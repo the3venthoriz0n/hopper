@@ -1,0 +1,157 @@
+.video-item {
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 1rem;
+  background: #fafafa;
+}
+
+.video-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.75rem;
+}
+
+.video-title-section {
+  flex: 1;
+}
+
+.video-title-section h3 {
+  font-size: 1rem;
+  color: #333;
+  margin-bottom: 0.25rem;
+  word-break: break-word;
+}
+
+.video-status {
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.video-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btn-edit, .btn-delete {
+  padding: 0.4rem 0.8rem;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  background: #e0e0e0;
+  color: #333;
+}
+
+.btn-edit:hover {
+  background: #d0d0d0;
+}
+
+.btn-delete {
+  background: #ffebee;
+  color: #f44336;
+}
+
+.btn-delete:hover {
+  background: #ffcdd2;
+}
+
+.video-edit-form {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e0e0e0;
+}
+
+.form-row {
+  margin-bottom: 1rem;
+}
+
+.form-row label {
+  display: block;
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+  color: #333;
+}
+
+.form-row input[type="text"],
+.form-row input[type="datetime-local"],
+.form-row textarea {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 0.95rem;
+}
+
+.form-row textarea {
+  resize: vertical;
+}
+
+.destination-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: normal;
+}
+
+.form-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.btn-save, .btn-cancel {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.btn-save {
+  background: #1976d2;
+  color: white;
+}
+
+.btn-save:hover {
+  background: #1565c0;
+}
+
+.btn-cancel {
+  background: #e0e0e0;
+  color: #333;
+}
+
+.btn-cancel:hover {
+  background: #d0d0d0;
+}
+
+.video-details {
+  margin-top: 0.75rem;
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.video-details p {
+  margin-bottom: 0.5rem;
+}
+
+.btn-upload {
+  margin-top: 1rem;
+  padding: 0.5rem 1rem;
+  background: #4caf50;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.btn-upload:hover {
+  background: #45a049;
+}
+
