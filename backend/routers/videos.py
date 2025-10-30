@@ -135,6 +135,9 @@ async def delete_video(video_id: int, db: AsyncSession = Depends(get_db)):
 @router.post("/{video_id}/upload")
 async def trigger_upload(video_id: int, db: AsyncSession = Depends(get_db)):
     """Manually trigger upload for a video"""
+    from services.youtube_upload import upload_to_youtube
+    from sqlalchemy import select as sql_select
+    
     result = await db.execute(select(Video).where(Video.id == video_id))
     video = result.scalar_one_or_none()
     
@@ -156,12 +159,44 @@ async def trigger_upload(video_id: int, db: AsyncSession = Depends(get_db)):
     if not destinations:
         raise HTTPException(status_code=400, detail="No enabled destinations")
     
-    # Update status
-    video.status = "scheduled"
+    # Update status to uploading
+    video.status = "uploading"
     await db.commit()
     
-    # TODO: Queue the upload job
-    # This would be handled by a background worker in production
+    upload_errors = []
     
-    return {"status": "scheduled", "destinations": len(destinations)}
+    # Upload to each destination
+    for dest in destinations:
+        if dest.platform == "youtube":
+            try:
+                result = await upload_to_youtube(
+                    video_path=video.file_path,
+                    title=video.title or video.filename,
+                    description=video.description or "",
+                    privacy=video.privacy,
+                    credentials_json=dest.credentials
+                )
+                
+                if not result['success']:
+                    upload_errors.append(f"YouTube: {result['error']}")
+                    
+            except Exception as e:
+                upload_errors.append(f"YouTube: {str(e)}")
+    
+    # Update final status
+    if upload_errors:
+        video.status = "failed"
+        await db.commit()
+        return {
+            "status": "failed",
+            "errors": upload_errors
+        }
+    else:
+        video.status = "completed"
+        video.uploaded_at = func.now()
+        await db.commit()
+        return {
+            "status": "completed",
+            "destinations": len(destinations)
+        }
 

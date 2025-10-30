@@ -11,6 +11,7 @@ interface VideoDropzoneProps {
 function VideoDropzone({ userId, onUpload }: VideoDropzoneProps) {
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<string | null>(null)
+  const [uploadPercent, setUploadPercent] = useState(0)
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     if (acceptedFiles.length === 0) return
@@ -20,9 +21,12 @@ function VideoDropzone({ userId, onUpload }: VideoDropzoneProps) {
     for (let i = 0; i < acceptedFiles.length; i++) {
       const file = acceptedFiles[i]
       setUploadProgress(`Uploading ${file.name} (${i + 1}/${acceptedFiles.length})`)
+      setUploadPercent(0)
       
       try {
-        await uploadVideo(userId, file)
+        await uploadVideo(userId, file, (percent) => {
+          setUploadPercent(percent)
+        })
       } catch (error) {
         console.error('Upload error:', error)
         alert(`Failed to upload ${file.name}`)
@@ -31,6 +35,7 @@ function VideoDropzone({ userId, onUpload }: VideoDropzoneProps) {
 
     setUploading(false)
     setUploadProgress(null)
+    setUploadPercent(0)
     onUpload()
   }, [userId, onUpload])
 
@@ -52,6 +57,10 @@ function VideoDropzone({ userId, onUpload }: VideoDropzoneProps) {
       {uploading ? (
         <div className="upload-status">
           <p>{uploadProgress}</p>
+          <div className="progress-bar">
+            <div className="progress-fill" style={{ width: `${uploadPercent}%` }}></div>
+          </div>
+          <p className="progress-text">{uploadPercent}%</p>
         </div>
       ) : (
         <div className="dropzone-content">

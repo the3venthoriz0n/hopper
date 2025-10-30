@@ -61,11 +61,18 @@ function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
     }
 
     try {
-      await triggerUpload(video.id)
+      const result = await triggerUpload(video.id)
       onUpdate()
-    } catch (error) {
+      
+      if (result.status === 'failed') {
+        alert(`Upload failed:\n${result.errors.join('\n')}`)
+      } else {
+        alert('Upload started successfully!')
+      }
+    } catch (error: any) {
       console.error('Error triggering upload:', error)
-      alert('Failed to trigger upload')
+      const errorMsg = error.response?.data?.detail || error.message || 'Unknown error'
+      alert(`Failed to trigger upload: ${errorMsg}`)
     }
   }
 
@@ -86,12 +93,19 @@ function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
       })
       
       // Trigger upload immediately
-      await triggerUpload(video.id)
+      const result = await triggerUpload(video.id)
       setIsEditing(false)
       onUpdate()
-    } catch (error) {
+      
+      if (result.status === 'failed') {
+        alert(`Upload failed:\n${result.errors.join('\n')}`)
+      } else {
+        alert('Upload started successfully!')
+      }
+    } catch (error: any) {
       console.error('Error uploading:', error)
-      alert('Failed to upload video')
+      const errorMsg = error.response?.data?.detail || error.message || 'Unknown error'
+      alert(`Failed to upload video: ${errorMsg}`)
     }
   }
 
