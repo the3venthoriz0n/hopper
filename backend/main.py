@@ -31,7 +31,8 @@ except Exception:
 youtube_creds = None
 videos = []
 youtube_settings = {
-    "visibility": "private"  # public, private, unlisted
+    "visibility": "private",  # public, private, unlisted
+    "made_for_kids": False
 }
 
 @app.get("/api/auth/youtube")
@@ -98,12 +99,18 @@ def get_youtube_settings():
     return youtube_settings
 
 @app.post("/api/youtube/settings")
-def update_youtube_settings(visibility: str):
+def update_youtube_settings(visibility: str = None, made_for_kids: bool = None):
     """Update YouTube upload settings"""
     global youtube_settings
-    if visibility not in ["public", "private", "unlisted"]:
-        raise HTTPException(400, "Invalid visibility option")
-    youtube_settings["visibility"] = visibility
+    
+    if visibility is not None:
+        if visibility not in ["public", "private", "unlisted"]:
+            raise HTTPException(400, "Invalid visibility option")
+        youtube_settings["visibility"] = visibility
+    
+    if made_for_kids is not None:
+        youtube_settings["made_for_kids"] = made_for_kids
+    
     return youtube_settings
 
 @app.post("/api/videos")
@@ -158,7 +165,10 @@ def upload_videos():
                         'description': 'Uploaded via Hopper',
                         'categoryId': '22'
                     },
-                    'status': {'privacyStatus': youtube_settings['visibility']}
+                    'status': {
+                        'privacyStatus': youtube_settings['visibility'],
+                        'selfDeclaredMadeForKids': youtube_settings['made_for_kids']
+                    }
                 },
                 media_body=MediaFileUpload(video['path'], resumable=True)
             )

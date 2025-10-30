@@ -9,7 +9,7 @@ function App() {
   const [youtube, setYoutube] = useState({ connected: false, enabled: false });
   const [videos, setVideos] = useState([]);
   const [message, setMessage] = useState('');
-  const [youtubeSettings, setYoutubeSettings] = useState({ visibility: 'private' });
+  const [youtubeSettings, setYoutubeSettings] = useState({ visibility: 'private', made_for_kids: false });
   const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
@@ -38,11 +38,18 @@ function App() {
     }
   };
 
-  const updateYoutubeSettings = async (visibility) => {
+  const updateYoutubeSettings = async (key, value) => {
     try {
-      const res = await axios.post(`${API}/youtube/settings?visibility=${visibility}`);
+      const params = new URLSearchParams();
+      params.append(key, value);
+      const res = await axios.post(`${API}/youtube/settings?${params.toString()}`);
       setYoutubeSettings(res.data);
-      setMessage(`✅ Default visibility set to ${visibility}`);
+      
+      if (key === 'visibility') {
+        setMessage(`✅ Default visibility set to ${value}`);
+      } else if (key === 'made_for_kids') {
+        setMessage(`✅ Made for kids: ${value ? 'Yes' : 'No'}`);
+      }
     } catch (err) {
       setMessage('❌ Error updating settings');
     }
@@ -149,17 +156,30 @@ function App() {
         {showSettings && youtube.connected && (
           <div className="settings-panel">
             <h3>YouTube Settings</h3>
+            
             <div className="setting-group">
               <label>Default Visibility</label>
               <select 
                 value={youtubeSettings.visibility}
-                onChange={(e) => updateYoutubeSettings(e.target.value)}
+                onChange={(e) => updateYoutubeSettings('visibility', e.target.value)}
                 className="select"
               >
                 <option value="private">Private</option>
                 <option value="unlisted">Unlisted</option>
                 <option value="public">Public</option>
               </select>
+            </div>
+
+            <div className="setting-group">
+              <label className="checkbox-label">
+                <input 
+                  type="checkbox"
+                  checked={youtubeSettings.made_for_kids}
+                  onChange={(e) => updateYoutubeSettings('made_for_kids', e.target.checked)}
+                  className="checkbox"
+                />
+                <span>Made for Kids</span>
+              </label>
             </div>
           </div>
         )}
