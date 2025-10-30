@@ -192,3 +192,62 @@ button:hover {
   transform: none;
 }
 
+.btn-settings {
+  background: transparent;
+  border: 1px solid #666;
+  color: #999;
+  padding: 0.5rem 0.75rem;
+  font-size: 1rem;
+}
+
+.btn-settings:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: #999;
+  transform: none;
+}
+
+.settings-panel {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.settings-panel h3 {
+  margin: 0 0 1rem 0;
+  font-size: 0.95rem;
+  color: #999;
+}
+
+.setting-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.setting-group label {
+  color: #999;
+  font-size: 0.9rem;
+}
+
+.select {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid #666;
+  color: white;
+  padding: 0.5rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.select:focus {
+  outline: none;
+  border-color: #8b5cf6;
+}
+
+.select option {
+  background: #0a0a0a;
+  color: white;
+}
+

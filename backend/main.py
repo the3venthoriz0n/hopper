@@ -92,6 +92,20 @@ def disconnect_youtube():
     youtube_creds = None
     return {"message": "Disconnected"}
 
+@app.get("/api/youtube/settings")
+def get_youtube_settings():
+    """Get YouTube upload settings"""
+    return youtube_settings
+
+@app.post("/api/youtube/settings")
+def update_youtube_settings(visibility: str):
+    """Update YouTube upload settings"""
+    global youtube_settings
+    if visibility not in ["public", "private", "unlisted"]:
+        raise HTTPException(400, "Invalid visibility option")
+    youtube_settings["visibility"] = visibility
+    return youtube_settings
+
 @app.post("/api/videos")
 async def add_video(file: UploadFile = File(...)):
     """Add video to queue"""
@@ -144,7 +158,7 @@ def upload_videos():
                         'description': 'Uploaded via Hopper',
                         'categoryId': '22'
                     },
-                    'status': {'privacyStatus': 'private'}
+                    'status': {'privacyStatus': youtube_settings['visibility']}
                 },
                 media_body=MediaFileUpload(video['path'], resumable=True)
             )

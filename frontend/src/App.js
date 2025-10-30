@@ -9,9 +9,12 @@ function App() {
   const [youtube, setYoutube] = useState({ connected: false, enabled: false });
   const [videos, setVideos] = useState([]);
   const [message, setMessage] = useState('');
+  const [youtubeSettings, setYoutubeSettings] = useState({ visibility: 'private' });
+  const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
     loadDestinations();
+    loadYoutubeSettings();
     
     // Check OAuth callback
     if (window.location.search.includes('connected=youtube')) {
@@ -24,6 +27,25 @@ function App() {
   const loadDestinations = async () => {
     const res = await axios.get(`${API}/destinations`);
     setYoutube(res.data.youtube);
+  };
+
+  const loadYoutubeSettings = async () => {
+    try {
+      const res = await axios.get(`${API}/youtube/settings`);
+      setYoutubeSettings(res.data);
+    } catch (err) {
+      console.error('Error loading settings:', err);
+    }
+  };
+
+  const updateYoutubeSettings = async (visibility) => {
+    try {
+      const res = await axios.post(`${API}/youtube/settings?visibility=${visibility}`);
+      setYoutubeSettings(res.data);
+      setMessage(`✅ Default visibility set to ${visibility}`);
+    } catch (err) {
+      setMessage('❌ Error updating settings');
+    }
   };
 
   const connectYoutube = async () => {
@@ -111,6 +133,9 @@ function App() {
                 />
                 <span className="slider"></span>
               </label>
+              <button onClick={() => setShowSettings(!showSettings)} className="btn-settings">
+                ⚙️
+              </button>
               <button onClick={disconnectYoutube} className="btn-disconnect">
                 Disconnect
               </button>
@@ -119,6 +144,25 @@ function App() {
             <button onClick={connectYoutube}>Connect</button>
           )}
         </div>
+
+        {/* YouTube Settings */}
+        {showSettings && youtube.connected && (
+          <div className="settings-panel">
+            <h3>YouTube Settings</h3>
+            <div className="setting-group">
+              <label>Default Visibility</label>
+              <select 
+                value={youtubeSettings.visibility}
+                onChange={(e) => updateYoutubeSettings(e.target.value)}
+                className="select"
+              >
+                <option value="private">Private</option>
+                <option value="unlisted">Unlisted</option>
+                <option value="public">Public</option>
+              </select>
+            </div>
+          </div>
+        )}
       </div>
       
       {/* Drop Zone */}
