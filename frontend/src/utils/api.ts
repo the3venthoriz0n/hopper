@@ -1,4 +1,4 @@
-import axios from 'axios'
+import axios, { AxiosProgressEvent } from 'axios'
 
 const api = axios.create({
   baseURL: '/api',
@@ -68,7 +68,7 @@ export async function uploadVideo(
   
   const response = await api.post('/videos/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
-    onUploadProgress: (progressEvent) => {
+    onUploadProgress: (progressEvent: AxiosProgressEvent) => {
       if (progressEvent.total && onProgress) {
         const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total)
         onProgress(percent)
