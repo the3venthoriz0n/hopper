@@ -1,192 +1,116 @@
-# Hopper - Video Upload Manager
+# 🎥 Hopper
 
-A web application for managing and scheduling video uploads to YouTube (with support for additional platforms coming soon).
+**Simple video uploader for YouTube** - drag, drop, and upload videos automatically.
 
 ## Features
 
-- 🔐 **YouTube OAuth Integration** - Securely connect your YouTube account
-- 📤 **Drag & Drop Upload** - Easy video file management
-- 🎯 **Multiple Destinations** - Toggle upload destinations on/off
-- ⏰ **Upload Scheduling** - Schedule videos for future upload
-- ✏️ **Title & Description Management** - Edit metadata before upload
-- 🐳 **Docker Support** - Run in containers for easy deployment
+- 🎯 **Super Simple** - Just connect and upload
+- 📤 **Drag & Drop** - Add videos easily
+- ▶️ **YouTube** - OAuth integration
+- 🐳 **Docker Ready** - Run anywhere
 
-## Tech Stack
+## Quick Start
 
-**Frontend:**
-- React 18 with TypeScript
-- Vite for fast development
-- React Router for navigation
-- Axios for API calls
-- React Dropzone for file uploads
-
-**Backend:**
-- Python 3.11
-- FastAPI for REST API
-- SQLAlchemy with AsyncIO
-- SQLite database
-- Google OAuth 2.0
-
-## Getting Started
-
-### Prerequisites
-
-- Python 3.11+
-- Node.js 20+
-- YouTube API credentials (OAuth 2.0 Client ID)
-
-### YouTube API Setup
+### 1. Get YouTube API Credentials
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select existing one
-3. Enable the YouTube Data API v3
-4. Create OAuth 2.0 credentials:
+2. Create a new project
+3. Enable **YouTube Data API v3**
+4. Create **OAuth 2.0 Client ID** credentials:
    - Application type: Web application
-   - Authorized redirect URIs: `http://localhost:3000/auth/callback`
-5. Copy the Client ID and Client Secret
+   - Authorized redirect URIs: `http://localhost:8000/api/auth/youtube/callback`
+5. Download the JSON file and save as `backend/client_secrets.json`
 
-### Local Development
+### 2. Run with Docker (Easiest)
 
-#### Backend Setup
+```bash
+# Make sure client_secrets.json is in backend/
+docker-compose up --build
+```
 
+Access at `http://localhost:3000`
+
+### 3. Or Run Locally
+
+**Backend:**
 ```bash
 cd backend
-
-# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
+source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-
-# Copy and configure environment variables
-cp env.example .env
-# Edit .env and add your YouTube credentials
-
-# Run the backend
-uvicorn main:app --reload --port 8000
+python main.py
 ```
 
-The backend will be available at `http://localhost:8000`
-API documentation: `http://localhost:8000/docs`
-
-#### Frontend Setup
-
+**Frontend:**
 ```bash
 cd frontend
-
-# Install dependencies
 npm install
-
-# Run the development server
-npm run dev
+npm start
 ```
 
-The frontend will be available at `http://localhost:3000`
+## How to Use
 
-### Docker Deployment
+1. **Connect YouTube** - Click "Connect Account" and authorize
+2. **Enable YouTube** - Toggle it on
+3. **Add Videos** - Drag & drop video files into the hopper
+4. **Upload** - Click "Upload Now"
 
-```bash
-# Copy and configure environment variables
-cp env.example .env
-# Edit .env and add your YouTube credentials
-
-# Build and run with Docker Compose
-docker-compose up -d
-
-# View logs
-docker-compose logs -f
-
-# Stop containers
-docker-compose down
-```
-
-## Usage
-
-1. **Connect YouTube Account**
-   - Enter your email
-   - Click "Connect YouTube Account"
-   - Authorize the application
-
-2. **Upload Videos**
-   - Drag and drop video files into the hopper
-   - Supported formats: MP4, MOV, AVI, MKV, WebM
-
-3. **Configure Videos**
-   - Click "Edit" on any video
-   - Set title and description
-   - Choose upload destinations
-   - Schedule upload time (optional)
-   - Click "Save"
-
-4. **Upload**
-   - Click "Upload Now" to trigger immediate upload
-   - Or scheduled uploads will process automatically
+Done! 🎉
 
 ## Project Structure
 
 ```
 hopper/
-├── backend/
-│   ├── routers/          # API route handlers
-│   │   ├── auth.py       # OAuth and authentication
-│   │   ├── destinations.py # Destination management
-│   │   └── videos.py     # Video upload and management
-│   ├── config.py         # Configuration and settings
-│   ├── database.py       # Database setup
-│   ├── models.py         # SQLAlchemy models
-│   ├── main.py           # FastAPI application
-│   └── requirements.txt  # Python dependencies
-├── frontend/
-│   ├── src/
-│   │   ├── components/   # React components
-│   │   ├── pages/        # Page components
-│   │   ├── utils/        # Utilities and API client
-│   │   ├── App.tsx       # Main application
-│   │   └── main.tsx      # Entry point
-│   ├── package.json      # Node dependencies
-│   └── vite.config.ts    # Vite configuration
-├── docker-compose.yml    # Docker Compose configuration
-├── Dockerfile.backend    # Backend Docker image
-├── Dockerfile.frontend   # Frontend Docker image
-└── README.md            # This file
+├── backend/              # Python FastAPI backend
+│   ├── main.py          # Main API
+│   ├── youtube_uploader.py
+│   ├── scheduler.py
+│   ├── title_generator.py
+│   └── requirements.txt
+├── frontend/            # React frontend
+│   └── src/
+│       ├── App.js
+│       └── App.css
+└── docker-compose.yml
 ```
 
 ## API Endpoints
 
-### Authentication
-- `GET /api/auth/youtube/url` - Get YouTube OAuth URL
-- `POST /api/auth/youtube/callback` - Complete OAuth flow
+- `GET /api/destinations` - Get available destinations
+- `GET /api/auth/youtube` - Start YouTube OAuth
+- `POST /api/videos/upload` - Upload video file
+- `POST /api/upload/start` - Start uploading to YouTube
+- `GET /api/queue` - Get video queue
+- `DELETE /api/queue/{id}` - Remove video from queue
 
-### Destinations
-- `GET /api/destinations/user/{user_id}` - Get user's destinations
-- `PATCH /api/destinations/{destination_id}` - Toggle destination on/off
-- `DELETE /api/destinations/{destination_id}` - Remove destination
+## Troubleshooting
 
-### Videos
-- `POST /api/videos/upload` - Upload video to hopper
-- `GET /api/videos/user/{user_id}` - Get user's videos
-- `PATCH /api/videos/{video_id}` - Update video metadata
-- `DELETE /api/videos/{video_id}` - Delete video
-- `POST /api/videos/{video_id}/upload` - Trigger upload
+**"client_secrets.json not found"**
+- Download OAuth credentials from Google Cloud Console
+- Save as `backend/client_secrets.json`
 
-## Security Notes
+**CORS errors**
+- Make sure backend is on port 8000
+- Make sure frontend is on port 3000
 
-- Never commit `.env` files with real credentials
-- Keep your `SECRET_KEY` secure and random
-- Use HTTPS in production
-- Store OAuth tokens securely (currently encrypted in database)
+**Upload fails**
+- Check YouTube API quota limits
+- Verify OAuth token is valid
+- Make sure video format is supported (mp4, mov, avi, etc.)
 
-## Future Enhancements
+## Roadmap
 
-- Additional platforms (TikTok, Vimeo, etc.)
-- Bulk upload operations
-- Video thumbnail generation
-- Upload progress tracking
-- Background worker for scheduled uploads
-- Video format conversion
-- Upload analytics and history
+- [ ] Upload scheduling
+- [ ] Custom title templates
+- [ ] TikTok, Instagram, Twitter support
+- [ ] Progress tracking
+- [ ] User accounts & persistence
+- [ ] Thumbnail customization
 
 ## License
 
-See LICENSE file for details.
+MIT
+
+---
+
+**Keep it simple.** 🚀
