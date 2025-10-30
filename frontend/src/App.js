@@ -31,6 +31,12 @@ function App() {
     window.location.href = res.data.url;
   };
 
+  const disconnectYoutube = async () => {
+    await axios.post(`${API}/auth/youtube/disconnect`);
+    setYoutube({ connected: false, enabled: false });
+    setMessage('Disconnected from YouTube');
+  };
+
   const handleDrop = (e) => {
     e.preventDefault();
     const files = Array.from(e.dataTransfer.files).filter(f => 
@@ -96,14 +102,19 @@ function App() {
             {youtube.connected && <span className="badge">Connected</span>}
           </div>
           {youtube.connected ? (
-            <label className="toggle">
-              <input 
-                type="checkbox" 
-                checked={youtube.enabled}
-                onChange={toggleYoutube}
-              />
-              <span className="slider"></span>
-            </label>
+            <>
+              <label className="toggle">
+                <input 
+                  type="checkbox" 
+                  checked={youtube.enabled}
+                  onChange={toggleYoutube}
+                />
+                <span className="slider"></span>
+              </label>
+              <button onClick={disconnectYoutube} className="btn-disconnect">
+                Disconnect
+              </button>
+            </>
           ) : (
             <button onClick={connectYoutube}>Connect</button>
           )}

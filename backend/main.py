@@ -30,6 +30,9 @@ except Exception:
 
 youtube_creds = None
 videos = []
+youtube_settings = {
+    "visibility": "private"  # public, private, unlisted
+}
 
 @app.get("/api/auth/youtube")
 def auth_youtube(request: Request):
@@ -81,6 +84,13 @@ def get_destinations():
             "enabled": False
         }
     }
+
+@app.post("/api/auth/youtube/disconnect")
+def disconnect_youtube():
+    """Disconnect YouTube account"""
+    global youtube_creds
+    youtube_creds = None
+    return {"message": "Disconnected"}
 
 @app.post("/api/videos")
 async def add_video(file: UploadFile = File(...)):
