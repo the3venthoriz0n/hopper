@@ -13,9 +13,14 @@ function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
   const [title, setTitle] = useState(video.title || '')
   const [description, setDescription] = useState(video.description || '')
   const [privacy, setPrivacy] = useState(video.privacy || 'private')
-  const [scheduledTime, setScheduledTime] = useState(
-    video.scheduled_time ? new Date(video.scheduled_time).toISOString().slice(0, 16) : ''
-  )
+  const [scheduledTime, setScheduledTime] = useState(() => {
+    if (!video.scheduled_time) return ''
+    // Convert UTC time to local datetime-local format
+    const date = new Date(video.scheduled_time)
+    const offset = date.getTimezoneOffset() * 60000
+    const localDate = new Date(date.getTime() - offset)
+    return localDate.toISOString().slice(0, 16)
+  })
   const [selectedDestinations, setSelectedDestinations] = useState<number[]>(
     video.upload_destinations || []
   )
@@ -61,6 +66,32 @@ function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
     } catch (error) {
       console.error('Error triggering upload:', error)
       alert('Failed to trigger upload')
+    }
+  }
+
+  const handleSaveAndUpload = async () => {
+    if (selectedDestinations.length === 0) {
+      alert('Please select at least one destination')
+      return
+    }
+
+    try {
+      // Save the video settings
+      await updateVideo(video.id, {
+        title: title || undefined,
+        description: description || undefined,
+        privacy: privacy,
+        scheduled_time: null, // Upload immediately, no schedule
+        upload_destinations: selectedDestinations
+      })
+      
+      // Trigger upload immediately
+      await triggerUpload(video.id)
+      setIsEditing(false)
+      onUpdate()
+    } catch (error) {
+      console.error('Error uploading:', error)
+      alert('Failed to upload video')
     }
   }
 
@@ -150,13 +181,15 @@ function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
 
           <div className="form-row">
             <label>
-              Schedule Upload
+              Schedule Upload (Optional)
               <input
                 type="datetime-local"
                 value={scheduledTime}
                 onChange={(e) => setScheduledTime(e.target.value)}
+                placeholder="Leave empty for immediate upload"
               />
             </label>
+            <small className="form-hint">Leave empty to upload immediately</small>
           </div>
 
           <div className="form-row">
@@ -178,6 +211,9 @@ function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
           </div>
 
           <div className="form-actions">
+            <button onClick={handleSaveAndUpload} className="btn-upload-now">
+              Upload Now
+            </button>
             <button onClick={handleSave} className="btn-save">
               Save
             </button>
@@ -193,8 +229,8 @@ function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
           {title && <p><strong>Title:</strong> {title}</p>}
           {description && <p><strong>Description:</strong> {description}</p>}
           <p><strong>Privacy:</strong> <span className="privacy-badge">{privacy}</span></p>
-          {scheduledTime && (
-            <p><strong>Scheduled:</strong> {new Date(scheduledTime).toLocaleString()}</p>
+          {video.scheduled_time && (
+            <p><strong>Scheduled:</strong> {new Date(video.scheduled_time).toLocaleString()}</p>
           )}
           {selectedDestinations.length > 0 && (
             <p>
