@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from pathlib import Path
@@ -32,35 +32,45 @@ youtube_creds = None
 videos = []
 
 @app.get("/api/auth/youtube")
-def auth_youtube():
+def auth_youtube(request: Request):
     """Start YouTube OAuth"""
     if not os.path.exists('client_secrets.json'):
         raise HTTPException(400, "client_secrets.json missing")
     
+    # Build redirect URI dynamically based on request host
+    host = request.headers.get("host", "localhost:8000")
+    redirect_uri = f"http://{host}/api/auth/youtube/callback"
+    
     flow = Flow.from_client_secrets_file(
         'client_secrets.json',
         scopes=['https://www.googleapis.com/auth/youtube.upload'],
-        redirect_uri='http://localhost:8000/api/auth/youtube/callback'
+        redirect_uri=redirect_uri
     )
     
     url, _ = flow.authorization_url(access_type='offline')
     return {"url": url}
 
 @app.get("/api/auth/youtube/callback")
-def auth_callback(code: str):
+def auth_callback(code: str, request: Request):
     """OAuth callback"""
     global youtube_creds
+    
+    # Build redirect URI dynamically
+    host = request.headers.get("host", "localhost:8000")
+    redirect_uri = f"http://{host}/api/auth/youtube/callback"
     
     flow = Flow.from_client_secrets_file(
         'client_secrets.json',
         scopes=['https://www.googleapis.com/auth/youtube.upload'],
-        redirect_uri='http://localhost:8000/api/auth/youtube/callback'
+        redirect_uri=redirect_uri
     )
     
     flow.fetch_token(code=code)
     youtube_creds = flow.credentials
     
-    return RedirectResponse("http://localhost:3000?connected=youtube")
+    # Redirect back to frontend (replace port 8000 with 3000)
+    frontend_url = f"http://{host.replace(':8000', ':3000')}?connected=youtube"
+    return RedirectResponse(frontend_url)
 
 @app.get("/api/destinations")
 def get_destinations():
