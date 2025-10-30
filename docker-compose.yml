@@ -4,8 +4,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app
-      - ./backend/client_secrets.json:/app/client_secrets.json:ro
+      - backend_uploads:/app/uploads
     environment:
       - PYTHONUNBUFFERED=1
 
@@ -18,3 +17,6 @@ services:
       - ./frontend/public:/app/public
     depends_on:
       - backend
+
+volumes:
+  backend_uploads:

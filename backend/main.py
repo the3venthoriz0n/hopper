@@ -12,10 +12,10 @@ from googleapiclient.http import MediaFileUpload
 
 app = FastAPI()
 
-# CORS
+# CORS - allow all origins for development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -23,7 +23,10 @@ app.add_middleware(
 
 # Storage
 UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
+try:
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass  # Directory already exists or mounted
 
 youtube_creds = None
 videos = []

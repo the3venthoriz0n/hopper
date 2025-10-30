@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './App.css';
 
-const API = 'http://localhost:8000/api';
+// Use current host for API (works in Docker and locally)
+const API = `http://${window.location.hostname}:8000/api`;
 
 function App() {
   const [youtube, setYoutube] = useState({ connected: false, enabled: false });
