@@ -7,11 +7,9 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
-      - ./backend/uploads:/app/uploads
       - ./backend/client_secrets.json:/app/client_secrets.json:ro
     environment:
       - PYTHONUNBUFFERED=1
-    restart: unless-stopped
 
   frontend:
     build: ./frontend
@@ -19,12 +17,5 @@ services:
       - "3000:3000"
     volumes:
       - ./frontend/src:/app/src
-      - ./frontend/public:/app/public
     depends_on:
       - backend
-    environment:
-      - REACT_APP_API_URL=http://localhost:8000
-    restart: unless-stopped
-
-volumes:
-  uploads:

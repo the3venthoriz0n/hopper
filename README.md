@@ -1,116 +1,80 @@
 # 🎥 Hopper
 
-**Simple video uploader for YouTube** - drag, drop, and upload videos automatically.
+Dead simple video uploader for YouTube.
 
-## Features
+## What it does
 
-- 🎯 **Super Simple** - Just connect and upload
-- 📤 **Drag & Drop** - Add videos easily
-- ▶️ **YouTube** - OAuth integration
-- 🐳 **Docker Ready** - Run anywhere
+1. Connect to YouTube
+2. Drag videos in
+3. Upload
 
-## Quick Start
+That's it.
+
+## Setup
 
 ### 1. Get YouTube API Credentials
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project
-3. Enable **YouTube Data API v3**
-4. Create **OAuth 2.0 Client ID** credentials:
-   - Application type: Web application
-   - Authorized redirect URIs: `http://localhost:8000/api/auth/youtube/callback`
-5. Download the JSON file and save as `backend/client_secrets.json`
+Go to [Google Cloud Console](https://console.cloud.google.com/):
+- Create a project
+- Enable YouTube Data API v3
+- Create OAuth 2.0 credentials (Web application)
+- Add redirect URI: `http://localhost:8000/api/youtube/callback`
+- Download as `backend/client_secrets.json`
 
-### 2. Run with Docker (Easiest)
+### 2. Run
 
+**Option A: Docker (recommended)**
 ```bash
-# Make sure client_secrets.json is in backend/
-docker-compose up --build
+docker-compose up
 ```
 
-Access at `http://localhost:3000`
-
-### 3. Or Run Locally
-
-**Backend:**
+**Option B: Local**
 ```bash
+# Backend
 cd backend
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 python main.py
-```
 
-**Frontend:**
-```bash
+# Frontend (new terminal)
 cd frontend
 npm install
 npm start
 ```
 
-## How to Use
+Open http://localhost:3000
 
-1. **Connect YouTube** - Click "Connect Account" and authorize
-2. **Enable YouTube** - Toggle it on
-3. **Add Videos** - Drag & drop video files into the hopper
-4. **Upload** - Click "Upload Now"
+## Usage
 
-Done! 🎉
+1. Click "Connect YouTube"
+2. Authorize the app
+3. Drag video files into the drop zone
+4. Click "Upload to YouTube"
 
-## Project Structure
+Videos upload as private by default.
+
+## Structure
 
 ```
 hopper/
-├── backend/              # Python FastAPI backend
-│   ├── main.py          # Main API
-│   ├── youtube_uploader.py
-│   ├── scheduler.py
-│   ├── title_generator.py
+├── backend/
+│   ├── main.py          # All backend code
 │   └── requirements.txt
-├── frontend/            # React frontend
+├── frontend/
 │   └── src/
-│       ├── App.js
+│       ├── App.js       # All frontend code
 │       └── App.css
 └── docker-compose.yml
 ```
 
-## API Endpoints
+## Coming Later
 
-- `GET /api/destinations` - Get available destinations
-- `GET /api/auth/youtube` - Start YouTube OAuth
-- `POST /api/videos/upload` - Upload video file
-- `POST /api/upload/start` - Start uploading to YouTube
-- `GET /api/queue` - Get video queue
-- `DELETE /api/queue/{id}` - Remove video from queue
-
-## Troubleshooting
-
-**"client_secrets.json not found"**
-- Download OAuth credentials from Google Cloud Console
-- Save as `backend/client_secrets.json`
-
-**CORS errors**
-- Make sure backend is on port 8000
-- Make sure frontend is on port 3000
-
-**Upload fails**
-- Check YouTube API quota limits
-- Verify OAuth token is valid
-- Make sure video format is supported (mp4, mov, avi, etc.)
-
-## Roadmap
-
-- [ ] Upload scheduling
-- [ ] Custom title templates
-- [ ] TikTok, Instagram, Twitter support
-- [ ] Progress tracking
-- [ ] User accounts & persistence
-- [ ] Thumbnail customization
+- Multiple destinations (TikTok, Instagram, etc.)
+- Upload scheduling
+- Title/description templates
+- Progress tracking
 
 ## License
 
 MIT
-
----
-
-**Keep it simple.** 🚀
