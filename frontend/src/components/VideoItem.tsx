@@ -10,6 +10,8 @@ interface VideoItemProps {
 
 function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
   const [isEditing, setIsEditing] = useState(false)
+  const [isUploading, setIsUploading] = useState(false)
+  const [uploadStatus, setUploadStatus] = useState('')
   const [title, setTitle] = useState(video.title || '')
   const [description, setDescription] = useState(video.description || '')
   const [privacy, setPrivacy] = useState(video.privacy || 'private')
@@ -60,17 +62,33 @@ function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
       return
     }
 
+    setIsUploading(true)
+    setUploadStatus('Starting upload...')
+    
     try {
+      console.log(`[Upload] Starting upload for video ${video.id}`)
+      setUploadStatus('Uploading to YouTube...')
+      
       const result = await triggerUpload(video.id)
-      onUpdate()
+      console.log('[Upload] Result:', result)
+      
+      setUploadStatus('Upload complete!')
+      
+      setTimeout(() => {
+        setIsUploading(false)
+        setUploadStatus('')
+        onUpdate()
+      }, 1500)
       
       if (result.status === 'failed') {
         alert(`Upload failed:\n${result.errors.join('\n')}`)
       } else {
-        alert('Upload started successfully!')
+        alert('Upload completed successfully!')
       }
     } catch (error: any) {
-      console.error('Error triggering upload:', error)
+      console.error('[Upload] Error:', error)
+      setIsUploading(false)
+      setUploadStatus('')
       const errorMsg = error.response?.data?.detail || error.message || 'Unknown error'
       alert(`Failed to trigger upload: ${errorMsg}`)
     }
@@ -82,7 +100,12 @@ function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
       return
     }
 
+    setIsUploading(true)
+    setUploadStatus('Saving video settings...')
+    
     try {
+      console.log(`[Upload] Saving settings for video ${video.id}`)
+      
       // Save the video settings
       await updateVideo(video.id, {
         title: title || undefined,
@@ -92,18 +115,31 @@ function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
         upload_destinations: selectedDestinations
       })
       
+      console.log('[Upload] Settings saved, starting YouTube upload...')
+      setUploadStatus('Uploading to YouTube...')
+      
       // Trigger upload immediately
       const result = await triggerUpload(video.id)
+      console.log('[Upload] Result:', result)
+      
+      setUploadStatus('Upload complete!')
       setIsEditing(false)
-      onUpdate()
+      
+      setTimeout(() => {
+        setIsUploading(false)
+        setUploadStatus('')
+        onUpdate()
+      }, 1500)
       
       if (result.status === 'failed') {
         alert(`Upload failed:\n${result.errors.join('\n')}`)
       } else {
-        alert('Upload started successfully!')
+        alert('Upload completed successfully!')
       }
     } catch (error: any) {
-      console.error('Error uploading:', error)
+      console.error('[Upload] Error:', error)
+      setIsUploading(false)
+      setUploadStatus('')
       const errorMsg = error.response?.data?.detail || error.message || 'Unknown error'
       alert(`Failed to upload video: ${errorMsg}`)
     }
@@ -140,7 +176,7 @@ function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
           </span>
         </div>
         <div className="video-actions">
-          {!isEditing && (
+          {!isEditing && !isUploading && (
             <>
               <button onClick={() => setIsEditing(true)} className="btn-edit">
                 Edit
@@ -152,6 +188,13 @@ function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
           )}
         </div>
       </div>
+
+      {isUploading && (
+        <div className="upload-progress-banner">
+          <div className="upload-spinner"></div>
+          <span>{uploadStatus}</span>
+        </div>
+      )}
 
       {isEditing && (
         <div className="video-edit-form">
@@ -225,13 +268,25 @@ function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
           </div>
 
           <div className="form-actions">
-            <button onClick={handleSaveAndUpload} className="btn-upload-now">
-              Upload Now
+            <button 
+              onClick={handleSaveAndUpload} 
+              className="btn-upload-now"
+              disabled={isUploading}
+            >
+              {isUploading ? 'Uploading...' : 'Upload Now'}
             </button>
-            <button onClick={handleSave} className="btn-save">
+            <button 
+              onClick={handleSave} 
+              className="btn-save"
+              disabled={isUploading}
+            >
               Save
             </button>
-            <button onClick={() => setIsEditing(false)} className="btn-cancel">
+            <button 
+              onClick={() => setIsEditing(false)} 
+              className="btn-cancel"
+              disabled={isUploading}
+            >
               Cancel
             </button>
           </div>
@@ -256,7 +311,7 @@ function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
             </p>
           )}
 
-          {video.status === 'pending' && selectedDestinations.length > 0 && (
+          {video.status === 'pending' && selectedDestinations.length > 0 && !isUploading && (
             <button onClick={handleUpload} className="btn-upload">
               Upload Now
             </button>

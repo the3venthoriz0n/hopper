@@ -136,15 +136,21 @@ async def delete_video(video_id: int, db: AsyncSession = Depends(get_db)):
 async def trigger_upload(video_id: int, db: AsyncSession = Depends(get_db)):
     """Manually trigger upload for a video"""
     from services.youtube_upload import upload_to_youtube
-    from sqlalchemy import select as sql_select
+    
+    print(f"\n[API] Upload triggered for video ID: {video_id}")
     
     result = await db.execute(select(Video).where(Video.id == video_id))
     video = result.scalar_one_or_none()
     
     if not video:
+        print(f"[API] ERROR: Video {video_id} not found")
         raise HTTPException(status_code=404, detail="Video not found")
     
+    print(f"[API] Video found: {video.filename}")
+    print(f"[API] Upload destinations: {video.upload_destinations}")
+    
     if not video.upload_destinations:
+        print(f"[API] ERROR: No destinations selected")
         raise HTTPException(status_code=400, detail="No destinations selected")
     
     # Get enabled destinations
@@ -156,10 +162,14 @@ async def trigger_upload(video_id: int, db: AsyncSession = Depends(get_db)):
     )
     destinations = result.scalars().all()
     
+    print(f"[API] Found {len(destinations)} enabled destinations")
+    
     if not destinations:
+        print(f"[API] ERROR: No enabled destinations")
         raise HTTPException(status_code=400, detail="No enabled destinations")
     
     # Update status to uploading
+    print(f"[API] Updating video status to 'uploading'")
     video.status = "uploading"
     await db.commit()
     
@@ -167,8 +177,11 @@ async def trigger_upload(video_id: int, db: AsyncSession = Depends(get_db)):
     
     # Upload to each destination
     for dest in destinations:
+        print(f"[API] Processing destination: {dest.platform} (ID: {dest.id})")
+        
         if dest.platform == "youtube":
             try:
+                print(f"[API] Calling YouTube upload service...")
                 result = await upload_to_youtube(
                     video_path=video.file_path,
                     title=video.title or video.filename,
@@ -177,14 +190,25 @@ async def trigger_upload(video_id: int, db: AsyncSession = Depends(get_db)):
                     credentials_json=dest.credentials
                 )
                 
+                print(f"[API] YouTube upload result: {result}")
+                
                 if not result['success']:
-                    upload_errors.append(f"YouTube: {result['error']}")
+                    error = f"YouTube: {result['error']}"
+                    print(f"[API] Upload failed: {error}")
+                    upload_errors.append(error)
+                else:
+                    print(f"[API] Upload successful! Video URL: {result.get('url')}")
                     
             except Exception as e:
-                upload_errors.append(f"YouTube: {str(e)}")
+                error = f"YouTube: {str(e)}"
+                print(f"[API] Exception during upload: {error}")
+                import traceback
+                traceback.print_exc()
+                upload_errors.append(error)
     
     # Update final status
     if upload_errors:
+        print(f"[API] Upload failed with errors: {upload_errors}")
         video.status = "failed"
         await db.commit()
         return {
@@ -192,6 +216,7 @@ async def trigger_upload(video_id: int, db: AsyncSession = Depends(get_db)):
             "errors": upload_errors
         }
     else:
+        print(f"[API] Upload completed successfully")
         video.status = "completed"
         video.uploaded_at = func.now()
         await db.commit()
