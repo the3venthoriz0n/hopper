@@ -15,6 +15,7 @@ export interface Video {
   filename: string
   title: string | null
   description: string | null
+  privacy: string
   status: string
   scheduled_time: string | null
   upload_destinations: number[]
@@ -72,6 +73,7 @@ export async function updateVideo(
   data: {
     title?: string
     description?: string
+    privacy?: string
     scheduled_time?: string | null
     upload_destinations?: number[]
   }

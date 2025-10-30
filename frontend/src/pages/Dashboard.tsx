@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { getUserDestinations, getUserVideos, Destination, Video } from '../utils/api'
-import { getStoredUserEmail, setStoredUserEmail } from '../utils/storage'
+import { getStoredUserEmail, setStoredUserEmail, logout } from '../utils/storage'
 import DestinationList from '../components/DestinationList'
 import VideoDropzone from '../components/VideoDropzone'
 import VideoList from '../components/VideoList'
@@ -55,7 +55,12 @@ function Dashboard({ userId, onLogin }: DashboardProps) {
     <div className="dashboard">
       <header className="dashboard-header">
         <h1>Hopper</h1>
-        <p className="user-email">{userEmail}</p>
+        <div className="header-right">
+          <p className="user-email">{userEmail}</p>
+          <button onClick={logout} className="logout-button">
+            Logout
+          </button>
+        </div>
       </header>
 
       <div className="dashboard-content">

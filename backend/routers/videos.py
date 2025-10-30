@@ -22,6 +22,7 @@ class VideoResponse(BaseModel):
     filename: str
     title: Optional[str]
     description: Optional[str]
+    privacy: str
     status: str
     scheduled_time: Optional[datetime]
     upload_destinations: Optional[List[int]]
@@ -34,6 +35,7 @@ class VideoResponse(BaseModel):
 class UpdateVideoRequest(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
+    privacy: Optional[str] = None
     scheduled_time: Optional[datetime] = None
     upload_destinations: Optional[List[int]] = None
 
@@ -97,6 +99,8 @@ async def update_video(
         video.title = request.title
     if request.description is not None:
         video.description = request.description
+    if request.privacy is not None:
+        video.privacy = request.privacy
     if request.scheduled_time is not None:
         video.scheduled_time = request.scheduled_time
     if request.upload_destinations is not None:

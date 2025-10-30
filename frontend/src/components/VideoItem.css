@@ -75,12 +75,18 @@
 
 .form-row input[type="text"],
 .form-row input[type="datetime-local"],
+.form-row select,
 .form-row textarea {
   width: 100%;
   padding: 0.5rem;
   border: 1px solid #ddd;
   border-radius: 4px;
   font-size: 0.95rem;
+}
+
+.form-row select {
+  cursor: pointer;
+  background-color: white;
 }
 
 .form-row textarea {
@@ -153,5 +159,16 @@
 
 .btn-upload:hover {
   background: #45a049;
+}
+
+.privacy-badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: capitalize;
+  background: #e3f2fd;
+  color: #1976d2;
 }
 

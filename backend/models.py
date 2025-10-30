@@ -31,6 +31,7 @@ class Video(Base):
     file_path = Column(String)
     title = Column(String, nullable=True)
     description = Column(Text, nullable=True)
+    privacy = Column(String, default="private")  # public, private, unlisted
     status = Column(String, default="pending")  # pending, scheduled, uploading, completed, failed
     scheduled_time = Column(DateTime(timezone=True), nullable=True)
     upload_destinations = Column(JSON)  # List of destination IDs

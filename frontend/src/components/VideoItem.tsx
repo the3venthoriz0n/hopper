@@ -12,6 +12,7 @@ function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
   const [isEditing, setIsEditing] = useState(false)
   const [title, setTitle] = useState(video.title || '')
   const [description, setDescription] = useState(video.description || '')
+  const [privacy, setPrivacy] = useState(video.privacy || 'private')
   const [scheduledTime, setScheduledTime] = useState(
     video.scheduled_time ? new Date(video.scheduled_time).toISOString().slice(0, 16) : ''
   )
@@ -24,6 +25,7 @@ function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
       await updateVideo(video.id, {
         title: title || undefined,
         description: description || undefined,
+        privacy: privacy,
         scheduled_time: scheduledTime || null,
         upload_destinations: selectedDestinations
       })
@@ -134,6 +136,20 @@ function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
 
           <div className="form-row">
             <label>
+              Privacy
+              <select
+                value={privacy}
+                onChange={(e) => setPrivacy(e.target.value)}
+              >
+                <option value="private">Private</option>
+                <option value="unlisted">Unlisted</option>
+                <option value="public">Public</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="form-row">
+            <label>
               Schedule Upload
               <input
                 type="datetime-local"
@@ -176,6 +192,7 @@ function VideoItem({ video, destinations, onUpdate }: VideoItemProps) {
         <div className="video-details">
           {title && <p><strong>Title:</strong> {title}</p>}
           {description && <p><strong>Description:</strong> {description}</p>}
+          <p><strong>Privacy:</strong> <span className="privacy-badge">{privacy}</span></p>
           {scheduledTime && (
             <p><strong>Scheduled:</strong> {new Date(scheduledTime).toLocaleString()}</p>
           )}

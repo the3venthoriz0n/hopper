@@ -23,3 +23,8 @@ export function clearStorage() {
   localStorage.removeItem(USER_EMAIL_KEY)
 }
 
+export function logout() {
+  clearStorage()
+  window.location.href = '/'
+}
+

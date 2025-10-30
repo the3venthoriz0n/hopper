@@ -18,9 +18,29 @@
   color: #1976d2;
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
 .user-email {
   color: #666;
   font-size: 0.9rem;
+}
+
+.logout-button {
+  background: #f44336;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  transition: background 0.2s;
+}
+
+.logout-button:hover {
+  background: #d32f2f;
 }
 
 .dashboard-content {
