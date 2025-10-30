@@ -2,159 +2,158 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './App.css';
 
+const API = 'http://localhost:8000/api';
+
 function App() {
-  const [connected, setConnected] = useState(false);
+  const [youtube, setYoutube] = useState({ connected: false, enabled: false });
   const [videos, setVideos] = useState([]);
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    checkConnection();
+    loadDestinations();
     
     // Check OAuth callback
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('connected')) {
-      setMessage('✅ Connected to YouTube!');
-      checkConnection();
+    if (window.location.search.includes('connected=youtube')) {
+      setMessage('✅ YouTube connected!');
+      loadDestinations();
       window.history.replaceState({}, '', '/');
     }
   }, []);
 
-  const checkConnection = async () => {
-    try {
-      const res = await axios.get('http://localhost:8000/api/youtube/status');
-      setConnected(res.data.connected);
-    } catch (error) {
-      console.error('Error checking connection:', error);
-    }
+  const loadDestinations = async () => {
+    const res = await axios.get(`${API}/destinations`);
+    setYoutube(res.data.youtube);
   };
 
-  const connect = async () => {
-    try {
-      const res = await axios.get('http://localhost:8000/api/youtube/connect');
-      window.location.href = res.data.url;
-    } catch (error) {
-      setMessage('❌ Error: ' + error.response?.data?.detail);
-    }
+  const connectYoutube = async () => {
+    const res = await axios.get(`${API}/auth/youtube`);
+    window.location.href = res.data.url;
   };
 
   const handleDrop = (e) => {
     e.preventDefault();
-    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('video/'));
-    files.forEach(addVideo);
-  };
-
-  const handleFiles = (e) => {
-    const files = Array.from(e.target.files);
+    const files = Array.from(e.dataTransfer.files).filter(f => 
+      f.type.startsWith('video/')
+    );
     files.forEach(addVideo);
   };
 
   const addVideo = async (file) => {
-    const formData = new FormData();
-    formData.append('file', file);
+    const form = new FormData();
+    form.append('file', file);
     
     try {
-      const res = await axios.post('http://localhost:8000/api/videos/add', formData);
+      const res = await axios.post(`${API}/videos`, form);
       setVideos([...videos, res.data]);
-      setMessage(`✅ Added: ${file.name}`);
-    } catch (error) {
+      setMessage(`✅ Added ${file.name}`);
+    } catch (err) {
       setMessage('❌ Error adding video');
     }
   };
 
+  const removeVideo = async (id) => {
+    await axios.delete(`${API}/videos/${id}`);
+    setVideos(videos.filter(v => v.id !== id));
+  };
+
+  const toggleYoutube = () => {
+    setYoutube({ ...youtube, enabled: !youtube.enabled });
+  };
+
   const upload = async () => {
-    if (!connected) {
-      setMessage('❌ Connect to YouTube first');
+    if (!youtube.enabled) {
+      setMessage('❌ Enable YouTube first');
       return;
     }
     
     setMessage('⏳ Uploading...');
     
     try {
-      await axios.post('http://localhost:8000/api/videos/upload');
-      setMessage('✅ Upload complete!');
+      const res = await axios.post(`${API}/upload`);
+      setMessage(`✅ Uploaded ${res.data.uploaded} videos!`);
       
-      // Refresh video list
-      const res = await axios.get('http://localhost:8000/api/videos');
-      setVideos(res.data.videos);
-    } catch (error) {
-      setMessage('❌ Upload failed: ' + error.response?.data?.detail);
-    }
-  };
-
-  const removeVideo = async (id) => {
-    try {
-      await axios.delete(`http://localhost:8000/api/videos/${id}`);
-      setVideos(videos.filter(v => v.id !== id));
-    } catch (error) {
-      console.error('Error removing video:', error);
+      // Refresh
+      const videosRes = await axios.get(`${API}/videos`);
+      setVideos(videosRes.data);
+    } catch (err) {
+      setMessage('❌ Upload failed');
     }
   };
 
   return (
     <div className="app">
-      <div className="container">
-        <h1>🎥 Hopper</h1>
-        <p>Drag videos, upload to YouTube</p>
-        
-        {message && <div className="message">{message}</div>}
-        
-        {/* Connection */}
-        <div className="section">
-          <h2>YouTube</h2>
-          {!connected ? (
-            <button onClick={connect} className="btn">Connect YouTube</button>
+      <h1>🎥 Hopper</h1>
+      
+      {message && <div className="message">{message}</div>}
+      
+      {/* Destinations */}
+      <div className="card">
+        <h2>Destinations</h2>
+        <div className="destination">
+          <div>
+            <span>▶️ YouTube</span>
+            {youtube.connected && <span className="badge">Connected</span>}
+          </div>
+          {youtube.connected ? (
+            <label className="toggle">
+              <input 
+                type="checkbox" 
+                checked={youtube.enabled}
+                onChange={toggleYoutube}
+              />
+              <span className="slider"></span>
+            </label>
           ) : (
-            <div className="connected">✓ Connected</div>
+            <button onClick={connectYoutube}>Connect</button>
           )}
         </div>
-        
-        {/* Drop Zone */}
-        <div 
-          className="dropzone"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={handleDrop}
-          onClick={() => document.getElementById('file').click()}
-        >
-          <p>Drop videos here or click to browse</p>
-          <input 
-            id="file" 
-            type="file" 
-            multiple 
-            accept="video/*" 
-            onChange={handleFiles}
-            style={{display: 'none'}}
-          />
-        </div>
-        
-        {/* Video List */}
-        <div className="section">
-          <h2>Queue ({videos.length})</h2>
-          {videos.length === 0 ? (
-            <p className="empty">No videos yet</p>
-          ) : (
-            <div className="videos">
-              {videos.map(v => (
-                <div key={v.id} className="video">
-                  <div>
-                    <div className="filename">{v.filename}</div>
-                    <div className="status">{v.status}</div>
-                  </div>
-                  <button onClick={() => removeVideo(v.id)} className="remove">×</button>
-                </div>
-              ))}
+      </div>
+      
+      {/* Drop Zone */}
+      <div 
+        className="dropzone"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={handleDrop}
+        onClick={() => document.getElementById('file').click()}
+      >
+        <p>Drop videos here</p>
+        <input 
+          id="file"
+          type="file"
+          multiple
+          accept="video/*"
+          onChange={(e) => Array.from(e.target.files).forEach(addVideo)}
+          style={{display: 'none'}}
+        />
+      </div>
+      
+      {/* Queue */}
+      <div className="card">
+        <h2>Queue ({videos.length})</h2>
+        {videos.length === 0 ? (
+          <p className="empty">No videos</p>
+        ) : (
+          videos.map(v => (
+            <div key={v.id} className="video">
+              <div>
+                <div className="name">{v.filename}</div>
+                <div className="status">{v.status}</div>
+              </div>
+              <button onClick={() => removeVideo(v.id)}>×</button>
             </div>
-          )}
-        </div>
-        
-        {/* Upload Button */}
-        {videos.length > 0 && (
-          <button onClick={upload} className="btn btn-upload">
-            Upload to YouTube
-          </button>
+          ))
         )}
       </div>
+      
+      {/* Upload */}
+      {videos.length > 0 && youtube.enabled && (
+        <button className="upload-btn" onClick={upload}>
+          Upload to YouTube
+        </button>
+      )}
     </div>
   );
 }
 
 export default App;
+

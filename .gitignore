@@ -1,46 +1,26 @@
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
 venv/
-env/
-ENV/
-*.egg-info/
-dist/
-build/
+*.db
 
-# Backend specific
+# Backend
 backend/uploads/
 backend/client_secrets.json
-backend/.env
 
 # Node
 node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Frontend specific
 frontend/build/
-frontend/.env.local
-frontend/.env
 
 # IDE
 .vscode/
 .idea/
 *.swp
-*.swo
-*~
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
-
 # Environment
 .env
-.env.local
+

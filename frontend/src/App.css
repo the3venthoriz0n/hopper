@@ -5,64 +5,118 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  background: #0f0f0f;
+  background: #0a0a0a;
   color: white;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 .app {
-  min-height: 100vh;
+  max-width: 600px;
+  margin: 0 auto;
   padding: 2rem;
 }
 
-.container {
-  max-width: 800px;
-  margin: 0 auto;
-}
-
 h1 {
-  font-size: 3rem;
-  margin-bottom: 0.5rem;
+  font-size: 2.5rem;
+  margin-bottom: 2rem;
 }
 
 h2 {
-  font-size: 1.2rem;
+  font-size: 1.1rem;
   margin-bottom: 1rem;
   color: #999;
-}
-
-p {
-  color: #666;
-  margin-bottom: 2rem;
 }
 
 .message {
   background: rgba(255, 255, 255, 0.1);
   padding: 1rem;
   border-radius: 8px;
-  margin-bottom: 2rem;
+  margin-bottom: 1.5rem;
 }
 
-.section {
+.card {
   background: rgba(255, 255, 255, 0.05);
   padding: 1.5rem;
   border-radius: 12px;
   margin-bottom: 1.5rem;
 }
 
-.connected {
-  color: #4ade80;
-  font-weight: 500;
+.destination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 1rem;
+  border-radius: 8px;
+}
+
+.destination > div {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.badge {
+  background: #22c55e;
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.toggle {
+  position: relative;
+  width: 44px;
+  height: 24px;
+}
+
+.toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #333;
+  border-radius: 24px;
+  transition: 0.3s;
+}
+
+.slider:before {
+  content: "";
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background: white;
+  border-radius: 50%;
+  transition: 0.3s;
+}
+
+input:checked + .slider {
+  background: #8b5cf6;
+}
+
+input:checked + .slider:before {
+  transform: translateX(20px);
 }
 
 .dropzone {
   border: 2px dashed #333;
   border-radius: 12px;
-  padding: 4rem 2rem;
+  padding: 3rem;
   text-align: center;
   cursor: pointer;
   margin-bottom: 1.5rem;
-  transition: all 0.3s;
+  transition: 0.3s;
 }
 
 .dropzone:hover {
@@ -71,75 +125,54 @@ p {
 }
 
 .dropzone p {
-  margin: 0;
   color: #666;
 }
 
-.videos {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
 .video {
-  background: rgba(255, 255, 255, 0.05);
-  padding: 1rem;
-  border-radius: 8px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 0.5rem;
 }
 
-.filename {
+.name {
   font-weight: 500;
-  margin-bottom: 0.25rem;
 }
 
 .status {
   font-size: 0.85rem;
   color: #666;
+  margin-top: 0.25rem;
 }
 
 .empty {
   color: #666;
   font-style: italic;
-  margin: 0;
 }
 
-.btn {
+button {
   background: white;
   color: black;
   border: none;
-  padding: 0.75rem 1.5rem;
-  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: 0.2s;
 }
 
-.btn:hover {
+button:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(255, 255, 255, 0.2);
 }
 
-.btn-upload {
+.upload-btn {
   width: 100%;
   padding: 1rem;
   font-size: 1.1rem;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
   color: white;
 }
 
-.remove {
-  background: transparent;
-  border: none;
-  color: #666;
-  font-size: 1.5rem;
-  cursor: pointer;
-  padding: 0.5rem;
-  line-height: 1;
-}
-
-.remove:hover {
-  color: #ff4444;
-}

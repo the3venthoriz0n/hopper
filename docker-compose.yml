@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   backend:
     build: ./backend
@@ -17,5 +15,6 @@ services:
       - "3000:3000"
     volumes:
       - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
     depends_on:
       - backend

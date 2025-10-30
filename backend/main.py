@@ -1,9 +1,10 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
+from pathlib import Path
 import uvicorn
 import os
-from pathlib import Path
+
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -23,111 +24,111 @@ app.add_middleware(
 # Storage
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
-youtube_credentials = None
-video_queue = []
 
-@app.get("/")
-def root():
-    return {"status": "ok"}
+youtube_creds = None
+videos = []
 
-@app.get("/api/youtube/connect")
-def youtube_connect():
+@app.get("/api/auth/youtube")
+def auth_youtube():
     """Start YouTube OAuth"""
     if not os.path.exists('client_secrets.json'):
-        raise HTTPException(status_code=400, detail="client_secrets.json not found")
+        raise HTTPException(400, "client_secrets.json missing")
     
     flow = Flow.from_client_secrets_file(
         'client_secrets.json',
         scopes=['https://www.googleapis.com/auth/youtube.upload'],
-        redirect_uri='http://localhost:8000/api/youtube/callback'
+        redirect_uri='http://localhost:8000/api/auth/youtube/callback'
     )
     
-    auth_url, _ = flow.authorization_url(access_type='offline', include_granted_scopes='true')
-    return {"url": auth_url}
+    url, _ = flow.authorization_url(access_type='offline')
+    return {"url": url}
 
-@app.get("/api/youtube/callback")
-def youtube_callback(code: str):
-    """Handle YouTube OAuth callback"""
-    global youtube_credentials
+@app.get("/api/auth/youtube/callback")
+def auth_callback(code: str):
+    """OAuth callback"""
+    global youtube_creds
     
     flow = Flow.from_client_secrets_file(
         'client_secrets.json',
         scopes=['https://www.googleapis.com/auth/youtube.upload'],
-        redirect_uri='http://localhost:8000/api/youtube/callback'
+        redirect_uri='http://localhost:8000/api/auth/youtube/callback'
     )
     
     flow.fetch_token(code=code)
-    youtube_credentials = flow.credentials
+    youtube_creds = flow.credentials
     
-    return RedirectResponse("http://localhost:3000?connected=true")
+    return RedirectResponse("http://localhost:3000?connected=youtube")
 
-@app.get("/api/youtube/status")
-def youtube_status():
-    """Check if YouTube is connected"""
-    return {"connected": youtube_credentials is not None}
+@app.get("/api/destinations")
+def get_destinations():
+    """Get destination status"""
+    return {
+        "youtube": {
+            "connected": youtube_creds is not None,
+            "enabled": False
+        }
+    }
 
-@app.post("/api/videos/add")
+@app.post("/api/videos")
 async def add_video(file: UploadFile = File(...)):
     """Add video to queue"""
-    video_path = UPLOAD_DIR / file.filename
+    path = UPLOAD_DIR / file.filename
     
-    with open(video_path, "wb") as f:
-        content = await file.read()
-        f.write(content)
+    with open(path, "wb") as f:
+        f.write(await file.read())
     
     video = {
-        "id": len(video_queue) + 1,
+        "id": len(videos) + 1,
         "filename": file.filename,
-        "path": str(video_path),
+        "path": str(path),
         "status": "pending"
     }
-    video_queue.append(video)
-    
+    videos.append(video)
     return video
 
 @app.get("/api/videos")
 def get_videos():
     """Get video queue"""
-    return {"videos": video_queue}
+    return videos
 
-@app.post("/api/videos/upload")
+@app.delete("/api/videos/{video_id}")
+def delete_video(video_id: int):
+    """Remove from queue"""
+    global videos
+    videos = [v for v in videos if v['id'] != video_id]
+    return {"ok": True}
+
+@app.post("/api/upload")
 def upload_videos():
-    """Upload all videos to YouTube"""
-    if not youtube_credentials:
-        raise HTTPException(status_code=400, detail="YouTube not connected")
+    """Upload all pending videos to YouTube"""
+    if not youtube_creds:
+        raise HTTPException(400, "YouTube not connected")
     
-    if not video_queue:
-        raise HTTPException(status_code=400, detail="No videos in queue")
+    youtube = build('youtube', 'v3', credentials=youtube_creds)
     
-    youtube = build('youtube', 'v3', credentials=youtube_credentials)
-    
-    for video in video_queue:
+    for video in videos:
         if video['status'] != 'pending':
             continue
-            
+        
         try:
-            # Use filename as title
             title = video['filename'].rsplit('.', 1)[0]
             
-            body = {
-                'snippet': {
-                    'title': title,
-                    'description': 'Uploaded via Hopper',
-                    'categoryId': '22'
-                },
-                'status': {'privacyStatus': 'private'}
-            }
-            
-            media = MediaFileUpload(video['path'], resumable=True)
             request = youtube.videos().insert(
                 part='snippet,status',
-                body=body,
-                media_body=media
+                body={
+                    'snippet': {
+                        'title': title,
+                        'description': 'Uploaded via Hopper',
+                        'categoryId': '22'
+                    },
+                    'status': {'privacyStatus': 'private'}
+                },
+                media_body=MediaFileUpload(video['path'], resumable=True)
             )
             
             response = None
             while response is None:
-                status, response = request.next_chunk()
+                _, response = request.next_chunk()
             
             video['status'] = 'uploaded'
             video['youtube_id'] = response['id']
@@ -136,16 +137,8 @@ def upload_videos():
             video['status'] = 'failed'
             video['error'] = str(e)
     
-    return {"message": "Upload complete", "videos": video_queue}
-
-@app.delete("/api/videos/{video_id}")
-def remove_video(video_id: int):
-    """Remove video from queue"""
-    global video_queue
-    video_queue = [v for v in video_queue if v['id'] != video_id]
-    return {"message": "Removed"}
+    return {"uploaded": len([v for v in videos if v['status'] == 'uploaded'])}
 
 if __name__ == "__main__":
-    print("🚀 Hopper Backend")
-    print("📍 http://localhost:8000")
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
