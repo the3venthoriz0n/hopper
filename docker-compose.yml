@@ -5,6 +5,7 @@ services:
       - "8000:8000"
     volumes:
       - backend_uploads:/app/uploads
+      - backend_sessions:/app/sessions
     environment:
       - PYTHONUNBUFFERED=1
 
@@ -20,3 +21,4 @@ services:
 
 volumes:
   backend_uploads:
+  backend_sessions:

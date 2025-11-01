@@ -5,6 +5,9 @@ import './App.css';
 // Use current host for API (works in Docker and locally)
 const API = `http://${window.location.hostname}:8000/api`;
 
+// Configure axios to send cookies with every request
+axios.defaults.withCredentials = true;
+
 function App() {
   const [youtube, setYoutube] = useState({ connected: false, enabled: false });
   const [videos, setVideos] = useState([]);
