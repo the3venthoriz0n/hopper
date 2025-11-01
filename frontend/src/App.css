@@ -144,6 +144,25 @@ input:checked + .slider:before {
   min-width: 0;
 }
 
+.video-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+.youtube-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: white;
+}
+
+.filename {
+  font-size: 0.8rem;
+  color: #999;
+  font-family: monospace;
+}
+
 .name {
   font-weight: 500;
 }

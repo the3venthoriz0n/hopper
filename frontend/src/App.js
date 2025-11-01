@@ -142,29 +142,40 @@ function App() {
     }
     
     setIsUploading(true);
-    setMessage('⏳ Uploading to YouTube...');
+    const isScheduling = !youtubeSettings.upload_immediately;
+    setMessage(isScheduling ? '⏳ Scheduling videos...' : '⏳ Uploading to YouTube...');
     
-    // Start polling for progress
-    const pollInterval = setInterval(async () => {
-      try {
-        const res = await axios.get(`${API}/videos`);
-        setVideos(res.data);
-      } catch (err) {
-        console.error('Error polling videos:', err);
-      }
-    }, 1000); // Poll every second
+    // Only poll for progress if uploading immediately
+    let pollInterval;
+    if (!isScheduling) {
+      pollInterval = setInterval(async () => {
+        try {
+          const res = await axios.get(`${API}/videos`);
+          setVideos(res.data);
+        } catch (err) {
+          console.error('Error polling videos:', err);
+        }
+      }, 1000);
+    }
     
     try {
       const res = await axios.post(`${API}/upload`);
-      clearInterval(pollInterval);
-      setMessage(`✅ Uploaded ${res.data.uploaded} videos!`);
+      if (pollInterval) clearInterval(pollInterval);
+      
+      if (res.data.uploaded !== undefined) {
+        setMessage(`✅ Uploaded ${res.data.uploaded} videos!`);
+      } else if (res.data.scheduled !== undefined) {
+        setMessage(`✅ ${res.data.scheduled} videos scheduled! ${res.data.message}`);
+      } else {
+        setMessage(`✅ ${res.data.message || 'Success'}`);
+      }
       
       // Final refresh
       const videosRes = await axios.get(`${API}/videos`);
       setVideos(videosRes.data);
     } catch (err) {
-      clearInterval(pollInterval);
-      setMessage('❌ Upload failed');
+      if (pollInterval) clearInterval(pollInterval);
+      setMessage(`❌ ${err.response?.data?.detail || 'Operation failed'}`);
       
       // Refresh to get real status
       const videosRes = await axios.get(`${API}/videos`);
@@ -363,8 +374,9 @@ function App() {
       
       {/* Upload Button */}
       {videos.length > 0 && youtube.enabled && (
-        <button className="upload-btn" onClick={upload}>
-          Upload to YouTube
+        <button className="upload-btn" onClick={upload} disabled={isUploading}>
+          {isUploading ? 'Uploading...' : 
+           youtubeSettings.upload_immediately ? 'Upload to YouTube' : 'Schedule Videos'}
         </button>
       )}
       
@@ -377,7 +389,10 @@ function App() {
           videos.map(v => (
             <div key={v.id} className="video">
               <div className="video-info-container">
-                <div className="name">{v.filename}</div>
+                <div className="video-titles">
+                  <div className="youtube-title">▶️ {v.youtube_title || v.filename}</div>
+                  <div className="filename">File: {v.filename}</div>
+                </div>
                 <div className="status">
                   {v.status === 'uploading' ? (
                     v.upload_progress !== undefined ? (
@@ -387,6 +402,15 @@ function App() {
                     ) : (
                       <span>Processing...</span>
                     )
+                  ) : v.status === 'scheduled' && v.scheduled_time ? (
+                    <span>Scheduled for {new Date(v.scheduled_time).toLocaleString(undefined, {
+                      year: 'numeric',
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit'
+                    })}</span>
                   ) : (
                     <span>{v.status}</span>
                   )}

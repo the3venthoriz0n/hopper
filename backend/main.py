@@ -177,15 +177,23 @@ async def add_video(file: UploadFile = File(...)):
 
 @app.get("/api/videos")
 def get_videos():
-    """Get video queue with progress"""
-    # Add progress info to videos
-    videos_with_progress = []
+    """Get video queue with progress and computed titles"""
+    # Add progress info and computed YouTube titles to videos
+    videos_with_info = []
     for video in videos:
         video_copy = video.copy()
+        
+        # Add upload progress if available
         if video['id'] in upload_progress:
             video_copy['upload_progress'] = upload_progress[video['id']]
-        videos_with_progress.append(video_copy)
-    return videos_with_progress
+        
+        # Compute YouTube title from template
+        filename_no_ext = video['filename'].rsplit('.', 1)[0]
+        youtube_title = youtube_settings['title_template'].replace('{filename}', filename_no_ext)
+        video_copy['youtube_title'] = youtube_title
+        
+        videos_with_info.append(video_copy)
+    return videos_with_info
 
 @app.delete("/api/videos/{video_id}")
 def delete_video(video_id: int):
@@ -264,7 +272,7 @@ def upload_videos():
         }
     
     # Otherwise, mark for scheduled upload
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     
     if youtube_settings['schedule_mode'] == 'spaced':
         # Calculate interval in minutes
@@ -280,8 +288,8 @@ def upload_videos():
         else:
             interval_minutes = 60  # default to 1 hour
         
-        # Set scheduled time for each video
-        current_time = datetime.now()
+        # Set scheduled time for each video (use timezone-aware datetime)
+        current_time = datetime.now(timezone.utc)
         for i, video in enumerate(pending_videos):
             scheduled_time = current_time + timedelta(minutes=interval_minutes * i)
             video['scheduled_time'] = scheduled_time.isoformat()
