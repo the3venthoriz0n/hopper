@@ -9,8 +9,14 @@ function App() {
   const [youtube, setYoutube] = useState({ connected: false, enabled: false });
   const [videos, setVideos] = useState([]);
   const [message, setMessage] = useState('');
-  const [youtubeSettings, setYoutubeSettings] = useState({ visibility: 'private', made_for_kids: false });
+  const [youtubeSettings, setYoutubeSettings] = useState({ 
+    visibility: 'private', 
+    made_for_kids: false,
+    title_template: '{filename}',
+    description_template: 'Uploaded via Hopper'
+  });
   const [showSettings, setShowSettings] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     loadDestinations();
@@ -49,6 +55,8 @@ function App() {
         setMessage(`✅ Default visibility set to ${value}`);
       } else if (key === 'made_for_kids') {
         setMessage(`✅ Made for kids: ${value ? 'Yes' : 'No'}`);
+      } else if (key === 'title_template' || key === 'description_template') {
+        setMessage(`✅ Settings updated`);
       }
     } catch (err) {
       setMessage('❌ Error updating settings');
@@ -78,11 +86,33 @@ function App() {
     const form = new FormData();
     form.append('file', file);
     
+    // Add temp entry with uploading status
+    const tempId = Date.now();
+    const tempVideo = {
+      id: tempId,
+      filename: file.name,
+      status: 'uploading',
+      progress: 0
+    };
+    setVideos(prev => [...prev, tempVideo]);
+    
     try {
-      const res = await axios.post(`${API}/videos`, form);
-      setVideos([...videos, res.data]);
+      const res = await axios.post(`${API}/videos`, form, {
+        onUploadProgress: (progressEvent) => {
+          const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          setVideos(prev => prev.map(v => 
+            v.id === tempId ? { ...v, progress: percent } : v
+          ));
+        }
+      });
+      
+      // Replace temp with real video data
+      setVideos(prev => prev.map(v => 
+        v.id === tempId ? { ...res.data, progress: 100 } : v
+      ));
       setMessage(`✅ Added ${file.name}`);
     } catch (err) {
+      setVideos(prev => prev.filter(v => v.id !== tempId));
       setMessage('❌ Error adding video');
     }
   };
@@ -102,17 +132,36 @@ function App() {
       return;
     }
     
-    setMessage('⏳ Uploading...');
+    setIsUploading(true);
+    setMessage('⏳ Uploading to YouTube...');
+    
+    // Start polling for progress
+    const pollInterval = setInterval(async () => {
+      try {
+        const res = await axios.get(`${API}/videos`);
+        setVideos(res.data);
+      } catch (err) {
+        console.error('Error polling videos:', err);
+      }
+    }, 1000); // Poll every second
     
     try {
       const res = await axios.post(`${API}/upload`);
+      clearInterval(pollInterval);
       setMessage(`✅ Uploaded ${res.data.uploaded} videos!`);
       
-      // Refresh
+      // Final refresh
       const videosRes = await axios.get(`${API}/videos`);
       setVideos(videosRes.data);
     } catch (err) {
+      clearInterval(pollInterval);
       setMessage('❌ Upload failed');
+      
+      // Refresh to get real status
+      const videosRes = await axios.get(`${API}/videos`);
+      setVideos(videosRes.data);
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -181,6 +230,32 @@ function App() {
                 <span>Made for Kids</span>
               </label>
             </div>
+
+            <div className="setting-group">
+              <label>Video Title Template</label>
+              <input 
+                type="text"
+                value={youtubeSettings.title_template}
+                onChange={(e) => setYoutubeSettings({...youtubeSettings, title_template: e.target.value})}
+                onBlur={(e) => updateYoutubeSettings('title_template', e.target.value)}
+                placeholder="{filename}"
+                className="input-text"
+              />
+              <small className="hint">Use {'{filename}'} for video filename</small>
+            </div>
+
+            <div className="setting-group">
+              <label>Video Description Template</label>
+              <textarea 
+                value={youtubeSettings.description_template}
+                onChange={(e) => setYoutubeSettings({...youtubeSettings, description_template: e.target.value})}
+                onBlur={(e) => updateYoutubeSettings('description_template', e.target.value)}
+                placeholder="Uploaded via Hopper"
+                className="textarea-text"
+                rows="3"
+              />
+              <small className="hint">Use {'{filename}'} for video filename</small>
+            </div>
           </div>
         )}
       </div>
@@ -203,6 +278,13 @@ function App() {
         />
       </div>
       
+      {/* Upload Button */}
+      {videos.length > 0 && youtube.enabled && (
+        <button className="upload-btn" onClick={upload}>
+          Upload to YouTube
+        </button>
+      )}
+      
       {/* Queue */}
       <div className="card">
         <h2>Queue ({videos.length})</h2>
@@ -211,22 +293,37 @@ function App() {
         ) : (
           videos.map(v => (
             <div key={v.id} className="video">
-              <div>
+              <div className="video-info-container">
                 <div className="name">{v.filename}</div>
-                <div className="status">{v.status}</div>
+                <div className="status">
+                  {v.status === 'uploading' ? (
+                    v.upload_progress !== undefined ? (
+                      <span>Uploading to YouTube {v.upload_progress}%</span>
+                    ) : v.progress !== undefined && v.progress < 100 ? (
+                      <span>Uploading to server {v.progress}%</span>
+                    ) : (
+                      <span>Processing...</span>
+                    )
+                  ) : (
+                    <span>{v.status}</span>
+                  )}
+                </div>
+                {v.status === 'uploading' && (
+                  <div className="progress-bar">
+                    <div 
+                      className="progress-fill" 
+                      style={{ 
+                        width: `${v.upload_progress !== undefined ? v.upload_progress : (v.progress || 0)}%` 
+                      }}
+                    ></div>
+                  </div>
+                )}
               </div>
-              <button onClick={() => removeVideo(v.id)}>×</button>
+              <button onClick={() => removeVideo(v.id)} disabled={v.status === 'uploading'}>×</button>
             </div>
           ))
         )}
       </div>
-      
-      {/* Upload */}
-      {videos.length > 0 && youtube.enabled && (
-        <button className="upload-btn" onClick={upload}>
-          Upload to YouTube
-        </button>
-      )}
     </div>
   );
 }

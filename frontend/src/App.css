@@ -139,6 +139,11 @@ input:checked + .slider:before {
   margin-bottom: 0.5rem;
 }
 
+.video-info-container {
+  flex: 1;
+  min-width: 0;
+}
+
 .name {
   font-weight: 500;
 }
@@ -147,6 +152,22 @@ input:checked + .slider:before {
   font-size: 0.85rem;
   color: #666;
   margin-top: 0.25rem;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  margin-top: 0.5rem;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #8b5cf6, #ec4899);
+  border-radius: 2px;
+  transition: width 0.3s ease;
 }
 
 .empty {
@@ -165,8 +186,13 @@ button {
   transition: 0.2s;
 }
 
-button:hover {
+button:hover:not(:disabled) {
   transform: translateY(-2px);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .upload-btn {
@@ -264,5 +290,35 @@ button:hover {
   height: 18px;
   cursor: pointer;
   accent-color: #8b5cf6;
+}
+
+.input-text,
+.textarea-text {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid #666;
+  color: white;
+  padding: 0.5rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+
+.input-text:focus,
+.textarea-text:focus {
+  outline: none;
+  border-color: #8b5cf6;
+}
+
+.textarea-text {
+  resize: vertical;
+  min-height: 60px;
+}
+
+.hint {
+  font-size: 0.8rem;
+  color: #666;
+  margin-top: 0.25rem;
+  display: block;
 }
 
