@@ -26,6 +26,7 @@ function App() {
   useEffect(() => {
     loadDestinations();
     loadYoutubeSettings();
+    loadVideos();
     
     // Check OAuth callback
     if (window.location.search.includes('connected=youtube')) {
@@ -33,7 +34,23 @@ function App() {
       loadDestinations();
       window.history.replaceState({}, '', '/');
     }
+    
+    // Poll for video updates every 5 seconds to catch scheduled uploads
+    const pollInterval = setInterval(() => {
+      loadVideos();
+    }, 5000);
+    
+    return () => clearInterval(pollInterval);
   }, []);
+  
+  const loadVideos = async () => {
+    try {
+      const res = await axios.get(`${API}/videos`);
+      setVideos(res.data);
+    } catch (err) {
+      console.error('Error loading videos:', err);
+    }
+  };
 
   const loadDestinations = async () => {
     const res = await axios.get(`${API}/destinations`);

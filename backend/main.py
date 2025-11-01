@@ -4,6 +4,8 @@ from fastapi.responses import RedirectResponse
 from pathlib import Path
 import uvicorn
 import os
+import asyncio
+from datetime import datetime, timedelta, timezone
 
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
@@ -87,11 +89,13 @@ def auth_callback(code: str, request: Request):
 @app.get("/api/destinations")
 def get_destinations():
     """Get destination status"""
+    scheduled_count = len([v for v in videos if v['status'] == 'scheduled'])
     return {
         "youtube": {
             "connected": youtube_creds is not None,
             "enabled": False
-        }
+        },
+        "scheduled_videos": scheduled_count
     }
 
 @app.post("/api/auth/youtube/disconnect")
@@ -206,6 +210,11 @@ def upload_video_to_youtube(video):
     """Helper function to upload a single video to YouTube"""
     global upload_progress
     
+    if not youtube_creds:
+        video['status'] = 'failed'
+        video['error'] = 'No YouTube credentials'
+        return
+    
     try:
         video['status'] = 'uploading'
         upload_progress[video['id']] = 0
@@ -250,6 +259,38 @@ def upload_video_to_youtube(video):
         if video['id'] in upload_progress:
             del upload_progress[video['id']]
 
+async def scheduler_task():
+    """Background task that checks for scheduled videos and uploads them"""
+    while True:
+        try:
+            await asyncio.sleep(30)  # Check every 30 seconds
+            
+            current_time = datetime.now(timezone.utc)
+            
+            # Find videos that are scheduled and due for upload
+            for video in videos:
+                if video['status'] == 'scheduled' and 'scheduled_time' in video:
+                    try:
+                        scheduled_time = datetime.fromisoformat(video['scheduled_time'])
+                        
+                        # If scheduled time has passed, upload the video
+                        if current_time >= scheduled_time:
+                            print(f"Uploading scheduled video: {video['filename']}")
+                            upload_video_to_youtube(video)
+                    except Exception as e:
+                        print(f"Error processing scheduled video {video['filename']}: {e}")
+                        video['status'] = 'failed'
+                        video['error'] = str(e)
+        except Exception as e:
+            print(f"Error in scheduler task: {e}")
+            await asyncio.sleep(30)
+
+@app.on_event("startup")
+async def startup_event():
+    """Start the scheduler when the app starts"""
+    asyncio.create_task(scheduler_task())
+    print("Scheduler task started")
+
 @app.post("/api/upload")
 def upload_videos():
     """Upload all pending videos to YouTube (immediate or scheduled)"""
@@ -272,8 +313,6 @@ def upload_videos():
         }
     
     # Otherwise, mark for scheduled upload
-    from datetime import datetime, timedelta, timezone
-    
     if youtube_settings['schedule_mode'] == 'spaced':
         # Calculate interval in minutes
         value = youtube_settings['schedule_interval_value']
