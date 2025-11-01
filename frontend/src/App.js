@@ -13,7 +13,12 @@ function App() {
     visibility: 'private', 
     made_for_kids: false,
     title_template: '{filename}',
-    description_template: 'Uploaded via Hopper'
+    description_template: 'Uploaded via Hopper',
+    upload_immediately: true,
+    schedule_mode: 'spaced',
+    schedule_interval_value: 1,
+    schedule_interval_unit: 'hours',
+    schedule_start_time: ''
   });
   const [showSettings, setShowSettings] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -55,7 +60,11 @@ function App() {
         setMessage(`✅ Default visibility set to ${value}`);
       } else if (key === 'made_for_kids') {
         setMessage(`✅ Made for kids: ${value ? 'Yes' : 'No'}`);
+      } else if (key === 'upload_immediately') {
+        setMessage(`✅ Upload mode: ${value ? 'Immediate' : 'Scheduled'}`);
       } else if (key === 'title_template' || key === 'description_template') {
+        setMessage(`✅ Settings updated`);
+      } else {
         setMessage(`✅ Settings updated`);
       }
     } catch (err) {
@@ -256,6 +265,80 @@ function App() {
               />
               <small className="hint">Use {'{filename}'} for video filename</small>
             </div>
+
+            <div className="setting-divider"></div>
+
+            <div className="setting-group">
+              <label className="checkbox-label">
+                <input 
+                  type="checkbox"
+                  checked={youtubeSettings.upload_immediately}
+                  onChange={(e) => updateYoutubeSettings('upload_immediately', e.target.checked)}
+                  className="checkbox"
+                />
+                <span>Upload Immediately</span>
+              </label>
+              <small className="hint">If disabled, videos will be scheduled</small>
+            </div>
+
+            {!youtubeSettings.upload_immediately && (
+              <>
+                <div className="setting-group">
+                  <label>Schedule Mode</label>
+                  <select 
+                    value={youtubeSettings.schedule_mode}
+                    onChange={(e) => updateYoutubeSettings('schedule_mode', e.target.value)}
+                    className="select"
+                  >
+                    <option value="spaced">Spaced Interval</option>
+                    <option value="specific_time">Specific Time</option>
+                  </select>
+                </div>
+
+                {youtubeSettings.schedule_mode === 'spaced' ? (
+                  <div className="setting-group">
+                    <label>Upload Interval</label>
+                    <div className="interval-input">
+                      <input 
+                        type="number"
+                        min="1"
+                        value={youtubeSettings.schedule_interval_value}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value) || 1;
+                          setYoutubeSettings({...youtubeSettings, schedule_interval_value: val});
+                        }}
+                        onBlur={(e) => {
+                          const val = parseInt(e.target.value) || 1;
+                          updateYoutubeSettings('schedule_interval_value', val);
+                        }}
+                        className="input-number"
+                      />
+                      <select 
+                        value={youtubeSettings.schedule_interval_unit}
+                        onChange={(e) => updateYoutubeSettings('schedule_interval_unit', e.target.value)}
+                        className="select-unit"
+                      >
+                        <option value="minutes">Minutes</option>
+                        <option value="hours">Hours</option>
+                        <option value="days">Days</option>
+                      </select>
+                    </div>
+                    <small className="hint">Videos upload one at a time with this interval</small>
+                  </div>
+                ) : (
+                  <div className="setting-group">
+                    <label>Start Time</label>
+                    <input 
+                      type="datetime-local"
+                      value={youtubeSettings.schedule_start_time}
+                      onChange={(e) => updateYoutubeSettings('schedule_start_time', e.target.value)}
+                      className="input-text"
+                    />
+                    <small className="hint">All videos will upload at this time</small>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
       </div>

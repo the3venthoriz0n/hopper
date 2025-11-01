@@ -322,3 +322,52 @@ button:disabled {
   display: block;
 }
 
+.setting-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 1.5rem 0;
+}
+
+.interval-input {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.input-number {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid #666;
+  color: white;
+  padding: 0.5rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  min-width: 80px;
+}
+
+.input-number:focus {
+  outline: none;
+  border-color: #8b5cf6;
+}
+
+.select-unit {
+  flex: 1.5;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid #666;
+  color: white;
+  padding: 0.5rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.select-unit:focus {
+  outline: none;
+  border-color: #8b5cf6;
+}
+
+.select-unit option {
+  background: #0a0a0a;
+  color: white;
+}
+

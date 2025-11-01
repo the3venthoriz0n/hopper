@@ -34,7 +34,12 @@ youtube_settings = {
     "visibility": "private",  # public, private, unlisted
     "made_for_kids": False,
     "title_template": "{filename}",  # {filename} will be replaced with video filename
-    "description_template": "Uploaded via Hopper"
+    "description_template": "Uploaded via Hopper",
+    "upload_immediately": True,  # If True, upload right away; if False, schedule
+    "schedule_mode": "spaced",  # spaced, specific_time
+    "schedule_interval_value": 1,  # numeric value for interval
+    "schedule_interval_unit": "hours",  # minutes, hours, days
+    "schedule_start_time": ""  # ISO format datetime for specific_time mode
 }
 upload_progress = {}  # Track upload progress: {video_id: progress_percent}
 
@@ -106,7 +111,12 @@ def update_youtube_settings(
     visibility: str = None, 
     made_for_kids: bool = None,
     title_template: str = None,
-    description_template: str = None
+    description_template: str = None,
+    upload_immediately: bool = None,
+    schedule_mode: str = None,
+    schedule_interval_value: int = None,
+    schedule_interval_unit: str = None,
+    schedule_start_time: str = None
 ):
     """Update YouTube upload settings"""
     global youtube_settings
@@ -124,6 +134,27 @@ def update_youtube_settings(
     
     if description_template is not None:
         youtube_settings["description_template"] = description_template
+    
+    if upload_immediately is not None:
+        youtube_settings["upload_immediately"] = upload_immediately
+    
+    if schedule_mode is not None:
+        if schedule_mode not in ["spaced", "specific_time"]:
+            raise HTTPException(400, "Invalid schedule mode")
+        youtube_settings["schedule_mode"] = schedule_mode
+    
+    if schedule_interval_value is not None:
+        if schedule_interval_value < 1:
+            raise HTTPException(400, "Interval value must be at least 1")
+        youtube_settings["schedule_interval_value"] = schedule_interval_value
+    
+    if schedule_interval_unit is not None:
+        if schedule_interval_unit not in ["minutes", "hours", "days"]:
+            raise HTTPException(400, "Invalid interval unit")
+        youtube_settings["schedule_interval_unit"] = schedule_interval_unit
+    
+    if schedule_start_time is not None:
+        youtube_settings["schedule_start_time"] = schedule_start_time
     
     return youtube_settings
 
@@ -163,63 +194,119 @@ def delete_video(video_id: int):
     videos = [v for v in videos if v['id'] != video_id]
     return {"ok": True}
 
-@app.post("/api/upload")
-def upload_videos():
-    """Upload all pending videos to YouTube"""
+def upload_video_to_youtube(video):
+    """Helper function to upload a single video to YouTube"""
     global upload_progress
     
+    try:
+        video['status'] = 'uploading'
+        upload_progress[video['id']] = 0
+        
+        youtube = build('youtube', 'v3', credentials=youtube_creds)
+        
+        # Generate title and description from templates
+        filename_no_ext = video['filename'].rsplit('.', 1)[0]
+        title = youtube_settings['title_template'].replace('{filename}', filename_no_ext)
+        description = youtube_settings['description_template'].replace('{filename}', filename_no_ext)
+        
+        request = youtube.videos().insert(
+            part='snippet,status',
+            body={
+                'snippet': {
+                    'title': title,
+                    'description': description,
+                    'categoryId': '22'
+                },
+                'status': {
+                    'privacyStatus': youtube_settings['visibility'],
+                    'selfDeclaredMadeForKids': youtube_settings['made_for_kids']
+                }
+            },
+            media_body=MediaFileUpload(video['path'], resumable=True)
+        )
+        
+        response = None
+        while response is None:
+            status, response = request.next_chunk()
+            if status:
+                progress = int(status.progress() * 100)
+                upload_progress[video['id']] = progress
+        
+        video['status'] = 'uploaded'
+        video['youtube_id'] = response['id']
+        upload_progress[video['id']] = 100
+        
+    except Exception as e:
+        video['status'] = 'failed'
+        video['error'] = str(e)
+        if video['id'] in upload_progress:
+            del upload_progress[video['id']]
+
+@app.post("/api/upload")
+def upload_videos():
+    """Upload all pending videos to YouTube (immediate or scheduled)"""
     if not youtube_creds:
         raise HTTPException(400, "YouTube not connected")
     
-    youtube = build('youtube', 'v3', credentials=youtube_creds)
+    pending_videos = [v for v in videos if v['status'] == 'pending']
     
-    for video in videos:
-        if video['status'] != 'pending':
-            continue
+    if not pending_videos:
+        raise HTTPException(400, "No pending videos to upload")
+    
+    # If upload immediately is enabled, upload all at once
+    if youtube_settings['upload_immediately']:
+        for video in pending_videos:
+            upload_video_to_youtube(video)
         
-        try:
-            video['status'] = 'uploading'
-            upload_progress[video['id']] = 0
-            
-            # Generate title and description from templates
-            filename_no_ext = video['filename'].rsplit('.', 1)[0]
-            title = youtube_settings['title_template'].replace('{filename}', filename_no_ext)
-            description = youtube_settings['description_template'].replace('{filename}', filename_no_ext)
-            
-            request = youtube.videos().insert(
-                part='snippet,status',
-                body={
-                    'snippet': {
-                        'title': title,
-                        'description': description,
-                        'categoryId': '22'
-                    },
-                    'status': {
-                        'privacyStatus': youtube_settings['visibility'],
-                        'selfDeclaredMadeForKids': youtube_settings['made_for_kids']
-                    }
-                },
-                media_body=MediaFileUpload(video['path'], resumable=True)
-            )
-            
-            response = None
-            while response is None:
-                status, response = request.next_chunk()
-                if status:
-                    progress = int(status.progress() * 100)
-                    upload_progress[video['id']] = progress
-            
-            video['status'] = 'uploaded'
-            video['youtube_id'] = response['id']
-            upload_progress[video['id']] = 100
-            
-        except Exception as e:
-            video['status'] = 'failed'
-            video['error'] = str(e)
-            if video['id'] in upload_progress:
-                del upload_progress[video['id']]
+        return {
+            "uploaded": len([v for v in videos if v['status'] == 'uploaded']),
+            "message": "Videos uploaded immediately"
+        }
     
-    return {"uploaded": len([v for v in videos if v['status'] == 'uploaded'])}
+    # Otherwise, mark for scheduled upload
+    from datetime import datetime, timedelta
+    
+    if youtube_settings['schedule_mode'] == 'spaced':
+        # Calculate interval in minutes
+        value = youtube_settings['schedule_interval_value']
+        unit = youtube_settings['schedule_interval_unit']
+        
+        if unit == 'minutes':
+            interval_minutes = value
+        elif unit == 'hours':
+            interval_minutes = value * 60
+        elif unit == 'days':
+            interval_minutes = value * 1440
+        else:
+            interval_minutes = 60  # default to 1 hour
+        
+        # Set scheduled time for each video
+        current_time = datetime.now()
+        for i, video in enumerate(pending_videos):
+            scheduled_time = current_time + timedelta(minutes=interval_minutes * i)
+            video['scheduled_time'] = scheduled_time.isoformat()
+            video['status'] = 'scheduled'
+        
+        return {
+            "scheduled": len(pending_videos),
+            "message": f"Videos scheduled with {value} {unit} interval"
+        }
+    
+    elif youtube_settings['schedule_mode'] == 'specific_time':
+        # Schedule all for a specific time
+        if youtube_settings['schedule_start_time']:
+            for video in pending_videos:
+                video['scheduled_time'] = youtube_settings['schedule_start_time']
+                video['status'] = 'scheduled'
+            
+            return {
+                "scheduled": len(pending_videos),
+                "message": f"Videos scheduled for {youtube_settings['schedule_start_time']}"
+            }
+        else:
+            raise HTTPException(400, "No start time specified for scheduled upload")
+    
+    return {"message": "Upload processing"}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
