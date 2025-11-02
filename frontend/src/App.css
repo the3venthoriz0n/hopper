@@ -268,6 +268,27 @@ button:disabled {
   font-size: 1.1rem;
   background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
   color: white;
+  margin-bottom: 0.75rem;
+}
+
+.cancel-scheduled-btn {
+  width: 100%;
+  padding: 1rem;
+  font-size: 1rem;
+  background: transparent;
+  border: 2px solid #ef4444;
+  color: #ef4444;
+  margin-bottom: 1.5rem;
+  cursor: pointer;
+  border-radius: 6px;
+  font-weight: 600;
+  transition: 0.2s;
+}
+
+.cancel-scheduled-btn:hover:not(:disabled) {
+  background: #ef4444;
+  color: white;
+  transform: translateY(-2px);
 }
 
 .btn-disconnect {

@@ -171,6 +171,17 @@ function App() {
     setVideos(videos.filter(v => v.id !== id));
   };
 
+  const cancelScheduled = async () => {
+    try {
+      const res = await axios.post(`${API}/videos/cancel-scheduled`);
+      setMessage(`✅ Cancelled ${res.data.cancelled} scheduled videos`);
+      await loadVideos();
+    } catch (err) {
+      setMessage('❌ Error cancelling scheduled videos');
+      console.error('Error cancelling scheduled videos:', err);
+    }
+  };
+
   const updateVideoSettings = async (videoId, settings) => {
     try {
       const params = new URLSearchParams();
@@ -534,10 +545,19 @@ function App() {
       
       {/* Upload Button */}
       {videos.length > 0 && youtube.enabled && (
-        <button className="upload-btn" onClick={upload} disabled={isUploading}>
-          {isUploading ? 'Uploading...' : 
-           youtubeSettings.upload_immediately ? 'Upload to YouTube' : 'Schedule Videos'}
-        </button>
+        <>
+          <button className="upload-btn" onClick={upload} disabled={isUploading}>
+            {isUploading ? 'Uploading...' : 
+             youtubeSettings.upload_immediately ? 'Upload to YouTube' : 'Schedule Videos'}
+          </button>
+          
+          {/* Cancel Scheduled Button */}
+          {videos.some(v => v.status === 'scheduled') && (
+            <button className="cancel-scheduled-btn" onClick={cancelScheduled}>
+              Cancel Scheduled ({videos.filter(v => v.status === 'scheduled').length})
+            </button>
+          )}
+        </>
       )}
       
       {/* Queue */}

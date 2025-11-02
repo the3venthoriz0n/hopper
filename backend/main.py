@@ -474,6 +474,24 @@ async def reorder_videos(request: Request, response: Response):
         print(f"Error reordering videos: {e}")
         raise HTTPException(500, f"Error reordering videos: {str(e)}")
 
+@app.post("/api/videos/cancel-scheduled")
+def cancel_scheduled_videos(request: Request, response: Response):
+    """Cancel all scheduled videos and return them to pending status"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    
+    cancelled_count = 0
+    for video in session["videos"]:
+        if video['status'] == 'scheduled':
+            video['status'] = 'pending'
+            if 'scheduled_time' in video:
+                del video['scheduled_time']
+            cancelled_count += 1
+    
+    save_session(session_id)
+    
+    return {"ok": True, "cancelled": cancelled_count}
+
 def upload_video_to_youtube(video, session):
     """Helper function to upload a single video to YouTube"""
     youtube_creds = session["youtube_creds"]
