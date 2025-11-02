@@ -17,6 +17,7 @@ function App() {
     made_for_kids: false,
     title_template: '{filename}',
     description_template: 'Uploaded via Hopper',
+    tags_template: '',
     upload_immediately: true,
     schedule_mode: 'spaced',
     schedule_interval_value: 1,
@@ -449,6 +450,19 @@ function App() {
               <small className="hint">Use {'{filename}'} for video filename</small>
             </div>
 
+            <div className="setting-group">
+              <label>Video Tags Template</label>
+              <input 
+                type="text"
+                value={youtubeSettings.tags_template}
+                onChange={(e) => setYoutubeSettings({...youtubeSettings, tags_template: e.target.value})}
+                onBlur={(e) => updateYoutubeSettings('tags_template', e.target.value)}
+                placeholder="tag1, tag2, tag3"
+                className="input-text"
+              />
+              <small className="hint">Comma-separated tags. Use {'{filename}'} for video filename</small>
+            </div>
+
             <div className="setting-divider"></div>
 
             <div className="setting-group">
@@ -663,6 +677,18 @@ function App() {
               </div>
               
               <div className="form-group">
+                <label>Tags</label>
+                <input 
+                  type="text"
+                  defaultValue={editingVideo.custom_settings?.tags || ''}
+                  id="edit-tags"
+                  className="input-text"
+                  placeholder="tag1, tag2, tag3"
+                />
+                <small className="hint">Comma-separated tags. Leave empty to use global template</small>
+              </div>
+              
+              <div className="form-group">
                 <label>Visibility</label>
                 <select 
                   defaultValue={editingVideo.custom_settings?.visibility || youtubeSettings.visibility}
@@ -710,6 +736,7 @@ function App() {
                 onClick={() => {
                   const title = document.getElementById('edit-title').value;
                   const description = document.getElementById('edit-description').value;
+                  const tags = document.getElementById('edit-tags').value;
                   const visibility = document.getElementById('edit-visibility').value;
                   const madeForKids = document.getElementById('edit-made-for-kids').checked;
                   const scheduledTime = document.getElementById('edit-scheduled-time').value;
@@ -717,6 +744,7 @@ function App() {
                   updateVideoSettings(editingVideo.id, {
                     title: title || null,
                     description: description || null,
+                    tags: tags || null,
                     visibility,
                     made_for_kids: madeForKids,
                     scheduled_time: scheduledTime ? new Date(scheduledTime).toISOString() : ''

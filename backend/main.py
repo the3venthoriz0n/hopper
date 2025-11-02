@@ -45,6 +45,7 @@ def get_default_settings():
         "made_for_kids": False,
         "title_template": "{filename}",
         "description_template": "Uploaded via Hopper",
+        "tags_template": "",
         "upload_immediately": True,
         "schedule_mode": "spaced",
         "schedule_interval_value": 1,
@@ -136,6 +137,8 @@ def load_session(session_id: str):
         # Add missing settings for backwards compatibility
         if "allow_duplicates" not in session_data["youtube_settings"]:
             session_data["youtube_settings"]["allow_duplicates"] = False
+        if "tags_template" not in session_data["youtube_settings"]:
+            session_data["youtube_settings"]["tags_template"] = ""
         
         sessions[session_id] = session_data
         print(f"Loaded session {session_id}")
@@ -270,6 +273,7 @@ def update_youtube_settings(
     made_for_kids: bool = None,
     title_template: str = None,
     description_template: str = None,
+    tags_template: str = None,
     upload_immediately: bool = None,
     schedule_mode: str = None,
     schedule_interval_value: int = None,
@@ -295,6 +299,9 @@ def update_youtube_settings(
     
     if description_template is not None:
         settings["description_template"] = description_template
+    
+    if tags_template is not None:
+        settings["tags_template"] = tags_template
     
     if upload_immediately is not None:
         settings["upload_immediately"] = upload_immediately
@@ -394,6 +401,7 @@ def update_video(
     response: Response,
     title: str = None,
     description: str = None,
+    tags: str = None,
     visibility: str = None,
     made_for_kids: bool = None,
     scheduled_time: str = None
@@ -421,6 +429,9 @@ def update_video(
     
     if description is not None:
         video["custom_settings"]["description"] = description
+    
+    if tags is not None:
+        video["custom_settings"]["tags"] = tags
     
     if visibility is not None:
         if visibility not in ["public", "private", "unlisted"]:
@@ -536,14 +547,29 @@ def upload_video_to_youtube(video, session):
         visibility = custom_settings.get('visibility', youtube_settings['visibility'])
         made_for_kids = custom_settings.get('made_for_kids', youtube_settings['made_for_kids'])
         
+        # Use custom tags if set, otherwise use template
+        if 'tags' in custom_settings:
+            tags_str = custom_settings['tags']
+        else:
+            tags_str = youtube_settings['tags_template'].replace('{filename}', filename_no_ext)
+        
+        # Parse tags (comma-separated, strip whitespace, filter empty)
+        tags = [tag.strip() for tag in tags_str.split(',') if tag.strip()] if tags_str else []
+        
+        snippet_body = {
+            'title': title,
+            'description': description,
+            'categoryId': '22'
+        }
+        
+        # Only add tags if there are any
+        if tags:
+            snippet_body['tags'] = tags
+        
         request = youtube.videos().insert(
             part='snippet,status',
             body={
-                'snippet': {
-                    'title': title,
-                    'description': description,
-                    'categoryId': '22'
-                },
+                'snippet': snippet_body,
                 'status': {
                     'privacyStatus': visibility,
                     'selfDeclaredMadeForKids': made_for_kids
