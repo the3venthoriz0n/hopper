@@ -430,8 +430,16 @@ def get_videos(request: Request, response: Response):
             youtube_title = custom_settings['title']
         else:
             filename_no_ext = video['filename'].rsplit('.', 1)[0]
-            youtube_title = session["youtube_settings"]['title_template'].replace('{filename}', filename_no_ext)
-        video_copy['youtube_title'] = youtube_title
+            youtube_title = replace_template_placeholders(
+                session["youtube_settings"]['title_template'],
+                filename_no_ext,
+                session["youtube_settings"].get('wordbank', [])
+            )
+        
+        # Enforce YouTube's 100 character limit
+        video_copy['youtube_title'] = youtube_title[:100] if len(youtube_title) > 100 else youtube_title
+        video_copy['title_too_long'] = len(youtube_title) > 100
+        video_copy['title_original_length'] = len(youtube_title)
         
         videos_with_info.append(video_copy)
     return videos_with_info

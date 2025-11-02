@@ -663,7 +663,14 @@ function App() {
               <div className="drag-handle" title="Drag to reorder">⋮⋮</div>
               <div className="video-info-container">
                 <div className="video-titles">
-                  <div className="youtube-title">▶️ {v.youtube_title || v.filename}</div>
+                  <div className="youtube-title">
+                    ▶️ {v.youtube_title || v.filename}
+                    {v.title_too_long && (
+                      <span className="title-warning" title={`Title truncated from ${v.title_original_length} to 100 characters`}>
+                        ⚠️ {v.title_original_length}
+                      </span>
+                    )}
+                  </div>
                   <div className="filename">File: {v.filename}</div>
                 </div>
                 <div className="status">
