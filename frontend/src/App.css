@@ -464,6 +464,37 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.wordbank-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.wordbank-caret {
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: #8b5cf6;
+  transition: transform 0.2s ease;
+  user-select: none;
+  padding: 0.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wordbank-caret:hover {
+  color: #ec4899;
+  transform: scale(1.2);
+}
+
+.wordbank-caret.expanded {
+  transform: rotate(180deg);
+}
+
+.wordbank-caret.expanded:hover {
+  transform: rotate(180deg) scale(1.2);
+}
+
 .wordbank-list {
   display: flex;
   flex-wrap: wrap;

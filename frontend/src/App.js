@@ -32,6 +32,7 @@ function App() {
   const [draggedVideo, setDraggedVideo] = useState(null);
   const [editTitleLength, setEditTitleLength] = useState(0);
   const [newWord, setNewWord] = useState('');
+  const [wordbankExpanded, setWordbankExpanded] = useState(false);
 
   useEffect(() => {
     loadDestinations();
@@ -525,7 +526,18 @@ function App() {
             <div className="setting-divider"></div>
 
             <div className="setting-group">
-              <label>Random Wordbank ({youtubeSettings.wordbank.length} words)</label>
+              <label className="wordbank-label">
+                Random Wordbank ({youtubeSettings.wordbank.length} words)
+                {youtubeSettings.wordbank.length > 0 && (
+                  <span 
+                    className={`wordbank-caret ${wordbankExpanded ? 'expanded' : ''}`}
+                    onClick={() => setWordbankExpanded(!wordbankExpanded)}
+                    title={wordbankExpanded ? 'Hide words' : 'Show words'}
+                  >
+                    ▼
+                  </span>
+                )}
+              </label>
               <div className="wordbank-input">
                 <input 
                   type="text"
@@ -545,7 +557,7 @@ function App() {
               </div>
               <small className="hint">Words to use with {'{random}'} placeholder. Enter comma-separated words to add multiple at once</small>
               
-              {youtubeSettings.wordbank.length > 0 && (
+              {youtubeSettings.wordbank.length > 0 && wordbankExpanded && (
                 <div className="wordbank-list">
                   {youtubeSettings.wordbank.map((word, idx) => (
                     <div key={idx} className="wordbank-item">
