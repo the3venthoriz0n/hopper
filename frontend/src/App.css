@@ -137,6 +137,35 @@ input:checked + .slider:before {
   padding: 1rem;
   border-radius: 8px;
   margin-bottom: 0.5rem;
+  cursor: grab;
+  transition: all 0.2s ease;
+  border: 2px solid transparent;
+}
+
+.video:active {
+  cursor: grabbing;
+}
+
+.video.dragging {
+  opacity: 0.5;
+}
+
+.video:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+.drag-handle {
+  color: #666;
+  font-size: 1.2rem;
+  cursor: grab;
+  padding: 0 0.5rem;
+  user-select: none;
+  line-height: 1;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
 }
 
 .video-actions {

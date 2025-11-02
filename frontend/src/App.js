@@ -26,6 +26,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [editingVideo, setEditingVideo] = useState(null);
+  const [draggedVideo, setDraggedVideo] = useState(null);
 
   useEffect(() => {
     loadDestinations();
@@ -109,7 +110,7 @@ function App() {
     }
   };
 
-  const handleDrop = (e) => {
+  const handleFileDrop = (e) => {
     e.preventDefault();
     const files = Array.from(e.dataTransfer.files).filter(f => 
       f.type.startsWith('video/')
@@ -175,6 +176,50 @@ function App() {
     } catch (err) {
       setMessage('❌ Error updating video');
       console.error('Error updating video:', err);
+    }
+  };
+
+  const handleDragStart = (e, video) => {
+    setDraggedVideo(video);
+    e.dataTransfer.effectAllowed = 'move';
+    e.currentTarget.style.opacity = '0.5';
+  };
+
+  const handleDragEnd = (e) => {
+    e.currentTarget.style.opacity = '1';
+    setDraggedVideo(null);
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = async (e, targetVideo) => {
+    e.preventDefault();
+    
+    if (!draggedVideo || draggedVideo.id === targetVideo.id) {
+      return;
+    }
+
+    // Create new order
+    const draggedIdx = videos.findIndex(v => v.id === draggedVideo.id);
+    const targetIdx = videos.findIndex(v => v.id === targetVideo.id);
+    
+    const newVideos = [...videos];
+    newVideos.splice(draggedIdx, 1);
+    newVideos.splice(targetIdx, 0, draggedVideo);
+    
+    setVideos(newVideos);
+    
+    // Save to backend
+    try {
+      const videoIds = newVideos.map(v => v.id);
+      await axios.post(`${API}/videos/reorder`, { video_ids: videoIds });
+    } catch (err) {
+      console.error('Error reordering videos:', err);
+      // Reload videos on error
+      loadVideos();
     }
   };
 
@@ -416,7 +461,7 @@ function App() {
       <div 
         className="dropzone"
         onDragOver={(e) => e.preventDefault()}
-        onDrop={handleDrop}
+        onDrop={handleFileDrop}
         onClick={() => document.getElementById('file').click()}
       >
         <p>Drop videos here</p>
@@ -445,7 +490,16 @@ function App() {
           <p className="empty">No videos</p>
         ) : (
           videos.map(v => (
-            <div key={v.id} className="video">
+            <div 
+              key={v.id} 
+              className={`video ${draggedVideo?.id === v.id ? 'dragging' : ''}`}
+              draggable={v.status !== 'uploading'}
+              onDragStart={(e) => handleDragStart(e, v)}
+              onDragEnd={handleDragEnd}
+              onDragOver={handleDragOver}
+              onDrop={(e) => handleDrop(e, v)}
+            >
+              <div className="drag-handle" title="Drag to reorder">⋮⋮</div>
               <div className="video-info-container">
                 <div className="video-titles">
                   <div className="youtube-title">▶️ {v.youtube_title || v.filename}</div>
