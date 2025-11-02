@@ -186,6 +186,7 @@ function App() {
     try {
       const params = new URLSearchParams();
       Object.entries(settings).forEach(([key, value]) => {
+        // Include empty strings (for clearing values like scheduled_time)
         if (value !== null && value !== undefined) {
           params.append(key, value);
         }
@@ -685,6 +686,17 @@ function App() {
                   <span>Made for Kids</span>
                 </label>
               </div>
+              
+              <div className="form-group">
+                <label>Scheduled Time</label>
+                <input 
+                  type="datetime-local"
+                  defaultValue={editingVideo.scheduled_time ? new Date(editingVideo.scheduled_time).toISOString().slice(0, 16) : ''}
+                  id="edit-scheduled-time"
+                  className="input-text"
+                />
+                <small className="hint">Leave empty for immediate upload (if enabled) or use global schedule</small>
+              </div>
             </div>
             <div className="modal-footer">
               <button onClick={() => setEditingVideo(null)} className="btn-cancel">
@@ -696,12 +708,14 @@ function App() {
                   const description = document.getElementById('edit-description').value;
                   const visibility = document.getElementById('edit-visibility').value;
                   const madeForKids = document.getElementById('edit-made-for-kids').checked;
+                  const scheduledTime = document.getElementById('edit-scheduled-time').value;
                   
                   updateVideoSettings(editingVideo.id, {
                     title: title || null,
                     description: description || null,
                     visibility,
-                    made_for_kids: madeForKids
+                    made_for_kids: madeForKids,
+                    scheduled_time: scheduledTime ? new Date(scheduledTime).toISOString() : ''
                   });
                 }}
                 className="btn-save"

@@ -430,10 +430,17 @@ def update_video(
     if made_for_kids is not None:
         video["custom_settings"]["made_for_kids"] = made_for_kids
     
-    if scheduled_time is not None:
-        video["scheduled_time"] = scheduled_time
-        if video["status"] == "pending":
-            video["status"] = "scheduled"
+    # Handle scheduled_time - can be set or cleared
+    if 'scheduled_time' in request.query_params:
+        if scheduled_time:  # If it has a value, set the schedule
+            video["scheduled_time"] = scheduled_time
+            if video["status"] == "pending":
+                video["status"] = "scheduled"
+        else:  # If empty or null, clear the schedule
+            if "scheduled_time" in video:
+                del video["scheduled_time"]
+            if video["status"] == "scheduled":
+                video["status"] = "pending"
     
     save_session(session_id)
     return video
