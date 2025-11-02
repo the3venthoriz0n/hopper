@@ -400,25 +400,106 @@ def disconnect_youtube(request: Request, response: Response):
 # TikTok OAuth endpoints
 @app.get("/api/auth/tiktok")
 def auth_tiktok(request: Request, response: Response):
-    """Start TikTok OAuth (placeholder - requires TikTok app setup)"""
+    """Start TikTok OAuth"""
     session_id = get_or_create_session_id(request, response)
     
-    # TODO: Implement TikTok OAuth with actual credentials
-    # For now, return a placeholder that indicates setup is needed
-    raise HTTPException(501, "TikTok OAuth requires app setup. Add your TikTok app credentials to enable.")
+    # Load TikTok credentials from client_secrets.json
+    try:
+        with open('client_secrets.json', 'r') as f:
+            secrets = json.load(f)
+        
+        tiktok_config = secrets.get('tiktok', {})
+        client_key = tiktok_config.get('client_key')
+        redirect_uri = tiktok_config.get('redirect_uri')
+        
+        if not client_key or not redirect_uri:
+            raise HTTPException(400, "TikTok credentials not configured in client_secrets.json")
+        
+        if client_key == "YOUR_TIKTOK_CLIENT_KEY":
+            raise HTTPException(400, "Please update TikTok credentials in client_secrets.json")
+        
+        # Build TikTok OAuth URL
+        # TikTok OAuth scopes: user.info.basic, video.upload, video.publish
+        scopes = "user.info.basic,video.upload,video.publish"
+        state = session_id  # Use session_id as state for CSRF protection
+        
+        auth_url = (
+            f"https://www.tiktok.com/v2/auth/authorize/"
+            f"?client_key={client_key}"
+            f"&scope={scopes}"
+            f"&response_type=code"
+            f"&redirect_uri={redirect_uri}"
+            f"&state={state}"
+        )
+        
+        return {"url": auth_url}
+        
+    except FileNotFoundError:
+        raise HTTPException(500, "client_secrets.json not found")
+    except json.JSONDecodeError:
+        raise HTTPException(500, "Invalid client_secrets.json format")
 
 @app.get("/api/auth/tiktok/callback")
-def auth_tiktok_callback(request: Request, response: Response, code: str = None, state: str = None):
-    """Handle TikTok OAuth callback (placeholder)"""
+async def auth_tiktok_callback(request: Request, response: Response, code: str = None, state: str = None):
+    """Handle TikTok OAuth callback"""
     if not code:
         raise HTTPException(400, "No authorization code")
     
-    # TODO: Exchange code for access token and store credentials
-    # session_id = state
-    # session = get_session(session_id)
-    # session["tiktok_creds"] = credentials
-    
-    return RedirectResponse('/?connected=tiktok')
+    # Load TikTok credentials
+    try:
+        with open('client_secrets.json', 'r') as f:
+            secrets = json.load(f)
+        
+        tiktok_config = secrets.get('tiktok', {})
+        client_key = tiktok_config.get('client_key')
+        client_secret = tiktok_config.get('client_secret')
+        redirect_uri = tiktok_config.get('redirect_uri')
+        
+        if not all([client_key, client_secret, redirect_uri]):
+            raise HTTPException(400, "TikTok credentials not configured")
+        
+        # Exchange authorization code for access token
+        import httpx
+        token_url = "https://open.tiktokapis.com/v2/oauth/token/"
+        
+        token_data = {
+            "client_key": client_key,
+            "client_secret": client_secret,
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri
+        }
+        
+        async with httpx.AsyncClient() as client:
+            token_response = await client.post(token_url, json=token_data)
+            
+            if token_response.status_code != 200:
+                raise HTTPException(400, f"Token exchange failed: {token_response.text}")
+            
+            token_json = token_response.json()
+            
+            # Store credentials in session
+            session_id = state  # We used session_id as state
+            session = get_session(session_id)
+            
+            session["tiktok_creds"] = {
+                "access_token": token_json.get("access_token"),
+                "refresh_token": token_json.get("refresh_token"),
+                "expires_in": token_json.get("expires_in"),
+                "token_type": token_json.get("token_type"),
+                "open_id": token_json.get("open_id")
+            }
+            
+            session["destinations"]["tiktok"]["enabled"] = True
+            save_session(session_id)
+        
+        return RedirectResponse('/?connected=tiktok')
+        
+    except FileNotFoundError:
+        raise HTTPException(500, "client_secrets.json not found")
+    except Exception as e:
+        print(f"TikTok OAuth error: {e}")
+        raise HTTPException(500, f"Authentication failed: {str(e)}")
 
 @app.post("/api/auth/tiktok/disconnect")
 def disconnect_tiktok(request: Request, response: Response):
