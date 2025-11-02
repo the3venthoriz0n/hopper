@@ -279,8 +279,8 @@ def add_wordbank_word(request: Request, response: Response, word: str):
     session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
-    # Strip whitespace and convert to uppercase
-    word = word.strip().upper()
+    # Strip whitespace and capitalize (first letter uppercase, rest lowercase)
+    word = word.strip().capitalize()
     if not word:
         raise HTTPException(400, "Word cannot be empty")
     
