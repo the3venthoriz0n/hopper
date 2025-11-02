@@ -468,11 +468,12 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: 1rem;
   width: 100%;
+  margin-bottom: 0.5rem;
 }
 
-.wordbank-controls {
+.wordbank-title {
   display: flex;
   align-items: center;
   gap: 0.5rem;

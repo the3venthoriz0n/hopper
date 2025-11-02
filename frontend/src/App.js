@@ -541,29 +541,32 @@ function App() {
             <div className="setting-divider"></div>
 
             <div className="setting-group">
-              <label className="wordbank-label">
-                <span>Random Wordbank ({youtubeSettings.wordbank.length} words)</span>
-                <div className="wordbank-controls">
+              <div className="wordbank-label">
+                <div className="wordbank-title">
+                  <span>Random Wordbank ({youtubeSettings.wordbank.length} words)</span>
                   {youtubeSettings.wordbank.length > 0 && (
-                    <>
-                      <span 
-                        className={`wordbank-caret ${wordbankExpanded ? 'expanded' : ''}`}
-                        onClick={() => setWordbankExpanded(!wordbankExpanded)}
-                        title={wordbankExpanded ? 'Hide words' : 'Show words'}
-                      >
-                        ▼
-                      </span>
-                      <button 
-                        onClick={clearWordbank}
-                        className="btn-clear-wordbank"
-                        title="Clear all words"
-                      >
-                        Clear All
-                      </button>
-                    </>
+                    <span 
+                      className={`wordbank-caret ${wordbankExpanded ? 'expanded' : ''}`}
+                      onClick={() => setWordbankExpanded(!wordbankExpanded)}
+                      title={wordbankExpanded ? 'Hide words' : 'Show words'}
+                    >
+                      ▼
+                    </span>
                   )}
                 </div>
-              </label>
+                {youtubeSettings.wordbank.length > 0 && (
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      clearWordbank();
+                    }}
+                    className="btn-clear-wordbank"
+                    title="Clear all words"
+                  >
+                    Clear All
+                  </button>
+                )}
+              </div>
               <div className="wordbank-input">
                 <input 
                   type="text"
