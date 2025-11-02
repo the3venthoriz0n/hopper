@@ -125,17 +125,42 @@ function App() {
     }
   };
 
-  const addWordToWordbank = async (word) => {
+  const addWordToWordbank = async (input) => {
     try {
-      const params = new URLSearchParams();
-      params.append('word', word);
-      const res = await axios.post(`${API}/youtube/wordbank?${params.toString()}`);
-      setYoutubeSettings({...youtubeSettings, wordbank: res.data.wordbank});
+      // Split by comma, trim, and filter empty strings
+      const words = input.split(',').map(w => w.trim()).filter(w => w);
+      
+      if (words.length === 0) {
+        setMessage('❌ No valid words to add');
+        return;
+      }
+      
+      // Add each word individually (backend prevents duplicates)
+      let addedCount = 0;
+      for (const word of words) {
+        try {
+          const params = new URLSearchParams();
+          params.append('word', word);
+          const res = await axios.post(`${API}/youtube/wordbank?${params.toString()}`);
+          setYoutubeSettings({...youtubeSettings, wordbank: res.data.wordbank});
+          addedCount++;
+        } catch (err) {
+          console.error(`Error adding word "${word}":`, err);
+        }
+      }
+      
       setNewWord('');
-      setMessage('✅ Word added to wordbank');
+      if (addedCount === words.length) {
+        setMessage(`✅ Added ${addedCount} word${addedCount !== 1 ? 's' : ''} to wordbank`);
+      } else {
+        setMessage(`✅ Added ${addedCount} of ${words.length} words (some were duplicates)`);
+      }
+      
+      // Reload settings to get final wordbank state
+      await loadYoutubeSettings();
     } catch (err) {
-      setMessage('❌ Error adding word');
-      console.error('Error adding word:', err);
+      setMessage('❌ Error adding words');
+      console.error('Error adding words:', err);
     }
   };
 
@@ -507,7 +532,7 @@ function App() {
                   value={newWord}
                   onChange={(e) => setNewWord(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && newWord.trim() && addWordToWordbank(newWord.trim())}
-                  placeholder="Add a word or phrase"
+                  placeholder="Add word(s) - comma-separated for multiple"
                   className="input-text"
                 />
                 <button 
@@ -518,7 +543,7 @@ function App() {
                   Add
                 </button>
               </div>
-              <small className="hint">Words to use with {'{random}'} placeholder in templates</small>
+              <small className="hint">Words to use with {'{random}'} placeholder. Enter comma-separated words to add multiple at once</small>
               
               {youtubeSettings.wordbank.length > 0 && (
                 <div className="wordbank-list">
