@@ -350,9 +350,13 @@ def get_videos(request: Request, response: Response):
         if video['id'] in session["upload_progress"]:
             video_copy['upload_progress'] = session["upload_progress"][video['id']]
         
-        # Compute YouTube title from template
-        filename_no_ext = video['filename'].rsplit('.', 1)[0]
-        youtube_title = session["youtube_settings"]['title_template'].replace('{filename}', filename_no_ext)
+        # Compute YouTube title - use custom title if set, otherwise use template
+        custom_settings = video.get('custom_settings', {})
+        if 'title' in custom_settings:
+            youtube_title = custom_settings['title']
+        else:
+            filename_no_ext = video['filename'].rsplit('.', 1)[0]
+            youtube_title = session["youtube_settings"]['title_template'].replace('{filename}', filename_no_ext)
         video_copy['youtube_title'] = youtube_title
         
         videos_with_info.append(video_copy)
@@ -367,6 +371,57 @@ def delete_video(video_id: int, request: Request, response: Response):
     session["videos"] = [v for v in session["videos"] if v['id'] != video_id]
     save_session(session_id)
     return {"ok": True}
+
+@app.patch("/api/videos/{video_id}")
+def update_video(
+    video_id: int,
+    request: Request,
+    response: Response,
+    title: str = None,
+    description: str = None,
+    visibility: str = None,
+    made_for_kids: bool = None,
+    scheduled_time: str = None
+):
+    """Update video settings"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    
+    # Find the video
+    video = None
+    for v in session["videos"]:
+        if v['id'] == video_id:
+            video = v
+            break
+    
+    if not video:
+        raise HTTPException(404, "Video not found")
+    
+    # Update custom settings (these override global settings)
+    if "custom_settings" not in video:
+        video["custom_settings"] = {}
+    
+    if title is not None:
+        video["custom_settings"]["title"] = title
+    
+    if description is not None:
+        video["custom_settings"]["description"] = description
+    
+    if visibility is not None:
+        if visibility not in ["public", "private", "unlisted"]:
+            raise HTTPException(400, "Invalid visibility option")
+        video["custom_settings"]["visibility"] = visibility
+    
+    if made_for_kids is not None:
+        video["custom_settings"]["made_for_kids"] = made_for_kids
+    
+    if scheduled_time is not None:
+        video["scheduled_time"] = scheduled_time
+        if video["status"] == "pending":
+            video["status"] = "scheduled"
+    
+    save_session(session_id)
+    return video
 
 def upload_video_to_youtube(video, session):
     """Helper function to upload a single video to YouTube"""
@@ -385,10 +440,25 @@ def upload_video_to_youtube(video, session):
         
         youtube = build('youtube', 'v3', credentials=youtube_creds)
         
-        # Generate title and description from templates
+        # Check for custom settings, otherwise use global settings and templates
+        custom_settings = video.get('custom_settings', {})
         filename_no_ext = video['filename'].rsplit('.', 1)[0]
-        title = youtube_settings['title_template'].replace('{filename}', filename_no_ext)
-        description = youtube_settings['description_template'].replace('{filename}', filename_no_ext)
+        
+        # Use custom title if set, otherwise use template
+        if 'title' in custom_settings:
+            title = custom_settings['title']
+        else:
+            title = youtube_settings['title_template'].replace('{filename}', filename_no_ext)
+        
+        # Use custom description if set, otherwise use template
+        if 'description' in custom_settings:
+            description = custom_settings['description']
+        else:
+            description = youtube_settings['description_template'].replace('{filename}', filename_no_ext)
+        
+        # Use custom visibility if set, otherwise use global setting
+        visibility = custom_settings.get('visibility', youtube_settings['visibility'])
+        made_for_kids = custom_settings.get('made_for_kids', youtube_settings['made_for_kids'])
         
         request = youtube.videos().insert(
             part='snippet,status',
@@ -399,8 +469,8 @@ def upload_video_to_youtube(video, session):
                     'categoryId': '22'
                 },
                 'status': {
-                    'privacyStatus': youtube_settings['visibility'],
-                    'selfDeclaredMadeForKids': youtube_settings['made_for_kids']
+                    'privacyStatus': visibility,
+                    'selfDeclaredMadeForKids': made_for_kids
                 }
             },
             media_body=MediaFileUpload(video['path'], resumable=True)

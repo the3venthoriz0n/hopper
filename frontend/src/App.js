@@ -25,6 +25,7 @@ function App() {
   });
   const [showSettings, setShowSettings] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [editingVideo, setEditingVideo] = useState(null);
 
   useEffect(() => {
     loadDestinations();
@@ -154,6 +155,27 @@ function App() {
   const removeVideo = async (id) => {
     await axios.delete(`${API}/videos/${id}`);
     setVideos(videos.filter(v => v.id !== id));
+  };
+
+  const updateVideoSettings = async (videoId, settings) => {
+    try {
+      const params = new URLSearchParams();
+      Object.entries(settings).forEach(([key, value]) => {
+        if (value !== null && value !== undefined) {
+          params.append(key, value);
+        }
+      });
+      
+      const res = await axios.patch(`${API}/videos/${videoId}?${params.toString()}`);
+      
+      // Update local state
+      setVideos(prev => prev.map(v => v.id === videoId ? { ...v, ...res.data } : v));
+      setMessage('✅ Video settings updated');
+      setEditingVideo(null);
+    } catch (err) {
+      setMessage('❌ Error updating video');
+      console.error('Error updating video:', err);
+    }
   };
 
   const toggleYoutube = async () => {
@@ -462,11 +484,103 @@ function App() {
                   </div>
                 )}
               </div>
-              <button onClick={() => removeVideo(v.id)} disabled={v.status === 'uploading'}>×</button>
+              <div className="video-actions">
+                {v.status !== 'uploading' && v.status !== 'uploaded' && (
+                  <button onClick={() => setEditingVideo(v)} className="btn-edit" title="Edit video settings">
+                    ✏️
+                  </button>
+                )}
+                <button onClick={() => removeVideo(v.id)} disabled={v.status === 'uploading'}>×</button>
+              </div>
             </div>
           ))
         )}
       </div>
+      
+      {/* Edit Video Modal */}
+      {editingVideo && (
+        <div className="modal-overlay" onClick={() => setEditingVideo(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Edit Video Settings</h2>
+              <button onClick={() => setEditingVideo(null)} className="btn-close">×</button>
+            </div>
+            <div className="modal-body">
+              <div className="form-group">
+                <label>Video Title</label>
+                <input 
+                  type="text"
+                  defaultValue={editingVideo.custom_settings?.title || editingVideo.youtube_title}
+                  id="edit-title"
+                  className="input-text"
+                  placeholder="Video title"
+                />
+                <small className="hint">Leave empty to use global template</small>
+              </div>
+              
+              <div className="form-group">
+                <label>Description</label>
+                <textarea 
+                  defaultValue={editingVideo.custom_settings?.description || ''}
+                  id="edit-description"
+                  className="textarea-text"
+                  rows="4"
+                  placeholder="Video description"
+                />
+                <small className="hint">Leave empty to use global template</small>
+              </div>
+              
+              <div className="form-group">
+                <label>Visibility</label>
+                <select 
+                  defaultValue={editingVideo.custom_settings?.visibility || youtubeSettings.visibility}
+                  id="edit-visibility"
+                  className="select"
+                >
+                  <option value="private">Private</option>
+                  <option value="unlisted">Unlisted</option>
+                  <option value="public">Public</option>
+                </select>
+              </div>
+              
+              <div className="form-group">
+                <label className="checkbox-label">
+                  <input 
+                    type="checkbox"
+                    defaultChecked={editingVideo.custom_settings?.made_for_kids ?? youtubeSettings.made_for_kids}
+                    id="edit-made-for-kids"
+                    className="checkbox"
+                  />
+                  <span>Made for Kids</span>
+                </label>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button onClick={() => setEditingVideo(null)} className="btn-cancel">
+                Cancel
+              </button>
+              <button 
+                onClick={() => {
+                  const title = document.getElementById('edit-title').value;
+                  const description = document.getElementById('edit-description').value;
+                  const visibility = document.getElementById('edit-visibility').value;
+                  const madeForKids = document.getElementById('edit-made-for-kids').checked;
+                  
+                  updateVideoSettings(editingVideo.id, {
+                    title: title || null,
+                    description: description || null,
+                    visibility,
+                    made_for_kids: madeForKids
+                  });
+                }}
+                className="btn-save"
+              >
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
