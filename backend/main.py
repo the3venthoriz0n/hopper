@@ -399,11 +399,20 @@ async def add_video(file: UploadFile = File(...), request: Request = None, respo
     with open(path, "wb") as f:
         f.write(await file.read())
     
+    # Generate YouTube title once when video is added
+    filename_no_ext = file.filename.rsplit('.', 1)[0]
+    youtube_title = replace_template_placeholders(
+        session["youtube_settings"]['title_template'],
+        filename_no_ext,
+        session["youtube_settings"].get('wordbank', [])
+    )
+    
     video = {
         "id": len(session["videos"]) + 1,
         "filename": file.filename,
         "path": str(path),
-        "status": "pending"
+        "status": "pending",
+        "generated_title": youtube_title  # Store the generated title
     }
     session["videos"].append(video)
     save_session(session_id)
@@ -424,11 +433,15 @@ def get_videos(request: Request, response: Response):
         if video['id'] in session["upload_progress"]:
             video_copy['upload_progress'] = session["upload_progress"][video['id']]
         
-        # Compute YouTube title - use custom title if set, otherwise use template
+        # Compute YouTube title - use custom title if set, otherwise use stored generated title
         custom_settings = video.get('custom_settings', {})
         if 'title' in custom_settings:
             youtube_title = custom_settings['title']
+        elif 'generated_title' in video:
+            # Use the title that was generated when video was added
+            youtube_title = video['generated_title']
         else:
+            # Fallback for old videos without generated_title (backwards compatibility)
             filename_no_ext = video['filename'].rsplit('.', 1)[0]
             youtube_title = replace_template_placeholders(
                 session["youtube_settings"]['title_template'],
@@ -593,10 +606,14 @@ def upload_video_to_youtube(video, session):
         custom_settings = video.get('custom_settings', {})
         filename_no_ext = video['filename'].rsplit('.', 1)[0]
         
-        # Use custom title if set, otherwise use template
+        # Use custom title if set, otherwise use the generated title (or fallback to template)
         if 'title' in custom_settings:
             title = custom_settings['title']
+        elif 'generated_title' in video:
+            # Use the pre-generated title from when video was added
+            title = video['generated_title']
         else:
+            # Fallback for backwards compatibility
             title = replace_template_placeholders(
                 youtube_settings['title_template'], 
                 filename_no_ext,
