@@ -176,6 +176,21 @@ function App() {
     }
   };
 
+  const clearWordbank = async () => {
+    if (!window.confirm(`Clear all ${youtubeSettings.wordbank.length} words from wordbank?`)) {
+      return;
+    }
+    try {
+      await axios.delete(`${API}/youtube/wordbank`);
+      setYoutubeSettings({...youtubeSettings, wordbank: []});
+      setWordbankExpanded(false);
+      setMessage('✅ Wordbank cleared');
+    } catch (err) {
+      setMessage('❌ Error clearing wordbank');
+      console.error('Error clearing wordbank:', err);
+    }
+  };
+
   const handleFileDrop = (e) => {
     e.preventDefault();
     const files = Array.from(e.dataTransfer.files).filter(f => 
@@ -527,16 +542,27 @@ function App() {
 
             <div className="setting-group">
               <label className="wordbank-label">
-                Random Wordbank ({youtubeSettings.wordbank.length} words)
-                {youtubeSettings.wordbank.length > 0 && (
-                  <span 
-                    className={`wordbank-caret ${wordbankExpanded ? 'expanded' : ''}`}
-                    onClick={() => setWordbankExpanded(!wordbankExpanded)}
-                    title={wordbankExpanded ? 'Hide words' : 'Show words'}
-                  >
-                    ▼
-                  </span>
-                )}
+                <span>Random Wordbank ({youtubeSettings.wordbank.length} words)</span>
+                <div className="wordbank-controls">
+                  {youtubeSettings.wordbank.length > 0 && (
+                    <>
+                      <span 
+                        className={`wordbank-caret ${wordbankExpanded ? 'expanded' : ''}`}
+                        onClick={() => setWordbankExpanded(!wordbankExpanded)}
+                        title={wordbankExpanded ? 'Hide words' : 'Show words'}
+                      >
+                        ▼
+                      </span>
+                      <button 
+                        onClick={clearWordbank}
+                        className="btn-clear-wordbank"
+                        title="Clear all words"
+                      >
+                        Clear All
+                      </button>
+                    </>
+                  )}
+                </div>
               </label>
               <div className="wordbank-input">
                 <input 

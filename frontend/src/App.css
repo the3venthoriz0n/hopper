@@ -467,6 +467,14 @@ button:disabled {
 .wordbank-label {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.wordbank-controls {
+  display: flex;
+  align-items: center;
   gap: 0.5rem;
 }
 
@@ -538,6 +546,24 @@ button:disabled {
 .btn-remove-word:hover {
   color: #ff5252;
   transform: scale(1.2);
+}
+
+.btn-clear-wordbank {
+  padding: 0.3rem 0.75rem;
+  background: transparent;
+  border: 1px solid #ef4444;
+  color: #ef4444;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 500;
+  transition: 0.2s;
+}
+
+.btn-clear-wordbank:hover {
+  background: #ef4444;
+  color: white;
+  transform: translateY(-1px);
 }
 
 .setting-divider {

@@ -282,6 +282,17 @@ def remove_wordbank_word(request: Request, response: Response, word: str):
     
     return {"wordbank": session["youtube_settings"]["wordbank"]}
 
+@app.delete("/api/youtube/wordbank")
+def clear_wordbank(request: Request, response: Response):
+    """Clear all words from the wordbank"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    
+    session["youtube_settings"]["wordbank"] = []
+    save_session(session_id)
+    
+    return {"wordbank": []}
+
 @app.post("/api/destinations/youtube/toggle")
 def toggle_youtube(request: Request, response: Response, enabled: bool):
     """Toggle YouTube destination on/off"""
