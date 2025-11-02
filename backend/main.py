@@ -439,29 +439,40 @@ def update_video(
     return video
 
 @app.post("/api/videos/reorder")
-def reorder_videos(request: Request, response: Response, video_ids: list[int]):
+async def reorder_videos(request: Request, response: Response):
     """Reorder videos in the queue"""
     session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
-    # Create a mapping of video IDs to video objects
-    video_map = {v['id']: v for v in session["videos"]}
-    
-    # Reorder videos based on the provided IDs
-    reordered_videos = []
-    for vid in video_ids:
-        if vid in video_map:
-            reordered_videos.append(video_map[vid])
-    
-    # Add any videos that weren't in the reorder list (shouldn't happen, but safety)
-    for video in session["videos"]:
-        if video not in reordered_videos:
-            reordered_videos.append(video)
-    
-    session["videos"] = reordered_videos
-    save_session(session_id)
-    
-    return {"ok": True, "count": len(reordered_videos)}
+    try:
+        # Parse JSON body
+        body = await request.json()
+        video_ids = body.get("video_ids", [])
+        
+        if not video_ids:
+            raise HTTPException(400, "video_ids required")
+        
+        # Create a mapping of video IDs to video objects
+        video_map = {v['id']: v for v in session["videos"]}
+        
+        # Reorder videos based on the provided IDs
+        reordered_videos = []
+        for vid in video_ids:
+            if vid in video_map:
+                reordered_videos.append(video_map[vid])
+        
+        # Add any videos that weren't in the reorder list (shouldn't happen, but safety)
+        for video in session["videos"]:
+            if video not in reordered_videos:
+                reordered_videos.append(video)
+        
+        session["videos"] = reordered_videos
+        save_session(session_id)
+        
+        return {"ok": True, "count": len(reordered_videos)}
+    except Exception as e:
+        print(f"Error reordering videos: {e}")
+        raise HTTPException(500, f"Error reordering videos: {str(e)}")
 
 def upload_video_to_youtube(video, session):
     """Helper function to upload a single video to YouTube"""

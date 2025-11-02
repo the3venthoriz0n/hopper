@@ -52,7 +52,15 @@ function App() {
   const loadVideos = async () => {
     try {
       const res = await axios.get(`${API}/videos`);
-      setVideos(res.data);
+      // Only update if the data has actually changed to avoid unnecessary re-renders
+      setVideos(prevVideos => {
+        const newData = res.data;
+        // Check if the data is different
+        if (JSON.stringify(prevVideos) === JSON.stringify(newData)) {
+          return prevVideos;
+        }
+        return newData;
+      });
     } catch (err) {
       console.error('Error loading videos:', err);
     }
@@ -186,13 +194,20 @@ function App() {
   };
 
   const handleDragStart = (e, video) => {
+    // Only allow dragging if not uploading
+    if (video.status === 'uploading') {
+      e.preventDefault();
+      return;
+    }
     setDraggedVideo(video);
     e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', video.id);
+    e.dataTransfer.setData('text/plain', String(video.id));
   };
 
   const handleDragEnd = (e) => {
     setDraggedVideo(null);
+    // Remove any visual artifacts
+    e.currentTarget.style.opacity = '1';
   };
 
   const handleDragOver = (e) => {
@@ -209,6 +224,9 @@ function App() {
       return;
     }
 
+    // Store original videos in case we need to revert
+    const originalVideos = [...videos];
+    
     const newVideos = [...videos];
     const draggedIdx = newVideos.findIndex(v => v.id === draggedVideo.id);
     const targetIdx = newVideos.findIndex(v => v.id === targetVideo.id);
@@ -231,9 +249,11 @@ function App() {
     // Insert at new position  
     newVideos.splice(insertIdx, 0, draggedItem);
     
-    // Update state immediately for instant visual feedback
-    setVideos(newVideos);
+    // Clear dragged state immediately
     setDraggedVideo(null);
+    
+    // Update state optimistically for instant visual feedback
+    setVideos(newVideos);
     
     // Save to backend
     try {
@@ -242,8 +262,8 @@ function App() {
     } catch (err) {
       console.error('Error reordering videos:', err);
       setMessage('❌ Error reordering videos');
-      // Reload videos on error
-      await loadVideos();
+      // Revert to original order on error
+      setVideos(originalVideos);
     }
   };
 
