@@ -7,6 +7,8 @@ import os
 import asyncio
 import json
 import secrets
+import random
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -38,6 +40,23 @@ except Exception:
 # Session storage: {session_id: {youtube_creds, videos, youtube_settings, upload_progress}}
 sessions = {}
 
+def replace_template_placeholders(template: str, filename: str, wordbank: list) -> str:
+    """Replace template placeholders with actual values"""
+    # Replace {filename}
+    result = template.replace('{filename}', filename)
+    
+    # Replace each {random} with a random word from wordbank
+    if wordbank:
+        # Find all {random} occurrences and replace each independently
+        while '{random}' in result:
+            random_word = random.choice(wordbank)
+            result = result.replace('{random}', random_word, 1)  # Replace only first occurrence
+    else:
+        # If wordbank is empty, just remove {random} placeholders
+        result = result.replace('{random}', '')
+    
+    return result
+
 def get_default_settings():
     """Return default YouTube settings"""
     return {
@@ -46,6 +65,7 @@ def get_default_settings():
         "title_template": "{filename}",
         "description_template": "Uploaded via Hopper",
         "tags_template": "",
+        "wordbank": [],
         "upload_immediately": True,
         "schedule_mode": "spaced",
         "schedule_interval_value": 1,
@@ -139,6 +159,8 @@ def load_session(session_id: str):
             session_data["youtube_settings"]["allow_duplicates"] = False
         if "tags_template" not in session_data["youtube_settings"]:
             session_data["youtube_settings"]["tags_template"] = ""
+        if "wordbank" not in session_data["youtube_settings"]:
+            session_data["youtube_settings"]["wordbank"] = []
         
         sessions[session_id] = session_data
         print(f"Loaded session {session_id}")
@@ -230,6 +252,34 @@ def get_destinations(request: Request, response: Response):
         },
         "scheduled_videos": scheduled_count
     }
+
+@app.post("/api/youtube/wordbank")
+def add_wordbank_word(request: Request, response: Response, word: str):
+    """Add a word to the wordbank"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    
+    word = word.strip()
+    if not word:
+        raise HTTPException(400, "Word cannot be empty")
+    
+    if word not in session["youtube_settings"]["wordbank"]:
+        session["youtube_settings"]["wordbank"].append(word)
+        save_session(session_id)
+    
+    return {"wordbank": session["youtube_settings"]["wordbank"]}
+
+@app.delete("/api/youtube/wordbank/{word}")
+def remove_wordbank_word(request: Request, response: Response, word: str):
+    """Remove a word from the wordbank"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    
+    if word in session["youtube_settings"]["wordbank"]:
+        session["youtube_settings"]["wordbank"].remove(word)
+        save_session(session_id)
+    
+    return {"wordbank": session["youtube_settings"]["wordbank"]}
 
 @app.post("/api/destinations/youtube/toggle")
 def toggle_youtube(request: Request, response: Response, enabled: bool):
@@ -539,7 +589,11 @@ def upload_video_to_youtube(video, session):
         if 'title' in custom_settings:
             title = custom_settings['title']
         else:
-            title = youtube_settings['title_template'].replace('{filename}', filename_no_ext)
+            title = replace_template_placeholders(
+                youtube_settings['title_template'], 
+                filename_no_ext,
+                youtube_settings.get('wordbank', [])
+            )
         
         # Enforce YouTube's 100 character limit for titles
         if len(title) > 100:
@@ -549,7 +603,11 @@ def upload_video_to_youtube(video, session):
         if 'description' in custom_settings:
             description = custom_settings['description']
         else:
-            description = youtube_settings['description_template'].replace('{filename}', filename_no_ext)
+            description = replace_template_placeholders(
+                youtube_settings['description_template'],
+                filename_no_ext,
+                youtube_settings.get('wordbank', [])
+            )
         
         # Use custom visibility if set, otherwise use global setting
         visibility = custom_settings.get('visibility', youtube_settings['visibility'])
@@ -559,7 +617,11 @@ def upload_video_to_youtube(video, session):
         if 'tags' in custom_settings:
             tags_str = custom_settings['tags']
         else:
-            tags_str = youtube_settings['tags_template'].replace('{filename}', filename_no_ext)
+            tags_str = replace_template_placeholders(
+                youtube_settings['tags_template'],
+                filename_no_ext,
+                youtube_settings.get('wordbank', [])
+            )
         
         # Parse tags (comma-separated, strip whitespace, filter empty)
         tags = [tag.strip() for tag in tags_str.split(',') if tag.strip()] if tags_str else []

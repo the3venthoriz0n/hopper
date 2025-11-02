@@ -18,6 +18,7 @@ function App() {
     title_template: '{filename}',
     description_template: 'Uploaded via Hopper',
     tags_template: '',
+    wordbank: [],
     upload_immediately: true,
     schedule_mode: 'spaced',
     schedule_interval_value: 1,
@@ -30,6 +31,7 @@ function App() {
   const [editingVideo, setEditingVideo] = useState(null);
   const [draggedVideo, setDraggedVideo] = useState(null);
   const [editTitleLength, setEditTitleLength] = useState(0);
+  const [newWord, setNewWord] = useState('');
 
   useEffect(() => {
     loadDestinations();
@@ -120,6 +122,31 @@ function App() {
     } catch (err) {
       setMessage('❌ Error disconnecting');
       console.error('Error disconnecting:', err);
+    }
+  };
+
+  const addWordToWordbank = async (word) => {
+    try {
+      const params = new URLSearchParams();
+      params.append('word', word);
+      const res = await axios.post(`${API}/youtube/wordbank?${params.toString()}`);
+      setYoutubeSettings({...youtubeSettings, wordbank: res.data.wordbank});
+      setNewWord('');
+      setMessage('✅ Word added to wordbank');
+    } catch (err) {
+      setMessage('❌ Error adding word');
+      console.error('Error adding word:', err);
+    }
+  };
+
+  const removeWordFromWordbank = async (word) => {
+    try {
+      await axios.delete(`${API}/youtube/wordbank/${encodeURIComponent(word)}`);
+      setYoutubeSettings({...youtubeSettings, wordbank: youtubeSettings.wordbank.filter(w => w !== word)});
+      setMessage('✅ Word removed from wordbank');
+    } catch (err) {
+      setMessage('❌ Error removing word');
+      console.error('Error removing word:', err);
     }
   };
 
@@ -441,7 +468,7 @@ function App() {
                 className="input-text"
                 maxLength="100"
               />
-              <small className="hint">Use {'{filename}'} for video filename</small>
+              <small className="hint">Use {'{filename}'} for filename, {'{random}'} for random wordbank word</small>
             </div>
 
             <div className="setting-group">
@@ -454,7 +481,7 @@ function App() {
                 className="textarea-text"
                 rows="3"
               />
-              <small className="hint">Use {'{filename}'} for video filename</small>
+              <small className="hint">Use {'{filename}'} for filename, {'{random}'} for random wordbank word</small>
             </div>
 
             <div className="setting-group">
@@ -467,7 +494,42 @@ function App() {
                 placeholder="tag1, tag2, tag3"
                 className="input-text"
               />
-              <small className="hint">Comma-separated tags. Use {'{filename}'} for video filename</small>
+              <small className="hint">Comma-separated tags. Use {'{filename}'} or {'{random}'}</small>
+            </div>
+
+            <div className="setting-divider"></div>
+
+            <div className="setting-group">
+              <label>Random Wordbank ({youtubeSettings.wordbank.length} words)</label>
+              <div className="wordbank-input">
+                <input 
+                  type="text"
+                  value={newWord}
+                  onChange={(e) => setNewWord(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && newWord.trim() && addWordToWordbank(newWord.trim())}
+                  placeholder="Add a word or phrase"
+                  className="input-text"
+                />
+                <button 
+                  onClick={() => newWord.trim() && addWordToWordbank(newWord.trim())}
+                  className="btn-add-word"
+                  disabled={!newWord.trim()}
+                >
+                  Add
+                </button>
+              </div>
+              <small className="hint">Words to use with {'{random}'} placeholder in templates</small>
+              
+              {youtubeSettings.wordbank.length > 0 && (
+                <div className="wordbank-list">
+                  {youtubeSettings.wordbank.map((word, idx) => (
+                    <div key={idx} className="wordbank-item">
+                      <span>{word}</span>
+                      <button onClick={() => removeWordFromWordbank(word)} className="btn-remove-word">×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="setting-divider"></div>
