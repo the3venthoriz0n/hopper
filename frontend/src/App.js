@@ -21,7 +21,8 @@ function App() {
     schedule_mode: 'spaced',
     schedule_interval_value: 1,
     schedule_interval_unit: 'hours',
-    schedule_start_time: ''
+    schedule_start_time: '',
+    allow_duplicates: false
   });
   const [showSettings, setShowSettings] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -84,6 +85,8 @@ function App() {
         setMessage(`✅ Made for kids: ${value ? 'Yes' : 'No'}`);
       } else if (key === 'upload_immediately') {
         setMessage(`✅ Upload mode: ${value ? 'Immediate' : 'Scheduled'}`);
+      } else if (key === 'allow_duplicates') {
+        setMessage(`✅ Duplicates: ${value ? 'Allowed' : 'Blocked'}`);
       } else if (key === 'title_template' || key === 'description_template') {
         setMessage(`✅ Settings updated`);
       } else {
@@ -132,25 +135,27 @@ function App() {
     };
     setVideos(prev => [...prev, tempVideo]);
     
-    try {
-      const res = await axios.post(`${API}/videos`, form, {
-        onUploadProgress: (progressEvent) => {
-          const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          setVideos(prev => prev.map(v => 
-            v.id === tempId ? { ...v, progress: percent } : v
-          ));
-        }
-      });
-      
-      // Replace temp with real video data
-      setVideos(prev => prev.map(v => 
-        v.id === tempId ? { ...res.data, progress: 100 } : v
-      ));
-      setMessage(`✅ Added ${file.name}`);
-    } catch (err) {
-      setVideos(prev => prev.filter(v => v.id !== tempId));
-      setMessage('❌ Error adding video');
-    }
+      try {
+        const res = await axios.post(`${API}/videos`, form, {
+          onUploadProgress: (progressEvent) => {
+            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            setVideos(prev => prev.map(v =>
+              v.id === tempId ? { ...v, progress: percent } : v
+            ));
+          }
+        });
+        
+        // Replace temp with real video data
+        setVideos(prev => prev.map(v => 
+          v.id === tempId ? { ...res.data, progress: 100 } : v
+        ));
+        setMessage(`✅ Added ${file.name}`);
+      } catch (err) {
+        setVideos(prev => prev.filter(v => v.id !== tempId));
+        const errorMsg = err.response?.data?.detail || 'Error adding video';
+        setMessage(`❌ ${errorMsg}`);
+        console.error('Error adding video:', err);
+      }
   };
 
   const removeVideo = async (id) => {
@@ -371,6 +376,19 @@ function App() {
                 />
                 <span>Made for Kids</span>
               </label>
+            </div>
+
+            <div className="setting-group">
+              <label className="checkbox-label">
+                <input 
+                  type="checkbox"
+                  checked={youtubeSettings.allow_duplicates}
+                  onChange={(e) => updateYoutubeSettings('allow_duplicates', e.target.checked)}
+                  className="checkbox"
+                />
+                <span>Allow Duplicate Videos</span>
+              </label>
+              <small className="hint">Allow uploading videos with the same filename</small>
             </div>
 
             <div className="setting-group">

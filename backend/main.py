@@ -49,7 +49,8 @@ def get_default_settings():
         "schedule_mode": "spaced",
         "schedule_interval_value": 1,
         "schedule_interval_unit": "hours",
-        "schedule_start_time": ""
+        "schedule_start_time": "",
+        "allow_duplicates": False
     }
 
 def get_session(session_id: str):
@@ -131,6 +132,10 @@ def load_session(session_id: str):
             session_data["upload_progress"] = {}
         if "youtube_settings" not in session_data:
             session_data["youtube_settings"] = get_default_settings()
+        
+        # Add missing settings for backwards compatibility
+        if "allow_duplicates" not in session_data["youtube_settings"]:
+            session_data["youtube_settings"]["allow_duplicates"] = False
         
         sessions[session_id] = session_data
         print(f"Loaded session {session_id}")
@@ -269,7 +274,8 @@ def update_youtube_settings(
     schedule_mode: str = None,
     schedule_interval_value: int = None,
     schedule_interval_unit: str = None,
-    schedule_start_time: str = None
+    schedule_start_time: str = None,
+    allow_duplicates: bool = None
 ):
     """Update YouTube upload settings"""
     session_id = get_or_create_session_id(request, response)
@@ -311,6 +317,9 @@ def update_youtube_settings(
     if schedule_start_time is not None:
         settings["schedule_start_time"] = schedule_start_time
     
+    if allow_duplicates is not None:
+        settings["allow_duplicates"] = allow_duplicates
+    
     save_session(session_id)
     return settings
 
@@ -319,6 +328,12 @@ async def add_video(file: UploadFile = File(...), request: Request = None, respo
     """Add video to queue"""
     session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
+    
+    # Check for duplicates if not allowed
+    if not session["youtube_settings"].get("allow_duplicates", False):
+        existing_filenames = [v["filename"] for v in session["videos"]]
+        if file.filename in existing_filenames:
+            raise HTTPException(400, f"Duplicate video: {file.filename} is already in the queue")
     
     path = UPLOAD_DIR / file.filename
     
