@@ -10,6 +10,7 @@ axios.defaults.withCredentials = true;
 
 function App() {
   const [youtube, setYoutube] = useState({ connected: false, enabled: false });
+  const [tiktok, setTiktok] = useState({ connected: false, enabled: false });
   const [videos, setVideos] = useState([]);
   const [message, setMessage] = useState('');
   const [globalSettings, setGlobalSettings] = useState({
@@ -30,7 +31,22 @@ function App() {
     schedule_start_time: '',
     allow_duplicates: false
   });
+  const [tiktokSettings, setTiktokSettings] = useState({
+    privacy_level: 'private',
+    allow_comments: true,
+    allow_duet: true,
+    allow_stitch: true,
+    title_template: '',
+    description_template: '',
+    upload_immediately: true,
+    schedule_mode: 'spaced',
+    schedule_interval_value: 1,
+    schedule_interval_unit: 'hours',
+    schedule_start_time: '',
+    allow_duplicates: false
+  });
   const [showSettings, setShowSettings] = useState(false);
+  const [showTiktokSettings, setShowTiktokSettings] = useState(false);
   const [showGlobalSettings, setShowGlobalSettings] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [editingVideo, setEditingVideo] = useState(null);
@@ -43,11 +59,16 @@ function App() {
     loadDestinations();
     loadGlobalSettings();
     loadYoutubeSettings();
+    loadTiktokSettings();
     loadVideos();
     
     // Check OAuth callback
     if (window.location.search.includes('connected=youtube')) {
       setMessage('✅ YouTube connected!');
+      loadDestinations();
+      window.history.replaceState({}, '', '/');
+    } else if (window.location.search.includes('connected=tiktok')) {
+      setMessage('✅ TikTok connected!');
       loadDestinations();
       window.history.replaceState({}, '', '/');
     }
@@ -80,6 +101,7 @@ function App() {
   const loadDestinations = async () => {
     const res = await axios.get(`${API}/destinations`);
     setYoutube(res.data.youtube);
+    setTiktok(res.data.tiktok);
   };
 
   const loadGlobalSettings = async () => {
@@ -138,6 +160,36 @@ function App() {
     }
   };
 
+  const loadTiktokSettings = async () => {
+    try {
+      const res = await axios.get(`${API}/tiktok/settings`);
+      setTiktokSettings(res.data);
+    } catch (err) {
+      console.error('Error loading TikTok settings:', err);
+    }
+  };
+
+  const updateTiktokSettings = async (key, value) => {
+    try {
+      const params = new URLSearchParams();
+      params.append(key, value);
+      const res = await axios.post(`${API}/tiktok/settings?${params.toString()}`);
+      setTiktokSettings(res.data);
+      
+      if (key === 'privacy_level') {
+        setMessage(`✅ Privacy level set to ${value}`);
+      } else if (key === 'upload_immediately') {
+        setMessage(`✅ Upload mode: ${value ? 'Immediate' : 'Scheduled'}`);
+      } else if (key === 'allow_duplicates') {
+        setMessage(`✅ Duplicates: ${value ? 'Allowed' : 'Blocked'}`);
+      } else {
+        setMessage(`✅ TikTok settings updated`);
+      }
+    } catch (err) {
+      setMessage('❌ Error updating TikTok settings');
+    }
+  };
+
   const connectYoutube = async () => {
     const res = await axios.get(`${API}/auth/youtube`);
     window.location.href = res.data.url;
@@ -151,6 +203,27 @@ function App() {
     } catch (err) {
       setMessage('❌ Error disconnecting');
       console.error('Error disconnecting:', err);
+    }
+  };
+
+  const connectTiktok = async () => {
+    try {
+      const res = await axios.get(`${API}/auth/tiktok`);
+      window.location.href = res.data.url;
+    } catch (err) {
+      setMessage(`❌ Error connecting to TikTok: ${err.response?.data?.detail || err.message}`);
+      console.error('Error connecting TikTok:', err);
+    }
+  };
+
+  const disconnectTiktok = async () => {
+    try {
+      await axios.post(`${API}/auth/tiktok/disconnect`);
+      setTiktok({ connected: false, enabled: false });
+      setMessage('✅ Disconnected from TikTok');
+    } catch (err) {
+      setMessage('❌ Error disconnecting from TikTok');
+      console.error('Error disconnecting TikTok:', err);
     }
   };
 
@@ -394,6 +467,21 @@ function App() {
       console.error('Error toggling YouTube:', err);
       // Revert on error
       setYoutube({ ...youtube, enabled: !newEnabled });
+    }
+  };
+
+  const toggleTiktok = async () => {
+    const newEnabled = !tiktok.enabled;
+    setTiktok({ ...tiktok, enabled: newEnabled });
+    
+    try {
+      const params = new URLSearchParams();
+      params.append('enabled', newEnabled);
+      await axios.post(`${API}/destinations/tiktok/toggle?${params.toString()}`);
+    } catch (err) {
+      console.error('Error toggling TikTok:', err);
+      // Revert on error
+      setTiktok({ ...tiktok, enabled: !newEnabled });
     }
   };
 
@@ -730,6 +818,196 @@ function App() {
                       type="datetime-local"
                       value={youtubeSettings.schedule_start_time}
                       onChange={(e) => updateYoutubeSettings('schedule_start_time', e.target.value)}
+                      className="input-text"
+                    />
+                    <small className="hint">All videos will upload at this time</small>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+
+        {/* TikTok Destination */}
+        <div className="destination">
+          <div>
+            <span>🎵 TikTok</span>
+            {tiktok.connected && <span className="badge">Connected</span>}
+          </div>
+          {tiktok.connected ? (
+            <>
+              <label className="toggle">
+                <input 
+                  type="checkbox" 
+                  checked={tiktok.enabled}
+                  onChange={toggleTiktok}
+                />
+                <span className="slider"></span>
+              </label>
+              <button onClick={() => setShowTiktokSettings(!showTiktokSettings)} className="btn-settings">
+                ⚙️
+              </button>
+              <button onClick={disconnectTiktok} className="btn-disconnect">
+                Disconnect
+              </button>
+            </>
+          ) : (
+            <button onClick={connectTiktok}>Connect</button>
+          )}
+        </div>
+
+        {/* TikTok Settings */}
+        {showTiktokSettings && tiktok.connected && (
+          <div className="settings-panel">
+            <h3>TikTok Settings</h3>
+            
+            <div className="setting-group">
+              <label>Privacy Level</label>
+              <select 
+                value={tiktokSettings.privacy_level}
+                onChange={(e) => updateTiktokSettings('privacy_level', e.target.value)}
+                className="select"
+              >
+                <option value="private">Private</option>
+                <option value="friends">Friends</option>
+                <option value="public">Public</option>
+              </select>
+            </div>
+
+            <div className="setting-group">
+              <label className="checkbox-label">
+                <input 
+                  type="checkbox"
+                  checked={tiktokSettings.allow_comments}
+                  onChange={(e) => updateTiktokSettings('allow_comments', e.target.checked)}
+                  className="checkbox"
+                />
+                <span>Allow Comments</span>
+              </label>
+            </div>
+
+            <div className="setting-group">
+              <label className="checkbox-label">
+                <input 
+                  type="checkbox"
+                  checked={tiktokSettings.allow_duet}
+                  onChange={(e) => updateTiktokSettings('allow_duet', e.target.checked)}
+                  className="checkbox"
+                />
+                <span>Allow Duet</span>
+              </label>
+            </div>
+
+            <div className="setting-group">
+              <label className="checkbox-label">
+                <input 
+                  type="checkbox"
+                  checked={tiktokSettings.allow_stitch}
+                  onChange={(e) => updateTiktokSettings('allow_stitch', e.target.checked)}
+                  className="checkbox"
+                />
+                <span>Allow Stitch</span>
+              </label>
+            </div>
+
+            <div className="setting-group">
+              <label className="checkbox-label">
+                <input 
+                  type="checkbox"
+                  checked={tiktokSettings.allow_duplicates}
+                  onChange={(e) => updateTiktokSettings('allow_duplicates', e.target.checked)}
+                  className="checkbox"
+                />
+                <span>Allow Duplicate Videos</span>
+              </label>
+              <small className="hint">Allow uploading videos with the same filename</small>
+            </div>
+
+            <div className="setting-group">
+              <label>TikTok Title Template (Override) <span className="char-counter">{tiktokSettings.title_template?.length || 0}/100</span></label>
+              <input 
+                type="text"
+                value={tiktokSettings.title_template || ''}
+                onChange={(e) => setTiktokSettings({...tiktokSettings, title_template: e.target.value})}
+                onBlur={(e) => updateTiktokSettings('title_template', e.target.value)}
+                placeholder="Leave empty to use global template"
+                className="input-text"
+                maxLength="100"
+              />
+              <small className="hint">Override global title template for TikTok only. Leave empty to use global</small>
+            </div>
+
+            <div className="setting-group">
+              <label>TikTok Description Template (Override)</label>
+              <textarea 
+                value={tiktokSettings.description_template || ''}
+                onChange={(e) => setTiktokSettings({...tiktokSettings, description_template: e.target.value})}
+                onBlur={(e) => updateTiktokSettings('description_template', e.target.value)}
+                placeholder="Leave empty to use global template"
+                className="textarea-text"
+                rows="3"
+              />
+              <small className="hint">Override global description template for TikTok only. Leave empty to use global</small>
+            </div>
+
+            <div className="setting-divider"></div>
+
+            <div className="setting-group">
+              <label className="checkbox-label">
+                <input 
+                  type="checkbox"
+                  checked={tiktokSettings.upload_immediately}
+                  onChange={(e) => updateTiktokSettings('upload_immediately', e.target.checked)}
+                  className="checkbox"
+                />
+                <span>Upload Immediately (Overrides Scheduler)</span>
+              </label>
+            </div>
+
+            {!tiktokSettings.upload_immediately && (
+              <>
+                <div className="setting-group">
+                  <label>Schedule Mode</label>
+                  <select 
+                    value={tiktokSettings.schedule_mode}
+                    onChange={(e) => updateTiktokSettings('schedule_mode', e.target.value)}
+                    className="select"
+                  >
+                    <option value="spaced">Spaced Intervals</option>
+                    <option value="specific_time">Specific Time</option>
+                  </select>
+                </div>
+
+                {tiktokSettings.schedule_mode === 'spaced' ? (
+                  <div className="setting-group">
+                    <label>Interval Between Uploads</label>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                      <input 
+                        type="number"
+                        min="1"
+                        value={tiktokSettings.schedule_interval_value}
+                        onChange={(e) => updateTiktokSettings('schedule_interval_value', parseInt(e.target.value))}
+                        className="input-number"
+                      />
+                      <select 
+                        value={tiktokSettings.schedule_interval_unit}
+                        onChange={(e) => updateTiktokSettings('schedule_interval_unit', e.target.value)}
+                        className="select-unit"
+                      >
+                        <option value="minutes">Minutes</option>
+                        <option value="hours">Hours</option>
+                        <option value="days">Days</option>
+                      </select>
+                    </div>
+                    <small className="hint">Videos upload one at a time with this interval</small>
+                  </div>
+                ) : (
+                  <div className="setting-group">
+                    <label>Start Time</label>
+                    <input 
+                      type="datetime-local"
+                      value={tiktokSettings.schedule_start_time}
+                      onChange={(e) => updateTiktokSettings('schedule_start_time', e.target.value)}
                       className="input-text"
                     />
                     <small className="hint">All videos will upload at this time</small>

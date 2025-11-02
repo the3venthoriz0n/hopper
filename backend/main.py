@@ -81,17 +81,39 @@ def get_default_youtube_settings():
         "allow_duplicates": False
     }
 
+def get_default_tiktok_settings():
+    """Return default TikTok-specific settings"""
+    return {
+        "privacy_level": "private",  # private, friends, public
+        "allow_comments": True,
+        "allow_duet": True,
+        "allow_stitch": True,
+        "title_template": "",  # Empty means use global
+        "description_template": "",  # Empty means use global (TikTok combines title+description)
+        "upload_immediately": True,
+        "schedule_mode": "spaced",
+        "schedule_interval_value": 1,
+        "schedule_interval_unit": "hours",
+        "schedule_start_time": "",
+        "allow_duplicates": False
+    }
+
 def get_session(session_id: str):
     """Get or create a session"""
     if session_id not in sessions:
         sessions[session_id] = {
             "youtube_creds": None,
+            "tiktok_creds": None,
             "videos": [],
             "global_settings": get_default_global_settings(),
             "youtube_settings": get_default_youtube_settings(),
+            "tiktok_settings": get_default_tiktok_settings(),
             "upload_progress": {},
             "destinations": {
                 "youtube": {
+                    "enabled": False
+                },
+                "tiktok": {
                     "enabled": False
                 }
             }
@@ -153,8 +175,23 @@ def load_session(session_id: str):
             session_data["destinations"] = {
                 "youtube": {
                     "enabled": False
+                },
+                "tiktok": {
+                    "enabled": False
                 }
             }
+        
+        # Add tiktok if missing from old sessions
+        if "tiktok" not in session_data["destinations"]:
+            session_data["destinations"]["tiktok"] = {"enabled": False}
+        
+        # Add tiktok_creds if missing
+        if "tiktok_creds" not in session_data:
+            session_data["tiktok_creds"] = None
+        
+        # Add tiktok_settings if missing
+        if "tiktok_settings" not in session_data:
+            session_data["tiktok_settings"] = get_default_tiktok_settings()
         
         # Ensure all required fields exist
         if "upload_progress" not in session_data:
@@ -270,6 +307,10 @@ def get_destinations(request: Request, response: Response):
             "connected": session["youtube_creds"] is not None,
             "enabled": session["destinations"]["youtube"]["enabled"]
         },
+        "tiktok": {
+            "connected": session["tiktok_creds"] is not None,
+            "enabled": session["destinations"]["tiktok"]["enabled"]
+        },
         "scheduled_videos": scheduled_count
     }
 
@@ -329,6 +370,22 @@ def toggle_youtube(request: Request, response: Response, enabled: bool):
         }
     }
 
+@app.post("/api/destinations/tiktok/toggle")
+def toggle_tiktok(request: Request, response: Response, enabled: bool):
+    """Toggle TikTok destination on/off"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    
+    session["destinations"]["tiktok"]["enabled"] = enabled
+    save_session(session_id)
+    
+    return {
+        "tiktok": {
+            "connected": session["tiktok_creds"] is not None,
+            "enabled": session["destinations"]["tiktok"]["enabled"]
+        }
+    }
+
 @app.post("/api/auth/youtube/disconnect")
 def disconnect_youtube(request: Request, response: Response):
     """Disconnect YouTube account"""
@@ -337,6 +394,40 @@ def disconnect_youtube(request: Request, response: Response):
     
     session["youtube_creds"] = None
     session["destinations"]["youtube"]["enabled"] = False
+    save_session(session_id)
+    return {"message": "Disconnected"}
+
+# TikTok OAuth endpoints
+@app.get("/api/auth/tiktok")
+def auth_tiktok(request: Request, response: Response):
+    """Start TikTok OAuth (placeholder - requires TikTok app setup)"""
+    session_id = get_or_create_session_id(request, response)
+    
+    # TODO: Implement TikTok OAuth with actual credentials
+    # For now, return a placeholder that indicates setup is needed
+    raise HTTPException(501, "TikTok OAuth requires app setup. Add your TikTok app credentials to enable.")
+
+@app.get("/api/auth/tiktok/callback")
+def auth_tiktok_callback(request: Request, response: Response, code: str = None, state: str = None):
+    """Handle TikTok OAuth callback (placeholder)"""
+    if not code:
+        raise HTTPException(400, "No authorization code")
+    
+    # TODO: Exchange code for access token and store credentials
+    # session_id = state
+    # session = get_session(session_id)
+    # session["tiktok_creds"] = credentials
+    
+    return RedirectResponse('/?connected=tiktok')
+
+@app.post("/api/auth/tiktok/disconnect")
+def disconnect_tiktok(request: Request, response: Response):
+    """Disconnect TikTok account"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    
+    session["tiktok_creds"] = None
+    session["destinations"]["tiktok"]["enabled"] = False
     save_session(session_id)
     return {"message": "Disconnected"}
 
@@ -416,6 +507,85 @@ def update_youtube_settings(
     
     if tags_template is not None:
         settings["tags_template"] = tags_template
+    
+    if upload_immediately is not None:
+        settings["upload_immediately"] = upload_immediately
+    
+    if schedule_mode is not None:
+        if schedule_mode not in ["spaced", "specific_time"]:
+            raise HTTPException(400, "Invalid schedule mode")
+        settings["schedule_mode"] = schedule_mode
+    
+    if schedule_interval_value is not None:
+        if schedule_interval_value < 1:
+            raise HTTPException(400, "Interval value must be at least 1")
+        settings["schedule_interval_value"] = schedule_interval_value
+    
+    if schedule_interval_unit is not None:
+        if schedule_interval_unit not in ["minutes", "hours", "days"]:
+            raise HTTPException(400, "Invalid interval unit")
+        settings["schedule_interval_unit"] = schedule_interval_unit
+    
+    if schedule_start_time is not None:
+        settings["schedule_start_time"] = schedule_start_time
+    
+    if allow_duplicates is not None:
+        settings["allow_duplicates"] = allow_duplicates
+    
+    save_session(session_id)
+    return settings
+
+# TikTok settings endpoints
+@app.get("/api/tiktok/settings")
+def get_tiktok_settings(request: Request, response: Response):
+    """Get TikTok upload settings"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    return session["tiktok_settings"]
+
+@app.post("/api/tiktok/settings")
+def update_tiktok_settings(
+    request: Request,
+    response: Response,
+    privacy_level: str = None,
+    allow_comments: bool = None,
+    allow_duet: bool = None,
+    allow_stitch: bool = None,
+    title_template: str = None,
+    description_template: str = None,
+    upload_immediately: bool = None,
+    schedule_mode: str = None,
+    schedule_interval_value: int = None,
+    schedule_interval_unit: str = None,
+    schedule_start_time: str = None,
+    allow_duplicates: bool = None
+):
+    """Update TikTok upload settings"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    settings = session["tiktok_settings"]
+    
+    if privacy_level is not None:
+        if privacy_level not in ["public", "private", "friends"]:
+            raise HTTPException(400, "Invalid privacy level")
+        settings["privacy_level"] = privacy_level
+    
+    if allow_comments is not None:
+        settings["allow_comments"] = allow_comments
+    
+    if allow_duet is not None:
+        settings["allow_duet"] = allow_duet
+    
+    if allow_stitch is not None:
+        settings["allow_stitch"] = allow_stitch
+    
+    if title_template is not None:
+        if len(title_template) > 100:
+            raise HTTPException(400, "Title template must be 100 characters or less")
+        settings["title_template"] = title_template
+    
+    if description_template is not None:
+        settings["description_template"] = description_template
     
     if upload_immediately is not None:
         settings["upload_immediately"] = upload_immediately
