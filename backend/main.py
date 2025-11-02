@@ -59,7 +59,12 @@ def get_session(session_id: str):
             "youtube_creds": None,
             "videos": [],
             "youtube_settings": get_default_settings(),
-            "upload_progress": {}
+            "upload_progress": {},
+            "destinations": {
+                "youtube": {
+                    "enabled": False
+                }
+            }
         }
         # Try to load from disk
         load_session(session_id)
@@ -112,6 +117,20 @@ def load_session(session_id: str):
                 client_secret=creds_data.get("client_secret"),
                 scopes=creds_data.get("scopes")
             )
+        
+        # Backwards compatibility: add destinations if missing
+        if "destinations" not in session_data:
+            session_data["destinations"] = {
+                "youtube": {
+                    "enabled": False
+                }
+            }
+        
+        # Ensure all required fields exist
+        if "upload_progress" not in session_data:
+            session_data["upload_progress"] = {}
+        if "youtube_settings" not in session_data:
+            session_data["youtube_settings"] = get_default_settings()
         
         sessions[session_id] = session_data
         print(f"Loaded session {session_id}")
@@ -199,9 +218,25 @@ def get_destinations(request: Request, response: Response):
     return {
         "youtube": {
             "connected": session["youtube_creds"] is not None,
-            "enabled": False
+            "enabled": session["destinations"]["youtube"]["enabled"]
         },
         "scheduled_videos": scheduled_count
+    }
+
+@app.post("/api/destinations/youtube/toggle")
+def toggle_youtube(request: Request, response: Response, enabled: bool):
+    """Toggle YouTube destination on/off"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    
+    session["destinations"]["youtube"]["enabled"] = enabled
+    save_session(session_id)
+    
+    return {
+        "youtube": {
+            "connected": session["youtube_creds"] is not None,
+            "enabled": session["destinations"]["youtube"]["enabled"]
+        }
     }
 
 @app.post("/api/auth/youtube/disconnect")
@@ -211,6 +246,7 @@ def disconnect_youtube(request: Request, response: Response):
     session = get_session(session_id)
     
     session["youtube_creds"] = None
+    session["destinations"]["youtube"]["enabled"] = False
     save_session(session_id)
     return {"message": "Disconnected"}
 

@@ -98,9 +98,14 @@ function App() {
   };
 
   const disconnectYoutube = async () => {
-    await axios.post(`${API}/auth/youtube/disconnect`);
-    setYoutube({ connected: false, enabled: false });
-    setMessage('Disconnected from YouTube');
+    try {
+      await axios.post(`${API}/auth/youtube/disconnect`);
+      setYoutube({ connected: false, enabled: false });
+      setMessage('✅ Disconnected from YouTube');
+    } catch (err) {
+      setMessage('❌ Error disconnecting');
+      console.error('Error disconnecting:', err);
+    }
   };
 
   const handleDrop = (e) => {
@@ -151,8 +156,19 @@ function App() {
     setVideos(videos.filter(v => v.id !== id));
   };
 
-  const toggleYoutube = () => {
-    setYoutube({ ...youtube, enabled: !youtube.enabled });
+  const toggleYoutube = async () => {
+    const newEnabled = !youtube.enabled;
+    setYoutube({ ...youtube, enabled: newEnabled });
+    
+    try {
+      const params = new URLSearchParams();
+      params.append('enabled', newEnabled);
+      await axios.post(`${API}/destinations/youtube/toggle?${params.toString()}`);
+    } catch (err) {
+      console.error('Error toggling YouTube:', err);
+      // Revert on error
+      setYoutube({ ...youtube, enabled: !newEnabled });
+    }
   };
 
   const upload = async () => {
