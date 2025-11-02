@@ -167,10 +167,11 @@ function App() {
         }
       });
       
-      const res = await axios.patch(`${API}/videos/${videoId}?${params.toString()}`);
+      await axios.patch(`${API}/videos/${videoId}?${params.toString()}`);
       
-      // Update local state
-      setVideos(prev => prev.map(v => v.id === videoId ? { ...v, ...res.data } : v));
+      // Reload videos to get updated computed titles
+      await loadVideos();
+      
       setMessage('✅ Video settings updated');
       setEditingVideo(null);
     } catch (err) {
@@ -182,11 +183,10 @@ function App() {
   const handleDragStart = (e, video) => {
     setDraggedVideo(video);
     e.dataTransfer.effectAllowed = 'move';
-    e.currentTarget.style.opacity = '0.5';
+    e.dataTransfer.setData('text/plain', video.id);
   };
 
   const handleDragEnd = (e) => {
-    e.currentTarget.style.opacity = '1';
     setDraggedVideo(null);
   };
 
@@ -197,20 +197,38 @@ function App() {
 
   const handleDrop = async (e, targetVideo) => {
     e.preventDefault();
+    e.stopPropagation();
     
     if (!draggedVideo || draggedVideo.id === targetVideo.id) {
+      setDraggedVideo(null);
       return;
     }
 
-    // Create new order
-    const draggedIdx = videos.findIndex(v => v.id === draggedVideo.id);
-    const targetIdx = videos.findIndex(v => v.id === targetVideo.id);
-    
     const newVideos = [...videos];
-    newVideos.splice(draggedIdx, 1);
-    newVideos.splice(targetIdx, 0, draggedVideo);
+    const draggedIdx = newVideos.findIndex(v => v.id === draggedVideo.id);
+    const targetIdx = newVideos.findIndex(v => v.id === targetVideo.id);
     
+    if (draggedIdx === -1 || targetIdx === -1) {
+      setDraggedVideo(null);
+      return;
+    }
+    
+    // Remove dragged item from its current position
+    const [draggedItem] = newVideos.splice(draggedIdx, 1);
+    
+    // Calculate correct insertion index after removal
+    // If dragging down (original draggedIdx < targetIdx), 
+    // the target has shifted up by 1, so we insert at targetIdx - 1
+    // If dragging up (original draggedIdx > targetIdx),
+    // the target hasn't shifted, so we insert at targetIdx
+    const insertIdx = draggedIdx < targetIdx ? targetIdx - 1 : targetIdx;
+    
+    // Insert at new position  
+    newVideos.splice(insertIdx, 0, draggedItem);
+    
+    // Update state immediately for instant visual feedback
     setVideos(newVideos);
+    setDraggedVideo(null);
     
     // Save to backend
     try {
@@ -218,8 +236,9 @@ function App() {
       await axios.post(`${API}/videos/reorder`, { video_ids: videoIds });
     } catch (err) {
       console.error('Error reordering videos:', err);
+      setMessage('❌ Error reordering videos');
       // Reload videos on error
-      loadVideos();
+      await loadVideos();
     }
   };
 
