@@ -41,6 +41,47 @@ h2 {
   margin-bottom: 1.5rem;
 }
 
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  margin: -1.5rem -1.5rem 0 -1.5rem;
+  padding: 1.5rem;
+  border-radius: 12px 12px 0 0;
+  transition: background 0.2s;
+}
+
+.card-header:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.card-header h2 {
+  margin: 0;
+}
+
+.settings-toggle {
+  background: rgba(139, 92, 246, 0.2);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  color: #8b5cf6;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 1.2rem;
+  font-weight: bold;
+  transition: 0.2s;
+  min-width: 40px;
+}
+
+.settings-toggle:hover {
+  background: rgba(139, 92, 246, 0.3);
+  transform: scale(1.05);
+}
+
+.settings-panel {
+  margin-top: 1.5rem;
+}
+
 .destination {
   display: flex;
   justify-content: space-between;

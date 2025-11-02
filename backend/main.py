@@ -57,15 +57,22 @@ def replace_template_placeholders(template: str, filename: str, wordbank: list) 
     
     return result
 
-def get_default_settings():
-    """Return default YouTube settings"""
+def get_default_global_settings():
+    """Return default global settings"""
+    return {
+        "title_template": "{filename}",
+        "description_template": "Uploaded via Hopper",
+        "wordbank": []
+    }
+
+def get_default_youtube_settings():
+    """Return default YouTube-specific settings"""
     return {
         "visibility": "private",
         "made_for_kids": False,
-        "title_template": "{filename}",
-        "description_template": "Uploaded via Hopper",
         "tags_template": "",
-        "wordbank": [],
+        "title_template": "",  # Empty means use global
+        "description_template": "",  # Empty means use global
         "upload_immediately": True,
         "schedule_mode": "spaced",
         "schedule_interval_value": 1,
@@ -80,7 +87,8 @@ def get_session(session_id: str):
         sessions[session_id] = {
             "youtube_creds": None,
             "videos": [],
-            "youtube_settings": get_default_settings(),
+            "global_settings": get_default_global_settings(),
+            "youtube_settings": get_default_youtube_settings(),
             "upload_progress": {},
             "destinations": {
                 "youtube": {
@@ -151,16 +159,28 @@ def load_session(session_id: str):
         # Ensure all required fields exist
         if "upload_progress" not in session_data:
             session_data["upload_progress"] = {}
+        
+        # Migrate old sessions to new structure
         if "youtube_settings" not in session_data:
-            session_data["youtube_settings"] = get_default_settings()
+            session_data["youtube_settings"] = get_default_youtube_settings()
+        if "global_settings" not in session_data:
+            # Migrate from old structure: move global fields from youtube_settings to global_settings
+            session_data["global_settings"] = {
+                "title_template": session_data["youtube_settings"].get("title_template", "{filename}"),
+                "description_template": session_data["youtube_settings"].get("description_template", "Uploaded via Hopper"),
+                "wordbank": session_data["youtube_settings"].get("wordbank", [])
+            }
+            # Clear these from youtube_settings so they use global by default
+            session_data["youtube_settings"]["title_template"] = ""
+            session_data["youtube_settings"]["description_template"] = ""
+            if "wordbank" in session_data["youtube_settings"]:
+                del session_data["youtube_settings"]["wordbank"]
         
         # Add missing settings for backwards compatibility
         if "allow_duplicates" not in session_data["youtube_settings"]:
             session_data["youtube_settings"]["allow_duplicates"] = False
         if "tags_template" not in session_data["youtube_settings"]:
             session_data["youtube_settings"]["tags_template"] = ""
-        if "wordbank" not in session_data["youtube_settings"]:
-            session_data["youtube_settings"]["wordbank"] = []
         
         sessions[session_id] = session_data
         print(f"Loaded session {session_id}")
@@ -253,9 +273,9 @@ def get_destinations(request: Request, response: Response):
         "scheduled_videos": scheduled_count
     }
 
-@app.post("/api/youtube/wordbank")
+@app.post("/api/global/wordbank")
 def add_wordbank_word(request: Request, response: Response, word: str):
-    """Add a word to the wordbank"""
+    """Add a word to the global wordbank"""
     session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
@@ -264,31 +284,31 @@ def add_wordbank_word(request: Request, response: Response, word: str):
     if not word:
         raise HTTPException(400, "Word cannot be empty")
     
-    if word not in session["youtube_settings"]["wordbank"]:
-        session["youtube_settings"]["wordbank"].append(word)
+    if word not in session["global_settings"]["wordbank"]:
+        session["global_settings"]["wordbank"].append(word)
         save_session(session_id)
     
-    return {"wordbank": session["youtube_settings"]["wordbank"]}
+    return {"wordbank": session["global_settings"]["wordbank"]}
 
-@app.delete("/api/youtube/wordbank/{word}")
+@app.delete("/api/global/wordbank/{word}")
 def remove_wordbank_word(request: Request, response: Response, word: str):
-    """Remove a word from the wordbank"""
+    """Remove a word from the global wordbank"""
     session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
-    if word in session["youtube_settings"]["wordbank"]:
-        session["youtube_settings"]["wordbank"].remove(word)
+    if word in session["global_settings"]["wordbank"]:
+        session["global_settings"]["wordbank"].remove(word)
         save_session(session_id)
     
-    return {"wordbank": session["youtube_settings"]["wordbank"]}
+    return {"wordbank": session["global_settings"]["wordbank"]}
 
-@app.delete("/api/youtube/wordbank")
+@app.delete("/api/global/wordbank")
 def clear_wordbank(request: Request, response: Response):
-    """Clear all words from the wordbank"""
+    """Clear all words from the global wordbank"""
     session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
-    session["youtube_settings"]["wordbank"] = []
+    session["global_settings"]["wordbank"] = []
     save_session(session_id)
     
     return {"wordbank": []}
@@ -319,6 +339,36 @@ def disconnect_youtube(request: Request, response: Response):
     session["destinations"]["youtube"]["enabled"] = False
     save_session(session_id)
     return {"message": "Disconnected"}
+
+@app.get("/api/global/settings")
+def get_global_settings(request: Request, response: Response):
+    """Get global settings"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    return session["global_settings"]
+
+@app.post("/api/global/settings")
+def update_global_settings(
+    request: Request,
+    response: Response,
+    title_template: str = None,
+    description_template: str = None
+):
+    """Update global settings"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    settings = session["global_settings"]
+    
+    if title_template is not None:
+        if len(title_template) > 100:
+            raise HTTPException(400, "Title template must be 100 characters or less")
+        settings["title_template"] = title_template
+    
+    if description_template is not None:
+        settings["description_template"] = description_template
+    
+    save_session(session_id)
+    return settings
 
 @app.get("/api/youtube/settings")
 def get_youtube_settings(request: Request, response: Response):
@@ -412,11 +462,13 @@ async def add_video(file: UploadFile = File(...), request: Request = None, respo
         f.write(await file.read())
     
     # Generate YouTube title once when video is added
+    # Priority: YouTube-specific template > Global template
     filename_no_ext = file.filename.rsplit('.', 1)[0]
+    title_template = session["youtube_settings"].get('title_template', '') or session["global_settings"]['title_template']
     youtube_title = replace_template_placeholders(
-        session["youtube_settings"]['title_template'],
+        title_template,
         filename_no_ext,
-        session["youtube_settings"].get('wordbank', [])
+        session["global_settings"].get('wordbank', [])
     )
     
     video = {
@@ -445,7 +497,7 @@ def get_videos(request: Request, response: Response):
         if video['id'] in session["upload_progress"]:
             video_copy['upload_progress'] = session["upload_progress"][video['id']]
         
-        # Compute YouTube title - use custom title if set, otherwise use stored generated title
+        # Compute YouTube title - Priority: custom > generated_title > destination > global
         custom_settings = video.get('custom_settings', {})
         if 'title' in custom_settings:
             youtube_title = custom_settings['title']
@@ -454,11 +506,13 @@ def get_videos(request: Request, response: Response):
             youtube_title = video['generated_title']
         else:
             # Fallback for old videos without generated_title (backwards compatibility)
+            # Priority: YouTube-specific template > Global template
             filename_no_ext = video['filename'].rsplit('.', 1)[0]
+            title_template = session["youtube_settings"].get('title_template', '') or session["global_settings"]['title_template']
             youtube_title = replace_template_placeholders(
-                session["youtube_settings"]['title_template'],
+                title_template,
                 filename_no_ext,
-                session["youtube_settings"].get('wordbank', [])
+                session["global_settings"].get('wordbank', [])
             )
         
         # Enforce YouTube's 100 character limit
@@ -618,46 +672,52 @@ def upload_video_to_youtube(video, session):
         custom_settings = video.get('custom_settings', {})
         filename_no_ext = video['filename'].rsplit('.', 1)[0]
         
-        # Use custom title if set, otherwise use the generated title (or fallback to template)
+        # Priority for title: custom > generated_title > destination > global
         if 'title' in custom_settings:
             title = custom_settings['title']
         elif 'generated_title' in video:
             # Use the pre-generated title from when video was added
             title = video['generated_title']
         else:
-            # Fallback for backwards compatibility
+            # Fallback: destination template > global template
+            global_settings = session.get("global_settings", {})
+            title_template = youtube_settings.get('title_template', '') or global_settings.get('title_template', '{filename}')
             title = replace_template_placeholders(
-                youtube_settings['title_template'], 
+                title_template, 
                 filename_no_ext,
-                youtube_settings.get('wordbank', [])
+                global_settings.get('wordbank', [])
             )
         
         # Enforce YouTube's 100 character limit for titles
         if len(title) > 100:
             title = title[:100]
         
-        # Use custom description if set, otherwise use template
+        # Priority for description: custom > destination > global
         if 'description' in custom_settings:
             description = custom_settings['description']
         else:
+            # Fallback: destination template > global template
+            global_settings = session.get("global_settings", {})
+            desc_template = youtube_settings.get('description_template', '') or global_settings.get('description_template', 'Uploaded via Hopper')
             description = replace_template_placeholders(
-                youtube_settings['description_template'],
+                desc_template,
                 filename_no_ext,
-                youtube_settings.get('wordbank', [])
+                global_settings.get('wordbank', [])
             )
         
         # Use custom visibility if set, otherwise use global setting
         visibility = custom_settings.get('visibility', youtube_settings['visibility'])
         made_for_kids = custom_settings.get('made_for_kids', youtube_settings['made_for_kids'])
         
-        # Use custom tags if set, otherwise use template
+        # Use custom tags if set, otherwise use template (tags use global wordbank)
         if 'tags' in custom_settings:
             tags_str = custom_settings['tags']
         else:
+            global_settings = session.get("global_settings", {})
             tags_str = replace_template_placeholders(
-                youtube_settings['tags_template'],
+                youtube_settings.get('tags_template', ''),
                 filename_no_ext,
-                youtube_settings.get('wordbank', [])
+                global_settings.get('wordbank', [])
             )
         
         # Parse tags (comma-separated, strip whitespace, filter empty)

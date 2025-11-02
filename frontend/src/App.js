@@ -12,13 +12,17 @@ function App() {
   const [youtube, setYoutube] = useState({ connected: false, enabled: false });
   const [videos, setVideos] = useState([]);
   const [message, setMessage] = useState('');
+  const [globalSettings, setGlobalSettings] = useState({
+    title_template: '{filename}',
+    description_template: 'Uploaded via Hopper',
+    wordbank: []
+  });
   const [youtubeSettings, setYoutubeSettings] = useState({ 
     visibility: 'private', 
     made_for_kids: false,
-    title_template: '{filename}',
-    description_template: 'Uploaded via Hopper',
+    title_template: '',
+    description_template: '',
     tags_template: '',
-    wordbank: [],
     upload_immediately: true,
     schedule_mode: 'spaced',
     schedule_interval_value: 1,
@@ -27,6 +31,7 @@ function App() {
     allow_duplicates: false
   });
   const [showSettings, setShowSettings] = useState(false);
+  const [showGlobalSettings, setShowGlobalSettings] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [editingVideo, setEditingVideo] = useState(null);
   const [draggedVideo, setDraggedVideo] = useState(null);
@@ -36,6 +41,7 @@ function App() {
 
   useEffect(() => {
     loadDestinations();
+    loadGlobalSettings();
     loadYoutubeSettings();
     loadVideos();
     
@@ -74,6 +80,28 @@ function App() {
   const loadDestinations = async () => {
     const res = await axios.get(`${API}/destinations`);
     setYoutube(res.data.youtube);
+  };
+
+  const loadGlobalSettings = async () => {
+    try {
+      const res = await axios.get(`${API}/global/settings`);
+      setGlobalSettings(res.data);
+    } catch (err) {
+      console.error('Error loading global settings:', err);
+    }
+  };
+
+  const updateGlobalSettings = async (key, value) => {
+    try {
+      const params = new URLSearchParams();
+      params.append(key, value);
+      const res = await axios.post(`${API}/global/settings?${params.toString()}`);
+      setGlobalSettings(res.data);
+      setMessage(`✅ Settings updated`);
+    } catch (err) {
+      setMessage('❌ Error updating settings');
+      console.error('Error updating settings:', err);
+    }
   };
 
   const loadYoutubeSettings = async () => {
@@ -142,8 +170,8 @@ function App() {
         try {
           const params = new URLSearchParams();
           params.append('word', word);
-          const res = await axios.post(`${API}/youtube/wordbank?${params.toString()}`);
-          setYoutubeSettings({...youtubeSettings, wordbank: res.data.wordbank});
+          const res = await axios.post(`${API}/global/wordbank?${params.toString()}`);
+          setGlobalSettings({...globalSettings, wordbank: res.data.wordbank});
           addedCount++;
         } catch (err) {
           console.error(`Error adding word "${word}":`, err);
@@ -158,7 +186,7 @@ function App() {
       }
       
       // Reload settings to get final wordbank state
-      await loadYoutubeSettings();
+      await loadGlobalSettings();
     } catch (err) {
       setMessage('❌ Error adding words');
       console.error('Error adding words:', err);
@@ -167,8 +195,8 @@ function App() {
 
   const removeWordFromWordbank = async (word) => {
     try {
-      await axios.delete(`${API}/youtube/wordbank/${encodeURIComponent(word)}`);
-      setYoutubeSettings({...youtubeSettings, wordbank: youtubeSettings.wordbank.filter(w => w !== word)});
+      await axios.delete(`${API}/global/wordbank/${encodeURIComponent(word)}`);
+      setGlobalSettings({...globalSettings, wordbank: globalSettings.wordbank.filter(w => w !== word)});
       setMessage('✅ Word removed from wordbank');
     } catch (err) {
       setMessage('❌ Error removing word');
@@ -177,12 +205,12 @@ function App() {
   };
 
   const clearWordbank = async () => {
-    if (!window.confirm(`Clear all ${youtubeSettings.wordbank.length} words from wordbank?`)) {
+    if (!window.confirm(`Clear all ${globalSettings.wordbank.length} words from wordbank?`)) {
       return;
     }
     try {
-      await axios.delete(`${API}/youtube/wordbank`);
-      setYoutubeSettings({...youtubeSettings, wordbank: []});
+      await axios.delete(`${API}/global/wordbank`);
+      setGlobalSettings({...globalSettings, wordbank: []});
       setWordbankExpanded(false);
       setMessage('✅ Wordbank cleared');
     } catch (err) {
@@ -425,6 +453,104 @@ function App() {
       
       {message && <div className="message">{message}</div>}
       
+      {/* Global Settings */}
+      <div className="card">
+        <div className="card-header" onClick={() => setShowGlobalSettings(!showGlobalSettings)}>
+          <h2>⚙️ Global Settings</h2>
+          <button className="settings-toggle">{showGlobalSettings ? '−' : '+'}</button>
+        </div>
+        {showGlobalSettings && (
+          <div className="settings-panel">
+            <div className="setting-group">
+              <label>Video Title Template <span className="char-counter">{globalSettings.title_template.length}/100</span></label>
+              <input 
+                type="text"
+                value={globalSettings.title_template}
+                onChange={(e) => setGlobalSettings({...globalSettings, title_template: e.target.value})}
+                onBlur={(e) => updateGlobalSettings('title_template', e.target.value)}
+                placeholder="{filename}"
+                className="input-text"
+                maxLength="100"
+              />
+              <small className="hint">Use {'{filename}'} for filename, {'{random}'} for random wordbank word</small>
+            </div>
+
+            <div className="setting-group">
+              <label>Video Description Template</label>
+              <textarea 
+                value={globalSettings.description_template}
+                onChange={(e) => setGlobalSettings({...globalSettings, description_template: e.target.value})}
+                onBlur={(e) => updateGlobalSettings('description_template', e.target.value)}
+                placeholder="Uploaded via Hopper"
+                className="textarea-text"
+                rows="3"
+              />
+              <small className="hint">Use {'{filename}'} for filename, {'{random}'} for random wordbank word</small>
+            </div>
+
+            <div className="setting-divider"></div>
+
+            <div className="setting-group">
+              <div className="wordbank-label">
+                <div className="wordbank-title">
+                  <span>Random Wordbank ({globalSettings.wordbank.length} words)</span>
+                  {globalSettings.wordbank.length > 0 && (
+                    <span 
+                      className={`wordbank-caret ${wordbankExpanded ? 'expanded' : ''}`}
+                      onClick={() => setWordbankExpanded(!wordbankExpanded)}
+                      title={wordbankExpanded ? 'Hide words' : 'Show words'}
+                    >
+                      ▼
+                    </span>
+                  )}
+                </div>
+                {globalSettings.wordbank.length > 0 && (
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      clearWordbank();
+                    }}
+                    className="btn-clear-wordbank"
+                    title="Clear all words"
+                  >
+                    Clear All
+                  </button>
+                )}
+              </div>
+              <div className="wordbank-input">
+                <input 
+                  type="text"
+                  value={newWord}
+                  onChange={(e) => setNewWord(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && newWord.trim() && addWordToWordbank(newWord.trim())}
+                  placeholder="Add word(s) - comma-separated for multiple"
+                  className="input-text"
+                />
+                <button 
+                  onClick={() => newWord.trim() && addWordToWordbank(newWord.trim())}
+                  className="btn-add-word"
+                  disabled={!newWord.trim()}
+                >
+                  Add
+                </button>
+              </div>
+              <small className="hint">Words to use with {'{random}'} placeholder. Enter comma-separated words to add multiple at once</small>
+              
+              {globalSettings.wordbank.length > 0 && wordbankExpanded && (
+                <div className="wordbank-list">
+                  {globalSettings.wordbank.map((word, idx) => (
+                    <div key={idx} className="wordbank-item">
+                      <span>{word}</span>
+                      <button onClick={() => removeWordFromWordbank(word)} className="btn-remove-word">×</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+      
       {/* Destinations */}
       <div className="card">
         <h2>Destinations</h2>
@@ -499,30 +625,30 @@ function App() {
             </div>
 
             <div className="setting-group">
-              <label>Video Title Template <span className="char-counter">{youtubeSettings.title_template.length}/100</span></label>
+              <label>YouTube Title Template (Override) <span className="char-counter">{youtubeSettings.title_template?.length || 0}/100</span></label>
               <input 
                 type="text"
-                value={youtubeSettings.title_template}
+                value={youtubeSettings.title_template || ''}
                 onChange={(e) => setYoutubeSettings({...youtubeSettings, title_template: e.target.value})}
                 onBlur={(e) => updateYoutubeSettings('title_template', e.target.value)}
-                placeholder="{filename}"
+                placeholder="Leave empty to use global template"
                 className="input-text"
                 maxLength="100"
               />
-              <small className="hint">Use {'{filename}'} for filename, {'{random}'} for random wordbank word</small>
+              <small className="hint">Override global title template for YouTube only. Leave empty to use global</small>
             </div>
 
             <div className="setting-group">
-              <label>Video Description Template</label>
+              <label>YouTube Description Template (Override)</label>
               <textarea 
-                value={youtubeSettings.description_template}
+                value={youtubeSettings.description_template || ''}
                 onChange={(e) => setYoutubeSettings({...youtubeSettings, description_template: e.target.value})}
                 onBlur={(e) => updateYoutubeSettings('description_template', e.target.value)}
-                placeholder="Uploaded via Hopper"
+                placeholder="Leave empty to use global template"
                 className="textarea-text"
                 rows="3"
               />
-              <small className="hint">Use {'{filename}'} for filename, {'{random}'} for random wordbank word</small>
+              <small className="hint">Override global description template for YouTube only. Leave empty to use global</small>
             </div>
 
             <div className="setting-group">
@@ -536,66 +662,6 @@ function App() {
                 className="input-text"
               />
               <small className="hint">Comma-separated tags. Use {'{filename}'} or {'{random}'}</small>
-            </div>
-
-            <div className="setting-divider"></div>
-
-            <div className="setting-group">
-              <div className="wordbank-label">
-                <div className="wordbank-title">
-                  <span>Random Wordbank ({youtubeSettings.wordbank.length} words)</span>
-                  {youtubeSettings.wordbank.length > 0 && (
-                    <span 
-                      className={`wordbank-caret ${wordbankExpanded ? 'expanded' : ''}`}
-                      onClick={() => setWordbankExpanded(!wordbankExpanded)}
-                      title={wordbankExpanded ? 'Hide words' : 'Show words'}
-                    >
-                      ▼
-                    </span>
-                  )}
-                </div>
-                {youtubeSettings.wordbank.length > 0 && (
-                  <button 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      clearWordbank();
-                    }}
-                    className="btn-clear-wordbank"
-                    title="Clear all words"
-                  >
-                    Clear All
-                  </button>
-                )}
-              </div>
-              <div className="wordbank-input">
-                <input 
-                  type="text"
-                  value={newWord}
-                  onChange={(e) => setNewWord(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && newWord.trim() && addWordToWordbank(newWord.trim())}
-                  placeholder="Add word(s) - comma-separated for multiple"
-                  className="input-text"
-                />
-                <button 
-                  onClick={() => newWord.trim() && addWordToWordbank(newWord.trim())}
-                  className="btn-add-word"
-                  disabled={!newWord.trim()}
-                >
-                  Add
-                </button>
-              </div>
-              <small className="hint">Words to use with {'{random}'} placeholder. Enter comma-separated words to add multiple at once</small>
-              
-              {youtubeSettings.wordbank.length > 0 && wordbankExpanded && (
-                <div className="wordbank-list">
-                  {youtubeSettings.wordbank.map((word, idx) => (
-                    <div key={idx} className="wordbank-item">
-                      <span>{word}</span>
-                      <button onClick={() => removeWordFromWordbank(word)} className="btn-remove-word">×</button>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
 
             <div className="setting-divider"></div>
