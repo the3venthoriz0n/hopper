@@ -29,6 +29,7 @@ function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [editingVideo, setEditingVideo] = useState(null);
   const [draggedVideo, setDraggedVideo] = useState(null);
+  const [editTitleLength, setEditTitleLength] = useState(0);
 
   useEffect(() => {
     loadDestinations();
@@ -183,6 +184,11 @@ function App() {
     }
   };
 
+  const closeEditModal = () => {
+    setEditingVideo(null);
+    setEditTitleLength(0);
+  };
+
   const updateVideoSettings = async (videoId, settings) => {
     try {
       const params = new URLSearchParams();
@@ -199,7 +205,7 @@ function App() {
       await loadVideos();
       
       setMessage('✅ Video settings updated');
-      setEditingVideo(null);
+      closeEditModal();
     } catch (err) {
       setMessage('❌ Error updating video');
       console.error('Error updating video:', err);
@@ -425,7 +431,7 @@ function App() {
             </div>
 
             <div className="setting-group">
-              <label>Video Title Template</label>
+              <label>Video Title Template <span className="char-counter">{youtubeSettings.title_template.length}/100</span></label>
               <input 
                 type="text"
                 value={youtubeSettings.title_template}
@@ -433,6 +439,7 @@ function App() {
                 onBlur={(e) => updateYoutubeSettings('title_template', e.target.value)}
                 placeholder="{filename}"
                 className="input-text"
+                maxLength="100"
               />
               <small className="hint">Use {'{filename}'} for video filename</small>
             </div>
@@ -632,7 +639,10 @@ function App() {
               </div>
               <div className="video-actions">
                 {v.status !== 'uploading' && v.status !== 'uploaded' && (
-                  <button onClick={() => setEditingVideo(v)} className="btn-edit" title="Edit video settings">
+                  <button onClick={() => {
+                    setEditingVideo(v);
+                    setEditTitleLength((v.custom_settings?.title || v.youtube_title || '').length);
+                  }} className="btn-edit" title="Edit video settings">
                     ✏️
                   </button>
                 )}
@@ -645,21 +655,23 @@ function App() {
       
       {/* Edit Video Modal */}
       {editingVideo && (
-        <div className="modal-overlay" onClick={() => setEditingVideo(null)}>
+        <div className="modal-overlay" onClick={closeEditModal}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Edit Video Settings</h2>
-              <button onClick={() => setEditingVideo(null)} className="btn-close">×</button>
+              <button onClick={closeEditModal} className="btn-close">×</button>
             </div>
             <div className="modal-body">
               <div className="form-group">
-                <label>Video Title</label>
+                <label>Video Title <span className="char-counter">{editTitleLength}/100</span></label>
                 <input 
                   type="text"
                   defaultValue={editingVideo.custom_settings?.title || editingVideo.youtube_title}
                   id="edit-title"
                   className="input-text"
                   placeholder="Video title"
+                  maxLength="100"
+                  onInput={(e) => setEditTitleLength(e.target.value.length)}
                 />
                 <small className="hint">Leave empty to use global template</small>
               </div>
@@ -729,7 +741,7 @@ function App() {
               </div>
             </div>
             <div className="modal-footer">
-              <button onClick={() => setEditingVideo(null)} className="btn-cancel">
+              <button onClick={closeEditModal} className="btn-cancel">
                 Cancel
               </button>
               <button 

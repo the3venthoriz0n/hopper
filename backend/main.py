@@ -295,6 +295,8 @@ def update_youtube_settings(
         settings["made_for_kids"] = made_for_kids
     
     if title_template is not None:
+        if len(title_template) > 100:
+            raise HTTPException(400, "Title template must be 100 characters or less")
         settings["title_template"] = title_template
     
     if description_template is not None:
@@ -425,6 +427,8 @@ def update_video(
         video["custom_settings"] = {}
     
     if title is not None:
+        if len(title) > 100:
+            raise HTTPException(400, "Title must be 100 characters or less")
         video["custom_settings"]["title"] = title
     
     if description is not None:
@@ -536,6 +540,10 @@ def upload_video_to_youtube(video, session):
             title = custom_settings['title']
         else:
             title = youtube_settings['title_template'].replace('{filename}', filename_no_ext)
+        
+        # Enforce YouTube's 100 character limit for titles
+        if len(title) > 100:
+            title = title[:100]
         
         # Use custom description if set, otherwise use template
         if 'description' in custom_settings:

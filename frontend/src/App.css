@@ -410,6 +410,13 @@ button:disabled {
   display: block;
 }
 
+.char-counter {
+  font-size: 0.85rem;
+  color: #8b5cf6;
+  font-weight: normal;
+  margin-left: 0.5rem;
+}
+
 .setting-divider {
   height: 1px;
   background: rgba(255, 255, 255, 0.1);
