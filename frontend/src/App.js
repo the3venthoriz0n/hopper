@@ -691,7 +691,11 @@ function App() {
                 <label>Scheduled Time</label>
                 <input 
                   type="datetime-local"
-                  defaultValue={editingVideo.scheduled_time ? new Date(editingVideo.scheduled_time).toISOString().slice(0, 16) : ''}
+                  defaultValue={editingVideo.scheduled_time ? (() => {
+                    const date = new Date(editingVideo.scheduled_time);
+                    const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+                    return localDate.toISOString().slice(0, 16);
+                  })() : ''}
                   id="edit-scheduled-time"
                   className="input-text"
                 />
