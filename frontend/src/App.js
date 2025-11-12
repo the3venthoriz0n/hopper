@@ -529,7 +529,9 @@ function App() {
       setVideos(videosRes.data);
     } catch (err) {
       if (pollInterval) clearInterval(pollInterval);
-      setMessage(`❌ ${err.response?.data?.detail || 'Operation failed'}`);
+      const errorMsg = err.response?.data?.detail || err.response?.data?.message || err.message || 'Unknown error';
+      console.error('Upload error:', err);
+      setMessage(`❌ Upload failed: ${errorMsg}`);
       
       // Refresh to get real status
       const videosRes = await axios.get(`${API}/videos`);

@@ -1362,12 +1362,28 @@ def upload_video_to_tiktok(video, session, session_id=None):
         
         video_size = video_path.stat().st_size
         
+        if video_size == 0:
+            raise Exception("Video file is empty")
+        
         # Chunk size: 10MB (10 * 1024 * 1024 bytes)
-        chunk_size = 10 * 1024 * 1024
-        total_chunks = (video_size + chunk_size - 1) // chunk_size  # Ceiling division
+        # If video is smaller than chunk size, use video size as chunk size
+        standard_chunk_size = 10 * 1024 * 1024
+        
+        if video_size <= standard_chunk_size:
+            # Video fits in one chunk
+            chunk_size = video_size
+            total_chunks = 1
+        else:
+            # Video needs multiple chunks
+            chunk_size = standard_chunk_size
+            # Calculate total chunks: ceiling division
+            total_chunks = (video_size + chunk_size - 1) // chunk_size
         
         # Step 1: Initialize upload
         print(f"[TikTok Upload] Initializing upload for {video['filename']}")
+        print(f"  Video size: {video_size} bytes ({video_size / (1024*1024):.2f} MB)")
+        print(f"  Chunk size: {chunk_size} bytes ({chunk_size / (1024*1024)} MB)")
+        print(f"  Total chunks: {total_chunks}")
         upload_progress[video['id']] = 5
         
         init_headers = {
@@ -1391,6 +1407,7 @@ def upload_video_to_tiktok(video, session, session_id=None):
             }
         }
         
+        print(f"[TikTok Upload] Init request body: {init_body}")
         init_response = httpx.post(TIKTOK_INIT_UPLOAD_URL, headers=init_headers, json=init_body, timeout=30.0)
         
         if init_response.status_code != 200:
@@ -1528,19 +1545,38 @@ def upload_videos(request: Request, response: Response):
     destinations = session.get("destinations", {})
     enabled_destinations = []
     
+    print(f"[Upload] Checking destinations for session {session_id[:16]}...")
+    print(f"  Destinations config: {destinations}")
+    
     for dest_name, uploader_func in DESTINATION_UPLOADERS.items():
-        if uploader_func and destinations.get(dest_name, {}).get("enabled", False):
-            creds_key = f"{dest_name}_creds"
-            if session.get(creds_key):
-                enabled_destinations.append(dest_name)
+        if not uploader_func:
+            continue
+        
+        dest_config = destinations.get(dest_name, {})
+        is_enabled = dest_config.get("enabled", False)
+        creds_key = f"{dest_name}_creds"
+        has_creds = session.get(creds_key) is not None
+        
+        print(f"  {dest_name}: enabled={is_enabled}, has_creds={has_creds}")
+        
+        if is_enabled and has_creds:
+            enabled_destinations.append(dest_name)
+    
+    print(f"[Upload] Enabled destinations: {enabled_destinations}")
     
     if not enabled_destinations:
-        raise HTTPException(400, "No enabled and connected destinations. Enable at least one destination and ensure it's connected.")
+        error_msg = "No enabled and connected destinations. Enable at least one destination and ensure it's connected."
+        print(f"[Upload] ERROR: {error_msg}")
+        raise HTTPException(400, error_msg)
     
     pending_videos = [v for v in session["videos"] if v['status'] == 'pending']
     
+    print(f"[Upload] Pending videos: {len(pending_videos)}")
+    
     if not pending_videos:
-        raise HTTPException(400, "No pending videos to upload")
+        error_msg = "No pending videos to upload"
+        print(f"[Upload] ERROR: {error_msg}")
+        raise HTTPException(400, error_msg)
     
     # Use YouTube settings for scheduling (can be made destination-agnostic later)
     # For now, all destinations follow the same schedule settings
