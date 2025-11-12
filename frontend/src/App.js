@@ -928,7 +928,7 @@ function App() {
             </div>
 
             <div className="setting-group">
-              <label>TikTok Title Template (Override) <span className="char-counter">{tiktokSettings.title_template?.length || 0}/100</span></label>
+              <label>TikTok Title Template (Caption) (Override) <span className="char-counter">{tiktokSettings.title_template?.length || 0}/2200</span></label>
               <input 
                 type="text"
                 value={tiktokSettings.title_template || ''}
@@ -936,13 +936,13 @@ function App() {
                 onBlur={(e) => updateTiktokSettings('title_template', e.target.value)}
                 placeholder="Leave empty to use global template"
                 className="input-text"
-                maxLength="100"
+                maxLength="2200"
               />
-              <small className="hint">Override global title template for TikTok only. Leave empty to use global</small>
+              <small className="hint">Override global title template for TikTok only. This is the video caption (max 2200 characters). Leave empty to use global</small>
             </div>
 
             <div className="setting-group">
-              <label>TikTok Description Template (Override)</label>
+              <label>TikTok Description Template (Override) <span className="hint-text">(Not used - TikTok only uses caption)</span></label>
               <textarea 
                 value={tiktokSettings.description_template || ''}
                 onChange={(e) => setTiktokSettings({...tiktokSettings, description_template: e.target.value})}
@@ -950,8 +950,9 @@ function App() {
                 placeholder="Leave empty to use global template"
                 className="textarea-text"
                 rows="3"
+                disabled
               />
-              <small className="hint">Override global description template for TikTok only. Leave empty to use global</small>
+              <small className="hint">TikTok only uses the caption (title) field. Description is not supported by TikTok API.</small>
             </div>
 
             <div className="setting-divider"></div>

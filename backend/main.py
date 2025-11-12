@@ -39,6 +39,17 @@ TIKTOK_AUTH_URL = "https://www.tiktok.com/v2/auth/authorize"
 TIKTOK_TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
 TIKTOK_SCOPES = ["user.info.basic", "video.upload", "video.publish"]
 
+# TikTok Content Posting API
+TIKTOK_API_BASE = "https://open.tiktokapis.com/v2"
+TIKTOK_CREATOR_INFO_URL = f"{TIKTOK_API_BASE}/post/publish/creator_info/query/"
+TIKTOK_INIT_UPLOAD_URL = f"{TIKTOK_API_BASE}/post/publish/video/init/"
+
+# TikTok Rate Limiting: 6 requests per minute per user
+# Simple rate limiter: track last request time per session
+tiktok_rate_limiter = {}  # {session_id: [timestamps]}
+TIKTOK_RATE_LIMIT_REQUESTS = 6
+TIKTOK_RATE_LIMIT_WINDOW = 60  # seconds
+
 
 def get_google_client_config():
     """Build Google OAuth client config from environment variables"""
@@ -1195,11 +1206,102 @@ def upload_video_to_youtube(video, session):
         if video['id'] in upload_progress:
             del upload_progress[video['id']]
 
-def upload_video_to_tiktok(video, session):
-    """Helper function to upload a single video to TikTok"""
+def check_tiktok_rate_limit(session_id):
+    """Check if TikTok API rate limit is exceeded (6 requests per minute)"""
+    import time
+    current_time = time.time()
+    
+    if session_id not in tiktok_rate_limiter:
+        tiktok_rate_limiter[session_id] = []
+    
+    # Remove timestamps older than the rate limit window
+    tiktok_rate_limiter[session_id] = [
+        ts for ts in tiktok_rate_limiter[session_id]
+        if current_time - ts < TIKTOK_RATE_LIMIT_WINDOW
+    ]
+    
+    # Check if we've exceeded the limit
+    if len(tiktok_rate_limiter[session_id]) >= TIKTOK_RATE_LIMIT_REQUESTS:
+        oldest_request = min(tiktok_rate_limiter[session_id])
+        wait_time = TIKTOK_RATE_LIMIT_WINDOW - (current_time - oldest_request)
+        raise Exception(f"TikTok rate limit exceeded. Wait {int(wait_time)} seconds before trying again.")
+    
+    # Record this request
+    tiktok_rate_limiter[session_id].append(current_time)
+
+def get_tiktok_creator_info(session):
+    """Query TikTok creator info and cache it in session"""
+    tiktok_creds = session.get("tiktok_creds")
+    if not tiktok_creds:
+        raise Exception("No TikTok credentials")
+    
+    access_token = tiktok_creds.get("access_token")
+    if not access_token:
+        raise Exception("No TikTok access token")
+    
+    # Check if we have cached creator info
+    if "tiktok_creator_info" in session and session["tiktok_creator_info"]:
+        return session["tiktok_creator_info"]
+    
+    # Query creator info
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json; charset=UTF-8"
+    }
+    
+    response = httpx.post(TIKTOK_CREATOR_INFO_URL, headers=headers, json={}, timeout=30.0)
+    
+    if response.status_code != 200:
+        error_data = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
+        error_code = error_data.get("error", {}).get("code", "unknown")
+        error_msg = error_data.get("error", {}).get("message", response.text)
+        raise Exception(f"Failed to query creator info: {error_code} - {error_msg}")
+    
+    creator_info = response.json()
+    
+    # Cache it in session
+    session["tiktok_creator_info"] = creator_info.get("data", {})
+    
+    return session["tiktok_creator_info"]
+
+def map_privacy_level_to_tiktok(privacy_level, creator_info):
+    """Map our privacy level to TikTok's format"""
+    # Get available privacy options from creator info
+    available_options = creator_info.get("privacy_level_options", [])
+    
+    # Mapping
+    mapping = {
+        "public": "PUBLIC_TO_EVERYONE",
+        "private": "SELF_ONLY",
+        "friends": "MUTUAL_FOLLOW_FRIENDS"
+    }
+    
+    tiktok_privacy = mapping.get(privacy_level, "PUBLIC_TO_EVERYONE")
+    
+    # Verify it's available, fallback to first available option
+    if tiktok_privacy not in available_options and available_options:
+        tiktok_privacy = available_options[0]
+    elif not available_options:
+        # Default if no options available
+        tiktok_privacy = "PUBLIC_TO_EVERYONE"
+    
+    return tiktok_privacy
+
+def upload_video_to_tiktok(video, session, session_id=None):
+    """Helper function to upload a single video to TikTok using Content Posting API"""
     tiktok_creds = session.get("tiktok_creds")
     tiktok_settings = session.get("tiktok_settings", {})
     upload_progress = session["upload_progress"]
+    
+    # Get session_id from session if not provided (for rate limiting)
+    if not session_id:
+        # Try to find session_id by searching sessions dict
+        for sid, sess in sessions.items():
+            if sess == session:
+                session_id = sid
+                break
+        if not session_id:
+            session_id = "unknown"
     
     if not tiktok_creds:
         video['status'] = 'failed'
@@ -1215,11 +1317,18 @@ def upload_video_to_tiktok(video, session):
         if not access_token:
             raise Exception("No TikTok access token")
         
+        # Check rate limit
+        check_tiktok_rate_limit(session_id)
+        
+        # Get creator info (cached in session)
+        creator_info = get_tiktok_creator_info(session)
+        
         # Prepare video metadata
         custom_settings = video.get('custom_settings', {})
         filename_no_ext = video['filename'].rsplit('.', 1)[0]
         
-        # Priority for title: custom > generated_title > destination > global
+        # Priority for title (caption): custom > generated_title > destination > global
+        # TikTok title is the caption, max 2200 UTF-16 runes
         if 'title' in custom_settings:
             title = custom_settings['title']
         elif 'generated_title' in video:
@@ -1233,57 +1342,126 @@ def upload_video_to_tiktok(video, session):
                 global_settings.get('wordbank', [])
             )
         
-        # TikTok title limit is 150 characters
-        if len(title) > 150:
-            title = title[:150]
+        # TikTok caption limit is 2200 UTF-16 runes (characters)
+        # For simplicity, we'll use len() which works for most cases
+        if len(title) > 2200:
+            title = title[:2200]
         
-        # Priority for description: custom > destination > global
-        if 'description' in custom_settings:
-            description = custom_settings['description']
-        else:
-            global_settings = session.get("global_settings", {})
-            desc_template = tiktok_settings.get('description_template', '') or global_settings.get('description_template', 'Uploaded via Hopper')
-            description = replace_template_placeholders(
-                desc_template,
-                filename_no_ext,
-                global_settings.get('wordbank', [])
-            )
-        
-        # TikTok description limit is 2200 characters
-        if len(description) > 2200:
-            description = description[:2200]
-        
-        # Get privacy settings
+        # Get privacy settings and map to TikTok format
         privacy_level = custom_settings.get('privacy_level', tiktok_settings.get('privacy_level', 'public'))
+        tiktok_privacy = map_privacy_level_to_tiktok(privacy_level, creator_info)
+        
         allow_comments = custom_settings.get('allow_comments', tiktok_settings.get('allow_comments', True))
         allow_duet = custom_settings.get('allow_duet', tiktok_settings.get('allow_duet', True))
         allow_stitch = custom_settings.get('allow_stitch', tiktok_settings.get('allow_stitch', True))
         
-        # TODO: Implement TikTok video upload using Content Posting API
-        # This requires:
-        # 1. Initialize upload session
-        # 2. Upload video in chunks
-        # 3. Publish video
-        # For now, mark as uploaded (placeholder)
-        # See: https://developers.tiktok.com/doc/content-posting-api-get-started-upload/
+        # Get video file size
+        video_path = Path(video['path'])
+        if not video_path.exists():
+            raise Exception(f"Video file not found: {video['path']}")
         
-        # Placeholder implementation - replace with actual TikTok API calls
-        print(f"[TikTok Upload] Would upload: {video['filename']}")
-        print(f"  Title: {title}")
-        print(f"  Description: {description[:100]}...")
-        print(f"  Privacy: {privacy_level}")
+        video_size = video_path.stat().st_size
         
-        # Simulate upload progress
-        upload_progress[video['id']] = 50
-        # TODO: Actual upload here
+        # Chunk size: 10MB (10 * 1024 * 1024 bytes)
+        chunk_size = 10 * 1024 * 1024
+        total_chunks = (video_size + chunk_size - 1) // chunk_size  # Ceiling division
+        
+        # Step 1: Initialize upload
+        print(f"[TikTok Upload] Initializing upload for {video['filename']}")
+        upload_progress[video['id']] = 5
+        
+        init_headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json; charset=UTF-8"
+        }
+        
+        init_body = {
+            "post_info": {
+                "title": title,
+                "privacy_level": tiktok_privacy,
+                "disable_duet": not allow_duet,
+                "disable_comment": not allow_comments,
+                "disable_stitch": not allow_stitch
+            },
+            "source_info": {
+                "source": "FILE_UPLOAD",
+                "video_size": video_size,
+                "chunk_size": chunk_size,
+                "total_chunk_count": total_chunks
+            }
+        }
+        
+        init_response = httpx.post(TIKTOK_INIT_UPLOAD_URL, headers=init_headers, json=init_body, timeout=30.0)
+        
+        if init_response.status_code != 200:
+            error_data = init_response.json() if init_response.headers.get("content-type", "").startswith("application/json") else {}
+            error_code = error_data.get("error", {}).get("code", "unknown")
+            error_msg = error_data.get("error", {}).get("message", init_response.text)
+            raise Exception(f"Failed to initialize upload: {error_code} - {error_msg}")
+        
+        init_data = init_response.json()
+        publish_id = init_data.get("data", {}).get("publish_id")
+        upload_url = init_data.get("data", {}).get("upload_url")
+        
+        if not publish_id or not upload_url:
+            raise Exception("Invalid response from TikTok: missing publish_id or upload_url")
+        
+        print(f"[TikTok Upload] Upload initialized, publish_id: {publish_id}")
+        upload_progress[video['id']] = 10
+        
+        # Step 2: Upload video in chunks
+        print(f"[TikTok Upload] Uploading {total_chunks} chunks...")
+        
+        with open(video_path, 'rb') as video_file:
+            for chunk_num in range(total_chunks):
+                # Calculate chunk range
+                start_byte = chunk_num * chunk_size
+                end_byte = min(start_byte + chunk_size - 1, video_size - 1)
+                chunk_data_size = end_byte - start_byte + 1
+                
+                # Read chunk
+                video_file.seek(start_byte)
+                chunk_data = video_file.read(chunk_data_size)
+                
+                # Determine content type from file extension
+                file_ext = video['filename'].rsplit('.', 1)[-1].lower()
+                content_type_map = {
+                    'mp4': 'video/mp4',
+                    'mov': 'video/quicktime',
+                    'webm': 'video/webm'
+                }
+                content_type = content_type_map.get(file_ext, 'video/mp4')
+                
+                # Upload chunk
+                upload_headers = {
+                    "Content-Type": content_type,
+                    "Content-Length": str(chunk_data_size),
+                    "Content-Range": f"bytes {start_byte}-{end_byte}/{video_size}"
+                }
+                
+                chunk_response = httpx.put(upload_url, headers=upload_headers, content=chunk_data, timeout=300.0)
+                
+                if chunk_response.status_code not in [200, 201, 308]:  # 308 is "Resume Incomplete"
+                    raise Exception(f"Failed to upload chunk {chunk_num + 1}/{total_chunks}: {chunk_response.status_code} - {chunk_response.text}")
+                
+                # Update progress
+                progress = 10 + int((chunk_num + 1) / total_chunks * 90)
+                upload_progress[video['id']] = progress
+                print(f"[TikTok Upload] Chunk {chunk_num + 1}/{total_chunks} uploaded ({progress}%)")
+        
         upload_progress[video['id']] = 100
         
+        # Store publish_id for status checking
+        video['tiktok_publish_id'] = publish_id
         video['status'] = 'uploaded'
-        video['tiktok_id'] = 'placeholder'  # Replace with actual TikTok video ID
+        video['tiktok_id'] = publish_id  # Use publish_id as identifier
+        
+        print(f"[TikTok Upload] Successfully uploaded {video['filename']}, publish_id: {publish_id}")
         
     except Exception as e:
         video['status'] = 'failed'
         video['error'] = f'TikTok upload failed: {str(e)}'
+        print(f"[TikTok Upload] Error: {str(e)}")
         if video['id'] in upload_progress:
             del upload_progress[video['id']]
 
@@ -1318,7 +1496,11 @@ async def scheduler_task():
                                         creds_key = f"{dest_name}_creds"
                                         if session.get(creds_key):
                                             print(f"  Uploading to {dest_name}...")
-                                            uploader_func(video, session)
+                                            # Pass session_id for TikTok rate limiting
+                                            if dest_name == "tiktok":
+                                                uploader_func(video, session, session_id)
+                                            else:
+                                                uploader_func(video, session)
                                 
                                 save_session(session_id)
                         except Exception as e:
@@ -1372,7 +1554,11 @@ def upload_videos(request: Request, response: Response):
                 uploader_func = DESTINATION_UPLOADERS[dest_name]
                 if uploader_func:
                     print(f"[Upload] Uploading {video['filename']} to {dest_name}")
-                    uploader_func(video, session)
+                    # Pass session_id for TikTok rate limiting
+                    if dest_name == "tiktok":
+                        uploader_func(video, session, session_id)
+                    else:
+                        uploader_func(video, session)
         
         save_session(session_id)
         uploaded_count = len([v for v in session["videos"] if v['status'] == 'uploaded'])
