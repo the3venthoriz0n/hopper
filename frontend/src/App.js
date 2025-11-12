@@ -2,23 +2,17 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './App.css';
 
-// Use environment variables or fallback to window.location
-// React only exposes REACT_APP_ prefixed env vars to the browser
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-
-console.log('REACT_APP_BACKEND_URL:', process.env.REACT_APP_BACKEND_URL);
-console.log('BACKEND_URL:', BACKEND_URL);
-
-const API = BACKEND_URL 
-  ? `${BACKEND_URL}/api`
-  : `${window.location.protocol}//${window.location.hostname}/api`;
-
-console.log('API URL:', API);
-
 // Configure axios to send cookies with every request
 axios.defaults.withCredentials = true;
 
 function App() {
+  // Build API URL at runtime - always use HTTPS
+  const getApiUrl = () => {
+    const backendUrl = process.env.REACT_APP_BACKEND_URL || `https://${window.location.hostname}`;
+    return `${backendUrl}/api`;
+  };
+  
+  const API = getApiUrl();
   const [youtube, setYoutube] = useState({ connected: false, enabled: false });
   const [tiktok, setTiktok] = useState({ connected: false, enabled: false });
   const [videos, setVideos] = useState([]);
