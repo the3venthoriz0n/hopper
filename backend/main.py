@@ -174,25 +174,6 @@ def get_session(session_id: str):
         # Try to load from disk
         load_session(session_id)
     
-    # Always ensure credentials are complete (fix old sessions in memory)
-    session = sessions[session_id]
-    if session.get("youtube_creds"):
-        creds = session["youtube_creds"]
-        # Check if credentials are missing required fields
-        if not creds.client_id or not creds.client_secret or not creds.token_uri:
-            print(f"[Session] Fixing incomplete credentials in memory for session {session_id[:16]}...")
-            # Reconstruct with complete fields
-            session["youtube_creds"] = Credentials(
-                token=creds.token,
-                refresh_token=creds.refresh_token,
-                token_uri=creds.token_uri or "https://oauth2.googleapis.com/token",
-                client_id=creds.client_id or GOOGLE_CLIENT_ID,
-                client_secret=creds.client_secret or GOOGLE_CLIENT_SECRET,
-                scopes=creds.scopes
-            )
-            # Save the fixed credentials
-            save_session(session_id)
-    
     return sessions[session_id]
 
 def save_session(session_id: str):
@@ -240,21 +221,8 @@ def load_session(session_id: str):
             client_secret = creds_data.get("client_secret") or GOOGLE_CLIENT_SECRET
             token_uri = creds_data.get("token_uri") or "https://oauth2.googleapis.com/token"
             
-            # Check if this is an old session missing required fields
-            if not creds_data.get("client_id") or not creds_data.get("client_secret"):
-                print(f"[Session Load] WARNING: Old session {session_id[:16]}... missing client_id/client_secret, using env vars")
-                # Update the session file with complete credentials for future loads
-                creds_data["client_id"] = client_id
-                creds_data["client_secret"] = client_secret
-                creds_data["token_uri"] = token_uri
-                # Save the updated session
-                try:
-                    with open(SESSIONS_DIR / f"{session_id}.json", 'w') as f:
-                        json.dump(session_data, f, indent=2)
-                    print(f"[Session Load] Updated session file with complete credentials")
-                except Exception as e:
-                    print(f"[Session Load] Failed to update session file: {e}")
-            
+            # Construct Credentials object with all required fields
+            # For old sessions missing fields, use env vars (they'll be saved on next save_session call)
             session_data["youtube_creds"] = Credentials(
                 token=creds_data.get("token"),
                 refresh_token=creds_data.get("refresh_token"),
@@ -263,6 +231,18 @@ def load_session(session_id: str):
                 client_secret=client_secret,
                 scopes=creds_data.get("scopes")
             )
+            
+            # If old session was missing fields, update the session file now
+            if not creds_data.get("client_id") or not creds_data.get("client_secret"):
+                creds_data["client_id"] = client_id
+                creds_data["client_secret"] = client_secret
+                creds_data["token_uri"] = token_uri
+                # Save immediately to fix the session file
+                try:
+                    with open(SESSIONS_DIR / f"{session_id}.json", 'w') as f:
+                        json.dump(session_data, f, indent=2)
+                except Exception as e:
+                    print(f"[Session Load] Failed to update session file: {e}")
         
         # Backwards compatibility: add destinations if missing
         if "destinations" not in session_data:
@@ -1161,17 +1141,10 @@ def upload_video_to_youtube(video, session):
         print(f"[YouTube Upload] ERROR: No YouTube credentials")
         return
     
-    # Validate credentials have all required fields for token refresh
-    print(f"[YouTube Upload] Validating credentials...")
-    print(f"  Has client_id: {bool(youtube_creds.client_id)}")
-    print(f"  Has client_secret: {bool(youtube_creds.client_secret)}")
-    print(f"  Has token_uri: {bool(youtube_creds.token_uri)}")
-    print(f"  Has refresh_token: {bool(youtube_creds.refresh_token)}")
-    print(f"  Has token: {bool(youtube_creds.token)}")
-    
+    # Credentials should always be complete (fixed in load_session if old session)
     if not youtube_creds.client_id or not youtube_creds.client_secret or not youtube_creds.token_uri:
         video['status'] = 'failed'
-        error_msg = 'YouTube credentials are incomplete. Please disconnect and reconnect YouTube to refresh credentials.'
+        error_msg = 'YouTube credentials are incomplete. Please disconnect and reconnect YouTube.'
         video['error'] = error_msg
         print(f"[YouTube Upload] ERROR: {error_msg}")
         return
