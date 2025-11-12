@@ -490,14 +490,14 @@ function App() {
   };
 
   const upload = async () => {
-    if (!youtube.enabled) {
-      setMessage('❌ Enable YouTube first');
+    if (!youtube.enabled && !tiktok.enabled) {
+      setMessage('❌ Enable at least one destination first');
       return;
     }
     
     setIsUploading(true);
     const isScheduling = !youtubeSettings.upload_immediately;
-    setMessage(isScheduling ? '⏳ Scheduling videos...' : '⏳ Uploading to YouTube...');
+    setMessage(isScheduling ? '⏳ Scheduling videos...' : '⏳ Uploading...');
     
     // Only poll for progress if uploading immediately
     let pollInterval;
@@ -1042,11 +1042,11 @@ function App() {
       </div>
       
       {/* Upload Button */}
-      {videos.length > 0 && youtube.enabled && (
+      {videos.length > 0 && (youtube.enabled || tiktok.enabled) && (
         <>
           <button className="upload-btn" onClick={upload} disabled={isUploading}>
             {isUploading ? 'Uploading...' : 
-             youtubeSettings.upload_immediately ? 'Upload to YouTube' : 'Schedule Videos'}
+             youtubeSettings.upload_immediately ? 'Upload' : 'Schedule Videos'}
           </button>
           
           {/* Cancel Scheduled Button */}
