@@ -1423,19 +1423,29 @@ def upload_video_to_tiktok(video, session, session_id=None):
         if video_size == 0:
             raise Exception("Video file is empty")
         
-        # Chunk size: 10MB (10 * 1024 * 1024 bytes)
-        # If video is smaller than chunk size, use video size as chunk size
-        standard_chunk_size = 10 * 1024 * 1024
+        # Chunk size: TikTok API uses decimal MB (not binary MiB)
+        # Example from docs: chunk_size: 10000000 (10MB decimal, not 10485760 which is 10MiB binary)
+        # Using 10MB decimal (10 * 1000 * 1000 bytes) as shown in TikTok API examples
+        import math
+        standard_chunk_size = 10 * 1000 * 1000  # 10MB in decimal, not binary
         
         if video_size <= standard_chunk_size:
             # Video fits in one chunk
             chunk_size = video_size
             total_chunks = 1
         else:
-            # Video needs multiple chunks
+            # Video needs multiple chunks - use standard chunk size
             chunk_size = standard_chunk_size
-            # Calculate total chunks: ceiling division
-            total_chunks = (video_size + chunk_size - 1) // chunk_size
+            # Calculate total chunks: ceil(video_size / chunk_size)
+            # This ensures we have enough chunks to cover the entire video
+            total_chunks = math.ceil(video_size / chunk_size)
+        
+        # Validate: (total_chunks - 1) * chunk_size + last_chunk_size should equal video_size
+        # Last chunk size = video_size - (total_chunks - 1) * chunk_size
+        if total_chunks > 1:
+            last_chunk_size = video_size - (total_chunks - 1) * chunk_size
+            if last_chunk_size <= 0 or last_chunk_size > chunk_size:
+                raise Exception(f"Invalid chunk calculation: last_chunk_size={last_chunk_size}, expected 1-{chunk_size}")
         
         # Step 1: Initialize upload
         print(f"[TikTok Upload] Initializing upload for {video['filename']}")
@@ -1459,19 +1469,31 @@ def upload_video_to_tiktok(video, session, session_id=None):
             },
             "source_info": {
                 "source": "FILE_UPLOAD",
-                "video_size": video_size,
-                "chunk_size": chunk_size,
-                "total_chunk_count": total_chunks
+                "video_size": int(video_size),
+                "chunk_size": int(chunk_size),
+                "total_chunk_count": int(total_chunks)
             }
         }
         
+        # Validate calculation: ensure chunks cover entire video
+        expected_total_bytes = (total_chunks - 1) * chunk_size + (video_size - (total_chunks - 1) * chunk_size)
+        if expected_total_bytes != video_size:
+            raise Exception(f"Chunk calculation mismatch: expected {expected_total_bytes} bytes, got {video_size}")
+        
         print(f"[TikTok Upload] Init request body: {init_body}")
+        print(f"[TikTok Upload] Validation: video_size={video_size}, chunk_size={chunk_size}, total_chunks={total_chunks}")
+        print(f"[TikTok Upload] Validation: (total_chunks-1)*chunk_size = {(total_chunks-1)*chunk_size}, last_chunk = {video_size - (total_chunks-1)*chunk_size}")
+        
         init_response = httpx.post(TIKTOK_INIT_UPLOAD_URL, headers=init_headers, json=init_body, timeout=30.0)
         
         if init_response.status_code != 200:
             error_data = init_response.json() if init_response.headers.get("content-type", "").startswith("application/json") else {}
             error_code = error_data.get("error", {}).get("code", "unknown")
             error_msg = error_data.get("error", {}).get("message", init_response.text)
+            error_details = error_data.get("error", {}).get("log_id", "")
+            print(f"[TikTok Upload] Error response: {init_response.status_code}")
+            print(f"[TikTok Upload] Error data: {error_data}")
+            print(f"[TikTok Upload] Full response: {init_response.text}")
             raise Exception(f"Failed to initialize upload: {error_code} - {error_msg}")
         
         init_data = init_response.json()
