@@ -21,11 +21,9 @@ EXPOSE 3000
 
 # Create .env file from runtime env vars and start app
 # Create React App reads .env files when npm start runs
-# Disable WebSocket for hot reload (doesn't work behind cloudflared)
+# Note: WebSocket warnings in console are harmless - hot reload won't work behind cloudflared
 CMD sh -c 'echo "REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL" > .env && \
            echo "REACT_APP_DOMAIN=$REACT_APP_DOMAIN" >> .env && \
            echo "REACT_APP_FRONTEND_URL=$REACT_APP_FRONTEND_URL" >> .env && \
-           echo "WDS_SOCKET_HOST=" >> .env && \
-           echo "WDS_SOCKET_PORT=" >> .env && \
            npm start'
 
