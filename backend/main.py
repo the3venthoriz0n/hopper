@@ -1569,14 +1569,33 @@ def upload_videos(request: Request, response: Response):
         print(f"[Upload] ERROR: {error_msg}")
         raise HTTPException(400, error_msg)
     
-    pending_videos = [v for v in session["videos"] if v['status'] == 'pending']
+    # Debug: Show all videos and their statuses
+    print(f"[Upload] Total videos in session: {len(session['videos'])}")
+    for v in session["videos"]:
+        print(f"  Video {v.get('id', '?')}: {v.get('filename', '?')} - status: {v.get('status', '?')}")
     
-    print(f"[Upload] Pending videos: {len(pending_videos)}")
+    # Get videos that can be uploaded: pending or failed (allow retry)
+    pending_videos = [v for v in session["videos"] if v['status'] in ['pending', 'failed']]
+    
+    print(f"[Upload] Videos ready to upload (pending or failed): {len(pending_videos)}")
     
     if not pending_videos:
-        error_msg = "No pending videos to upload"
+        # Check what statuses videos actually have
+        statuses = {}
+        for v in session["videos"]:
+            status = v.get('status', 'unknown')
+            statuses[status] = statuses.get(status, 0) + 1
+        error_msg = f"No videos ready to upload. Add videos first or reset failed videos. Current video statuses: {statuses}"
         print(f"[Upload] ERROR: {error_msg}")
         raise HTTPException(400, error_msg)
+    
+    # Reset failed videos to pending so they can be uploaded
+    for video in pending_videos:
+        if video['status'] == 'failed':
+            video['status'] = 'pending'
+            if 'error' in video:
+                del video['error']  # Clear previous error
+            print(f"[Upload] Resetting failed video {video['filename']} to pending")
     
     # Use YouTube settings for scheduling (can be made destination-agnostic later)
     # For now, all destinations follow the same schedule settings
