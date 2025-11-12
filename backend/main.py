@@ -455,25 +455,36 @@ def disconnect_youtube(request: Request, response: Response):
 # TikTok OAuth endpoints
 @app.get("/api/auth/tiktok")
 def auth_tiktok(request: Request, response: Response):
-    """Start TikTok OAuth"""
+    """Start TikTok OAuth
+    
+    IMPORTANT: The redirect_uri must be registered in TikTok Developer Portal.
+    Register: https://${DOMAIN}/api/auth/tiktok/callback
+    """
     if not TIKTOK_CLIENT_KEY:
         raise HTTPException(400, "TikTok credentials not configured. Set TIKTOK_CLIENT_KEY environment variable.")
     
     session_id = get_or_create_session_id(request, response)
     
-    # Build redirect URI dynamically
-    protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" or ENVIRONMENT == "production" else "http"
-    host = request.headers.get("host", DOMAIN)
-    if ":" in host:
-        host = host.split(":")[0]
-    redirect_uri = f"{protocol}://{host}/api/auth/tiktok/callback"
+    # Build redirect URI - use BACKEND_URL from env if available, otherwise construct from request
+    # Must match exactly what's registered in TikTok Developer Portal
+    if BACKEND_URL and BACKEND_URL.startswith(("http://", "https://")):
+        # Remove trailing slash if present, then add callback path
+        base_url = BACKEND_URL.rstrip("/")
+        redirect_uri = f"{base_url}/api/auth/tiktok/callback"
+    else:
+        # Fallback: construct from request
+        protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" or ENVIRONMENT == "production" else "http"
+        host = request.headers.get("host", DOMAIN)
+        if ":" in host:
+            host = host.split(":")[0]
+        redirect_uri = f"{protocol}://{host}/api/auth/tiktok/callback"
     
     # Build TikTok OAuth URL
     # TikTok OAuth scopes: user.info.basic, video.upload, video.publish
     scopes = "user.info.basic,video.upload,video.publish"
     state = session_id  # Use session_id as state for CSRF protection
     
-    # TikTok OAuth endpoint (using proper API endpoint)
+    # TikTok OAuth endpoint
     from urllib.parse import urlencode
     params = {
         "client_key": TIKTOK_CLIENT_KEY,
@@ -488,23 +499,35 @@ def auth_tiktok(request: Request, response: Response):
 
 @app.get("/api/auth/tiktok/callback")
 async def auth_tiktok_callback(request: Request, response: Response, code: str = None, state: str = None):
-    """Handle TikTok OAuth callback"""
+    """Handle TikTok OAuth callback
+    
+    IMPORTANT: The redirect_uri used here must match exactly what was sent in the auth request
+    and what's registered in TikTok Developer Portal.
+    """
     if not code:
         raise HTTPException(400, "No authorization code")
     
     if not TIKTOK_CLIENT_KEY or not TIKTOK_CLIENT_SECRET:
         raise HTTPException(400, "TikTok credentials not configured. Set TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET environment variables.")
     
-    # Build redirect URI dynamically
-    protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" or ENVIRONMENT == "production" else "http"
-    host = request.headers.get("host", DOMAIN)
-    if ":" in host:
-        host = host.split(":")[0]
-    redirect_uri = f"{protocol}://{host}/api/auth/tiktok/callback"
+    # Build redirect URI - use BACKEND_URL from env if available, otherwise construct from request
+    # Must match exactly what was used in auth request
+    if BACKEND_URL and BACKEND_URL.startswith(("http://", "https://")):
+        # Remove trailing slash if present, then add callback path
+        base_url = BACKEND_URL.rstrip("/")
+        redirect_uri = f"{base_url}/api/auth/tiktok/callback"
+    else:
+        # Fallback: construct from request
+        protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" or ENVIRONMENT == "production" else "http"
+        host = request.headers.get("host", DOMAIN)
+        if ":" in host:
+            host = host.split(":")[0]
+        redirect_uri = f"{protocol}://{host}/api/auth/tiktok/callback"
     
     try:
         
         # Exchange authorization code for access token
+        # TikTok requires application/x-www-form-urlencoded, not JSON
         import httpx
         token_url = "https://open.tiktokapis.com/v2/oauth/token/"
         
@@ -517,7 +540,12 @@ async def auth_tiktok_callback(request: Request, response: Response, code: str =
         }
         
         async with httpx.AsyncClient() as client:
-            token_response = await client.post(token_url, json=token_data)
+            # Use data= instead of json= to send as form-encoded
+            token_response = await client.post(
+                token_url,
+                data=token_data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"}
+            )
             
             if token_response.status_code != 200:
                 raise HTTPException(400, f"Token exchange failed: {token_response.text}")
