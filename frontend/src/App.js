@@ -2,16 +2,12 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './App.css';
 
-// Use same origin for API (cloudflared handles routing)
-// When behind cloudflared (HTTPS), use same hostname/protocol without port
-// In local dev (HTTP), use port 8000
-const protocol = window.location.protocol;
-const hostname = window.location.hostname;
-
-// If HTTPS (cloudflared), use same origin. If HTTP (local dev), use port 8000
-const API = protocol === 'https:'
-  ? `${protocol}//${hostname}/api`
-  : `http://${hostname}:8000/api`;
+// Use environment variables or fallback to window.location
+// React only exposes REACT_APP_ prefixed env vars to the browser
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const API = BACKEND_URL 
+  ? `${BACKEND_URL}/api`
+  : `${window.location.protocol}//${window.location.hostname}/api`;
 
 // Configure axios to send cookies with every request
 axios.defaults.withCredentials = true;

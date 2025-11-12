@@ -23,17 +23,17 @@ prod:
 	@echo "✅ Deployed to prod!"
 
 clean-dev:
-	docker image prune -f
 	docker compose --env-file .env.dev down
 	docker compose --env-file .env.dev build --no-cache
 	docker compose --env-file .env.dev up -d
+	docker image prune -f
 	@echo "✅ Fresh rebuild on dev complete!"
 
 clean-prod:
-	docker image prune -f
 	docker compose --env-file .env.prod down
 	docker compose --env-file .env.prod build --no-cache
 	docker compose --env-file .env.prod up -d
+	docker image prune -f
 	@echo "✅ Fresh rebuild on prod complete!"
 
 logs:
