@@ -185,18 +185,12 @@ def save_session(session_id: str):
     # Convert Credentials object to dict for JSON serialization
     if session_data["youtube_creds"]:
         creds = session_data["youtube_creds"]
-        # Ensure client_id and client_secret are set from environment if not in creds
-        # (they might not be on the Credentials object, but are needed for refresh)
-        client_id = creds.client_id or GOOGLE_CLIENT_ID
-        client_secret = creds.client_secret or GOOGLE_CLIENT_SECRET
-        token_uri = creds.token_uri or "https://oauth2.googleapis.com/token"
-        
         session_data["youtube_creds"] = {
             "token": creds.token,
             "refresh_token": creds.refresh_token,
-            "token_uri": token_uri,
-            "client_id": client_id,
-            "client_secret": client_secret,
+            "token_uri": creds.token_uri,
+            "client_id": creds.client_id,
+            "client_secret": creds.client_secret,
             "scopes": creds.scopes
         }
     
@@ -220,13 +214,11 @@ def load_session(session_id: str):
         # Convert credentials dict back to Credentials object
         if session_data.get("youtube_creds"):
             creds_data = session_data["youtube_creds"]
-            # Ensure client_id and client_secret are set (use env vars as fallback)
+            # For old sessions that might be missing fields, use env vars as fallback
+            # New sessions will always have these fields from the OAuth callback
             client_id = creds_data.get("client_id") or GOOGLE_CLIENT_ID
             client_secret = creds_data.get("client_secret") or GOOGLE_CLIENT_SECRET
             token_uri = creds_data.get("token_uri") or "https://oauth2.googleapis.com/token"
-            
-            if not client_id or not client_secret:
-                print(f"WARNING: Missing client_id or client_secret for session {session_id}")
             
             session_data["youtube_creds"] = Credentials(
                 token=creds_data.get("token"),
@@ -372,17 +364,17 @@ def auth_callback(code: str, state: str, request: Request, response: Response):
     
     flow.fetch_token(code=code)
     
-    # Ensure credentials have client_id and client_secret for token refresh
-    # The Credentials object might not have these, so we need to set them
-    creds = flow.credentials
-    if not creds.client_id:
-        creds.client_id = GOOGLE_CLIENT_ID
-    if not creds.client_secret:
-        creds.client_secret = GOOGLE_CLIENT_SECRET
-    if not creds.token_uri:
-        creds.token_uri = "https://oauth2.googleapis.com/token"
-    
-    session["youtube_creds"] = creds
+    # Create a complete Credentials object with all required fields for token refresh
+    # The flow.credentials might not have client_id/client_secret, so we construct it properly
+    flow_creds = flow.credentials
+    session["youtube_creds"] = Credentials(
+        token=flow_creds.token,
+        refresh_token=flow_creds.refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
+        scopes=flow_creds.scopes
+    )
     save_session(session_id)
     
     # Redirect back to frontend using environment variable or construct from request
@@ -1134,28 +1126,12 @@ def upload_video_to_youtube(video, session):
         print(f"[YouTube Upload] ERROR: No YouTube credentials")
         return
     
-    # Check if credentials have required fields for refresh
-    if not youtube_creds.client_id or not youtube_creds.client_secret:
-        print(f"[YouTube Upload] WARNING: Credentials missing client_id or client_secret, attempting to fix...")
-        # Try to fix by setting from environment
-        if not youtube_creds.client_id:
-            youtube_creds.client_id = GOOGLE_CLIENT_ID
-        if not youtube_creds.client_secret:
-            youtube_creds.client_secret = GOOGLE_CLIENT_SECRET
-        if not youtube_creds.token_uri:
-            youtube_creds.token_uri = "https://oauth2.googleapis.com/token"
-        print(f"[YouTube Upload] Fixed credentials from environment variables")
-    
-    # Validate credentials have all required fields
+    # Validate credentials have all required fields for token refresh
     if not youtube_creds.client_id or not youtube_creds.client_secret or not youtube_creds.token_uri:
         video['status'] = 'failed'
-        error_msg = 'YouTube credentials are incomplete. Please disconnect and reconnect YouTube.'
+        error_msg = 'YouTube credentials are incomplete. Please disconnect and reconnect YouTube to refresh credentials.'
         video['error'] = error_msg
         print(f"[YouTube Upload] ERROR: {error_msg}")
-        print(f"  Has client_id: {bool(youtube_creds.client_id)}")
-        print(f"  Has client_secret: {bool(youtube_creds.client_secret)}")
-        print(f"  Has token_uri: {bool(youtube_creds.token_uri)}")
-        print(f"  Has refresh_token: {bool(youtube_creds.refresh_token)}")
         return
     
     try:
