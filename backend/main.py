@@ -1346,7 +1346,14 @@ def map_privacy_level_to_tiktok(privacy_level, creator_info):
     return tiktok_privacy
 
 def upload_video_to_tiktok(video, session, session_id=None):
-    """Helper function to upload a single video to TikTok using Content Posting API"""
+    """
+    Upload video to TikTok using Content Posting API - Direct Post flow:
+    
+    1. Initialize the posting request (POST /v2/post/publish/video/init/)
+       - Get publish_id and upload_url from response
+    2. Send video to TikTok servers (PUT to upload_url)
+       - Upload video in chunks with Content-Range headers
+    """
     tiktok_creds = session.get("tiktok_creds")
     tiktok_settings = session.get("tiktok_settings", {})
     upload_progress = session["upload_progress"]
@@ -1423,10 +1430,9 @@ def upload_video_to_tiktok(video, session, session_id=None):
         if video_size == 0:
             raise Exception("Video file is empty")
         
-        # Chunk size: TikTok requires 5MB-64MB per chunk (except last chunk can be up to 128MB)
-        # Using 5MB decimal (5 * 1000 * 1000 bytes) as minimum recommended size
+
         import math
-        standard_chunk_size = 5 * 1000 * 1000  # 5MB in decimal (minimum chunk size)
+        standard_chunk_size = 10 * 1024 * 1024  # 10MB binary (10,485,760 bytes)
         
         if video_size <= standard_chunk_size:
             # Video fits in one chunk
@@ -1441,16 +1447,18 @@ def upload_video_to_tiktok(video, session, session_id=None):
         
         # Validate: (total_chunks - 1) * chunk_size + last_chunk_size should equal video_size
         # Last chunk size = video_size - (total_chunks - 1) * chunk_size
-        # Note: Last chunk can be larger than chunk_size (up to 128MB per TikTok docs)
+        # Note: Last chunk can be larger than chunk_size (up to 128MB binary per TikTok docs)
         if total_chunks > 1:
             last_chunk_size = video_size - (total_chunks - 1) * chunk_size
             if last_chunk_size <= 0:
                 raise Exception(f"Invalid chunk calculation: last_chunk_size={last_chunk_size}, must be > 0")
-            if last_chunk_size > 128 * 1000 * 1000:  # 128MB max for last chunk
-                raise Exception(f"Invalid chunk calculation: last_chunk_size={last_chunk_size}, exceeds 128MB limit")
+            max_last_chunk = 128 * 1024 * 1024  # 128MB binary
+            if last_chunk_size > max_last_chunk:
+                raise Exception(f"Invalid chunk calculation: last_chunk_size={last_chunk_size}, exceeds 128MB binary limit ({max_last_chunk})")
         
-        # Step 1: Initialize upload
-        print(f"[TikTok Upload] Initializing upload for {video['filename']}")
+        # Step 1: Initialize the posting request
+        # POST to /v2/post/publish/video/init/ to get upload_url
+        print(f"[TikTok Upload] Step 1: Initializing posting request for {video['filename']}")
         print(f"  Video size: {video_size} bytes ({video_size / (1024*1024):.2f} MB)")
         print(f"  Chunk size: {chunk_size} bytes ({chunk_size / (1024*1024)} MB)")
         print(f"  Total chunks: {total_chunks}")
@@ -1477,23 +1485,38 @@ def upload_video_to_tiktok(video, session, session_id=None):
             }
         }
         
-        print(f"[TikTok Upload] Init request body: {init_body}")
-        print(f"[TikTok Upload] Validation: video_size={video_size}, chunk_size={chunk_size}, total_chunks={total_chunks}")
-        print(f"[TikTok Upload] Validation: (total_chunks-1)*chunk_size = {(total_chunks-1)*chunk_size}, last_chunk = {video_size - (total_chunks-1)*chunk_size}")
+        # Log the exact request being sent
+        import json as json_module
+        request_json = json_module.dumps(init_body, indent=2)
+        print(f"[TikTok Upload] Request URL: {TIKTOK_INIT_UPLOAD_URL}")
+        print(f"[TikTok Upload] Request headers: {init_headers}")
+        print(f"[TikTok Upload] Request body:\n{request_json}")
+        print(f"[TikTok Upload] Calculation: video_size={video_size}, chunk_size={chunk_size}, total_chunks={total_chunks}")
+        print(f"[TikTok Upload] Calculation: (total_chunks-1)*chunk_size = {(total_chunks-1)*chunk_size}, last_chunk = {video_size - (total_chunks-1)*chunk_size}")
+        print(f"[TikTok Upload] Calculation: chunks cover video = {(total_chunks-1)*chunk_size + (video_size - (total_chunks-1)*chunk_size)} bytes")
         
         init_response = httpx.post(TIKTOK_INIT_UPLOAD_URL, headers=init_headers, json=init_body, timeout=30.0)
         
+        print(f"[TikTok Upload] Response status: {init_response.status_code}")
+        print(f"[TikTok Upload] Response headers: {dict(init_response.headers)}")
+        
         if init_response.status_code != 200:
-            error_data = init_response.json() if init_response.headers.get("content-type", "").startswith("application/json") else {}
-            error_code = error_data.get("error", {}).get("code", "unknown")
-            error_msg = error_data.get("error", {}).get("message", init_response.text)
-            error_details = error_data.get("error", {}).get("log_id", "")
-            print(f"[TikTok Upload] Error response: {init_response.status_code}")
-            print(f"[TikTok Upload] Error data: {error_data}")
-            print(f"[TikTok Upload] Full response: {init_response.text}")
+            try:
+                error_data = init_response.json()
+                error_code = error_data.get("error", {}).get("code", "unknown")
+                error_msg = error_data.get("error", {}).get("message", "Unknown error")
+                error_log_id = error_data.get("error", {}).get("log_id", "")
+                print(f"[TikTok Upload] Error code: {error_code}")
+                print(f"[TikTok Upload] Error message: {error_msg}")
+                print(f"[TikTok Upload] Error log_id: {error_log_id}")
+                print(f"[TikTok Upload] Full error response: {json_module.dumps(error_data, indent=2)}")
+            except:
+                print(f"[TikTok Upload] Non-JSON error response: {init_response.text}")
             raise Exception(f"Failed to initialize upload: {error_code} - {error_msg}")
         
+        # Parse and log successful response
         init_data = init_response.json()
+        print(f"[TikTok Upload] Success response: {json_module.dumps(init_data, indent=2)}")
         publish_id = init_data.get("data", {}).get("publish_id")
         upload_url = init_data.get("data", {}).get("upload_url")
         
@@ -1503,8 +1526,9 @@ def upload_video_to_tiktok(video, session, session_id=None):
         print(f"[TikTok Upload] Upload initialized, publish_id: {publish_id}")
         upload_progress[video['id']] = 10
         
-        # Step 2: Upload video in chunks
-        print(f"[TikTok Upload] Uploading {total_chunks} chunks...")
+        # Step 2: Send video to TikTok servers
+        # PUT to upload_url with video chunks
+        print(f"[TikTok Upload] Step 2: Sending video to TikTok servers ({total_chunks} chunks)...")
         
         with open(video_path, 'rb') as video_file:
             for chunk_num in range(total_chunks):
@@ -1533,9 +1557,15 @@ def upload_video_to_tiktok(video, session, session_id=None):
                     "Content-Range": f"bytes {start_byte}-{end_byte}/{video_size}"
                 }
                 
+                print(f"[TikTok Upload] Chunk {chunk_num + 1}/{total_chunks}: {chunk_data_size} bytes (range {start_byte}-{end_byte})")
+                print(f"[TikTok Upload] Chunk headers: {upload_headers}")
+                
                 chunk_response = httpx.put(upload_url, headers=upload_headers, content=chunk_data, timeout=300.0)
                 
-                if chunk_response.status_code not in [200, 201, 308]:  # 308 is "Resume Incomplete"
+                print(f"[TikTok Upload] Chunk {chunk_num + 1} response: {chunk_response.status_code}")
+                
+                if chunk_response.status_code not in [200, 201, 206, 308]:  # 200/201=complete, 206=partial, 308=resume
+                    print(f"[TikTok Upload] Chunk {chunk_num + 1} error response: {chunk_response.text}")
                     raise Exception(f"Failed to upload chunk {chunk_num + 1}/{total_chunks}: {chunk_response.status_code} - {chunk_response.text}")
                 
                 # Update progress
