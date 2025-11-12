@@ -1574,10 +1574,12 @@ def upload_videos(request: Request, response: Response):
     for v in session["videos"]:
         print(f"  Video {v.get('id', '?')}: {v.get('filename', '?')} - status: {v.get('status', '?')}")
     
-    # Get videos that can be uploaded: pending or failed (allow retry)
-    pending_videos = [v for v in session["videos"] if v['status'] in ['pending', 'failed']]
+    # Get videos that can be uploaded: pending, failed (retry), or uploading (retry if stuck)
+    # Exclude: 'uploaded' (already done), 'scheduled' (will be handled by scheduler)
+    pending_videos = [v for v in session["videos"] 
+                      if v['status'] in ['pending', 'failed', 'uploading']]
     
-    print(f"[Upload] Videos ready to upload (pending or failed): {len(pending_videos)}")
+    print(f"[Upload] Videos ready to upload: {len(pending_videos)}")
     
     if not pending_videos:
         # Check what statuses videos actually have
@@ -1585,17 +1587,9 @@ def upload_videos(request: Request, response: Response):
         for v in session["videos"]:
             status = v.get('status', 'unknown')
             statuses[status] = statuses.get(status, 0) + 1
-        error_msg = f"No videos ready to upload. Add videos first or reset failed videos. Current video statuses: {statuses}"
+        error_msg = f"No videos ready to upload. Add videos first. Current video statuses: {statuses}"
         print(f"[Upload] ERROR: {error_msg}")
         raise HTTPException(400, error_msg)
-    
-    # Reset failed videos to pending so they can be uploaded
-    for video in pending_videos:
-        if video['status'] == 'failed':
-            video['status'] = 'pending'
-            if 'error' in video:
-                del video['error']  # Clear previous error
-            print(f"[Upload] Resetting failed video {video['filename']} to pending")
     
     # Use YouTube settings for scheduling (can be made destination-agnostic later)
     # For now, all destinations follow the same schedule settings
@@ -1604,18 +1598,65 @@ def upload_videos(request: Request, response: Response):
     # If upload immediately is enabled, upload all at once to all enabled destinations
     if upload_immediately:
         for video in pending_videos:
+            # Set status to uploading before starting
+            video['status'] = 'uploading'
+            
+            # Track which destinations succeeded/failed
+            succeeded_destinations = []
+            failed_destinations = []
+            
             # Upload to all enabled destinations
             for dest_name in enabled_destinations:
                 uploader_func = DESTINATION_UPLOADERS[dest_name]
                 if uploader_func:
                     print(f"[Upload] Uploading {video['filename']} to {dest_name}")
+                    
+                    # Store status before upload (might be 'uploading' or 'pending')
+                    status_before = video.get('status', 'pending')
+                    
                     # Pass session_id for TikTok rate limiting
                     if dest_name == "tiktok":
                         uploader_func(video, session, session_id)
                     else:
                         uploader_func(video, session)
+                    
+                    # Check if this destination succeeded by looking for success markers
+                    # YouTube success: has 'youtube_id'
+                    # TikTok success: has 'tiktok_id' or 'tiktok_publish_id'
+                    if dest_name == 'youtube' and 'youtube_id' in video:
+                        succeeded_destinations.append(dest_name)
+                    elif dest_name == 'tiktok' and ('tiktok_id' in video or 'tiktok_publish_id' in video):
+                        succeeded_destinations.append(dest_name)
+                    else:
+                        # Check if upload function set an error
+                        if video.get('status') == 'failed' or 'error' in video:
+                            failed_destinations.append(dest_name)
+                            # Store per-destination error
+                            if 'upload_errors' not in video:
+                                video['upload_errors'] = {}
+                            video['upload_errors'][dest_name] = video.get('error', 'Upload failed')
+            
+            # Determine final status based on results
+            # Only mark as 'uploaded' if ALL enabled destinations succeeded
+            if len(succeeded_destinations) == len(enabled_destinations):
+                video['status'] = 'uploaded'
+                # Clear any errors since all succeeded
+                if 'error' in video:
+                    del video['error']
+                if 'upload_errors' in video:
+                    del video['upload_errors']
+            elif len(succeeded_destinations) > 0:
+                # Partial success - some destinations succeeded, some failed
+                video['status'] = 'failed'
+                video['error'] = f"Partial upload: succeeded ({', '.join(succeeded_destinations)}), failed ({', '.join(failed_destinations)})"
+            else:
+                # All failed
+                video['status'] = 'failed'
+                if 'error' not in video:
+                    video['error'] = f"Upload failed for all destinations: {', '.join(failed_destinations)}"
         
         save_session(session_id)
+        # Count videos that are fully uploaded
         uploaded_count = len([v for v in session["videos"] if v['status'] == 'uploaded'])
         return {
             "uploaded": uploaded_count,
