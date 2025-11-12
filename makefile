@@ -6,7 +6,9 @@ help:
 	@echo "  make prod         - Deploy to prod environment (uses .env.prod)"
 	@echo "  make clean-dev    - Fresh rebuild on dev (down, build --no-cache, up)"
 	@echo "  make clean-prod   - Fresh rebuild on prod (down, build --no-cache, up)"
-	@echo "  make logs         - View container logs"
+	@echo "  make logs         - View all container logs"
+	@echo "  make logs-frontend - View frontend logs only"
+	@echo "  make logs-backend  - View backend logs only"
 	@echo "  make shell        - Shell into backend container"
 	@echo "  make down         - Stop containers"
 	@echo ""
@@ -21,12 +23,14 @@ prod:
 	@echo "✅ Deployed to prod!"
 
 clean-dev:
+	docker image prune -f
 	docker compose --env-file .env.dev down
 	docker compose --env-file .env.dev build --no-cache
 	docker compose --env-file .env.dev up -d
 	@echo "✅ Fresh rebuild on dev complete!"
 
 clean-prod:
+	docker image prune -f
 	docker compose --env-file .env.prod down
 	docker compose --env-file .env.prod build --no-cache
 	docker compose --env-file .env.prod up -d
@@ -34,6 +38,12 @@ clean-prod:
 
 logs:
 	docker compose --env-file .env.dev logs -f
+
+logs-frontend:
+	docker compose --env-file .env.dev logs -f frontend
+
+logs-backend:
+	docker compose --env-file .env.dev logs -f backend
 
 shell:
 	docker compose --env-file .env.dev exec backend /bin/bash

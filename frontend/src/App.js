@@ -2,8 +2,15 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './App.css';
 
-// Use current host for API (works in Docker and locally)
-const API = `http://${window.location.hostname}:8000/api`;
+// Use same origin for API (cloudflared handles routing)
+// When behind cloudflared, use same hostname/protocol. In local dev, use port 8000
+const protocol = window.location.protocol;
+const hostname = window.location.hostname;
+const port = window.location.port;
+// If on HTTPS (cloudflared) or no port specified, use same origin. Otherwise use port 8000
+const API = port && protocol === 'http:' 
+  ? `http://${hostname}:8000/api` 
+  : `${protocol}//${hostname}/api`;
 
 // Configure axios to send cookies with every request
 axios.defaults.withCredentials = true;
