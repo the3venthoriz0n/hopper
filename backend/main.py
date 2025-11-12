@@ -35,7 +35,7 @@ TIKTOK_CLIENT_KEY = os.getenv("TIKTOK_CLIENT_KEY")
 TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_SECRET")
 
 # TikTok OAuth Configuration
-TIKTOK_AUTH_URL = "https://www.tiktok.com/v2/auth/authorize/"
+TIKTOK_AUTH_URL = "https://www.tiktok.com/v2/auth/authorize"
 TIKTOK_TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
 TIKTOK_SCOPES = ["user.info.basic", "video.upload", "video.publish"]
 
@@ -478,25 +478,32 @@ def auth_tiktok(request: Request, response: Response):
     state = session_id
     
     # Build redirect URI (must match TikTok Developer Portal exactly)
-    redirect_uri = f"{BACKEND_URL}/api/auth/tiktok/callback"
+    # Ensure no trailing slash and proper URL format
+    redirect_uri = f"{BACKEND_URL.rstrip('/')}/api/auth/tiktok/callback"
     
-    # Build authorization URL
+    # Build scope string (comma-separated, no spaces)
+    scope_string = ",".join(TIKTOK_SCOPES)
+    
+    # Build authorization URL with proper encoding
     params = {
         "client_key": TIKTOK_CLIENT_KEY,
         "response_type": "code",
-        "scope": ",".join(TIKTOK_SCOPES),
+        "scope": scope_string,
         "redirect_uri": redirect_uri,
         "state": state,
     }
     
-    auth_url = f"{TIKTOK_AUTH_URL}?{urlencode(params)}"
+    # Use urlencode with doseq=False (default) to properly encode all params
+    query_string = urlencode(params, doseq=False)
+    auth_url = f"{TIKTOK_AUTH_URL}?{query_string}"
     
     # Debug logging
     print(f"[TikTok OAuth] Initiating auth flow")
     print(f"  Client Key: {TIKTOK_CLIENT_KEY[:4]}...{TIKTOK_CLIENT_KEY[-4:]}")
     print(f"  Redirect URI: {redirect_uri}")
+    print(f"  Scope: {scope_string}")
     print(f"  State: {state[:16]}...")
-    print(f"  Auth URL: {auth_url[:100]}...")
+    print(f"  Full Auth URL: {auth_url}")
     
     return {"url": auth_url}
 
