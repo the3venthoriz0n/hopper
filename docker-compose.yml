@@ -4,15 +4,19 @@ services:
     volumes:
       - backend_uploads:/app/uploads
       - backend_sessions:/app/sessions
-      - ./backend/client_secrets.json:/app/client_secrets.json:ro
     environment:
       - PYTHONUNBUFFERED=1
-      - CLOUDFLARE_ACCESS_AUD_TAG=${CLOUDFLARE_ACCESS_AUD_TAG:-}
-      - CLOUDFLARE_ACCESS_TEAM_DOMAIN=${CLOUDFLARE_ACCESS_TEAM_DOMAIN:-}
-      - ENVIRONMENT=${ENVIRONMENT:-production}
-      - DOMAIN=${DOMAIN:-hopper-dev.dunkbox.net}
-      - FRONTEND_URL=${FRONTEND_URL:-https://hopper-dev.dunkbox.net}
-      - BACKEND_URL=${BACKEND_URL:-https://hopper-dev.dunkbox.net}
+      - CLOUDFLARE_ACCESS_AUD_TAG=${CLOUDFLARE_ACCESS_AUD_TAG}
+      - CLOUDFLARE_ACCESS_TEAM_DOMAIN=${CLOUDFLARE_ACCESS_TEAM_DOMAIN}
+      - ENVIRONMENT=${ENVIRONMENT}
+      - DOMAIN=${DOMAIN}
+      - FRONTEND_URL=${FRONTEND_URL}
+      - BACKEND_URL=${BACKEND_URL}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_PROJECT_ID=${GOOGLE_PROJECT_ID}
+      - TIKTOK_CLIENT_KEY=${TIKTOK_CLIENT_KEY}
+      - TIKTOK_CLIENT_SECRET=${TIKTOK_CLIENT_SECRET}
 
   frontend:
     build: ./frontend
@@ -22,9 +26,9 @@ services:
     depends_on:
       - backend
     environment:
-      - DOMAIN=${DOMAIN:-hopper-dev.dunkbox.net}
-      - FRONTEND_URL=${FRONTEND_URL:-https://hopper-dev.dunkbox.net}
-      - BACKEND_URL=${BACKEND_URL:-https://hopper-dev.dunkbox.net}
+      - DOMAIN=${DOMAIN}
+      - FRONTEND_URL=${FRONTEND_URL}
+      - BACKEND_URL=${BACKEND_URL}
 
 volumes:
   backend_uploads:

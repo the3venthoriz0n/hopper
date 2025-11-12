@@ -25,6 +25,29 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 
+# OAuth Credentials from environment variables
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+GOOGLE_PROJECT_ID = os.getenv("GOOGLE_PROJECT_ID")
+TIKTOK_CLIENT_KEY = os.getenv("TIKTOK_CLIENT_KEY")
+TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_SECRET")
+
+def get_google_client_config():
+    """Build Google OAuth client config from environment variables"""
+    if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_PROJECT_ID]):
+        return None
+    return {
+        "web": {
+            "client_id": GOOGLE_CLIENT_ID,
+            "project_id": GOOGLE_PROJECT_ID,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "redirect_uris": []  # Will be set dynamically
+        }
+    }
+
 # CORS - allow production domain or all origins for development
 if ENVIRONMENT == "production":
     allowed_origins = [FRONTEND_URL]
@@ -252,8 +275,9 @@ def get_or_create_session_id(request: Request, response: Response) -> str:
 @app.get("/api/auth/youtube")
 def auth_youtube(request: Request, response: Response):
     """Start YouTube OAuth"""
-    if not os.path.exists('client_secrets.json'):
-        raise HTTPException(400, "client_secrets.json missing")
+    google_config = get_google_client_config()
+    if not google_config:
+        raise HTTPException(400, "Google OAuth credentials not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_PROJECT_ID environment variables.")
     
     # Ensure session exists
     session_id = get_or_create_session_id(request, response)
@@ -267,8 +291,9 @@ def auth_youtube(request: Request, response: Response):
         host = host.split(":")[0]
     redirect_uri = f"{protocol}://{host}/api/auth/youtube/callback"
     
-    flow = Flow.from_client_secrets_file(
-        'client_secrets.json',
+    # Create Flow from config dict instead of file
+    flow = Flow.from_client_config(
+        google_config,
         scopes=['https://www.googleapis.com/auth/youtube.upload'],
         redirect_uri=redirect_uri
     )
@@ -302,8 +327,12 @@ def auth_callback(code: str, state: str, request: Request, response: Response):
         host = host.split(":")[0]
     redirect_uri = f"{protocol}://{host}/api/auth/youtube/callback"
     
-    flow = Flow.from_client_secrets_file(
-        'client_secrets.json',
+    google_config = get_google_client_config()
+    if not google_config:
+        raise HTTPException(400, "Google OAuth credentials not configured")
+    
+    flow = Flow.from_client_config(
+        google_config,
         scopes=['https://www.googleapis.com/auth/youtube.upload'],
         redirect_uri=redirect_uri
     )
@@ -427,45 +456,35 @@ def disconnect_youtube(request: Request, response: Response):
 @app.get("/api/auth/tiktok")
 def auth_tiktok(request: Request, response: Response):
     """Start TikTok OAuth"""
+    if not TIKTOK_CLIENT_KEY:
+        raise HTTPException(400, "TikTok credentials not configured. Set TIKTOK_CLIENT_KEY environment variable.")
+    
     session_id = get_or_create_session_id(request, response)
     
-    # Load TikTok credentials from client_secrets.json
-    try:
-        with open('client_secrets.json', 'r') as f:
-            secrets = json.load(f)
-        
-        tiktok_config = secrets.get('tiktok', {})
-        client_key = tiktok_config.get('client_key')
-        redirect_uri = tiktok_config.get('redirect_uri')
-        
-        if not client_key or not redirect_uri:
-            raise HTTPException(400, "TikTok credentials not configured in client_secrets.json")
-        
-        if client_key == "YOUR_TIKTOK_CLIENT_KEY":
-            raise HTTPException(400, "Please update TikTok credentials in client_secrets.json")
-        
-        # Build TikTok OAuth URL
-        # TikTok OAuth scopes: user.info.basic, video.upload, video.publish
-        scopes = "user.info.basic,video.upload,video.publish"
-        state = session_id  # Use session_id as state for CSRF protection
-        
-        # TikTok OAuth endpoint (using proper API endpoint)
-        from urllib.parse import urlencode
-        params = {
-            "client_key": client_key,
-            "scope": scopes,
-            "response_type": "code",
-            "redirect_uri": redirect_uri,
-            "state": state
-        }
-        auth_url = f"https://www.tiktok.com/v2/auth/authorize/?{urlencode(params)}"
-        
-        return {"url": auth_url}
-        
-    except FileNotFoundError:
-        raise HTTPException(500, "client_secrets.json not found")
-    except json.JSONDecodeError:
-        raise HTTPException(500, "Invalid client_secrets.json format")
+    # Build redirect URI dynamically
+    protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" or ENVIRONMENT == "production" else "http"
+    host = request.headers.get("host", DOMAIN)
+    if ":" in host:
+        host = host.split(":")[0]
+    redirect_uri = f"{protocol}://{host}/api/auth/tiktok/callback"
+    
+    # Build TikTok OAuth URL
+    # TikTok OAuth scopes: user.info.basic, video.upload, video.publish
+    scopes = "user.info.basic,video.upload,video.publish"
+    state = session_id  # Use session_id as state for CSRF protection
+    
+    # TikTok OAuth endpoint (using proper API endpoint)
+    from urllib.parse import urlencode
+    params = {
+        "client_key": TIKTOK_CLIENT_KEY,
+        "scope": scopes,
+        "response_type": "code",
+        "redirect_uri": redirect_uri,
+        "state": state
+    }
+    auth_url = f"https://www.tiktok.com/v2/auth/authorize/?{urlencode(params)}"
+    
+    return {"url": auth_url}
 
 @app.get("/api/auth/tiktok/callback")
 async def auth_tiktok_callback(request: Request, response: Response, code: str = None, state: str = None):
@@ -473,26 +492,25 @@ async def auth_tiktok_callback(request: Request, response: Response, code: str =
     if not code:
         raise HTTPException(400, "No authorization code")
     
-    # Load TikTok credentials
+    if not TIKTOK_CLIENT_KEY or not TIKTOK_CLIENT_SECRET:
+        raise HTTPException(400, "TikTok credentials not configured. Set TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET environment variables.")
+    
+    # Build redirect URI dynamically
+    protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" or ENVIRONMENT == "production" else "http"
+    host = request.headers.get("host", DOMAIN)
+    if ":" in host:
+        host = host.split(":")[0]
+    redirect_uri = f"{protocol}://{host}/api/auth/tiktok/callback"
+    
     try:
-        with open('client_secrets.json', 'r') as f:
-            secrets = json.load(f)
-        
-        tiktok_config = secrets.get('tiktok', {})
-        client_key = tiktok_config.get('client_key')
-        client_secret = tiktok_config.get('client_secret')
-        redirect_uri = tiktok_config.get('redirect_uri')
-        
-        if not all([client_key, client_secret, redirect_uri]):
-            raise HTTPException(400, "TikTok credentials not configured")
         
         # Exchange authorization code for access token
         import httpx
         token_url = "https://open.tiktokapis.com/v2/oauth/token/"
         
         token_data = {
-            "client_key": client_key,
-            "client_secret": client_secret,
+            "client_key": TIKTOK_CLIENT_KEY,
+            "client_secret": TIKTOK_CLIENT_SECRET,
             "code": code,
             "grant_type": "authorization_code",
             "redirect_uri": redirect_uri
@@ -530,8 +548,6 @@ async def auth_tiktok_callback(request: Request, response: Response, code: str =
             frontend_url = f"http://{host.replace(':8000', ':3000')}?connected=tiktok"
         return RedirectResponse(frontend_url)
         
-    except FileNotFoundError:
-        raise HTTPException(500, "client_secrets.json not found")
     except Exception as e:
         print(f"TikTok OAuth error: {e}")
         raise HTTPException(500, f"Authentication failed: {str(e)}")
