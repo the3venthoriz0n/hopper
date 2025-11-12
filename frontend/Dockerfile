@@ -25,5 +25,7 @@ EXPOSE 3000
 CMD sh -c 'echo "REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL" > .env && \
            echo "REACT_APP_DOMAIN=$REACT_APP_DOMAIN" >> .env && \
            echo "REACT_APP_FRONTEND_URL=$REACT_APP_FRONTEND_URL" >> .env && \
-           WDS_SOCKET_HOST= WDS_SOCKET_PORT= npm start'
+           echo "WDS_SOCKET_HOST=" >> .env && \
+           echo "WDS_SOCKET_PORT=" >> .env && \
+           npm start'
 

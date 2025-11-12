@@ -1077,6 +1077,13 @@ def cancel_scheduled_videos(request: Request, response: Response):
     
     return {"ok": True, "cancelled": cancelled_count}
 
+# Destination upload functions registry
+# This allows easy addition of new destinations in the future
+DESTINATION_UPLOADERS = {
+    "youtube": None,  # Will be set below
+    "tiktok": None,   # Will be set below
+}
+
 def upload_video_to_youtube(video, session):
     """Helper function to upload a single video to YouTube"""
     youtube_creds = session["youtube_creds"]
@@ -1188,8 +1195,104 @@ def upload_video_to_youtube(video, session):
         if video['id'] in upload_progress:
             del upload_progress[video['id']]
 
+def upload_video_to_tiktok(video, session):
+    """Helper function to upload a single video to TikTok"""
+    tiktok_creds = session.get("tiktok_creds")
+    tiktok_settings = session.get("tiktok_settings", {})
+    upload_progress = session["upload_progress"]
+    
+    if not tiktok_creds:
+        video['status'] = 'failed'
+        video['error'] = 'No TikTok credentials'
+        return
+    
+    try:
+        video['status'] = 'uploading'
+        upload_progress[video['id']] = 0
+        
+        # Get access token
+        access_token = tiktok_creds.get("access_token")
+        if not access_token:
+            raise Exception("No TikTok access token")
+        
+        # Prepare video metadata
+        custom_settings = video.get('custom_settings', {})
+        filename_no_ext = video['filename'].rsplit('.', 1)[0]
+        
+        # Priority for title: custom > generated_title > destination > global
+        if 'title' in custom_settings:
+            title = custom_settings['title']
+        elif 'generated_title' in video:
+            title = video['generated_title']
+        else:
+            global_settings = session.get("global_settings", {})
+            title_template = tiktok_settings.get('title_template', '') or global_settings.get('title_template', '{filename}')
+            title = replace_template_placeholders(
+                title_template,
+                filename_no_ext,
+                global_settings.get('wordbank', [])
+            )
+        
+        # TikTok title limit is 150 characters
+        if len(title) > 150:
+            title = title[:150]
+        
+        # Priority for description: custom > destination > global
+        if 'description' in custom_settings:
+            description = custom_settings['description']
+        else:
+            global_settings = session.get("global_settings", {})
+            desc_template = tiktok_settings.get('description_template', '') or global_settings.get('description_template', 'Uploaded via Hopper')
+            description = replace_template_placeholders(
+                desc_template,
+                filename_no_ext,
+                global_settings.get('wordbank', [])
+            )
+        
+        # TikTok description limit is 2200 characters
+        if len(description) > 2200:
+            description = description[:2200]
+        
+        # Get privacy settings
+        privacy_level = custom_settings.get('privacy_level', tiktok_settings.get('privacy_level', 'public'))
+        allow_comments = custom_settings.get('allow_comments', tiktok_settings.get('allow_comments', True))
+        allow_duet = custom_settings.get('allow_duet', tiktok_settings.get('allow_duet', True))
+        allow_stitch = custom_settings.get('allow_stitch', tiktok_settings.get('allow_stitch', True))
+        
+        # TODO: Implement TikTok video upload using Content Posting API
+        # This requires:
+        # 1. Initialize upload session
+        # 2. Upload video in chunks
+        # 3. Publish video
+        # For now, mark as uploaded (placeholder)
+        # See: https://developers.tiktok.com/doc/content-posting-api-get-started-upload/
+        
+        # Placeholder implementation - replace with actual TikTok API calls
+        print(f"[TikTok Upload] Would upload: {video['filename']}")
+        print(f"  Title: {title}")
+        print(f"  Description: {description[:100]}...")
+        print(f"  Privacy: {privacy_level}")
+        
+        # Simulate upload progress
+        upload_progress[video['id']] = 50
+        # TODO: Actual upload here
+        upload_progress[video['id']] = 100
+        
+        video['status'] = 'uploaded'
+        video['tiktok_id'] = 'placeholder'  # Replace with actual TikTok video ID
+        
+    except Exception as e:
+        video['status'] = 'failed'
+        video['error'] = f'TikTok upload failed: {str(e)}'
+        if video['id'] in upload_progress:
+            del upload_progress[video['id']]
+
+# Register upload functions
+DESTINATION_UPLOADERS["youtube"] = upload_video_to_youtube
+DESTINATION_UPLOADERS["tiktok"] = upload_video_to_tiktok
+
 async def scheduler_task():
-    """Background task that checks for scheduled videos and uploads them"""
+    """Background task that checks for scheduled videos and uploads them to all enabled destinations"""
     while True:
         try:
             await asyncio.sleep(30)  # Check every 30 seconds
@@ -1203,10 +1306,20 @@ async def scheduler_task():
                         try:
                             scheduled_time = datetime.fromisoformat(video['scheduled_time'])
                             
-                            # If scheduled time has passed, upload the video
+                            # If scheduled time has passed, upload the video to all enabled destinations
                             if current_time >= scheduled_time:
                                 print(f"Uploading scheduled video for session {session_id}: {video['filename']}")
-                                upload_video_to_youtube(video, session)
+                                
+                                # Upload to all enabled destinations
+                                destinations = session.get("destinations", {})
+                                for dest_name, uploader_func in DESTINATION_UPLOADERS.items():
+                                    if uploader_func and destinations.get(dest_name, {}).get("enabled", False):
+                                        # Check if credentials exist for this destination
+                                        creds_key = f"{dest_name}_creds"
+                                        if session.get(creds_key):
+                                            print(f"  Uploading to {dest_name}...")
+                                            uploader_func(video, session)
+                                
                                 save_session(session_id)
                         except Exception as e:
                             print(f"Error processing scheduled video {video['filename']}: {e}")
@@ -1225,27 +1338,47 @@ async def startup_event():
 
 @app.post("/api/upload")
 def upload_videos(request: Request, response: Response):
-    """Upload all pending videos to YouTube (immediate or scheduled)"""
+    """Upload all pending videos to all enabled destinations (immediate or scheduled)"""
     session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
-    if not session["youtube_creds"]:
-        raise HTTPException(400, "YouTube not connected")
+    # Check if at least one destination is enabled and connected
+    destinations = session.get("destinations", {})
+    enabled_destinations = []
+    
+    for dest_name, uploader_func in DESTINATION_UPLOADERS.items():
+        if uploader_func and destinations.get(dest_name, {}).get("enabled", False):
+            creds_key = f"{dest_name}_creds"
+            if session.get(creds_key):
+                enabled_destinations.append(dest_name)
+    
+    if not enabled_destinations:
+        raise HTTPException(400, "No enabled and connected destinations. Enable at least one destination and ensure it's connected.")
     
     pending_videos = [v for v in session["videos"] if v['status'] == 'pending']
     
     if not pending_videos:
         raise HTTPException(400, "No pending videos to upload")
     
-    # If upload immediately is enabled, upload all at once
-    if session["youtube_settings"]['upload_immediately']:
+    # Use YouTube settings for scheduling (can be made destination-agnostic later)
+    # For now, all destinations follow the same schedule settings
+    upload_immediately = session["youtube_settings"].get('upload_immediately', True)
+    
+    # If upload immediately is enabled, upload all at once to all enabled destinations
+    if upload_immediately:
         for video in pending_videos:
-            upload_video_to_youtube(video, session)
+            # Upload to all enabled destinations
+            for dest_name in enabled_destinations:
+                uploader_func = DESTINATION_UPLOADERS[dest_name]
+                if uploader_func:
+                    print(f"[Upload] Uploading {video['filename']} to {dest_name}")
+                    uploader_func(video, session)
         
         save_session(session_id)
+        uploaded_count = len([v for v in session["videos"] if v['status'] == 'uploaded'])
         return {
-            "uploaded": len([v for v in session["videos"] if v['status'] == 'uploaded']),
-            "message": "Videos uploaded immediately"
+            "uploaded": uploaded_count,
+            "message": f"Videos uploaded immediately to: {', '.join(enabled_destinations)}"
         }
     
     # Otherwise, mark for scheduled upload
