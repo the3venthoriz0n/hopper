@@ -1423,11 +1423,10 @@ def upload_video_to_tiktok(video, session, session_id=None):
         if video_size == 0:
             raise Exception("Video file is empty")
         
-        # Chunk size: TikTok API uses decimal MB (not binary MiB)
-        # Example from docs: chunk_size: 10000000 (10MB decimal, not 10485760 which is 10MiB binary)
-        # Using 10MB decimal (10 * 1000 * 1000 bytes) as shown in TikTok API examples
+        # Chunk size: TikTok requires 5MB-64MB per chunk (except last chunk can be up to 128MB)
+        # Using 5MB decimal (5 * 1000 * 1000 bytes) as minimum recommended size
         import math
-        standard_chunk_size = 10 * 1000 * 1000  # 10MB in decimal, not binary
+        standard_chunk_size = 5 * 1000 * 1000  # 5MB in decimal (minimum chunk size)
         
         if video_size <= standard_chunk_size:
             # Video fits in one chunk
@@ -1442,10 +1441,13 @@ def upload_video_to_tiktok(video, session, session_id=None):
         
         # Validate: (total_chunks - 1) * chunk_size + last_chunk_size should equal video_size
         # Last chunk size = video_size - (total_chunks - 1) * chunk_size
+        # Note: Last chunk can be larger than chunk_size (up to 128MB per TikTok docs)
         if total_chunks > 1:
             last_chunk_size = video_size - (total_chunks - 1) * chunk_size
-            if last_chunk_size <= 0 or last_chunk_size > chunk_size:
-                raise Exception(f"Invalid chunk calculation: last_chunk_size={last_chunk_size}, expected 1-{chunk_size}")
+            if last_chunk_size <= 0:
+                raise Exception(f"Invalid chunk calculation: last_chunk_size={last_chunk_size}, must be > 0")
+            if last_chunk_size > 128 * 1000 * 1000:  # 128MB max for last chunk
+                raise Exception(f"Invalid chunk calculation: last_chunk_size={last_chunk_size}, exceeds 128MB limit")
         
         # Step 1: Initialize upload
         print(f"[TikTok Upload] Initializing upload for {video['filename']}")
@@ -1474,11 +1476,6 @@ def upload_video_to_tiktok(video, session, session_id=None):
                 "total_chunk_count": int(total_chunks)
             }
         }
-        
-        # Validate calculation: ensure chunks cover entire video
-        expected_total_bytes = (total_chunks - 1) * chunk_size + (video_size - (total_chunks - 1) * chunk_size)
-        if expected_total_bytes != video_size:
-            raise Exception(f"Chunk calculation mismatch: expected {expected_total_bytes} bytes, got {video_size}")
         
         print(f"[TikTok Upload] Init request body: {init_body}")
         print(f"[TikTok Upload] Validation: video_size={video_size}, chunk_size={chunk_size}, total_chunks={total_chunks}")
