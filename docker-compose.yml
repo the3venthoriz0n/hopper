@@ -20,9 +20,8 @@ services:
 
   frontend:
     build: ./frontend
-    volumes:
-      - ./frontend/src:/app/src
-      - ./frontend/public:/app/public
+    # volumes:
+    #   - ./frontend/src:/app/src
     depends_on:
       - backend
     environment:

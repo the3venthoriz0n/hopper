@@ -33,13 +33,13 @@ clean-prod:
 	@echo "✅ Fresh rebuild on prod complete!"
 
 logs:
-	docker compose logs -f
+	docker compose --env-file .env.dev logs -f
 
 shell:
-	docker compose exec backend /bin/bash
+	docker compose --env-file .env.dev exec backend /bin/bash
 
 down:
-	docker compose down
+	docker compose --env-file .env.dev down
 
 
 # # Create Docker context
