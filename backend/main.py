@@ -1,4 +1,4 @@
-from urllib.parse import urlencode
+from urllib.parse import urlencode, unquote
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Response, Cookie
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
@@ -479,6 +479,7 @@ def auth_tiktok(request: Request, response: Response):
     
     # Build redirect URI (must match TikTok Developer Portal exactly)
     # Ensure no trailing slash and proper URL format
+    # This must match EXACTLY in the token exchange request
     redirect_uri = f"{BACKEND_URL.rstrip('/')}/api/auth/tiktok/callback"
     
     # Build scope string (comma-separated, no spaces)
@@ -551,18 +552,25 @@ async def auth_tiktok_callback(
     
     try:
         # Exchange authorization code for access token
-        redirect_uri = f"{BACKEND_URL}/api/auth/tiktok/callback"
+        # IMPORTANT: redirect_uri must match EXACTLY what was used in auth request
+        # Ensure no trailing slash on BACKEND_URL
+        redirect_uri = f"{BACKEND_URL.rstrip('/')}/api/auth/tiktok/callback"
+        
+        # URL decode the code if needed (FastAPI should do this, but be explicit)
+        decoded_code = unquote(code) if code else None
         
         token_data = {
             "client_key": TIKTOK_CLIENT_KEY,
             "client_secret": TIKTOK_CLIENT_SECRET,
-            "code": code,
+            "code": decoded_code,
             "grant_type": "authorization_code",
             "redirect_uri": redirect_uri,
         }
         
         print(f"  Exchanging code for token...")
+        print(f"  Token URL: {TIKTOK_TOKEN_URL}")
         print(f"  Redirect URI: {redirect_uri}")
+        print(f"  Client Key: {TIKTOK_CLIENT_KEY[:4]}...{TIKTOK_CLIENT_KEY[-4:]}")
         
         async with httpx.AsyncClient() as client:
             token_response = await client.post(
@@ -572,10 +580,12 @@ async def auth_tiktok_callback(
             )
             
             print(f"  Token response status: {token_response.status_code}")
+            print(f"  Token response headers: {dict(token_response.headers)}")
             
             if token_response.status_code != 200:
                 error_text = token_response.text
                 print(f"  Token exchange failed: {error_text}")
+                print(f"  Full response: {error_text[:500]}")
                 return RedirectResponse(f"{FRONTEND_URL}?error=tiktok_token_failed")
             
             token_json = token_response.json()
