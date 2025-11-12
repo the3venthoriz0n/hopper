@@ -9,6 +9,7 @@ import json
 import secrets
 import random
 import re
+import httpx
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -31,6 +32,12 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_PROJECT_ID = os.getenv("GOOGLE_PROJECT_ID")
 TIKTOK_CLIENT_KEY = os.getenv("TIKTOK_CLIENT_KEY")
 TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_SECRET")
+
+# TikTok OAuth Configuration
+TIKTOK_AUTH_URL = "https://www.tiktok.com/v2/auth/authorize/"
+TIKTOK_TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
+TIKTOK_SCOPES = ["user.info.basic", "video.upload", "video.publish"]
+
 
 def get_google_client_config():
     """Build Google OAuth client config from environment variables"""
@@ -452,201 +459,162 @@ def disconnect_youtube(request: Request, response: Response):
     save_session(session_id)
     return {"message": "Disconnected"}
 
-# TikTok OAuth endpoints
 @app.get("/api/auth/tiktok")
 def auth_tiktok(request: Request, response: Response):
-    """Start TikTok OAuth
+    """Initiate TikTok OAuth flow"""
     
-    IMPORTANT: The redirect_uri must be registered in TikTok Developer Portal.
-    Register: https://${DOMAIN}/api/auth/tiktok/callback
-    """
+    # Validate configuration
     if not TIKTOK_CLIENT_KEY:
-        raise HTTPException(400, "TikTok credentials not configured. Set TIKTOK_CLIENT_KEY environment variable.")
+        raise HTTPException(
+            status_code=500,
+            detail="TikTok OAuth not configured. Missing TIKTOK_CLIENT_KEY."
+        )
     
+    # Get or create session
     session_id = get_or_create_session_id(request, response)
     
-    # Build redirect URI - use BACKEND_URL from env if available, otherwise construct from request
-    # Must match exactly what's registered in TikTok Developer Portal
-    if BACKEND_URL and BACKEND_URL.startswith(("http://", "https://")):
-        # Remove trailing slash if present, then add callback path
-        base_url = BACKEND_URL.rstrip("/")
-        redirect_uri = f"{base_url}/api/auth/tiktok/callback"
-        redirect_source = "BACKEND_URL env var"
-    else:
-        # Fallback: construct from request
-        protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" or ENVIRONMENT == "production" else "http"
-        host = request.headers.get("host", DOMAIN)
-        if ":" in host:
-            host = host.split(":")[0]
-        redirect_uri = f"{protocol}://{host}/api/auth/tiktok/callback"
-        redirect_source = f"request headers (protocol={protocol}, host={host})"
+    # Generate CSRF token (using session_id for state)
+    state = session_id
     
-    # Build TikTok OAuth URL
-    # TikTok OAuth scopes: user.info.basic, video.upload, video.publish
-    scopes = "user.info.basic,video.upload,video.publish"
-    state = session_id  # Use session_id as state for CSRF protection
+    # Build redirect URI (must match TikTok Developer Portal exactly)
+    redirect_uri = f"{BACKEND_URL}/api/auth/tiktok/callback"
     
-    # Log OAuth request details (masking sensitive values)
-    masked_client_key = f"{TIKTOK_CLIENT_KEY[:8]}...{TIKTOK_CLIENT_KEY[-4:]}" if TIKTOK_CLIENT_KEY and len(TIKTOK_CLIENT_KEY) > 12 else "NOT SET"
-    print(f"[TikTok OAuth] Starting auth flow:")
-    print(f"  - Client Key: {masked_client_key}")
-    print(f"  - Redirect URI: {redirect_uri} (from {redirect_source})")
-    print(f"  - Scopes: {scopes}")
-    print(f"  - State: {state[:20]}...")
-    print(f"  - BACKEND_URL env: {BACKEND_URL}")
-    print(f"  - Request host: {request.headers.get('host', 'N/A')}")
-    print(f"  - X-Forwarded-Proto: {request.headers.get('X-Forwarded-Proto', 'N/A')}")
-    
-    # TikTok OAuth endpoint
-    from urllib.parse import urlencode
+    # Build authorization URL
     params = {
         "client_key": TIKTOK_CLIENT_KEY,
-        "scope": scopes,
         "response_type": "code",
+        "scope": ",".join(TIKTOK_SCOPES),
         "redirect_uri": redirect_uri,
-        "state": state
+        "state": state,
     }
-    auth_url = f"https://www.tiktok.com/v2/auth/authorize/?{urlencode(params)}"
-    print(f"  - Auth URL: {auth_url}")
+    
+    auth_url = f"{TIKTOK_AUTH_URL}?{urlencode(params)}"
+    
+    # Debug logging
+    print(f"[TikTok OAuth] Initiating auth flow")
+    print(f"  Client Key: {TIKTOK_CLIENT_KEY[:4]}...{TIKTOK_CLIENT_KEY[-4:]}")
+    print(f"  Redirect URI: {redirect_uri}")
+    print(f"  State: {state[:16]}...")
+    print(f"  Auth URL: {auth_url[:100]}...")
     
     return {"url": auth_url}
 
+
 @app.get("/api/auth/tiktok/callback")
-async def auth_tiktok_callback(request: Request, response: Response, code: str = None, state: str = None):
-    """Handle TikTok OAuth callback
+async def auth_tiktok_callback(
+    request: Request,
+    response: Response,
+    code: str = None,
+    state: str = None,
+    error: str = None,
+    error_description: str = None
+):
+    """Handle TikTok OAuth callback"""
     
-    IMPORTANT: The redirect_uri used here must match exactly what was sent in the auth request
-    and what's registered in TikTok Developer Portal.
-    """
-    # Log callback received
-    print(f"[TikTok OAuth Callback] Received callback:")
-    print(f"  - Code: {'SET' if code else 'MISSING'}")
-    print(f"  - State: {state[:20] + '...' if state else 'MISSING'}")
-    print(f"  - Query params: {dict(request.query_params)}")
-    print(f"  - Request host: {request.headers.get('host', 'N/A')}")
-    print(f"  - X-Forwarded-Proto: {request.headers.get('X-Forwarded-Proto', 'N/A')}")
+    print(f"[TikTok Callback] Received callback")
+    print(f"  Code: {'present' if code else 'MISSING'}")
+    print(f"  State: {state[:16] + '...' if state else 'MISSING'}")
+    print(f"  Error: {error or 'none'}")
     
-    # Check for error in callback (TikTok redirects with error params if auth fails)
-    error = request.query_params.get("error")
-    error_description = request.query_params.get("error_description")
+    # Check for errors from TikTok
     if error:
         error_msg = f"TikTok OAuth error: {error}"
         if error_description:
             error_msg += f" - {error_description}"
-        print(f"  - ERROR: {error_msg}")
-        raise HTTPException(400, error_msg)
+        print(f"  ERROR: {error_msg}")
+        # Redirect to frontend with error
+        return RedirectResponse(f"{FRONTEND_URL}?error=tiktok_auth_failed")
     
-    if not code:
-        raise HTTPException(400, "No authorization code")
+    # Validate required parameters
+    if not code or not state:
+        print("  ERROR: Missing code or state")
+        return RedirectResponse(f"{FRONTEND_URL}?error=tiktok_auth_failed")
     
+    # Validate configuration
     if not TIKTOK_CLIENT_KEY or not TIKTOK_CLIENT_SECRET:
-        raise HTTPException(400, "TikTok credentials not configured. Set TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET environment variables.")
+        raise HTTPException(
+            status_code=500,
+            detail="TikTok OAuth not configured. Missing credentials."
+        )
     
-    # Build redirect URI - use BACKEND_URL from env if available, otherwise construct from request
-    # Must match exactly what was used in auth request
-    if BACKEND_URL and BACKEND_URL.startswith(("http://", "https://")):
-        # Remove trailing slash if present, then add callback path
-        base_url = BACKEND_URL.rstrip("/")
-        redirect_uri = f"{base_url}/api/auth/tiktok/callback"
-        redirect_source = "BACKEND_URL env var"
-    else:
-        # Fallback: construct from request
-        protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" or ENVIRONMENT == "production" else "http"
-        host = request.headers.get("host", DOMAIN)
-        if ":" in host:
-            host = host.split(":")[0]
-        redirect_uri = f"{protocol}://{host}/api/auth/tiktok/callback"
-        redirect_source = f"request headers (protocol={protocol}, host={host})"
-    
-    print(f"  - Using redirect_uri: {redirect_uri} (from {redirect_source})")
+    # Validate state (CSRF protection)
+    session_id = state
+    session = get_session(session_id)
     
     try:
-        print(f"  - Exchanging code for token...")
-        
         # Exchange authorization code for access token
-        # TikTok requires application/x-www-form-urlencoded, not JSON
-        import httpx
-        token_url = "https://open.tiktokapis.com/v2/oauth/token/"
+        redirect_uri = f"{BACKEND_URL}/api/auth/tiktok/callback"
         
-        masked_client_key = f"{TIKTOK_CLIENT_KEY[:8]}...{TIKTOK_CLIENT_KEY[-4:]}" if TIKTOK_CLIENT_KEY and len(TIKTOK_CLIENT_KEY) > 12 else "NOT SET"
         token_data = {
             "client_key": TIKTOK_CLIENT_KEY,
             "client_secret": TIKTOK_CLIENT_SECRET,
             "code": code,
             "grant_type": "authorization_code",
-            "redirect_uri": redirect_uri
+            "redirect_uri": redirect_uri,
         }
         
-        print(f"  - Token request: client_key={masked_client_key}, redirect_uri={redirect_uri}")
+        print(f"  Exchanging code for token...")
+        print(f"  Redirect URI: {redirect_uri}")
         
         async with httpx.AsyncClient() as client:
-            # Use data= instead of json= to send as form-encoded
             token_response = await client.post(
-                token_url,
+                TIKTOK_TOKEN_URL,
                 data=token_data,
                 headers={"Content-Type": "application/x-www-form-urlencoded"}
             )
             
-            print(f"  - Token response status: {token_response.status_code}")
+            print(f"  Token response status: {token_response.status_code}")
             
             if token_response.status_code != 200:
                 error_text = token_response.text
-                print(f"  - Token exchange ERROR: {error_text}")
-                try:
-                    error_json = token_response.json()
-                    error_desc = error_json.get("error_description", error_text)
-                    error_type = error_json.get("error", "unknown")
-                    print(f"  - Error type: {error_type}, description: {error_desc}")
-                    raise HTTPException(400, f"TikTok token exchange failed: {error_desc}")
-                except:
-                    raise HTTPException(400, f"TikTok token exchange failed: {error_text}")
+                print(f"  Token exchange failed: {error_text}")
+                return RedirectResponse(f"{FRONTEND_URL}?error=tiktok_token_failed")
             
             token_json = token_response.json()
-            print(f"  - Token exchange SUCCESS: access_token={'SET' if token_json.get('access_token') else 'MISSING'}, open_id={token_json.get('open_id', 'N/A')}")
             
-            # Validate response has required fields
-            if not token_json.get("access_token"):
-                raise HTTPException(400, "TikTok token exchange failed: No access token in response")
+            # Validate response
+            if "access_token" not in token_json:
+                print(f"  ERROR: No access_token in response")
+                return RedirectResponse(f"{FRONTEND_URL}?error=tiktok_token_failed")
+            
+            print(f"  Token exchange successful!")
+            print(f"  Open ID: {token_json.get('open_id', 'N/A')}")
+            print(f"  Expires in: {token_json.get('expires_in', 'N/A')} seconds")
             
             # Store credentials in session
-            session_id = state  # We used session_id as state
-            session = get_session(session_id)
-            
             session["tiktok_creds"] = {
-                "access_token": token_json.get("access_token"),
+                "access_token": token_json["access_token"],
                 "refresh_token": token_json.get("refresh_token"),
                 "expires_in": token_json.get("expires_in"),
                 "refresh_expires_in": token_json.get("refresh_expires_in"),
                 "token_type": token_json.get("token_type"),
                 "open_id": token_json.get("open_id"),
-                "scope": token_json.get("scope")
+                "scope": token_json.get("scope"),
             }
             
             session["destinations"]["tiktok"]["enabled"] = True
             save_session(session_id)
-            print(f"  - Credentials saved to session: {session_id[:20]}...")
-        
-        # Redirect back to frontend - use FRONTEND_URL from env if available
-        if FRONTEND_URL and FRONTEND_URL.startswith(("http://", "https://")):
-            frontend_url = f"{FRONTEND_URL.rstrip('/')}?connected=tiktok"
-        else:
-            # Fallback: construct from request
-            protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" or ENVIRONMENT == "production" else "http"
-            host = request.headers.get("host", DOMAIN)
-            if ":" in host:
-                host = host.split(":")[0]
-            frontend_url = f"{protocol}://{host}?connected=tiktok"
-        
-        print(f"  - Redirecting to frontend: {frontend_url}")
-        return RedirectResponse(frontend_url)
-        
-    except HTTPException:
-        raise
+            
+            # Set session cookie
+            response.set_cookie(
+                key="session_id",
+                value=session_id,
+                httponly=True,
+                max_age=30*24*60*60,  # 30 days
+                samesite="lax"
+            )
+            
+            print(f"  Session saved: {session_id[:16]}...")
+            
+            # Redirect to frontend with success
+            return RedirectResponse(f"{FRONTEND_URL}?connected=tiktok")
+            
     except Exception as e:
-        print(f"[TikTok OAuth Callback] Exception: {e}")
+        print(f"[TikTok Callback] Exception: {e}")
         import traceback
-        print(f"  - Traceback: {traceback.format_exc()}")
-        raise HTTPException(500, f"Authentication failed: {str(e)}")
+        traceback.print_exc()
+        return RedirectResponse(f"{FRONTEND_URL}?error=tiktok_auth_failed")
+
 
 @app.post("/api/auth/tiktok/disconnect")
 def disconnect_tiktok(request: Request, response: Response):
@@ -657,7 +625,49 @@ def disconnect_tiktok(request: Request, response: Response):
     session["tiktok_creds"] = None
     session["destinations"]["tiktok"]["enabled"] = False
     save_session(session_id)
-    return {"message": "Disconnected"}
+    
+    print(f"[TikTok] Disconnected session: {session_id[:16]}...")
+    
+    return {"message": "TikTok disconnected successfully"}
+
+
+# Helper: Refresh TikTok access token
+async def refresh_tiktok_token(session_id: str) -> dict:
+    """Refresh TikTok access token using refresh token"""
+    session = get_session(session_id)
+    creds = session.get("tiktok_creds")
+    
+    if not creds or not creds.get("refresh_token"):
+        raise HTTPException(400, "No TikTok credentials to refresh")
+    
+    refresh_data = {
+        "client_key": TIKTOK_CLIENT_KEY,
+        "client_secret": TIKTOK_CLIENT_SECRET,
+        "grant_type": "refresh_token",
+        "refresh_token": creds["refresh_token"],
+    }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            TIKTOK_TOKEN_URL,
+            data=refresh_data,
+            headers={"Content-Type": "application/x-www-form-urlencoded"}
+        )
+        
+        if response.status_code != 200:
+            raise HTTPException(400, f"Token refresh failed: {response.text}")
+        
+        token_json = response.json()
+        
+        # Update session with new tokens
+        session["tiktok_creds"].update({
+            "access_token": token_json["access_token"],
+            "refresh_token": token_json.get("refresh_token", creds["refresh_token"]),
+            "expires_in": token_json.get("expires_in"),
+        })
+        save_session(session_id)
+        
+        return session["tiktok_creds"]
 
 @app.get("/api/global/settings")
 def get_global_settings(request: Request, response: Response):
