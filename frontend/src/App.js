@@ -385,6 +385,32 @@ function App() {
     }
   };
 
+  const recomputeVideoTitle = async (videoId) => {
+    try {
+      await axios.post(`${API}/videos/${videoId}/recompute-title`);
+      
+      // Reload videos to get updated title
+      await loadVideos();
+      
+      setMessage('✅ Title recomputed from template');
+      
+      // Update the edit modal title field if it's open
+      const titleInput = document.getElementById('edit-title');
+      if (titleInput) {
+        // Get the updated video data
+        const videosRes = await axios.get(`${API}/videos`);
+        const updatedVideo = videosRes.data.find(v => v.id === videoId);
+        if (updatedVideo) {
+          titleInput.value = updatedVideo.youtube_title || '';
+          setEditTitleLength(titleInput.value.length);
+        }
+      }
+    } catch (err) {
+      setMessage('❌ Error recomputing title');
+      console.error('Error recomputing title:', err);
+    }
+  };
+
   const handleDragStart = (e, video) => {
     // Only allow dragging if not uploading
     if (video.status === 'uploading') {
@@ -1149,7 +1175,27 @@ function App() {
             </div>
             <div className="modal-body">
               <div className="form-group">
-                <label>Video Title <span className="char-counter">{editTitleLength}/100</span></label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <label>Video Title <span className="char-counter">{editTitleLength}/100</span></label>
+                  <button 
+                    type="button"
+                    onClick={() => recomputeVideoTitle(editingVideo.id)}
+                    className="btn-recompute-title"
+                    style={{
+                      padding: '0.4rem 0.8rem',
+                      fontSize: '0.85rem',
+                      background: 'rgba(139, 92, 246, 0.2)',
+                      border: '1px solid rgba(139, 92, 246, 0.4)',
+                      borderRadius: '4px',
+                      color: '#8b5cf6',
+                      cursor: 'pointer',
+                      fontWeight: '500'
+                    }}
+                    title="Recompute title from current template"
+                  >
+                    🔄 Recompute
+                  </button>
+                </div>
                 <input 
                   type="text"
                   defaultValue={editingVideo.custom_settings?.title || editingVideo.youtube_title}
@@ -1159,7 +1205,7 @@ function App() {
                   maxLength="100"
                   onInput={(e) => setEditTitleLength(e.target.value.length)}
                 />
-                <small className="hint">Leave empty to use global template</small>
+                <small className="hint">Leave empty to use template. Click "Recompute" to regenerate from current template.</small>
               </div>
               
               <div className="form-group">
