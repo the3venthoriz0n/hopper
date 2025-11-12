@@ -23,4 +23,6 @@ Thumbs.db
 
 # Environment
 .env
+.env.prod
+.env.dev
 

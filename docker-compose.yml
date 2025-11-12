@@ -1,23 +1,30 @@
 services:
   backend:
     build: ./backend
-    ports:
-      - "8000:8000"
     volumes:
       - backend_uploads:/app/uploads
       - backend_sessions:/app/sessions
+      - ./backend/client_secrets.json:/app/client_secrets.json:ro
     environment:
       - PYTHONUNBUFFERED=1
+      - CLOUDFLARE_ACCESS_AUD_TAG=${CLOUDFLARE_ACCESS_AUD_TAG:-}
+      - CLOUDFLARE_ACCESS_TEAM_DOMAIN=${CLOUDFLARE_ACCESS_TEAM_DOMAIN:-}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - DOMAIN=${DOMAIN:-hopper-dev.dunkbox.net}
+      - FRONTEND_URL=${FRONTEND_URL:-https://hopper-dev.dunkbox.net}
+      - BACKEND_URL=${BACKEND_URL:-https://hopper-dev.dunkbox.net}
 
   frontend:
     build: ./frontend
-    ports:
-      - "3000:3000"
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/public:/app/public
     depends_on:
       - backend
+    environment:
+      - DOMAIN=${DOMAIN:-hopper-dev.dunkbox.net}
+      - FRONTEND_URL=${FRONTEND_URL:-https://hopper-dev.dunkbox.net}
+      - BACKEND_URL=${BACKEND_URL:-https://hopper-dev.dunkbox.net}
 
 volumes:
   backend_uploads:

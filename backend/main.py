@@ -19,10 +19,21 @@ from googleapiclient.http import MediaFileUpload
 
 app = FastAPI()
 
-# CORS - allow all origins for development
+# Get domain from environment or default to localhost for development
+DOMAIN = os.getenv("DOMAIN", "localhost:8000")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+
+# CORS - allow production domain or all origins for development
+if ENVIRONMENT == "production":
+    allowed_origins = [FRONTEND_URL]
+else:
+    allowed_origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -247,9 +258,14 @@ def auth_youtube(request: Request, response: Response):
     # Ensure session exists
     session_id = get_or_create_session_id(request, response)
     
-    # Build redirect URI dynamically based on request host
-    host = request.headers.get("host", "localhost:8000")
-    redirect_uri = f"http://{host}/api/auth/youtube/callback"
+    # Build redirect URI dynamically based on request
+    # Check for HTTPS from cloudflared (X-Forwarded-Proto) or use environment
+    protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" or ENVIRONMENT == "production" else "http"
+    host = request.headers.get("host", DOMAIN)
+    # Remove port if present (cloudflared doesn't expose ports)
+    if ":" in host:
+        host = host.split(":")[0]
+    redirect_uri = f"{protocol}://{host}/api/auth/youtube/callback"
     
     flow = Flow.from_client_secrets_file(
         'client_secrets.json',
@@ -278,8 +294,13 @@ def auth_callback(code: str, state: str, request: Request, response: Response):
     )
     
     # Build redirect URI dynamically
-    host = request.headers.get("host", "localhost:8000")
-    redirect_uri = f"http://{host}/api/auth/youtube/callback"
+    # Check for HTTPS from cloudflared (X-Forwarded-Proto) or use environment
+    protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" or ENVIRONMENT == "production" else "http"
+    host = request.headers.get("host", DOMAIN)
+    # Remove port if present (cloudflared doesn't expose ports)
+    if ":" in host:
+        host = host.split(":")[0]
+    redirect_uri = f"{protocol}://{host}/api/auth/youtube/callback"
     
     flow = Flow.from_client_secrets_file(
         'client_secrets.json',
@@ -291,8 +312,13 @@ def auth_callback(code: str, state: str, request: Request, response: Response):
     session["youtube_creds"] = flow.credentials
     save_session(session_id)
     
-    # Redirect back to frontend (replace port 8000 with 3000)
-    frontend_url = f"http://{host.replace(':8000', ':3000')}?connected=youtube"
+    # Redirect back to frontend using environment variable or construct from request
+    if ENVIRONMENT == "production":
+        frontend_url = f"{FRONTEND_URL}?connected=youtube"
+    else:
+        # Development: use request host and replace port
+        host = request.headers.get("host", "localhost:8000")
+        frontend_url = f"http://{host.replace(':8000', ':3000')}?connected=youtube"
     return RedirectResponse(frontend_url)
 
 @app.get("/api/destinations")
@@ -423,14 +449,16 @@ def auth_tiktok(request: Request, response: Response):
         scopes = "user.info.basic,video.upload,video.publish"
         state = session_id  # Use session_id as state for CSRF protection
         
-        auth_url = (
-            f"https://www.tiktok.com/v2/auth/authorize/"
-            f"?client_key={client_key}"
-            f"&scope={scopes}"
-            f"&response_type=code"
-            f"&redirect_uri={redirect_uri}"
-            f"&state={state}"
-        )
+        # TikTok OAuth endpoint (using proper API endpoint)
+        from urllib.parse import urlencode
+        params = {
+            "client_key": client_key,
+            "scope": scopes,
+            "response_type": "code",
+            "redirect_uri": redirect_uri,
+            "state": state
+        }
+        auth_url = f"https://www.tiktok.com/v2/auth/authorize/?{urlencode(params)}"
         
         return {"url": auth_url}
         
@@ -493,7 +521,14 @@ async def auth_tiktok_callback(request: Request, response: Response, code: str =
             session["destinations"]["tiktok"]["enabled"] = True
             save_session(session_id)
         
-        return RedirectResponse('/?connected=tiktok')
+        # Redirect back to frontend using environment variable or construct from request
+        if ENVIRONMENT == "production":
+            frontend_url = f"{FRONTEND_URL}?connected=tiktok"
+        else:
+            # Development: use request host
+            host = request.headers.get("host", "localhost:8000")
+            frontend_url = f"http://{host.replace(':8000', ':3000')}?connected=tiktok"
+        return RedirectResponse(frontend_url)
         
     except FileNotFoundError:
         raise HTTPException(500, "client_secrets.json not found")
