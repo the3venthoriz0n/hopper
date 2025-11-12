@@ -185,12 +185,18 @@ def save_session(session_id: str):
     # Convert Credentials object to dict for JSON serialization
     if session_data["youtube_creds"]:
         creds = session_data["youtube_creds"]
+        # Ensure client_id and client_secret are set from environment if not in creds
+        # (they might not be on the Credentials object, but are needed for refresh)
+        client_id = creds.client_id or GOOGLE_CLIENT_ID
+        client_secret = creds.client_secret or GOOGLE_CLIENT_SECRET
+        token_uri = creds.token_uri or "https://oauth2.googleapis.com/token"
+        
         session_data["youtube_creds"] = {
             "token": creds.token,
             "refresh_token": creds.refresh_token,
-            "token_uri": creds.token_uri,
-            "client_id": creds.client_id,
-            "client_secret": creds.client_secret,
+            "token_uri": token_uri,
+            "client_id": client_id,
+            "client_secret": client_secret,
             "scopes": creds.scopes
         }
     
@@ -214,12 +220,20 @@ def load_session(session_id: str):
         # Convert credentials dict back to Credentials object
         if session_data.get("youtube_creds"):
             creds_data = session_data["youtube_creds"]
+            # Ensure client_id and client_secret are set (use env vars as fallback)
+            client_id = creds_data.get("client_id") or GOOGLE_CLIENT_ID
+            client_secret = creds_data.get("client_secret") or GOOGLE_CLIENT_SECRET
+            token_uri = creds_data.get("token_uri") or "https://oauth2.googleapis.com/token"
+            
+            if not client_id or not client_secret:
+                print(f"WARNING: Missing client_id or client_secret for session {session_id}")
+            
             session_data["youtube_creds"] = Credentials(
                 token=creds_data.get("token"),
                 refresh_token=creds_data.get("refresh_token"),
-                token_uri=creds_data.get("token_uri"),
-                client_id=creds_data.get("client_id"),
-                client_secret=creds_data.get("client_secret"),
+                token_uri=token_uri,
+                client_id=client_id,
+                client_secret=client_secret,
                 scopes=creds_data.get("scopes")
             )
         
@@ -357,7 +371,18 @@ def auth_callback(code: str, state: str, request: Request, response: Response):
     )
     
     flow.fetch_token(code=code)
-    session["youtube_creds"] = flow.credentials
+    
+    # Ensure credentials have client_id and client_secret for token refresh
+    # The Credentials object might not have these, so we need to set them
+    creds = flow.credentials
+    if not creds.client_id:
+        creds.client_id = GOOGLE_CLIENT_ID
+    if not creds.client_secret:
+        creds.client_secret = GOOGLE_CLIENT_SECRET
+    if not creds.token_uri:
+        creds.token_uri = "https://oauth2.googleapis.com/token"
+    
+    session["youtube_creds"] = creds
     save_session(session_id)
     
     # Redirect back to frontend using environment variable or construct from request
@@ -1101,15 +1126,43 @@ def upload_video_to_youtube(video, session):
     youtube_settings = session["youtube_settings"]
     upload_progress = session["upload_progress"]
     
+    print(f"[YouTube Upload] Starting upload for {video['filename']}")
+    
     if not youtube_creds:
         video['status'] = 'failed'
         video['error'] = 'No YouTube credentials'
+        print(f"[YouTube Upload] ERROR: No YouTube credentials")
+        return
+    
+    # Check if credentials have required fields for refresh
+    if not youtube_creds.client_id or not youtube_creds.client_secret:
+        print(f"[YouTube Upload] WARNING: Credentials missing client_id or client_secret, attempting to fix...")
+        # Try to fix by setting from environment
+        if not youtube_creds.client_id:
+            youtube_creds.client_id = GOOGLE_CLIENT_ID
+        if not youtube_creds.client_secret:
+            youtube_creds.client_secret = GOOGLE_CLIENT_SECRET
+        if not youtube_creds.token_uri:
+            youtube_creds.token_uri = "https://oauth2.googleapis.com/token"
+        print(f"[YouTube Upload] Fixed credentials from environment variables")
+    
+    # Validate credentials have all required fields
+    if not youtube_creds.client_id or not youtube_creds.client_secret or not youtube_creds.token_uri:
+        video['status'] = 'failed'
+        error_msg = 'YouTube credentials are incomplete. Please disconnect and reconnect YouTube.'
+        video['error'] = error_msg
+        print(f"[YouTube Upload] ERROR: {error_msg}")
+        print(f"  Has client_id: {bool(youtube_creds.client_id)}")
+        print(f"  Has client_secret: {bool(youtube_creds.client_secret)}")
+        print(f"  Has token_uri: {bool(youtube_creds.token_uri)}")
+        print(f"  Has refresh_token: {bool(youtube_creds.refresh_token)}")
         return
     
     try:
         video['status'] = 'uploading'
         upload_progress[video['id']] = 0
         
+        print(f"[YouTube Upload] Building YouTube API client...")
         youtube = build('youtube', 'v3', credentials=youtube_creds)
         
         # Check for custom settings, otherwise use global settings and templates
@@ -1177,6 +1230,11 @@ def upload_video_to_youtube(video, session):
         if tags:
             snippet_body['tags'] = tags
         
+        print(f"[YouTube Upload] Preparing upload request...")
+        print(f"  Title: {title[:50]}...")
+        print(f"  Visibility: {visibility}")
+        print(f"  Video path: {video['path']}")
+        
         request = youtube.videos().insert(
             part='snippet,status',
             body={
@@ -1189,20 +1247,29 @@ def upload_video_to_youtube(video, session):
             media_body=MediaFileUpload(video['path'], resumable=True)
         )
         
+        print(f"[YouTube Upload] Starting resumable upload...")
         response = None
+        chunk_count = 0
         while response is None:
             status, response = request.next_chunk()
             if status:
                 progress = int(status.progress() * 100)
                 upload_progress[video['id']] = progress
+                chunk_count += 1
+                if chunk_count % 10 == 0 or progress == 100:  # Log every 10 chunks or at completion
+                    print(f"[YouTube Upload] Progress: {progress}%")
         
         video['status'] = 'uploaded'
         video['youtube_id'] = response['id']
         upload_progress[video['id']] = 100
+        print(f"[YouTube Upload] Successfully uploaded {video['filename']}, YouTube ID: {response['id']}")
         
     except Exception as e:
         video['status'] = 'failed'
         video['error'] = str(e)
+        print(f"[YouTube Upload] ERROR uploading {video['filename']}: {str(e)}")
+        import traceback
+        print(f"[YouTube Upload] Traceback: {traceback.format_exc()}")
         if video['id'] in upload_progress:
             del upload_progress[video['id']]
 
@@ -1623,10 +1690,19 @@ def upload_videos(request: Request, response: Response):
                     # Check if this destination succeeded by looking for success markers
                     # YouTube success: has 'youtube_id'
                     # TikTok success: has 'tiktok_id' or 'tiktok_publish_id'
+                    print(f"[Upload] Checking upload result for {dest_name}...")
+                    print(f"  Video status: {video.get('status', 'unknown')}")
+                    print(f"  Has youtube_id: {'youtube_id' in video}")
+                    print(f"  Has tiktok_id: {'tiktok_id' in video}")
+                    print(f"  Has tiktok_publish_id: {'tiktok_publish_id' in video}")
+                    print(f"  Has error: {'error' in video}")
+                    
                     if dest_name == 'youtube' and 'youtube_id' in video:
                         succeeded_destinations.append(dest_name)
+                        print(f"[Upload] ✓ YouTube upload succeeded")
                     elif dest_name == 'tiktok' and ('tiktok_id' in video or 'tiktok_publish_id' in video):
                         succeeded_destinations.append(dest_name)
+                        print(f"[Upload] ✓ TikTok upload succeeded")
                     else:
                         # Check if upload function set an error
                         if video.get('status') == 'failed' or 'error' in video:
@@ -1635,6 +1711,19 @@ def upload_videos(request: Request, response: Response):
                             if 'upload_errors' not in video:
                                 video['upload_errors'] = {}
                             video['upload_errors'][dest_name] = video.get('error', 'Upload failed')
+                            print(f"[Upload] ✗ {dest_name} upload failed: {video.get('error', 'Unknown error')}")
+                        else:
+                            # Upload might still be in progress or status unclear
+                            print(f"[Upload] ⚠ {dest_name} upload status unclear - checking status...")
+                            # If status is 'uploading', it might still be in progress
+                            # But since we're synchronous, this shouldn't happen
+                            if video.get('status') == 'uploading':
+                                print(f"[Upload] ⚠ {dest_name} still shows 'uploading' - may have failed silently")
+                                failed_destinations.append(dest_name)
+                            else:
+                                # Status is neither success nor failed - treat as failed
+                                failed_destinations.append(dest_name)
+                                print(f"[Upload] ✗ {dest_name} upload failed: no success marker and status is '{video.get('status', 'unknown')}'")
             
             # Determine final status based on results
             # Only mark as 'uploaded' if ALL enabled destinations succeeded
