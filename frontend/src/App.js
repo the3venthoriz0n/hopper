@@ -3,14 +3,15 @@ import axios from 'axios';
 import './App.css';
 
 // Use same origin for API (cloudflared handles routing)
-// When behind cloudflared, use same hostname/protocol. In local dev, use port 8000
+// When behind cloudflared (HTTPS), use same hostname/protocol without port
+// In local dev (HTTP), use port 8000
 const protocol = window.location.protocol;
 const hostname = window.location.hostname;
-const port = window.location.port;
-// If on HTTPS (cloudflared) or no port specified, use same origin. Otherwise use port 8000
-const API = port && protocol === 'http:' 
-  ? `http://${hostname}:8000/api` 
-  : `${protocol}//${hostname}/api`;
+
+// If HTTPS (cloudflared), use same origin. If HTTP (local dev), use port 8000
+const API = protocol === 'https:'
+  ? `${protocol}//${hostname}/api`
+  : `http://${hostname}:8000/api`;
 
 // Configure axios to send cookies with every request
 axios.defaults.withCredentials = true;
