@@ -5,9 +5,15 @@ import './App.css';
 // Use environment variables or fallback to window.location
 // React only exposes REACT_APP_ prefixed env vars to the browser
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+
+console.log('REACT_APP_BACKEND_URL:', process.env.REACT_APP_BACKEND_URL);
+console.log('BACKEND_URL:', BACKEND_URL);
+
 const API = BACKEND_URL 
   ? `${BACKEND_URL}/api`
   : `${window.location.protocol}//${window.location.hostname}/api`;
+
+console.log('API URL:', API);
 
 // Configure axios to send cookies with every request
 axios.defaults.withCredentials = true;
