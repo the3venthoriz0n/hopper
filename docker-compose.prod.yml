@@ -1,0 +1,52 @@
+services:
+  backend:
+    build: ./backend
+    container_name: hopper-prod-backend
+    ports:
+      - "8001:8000"
+    volumes:
+      - backend_uploads:/app/uploads
+      - backend_sessions:/app/sessions
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CLOUDFLARE_ACCESS_AUD_TAG=${CLOUDFLARE_ACCESS_AUD_TAG}
+      - CLOUDFLARE_ACCESS_TEAM_DOMAIN=${CLOUDFLARE_ACCESS_TEAM_DOMAIN}
+      - ENVIRONMENT=${ENVIRONMENT}
+      - DOMAIN=${DOMAIN}
+      - FRONTEND_URL=${FRONTEND_URL}
+      - BACKEND_URL=${BACKEND_URL}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_PROJECT_ID=${GOOGLE_PROJECT_ID}
+      - TIKTOK_CLIENT_KEY=${TIKTOK_CLIENT_KEY}
+      - TIKTOK_CLIENT_SECRET=${TIKTOK_CLIENT_SECRET}
+    networks:
+      - hopper_default
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        REACT_APP_BACKEND_URL: ${BACKEND_URL}
+        REACT_APP_DOMAIN: ${DOMAIN}
+        REACT_APP_FRONTEND_URL: ${FRONTEND_URL}
+    container_name: hopper-prod-frontend
+    ports:
+      - "3001:3000"
+    depends_on:
+      - backend
+    environment:
+      - REACT_APP_BACKEND_URL=${BACKEND_URL}
+      - REACT_APP_DOMAIN=${DOMAIN}
+      - REACT_APP_FRONTEND_URL=${FRONTEND_URL}
+    networks:
+      - hopper_default
+
+networks:
+  hopper_default:
+    external: true
+
+volumes:
+  backend_uploads:
+  backend_sessions:
+
