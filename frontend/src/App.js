@@ -569,7 +569,7 @@ function App() {
 
   return (
     <div className="app">
-      <h1>🐸 hopper</h1>
+      <h1>🐸 DEV hopper</h1>
       
       {message && <div className="message">{message}</div>}
       
