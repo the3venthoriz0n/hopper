@@ -1067,45 +1067,6 @@ def update_video(
     save_session(session_id)
     return video
 
-@app.post("/api/videos/{video_id}/recompute-title")
-def recompute_video_title(video_id: int, request: Request, response: Response):
-    """Recompute the generated title for a video from current template"""
-    session_id = get_or_create_session_id(request, response)
-    session = get_session(session_id)
-    
-    # Find the video
-    video = None
-    for v in session["videos"]:
-        if v['id'] == video_id:
-            video = v
-            break
-    
-    if not video:
-        raise HTTPException(404, "Video not found")
-    
-    # Recompute title from current template
-    # Priority: YouTube-specific template > Global template
-    filename_no_ext = video['filename'].rsplit('.', 1)[0]
-    title_template = session["youtube_settings"].get('title_template', '') or session["global_settings"]['title_template']
-    new_title = replace_template_placeholders(
-        title_template,
-        filename_no_ext,
-        session["global_settings"].get('wordbank', [])
-    )
-    
-    # Update generated_title
-    video['generated_title'] = new_title
-    
-    # If there's a custom title, clear it so the new generated title is used
-    if 'custom_settings' in video and 'title' in video['custom_settings']:
-        del video['custom_settings']['title']
-        # If custom_settings is now empty, remove it
-        if not video['custom_settings']:
-            del video['custom_settings']
-    
-    save_session(session_id)
-    return {"generated_title": new_title}
-
 @app.post("/api/videos/reorder")
 async def reorder_videos(request: Request, response: Response):
     """Reorder videos in the queue"""
