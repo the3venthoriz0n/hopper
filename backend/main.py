@@ -1324,26 +1324,42 @@ def get_tiktok_creator_info(session):
     return session["tiktok_creator_info"]
 
 def map_privacy_level_to_tiktok(privacy_level, creator_info):
-    """Map our privacy level to TikTok's format"""
+    """
+    Map frontend privacy level to TikTok's format.
+    
+    Frontend values: "public", "private", "friends"
+    TikTok values: "PUBLIC_TO_EVERYONE", "SELF_ONLY", "MUTUAL_FOLLOW_FRIENDS"
+    """
     # Get available privacy options from creator info
     available_options = creator_info.get("privacy_level_options", [])
     
-    # Mapping
+    # Mapping from frontend to TikTok API values
     mapping = {
         "public": "PUBLIC_TO_EVERYONE",
         "private": "SELF_ONLY",
         "friends": "MUTUAL_FOLLOW_FRIENDS"
     }
     
+    # Normalize input (lowercase, strip whitespace)
+    privacy_level = str(privacy_level).lower().strip() if privacy_level else "public"
+    
+    # Map to TikTok format
     tiktok_privacy = mapping.get(privacy_level, "PUBLIC_TO_EVERYONE")
     
-    # Verify it's available, fallback to first available option
-    if tiktok_privacy not in available_options and available_options:
-        tiktok_privacy = available_options[0]
-    elif not available_options:
-        # Default if no options available
-        tiktok_privacy = "PUBLIC_TO_EVERYONE"
+    # Log the mapping for debugging
+    print(f"[TikTok Privacy] Frontend value: '{privacy_level}' -> TikTok value: '{tiktok_privacy}'")
+    print(f"[TikTok Privacy] Available options from TikTok: {available_options}")
     
+    # Verify the mapped value is available in TikTok's options
+    if available_options:
+        if tiktok_privacy not in available_options:
+            print(f"[TikTok Privacy] Warning: '{tiktok_privacy}' not in available options, using first available: '{available_options[0]}'")
+            tiktok_privacy = available_options[0]
+    else:
+        # If no options returned, log warning but use mapped value
+        print(f"[TikTok Privacy] Warning: No privacy options returned from TikTok API, using mapped value: '{tiktok_privacy}'")
+    
+    print(f"[TikTok Privacy] Final privacy level: '{tiktok_privacy}'")
     return tiktok_privacy
 
 def upload_video_to_tiktok(video, session, session_id=None):
@@ -1427,11 +1443,16 @@ def upload_video_to_tiktok(video, session, session_id=None):
             },
             "source_info": {
                 "source": "FILE_UPLOAD",
-                "video_size": video_size,
-                "chunk_size": video_size,  # Single chunk upload
+                "video_size": int(video_size),
+                "chunk_size": int(video_size),  # Single chunk upload
                 "total_chunk_count": 1
             }
         }
+        
+        # Log the request details for debugging
+        import json as json_module
+        print(f"[TikTok Upload] Request body:\n{json_module.dumps(init_body, indent=2)}")
+        print(f"[TikTok Upload] Privacy level being sent: '{tiktok_privacy}'")
         
         init_response = httpx.post(
             TIKTOK_INIT_UPLOAD_URL,
