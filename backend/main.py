@@ -1839,5 +1839,7 @@ def upload_videos(request: Request, response: Response):
     return {"message": "Upload processing"}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Use reload=True in development for hot reload
+    reload = os.getenv("ENVIRONMENT", "development") == "development"
+    uvicorn.run(app, host="0.0.0.0", port=8000, reload=reload)
 
