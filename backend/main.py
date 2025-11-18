@@ -1840,6 +1840,10 @@ def upload_videos(request: Request, response: Response):
 
 if __name__ == "__main__":
     # Use reload=True in development for hot reload
+    # Must pass app as import string for reload to work
     reload = os.getenv("ENVIRONMENT", "development") == "development"
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=reload)
+    if reload:
+        uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    else:
+        uvicorn.run(app, host="0.0.0.0", port=8000)
 

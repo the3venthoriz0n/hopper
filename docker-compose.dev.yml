@@ -7,7 +7,7 @@ services:
     volumes:
       - backend_uploads:/app/uploads
       - backend_sessions:/app/sessions
-      - ./backend:/app
+      - /mnt/y/Misc/_DevRemote/hopper_sync/backend:/app
     environment:
       - PYTHONUNBUFFERED=1
       - CLOUDFLARE_ACCESS_AUD_TAG=${CLOUDFLARE_ACCESS_AUD_TAG}
@@ -35,7 +35,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./frontend:/app
+      - /mnt/y/Misc/_DevRemote/hopper_sync/frontend:/app
       - /app/node_modules
     depends_on:
       - backend

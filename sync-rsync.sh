@@ -1,17 +1,17 @@
 #!/bin/bash
-# Sync script - hardcoded to sync to local Windows path
+# Sync script - syncs to remote server via SSH
 # No secrets or sensitive data in this script
 
 set -e
 
-# Hardcoded sync destination (Windows path via WSL)
-SYNC_DEST="/mnt/y/Misc/_DevRemote/hopper_sync"
+# Hardcoded remote server configuration
+REMOTE_HOST="dbserver"
+REMOTE_USER="root"
+REMOTE_PATH="/mnt/y/Misc/_DevRemote/hopper_sync"
 
-echo "Syncing to: $SYNC_DEST"
+SYNC_DEST="${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}"
 
-# Create destination directory if it doesn't exist
-mkdir -p "${SYNC_DEST}/backend"
-mkdir -p "${SYNC_DEST}/frontend"
+echo "Syncing to remote server: $SYNC_DEST"
 
 # Common rsync options
 RSYNC_OPTS="-avz --delete"
