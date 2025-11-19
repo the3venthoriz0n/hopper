@@ -10,6 +10,7 @@ services:
       - /mnt/y/Misc/_DevRemote/hopper_sync/backend:/app
     environment:
       - PYTHONUNBUFFERED=1
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - CLOUDFLARE_ACCESS_AUD_TAG=${CLOUDFLARE_ACCESS_AUD_TAG}
       - CLOUDFLARE_ACCESS_TEAM_DOMAIN=${CLOUDFLARE_ACCESS_TEAM_DOMAIN}
       - ENVIRONMENT=${ENVIRONMENT}
@@ -21,6 +22,12 @@ services:
       - GOOGLE_PROJECT_ID=${GOOGLE_PROJECT_ID}
       - TIKTOK_CLIENT_KEY=${TIKTOK_CLIENT_KEY}
       - TIKTOK_CLIENT_SECRET=${TIKTOK_CLIENT_SECRET}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        compress: "true"
     networks:
       - hopper_default
 
@@ -45,6 +52,12 @@ services:
       - REACT_APP_FRONTEND_URL=${FRONTEND_URL}
       - CHOKIDAR_USEPOLLING=true
       - WATCHPACK_POLLING=true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        compress: "true"
     networks:
       - hopper_default
 

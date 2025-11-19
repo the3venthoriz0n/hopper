@@ -11,6 +11,7 @@ import secrets
 import random
 import re
 import httpx
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -26,6 +27,20 @@ DOMAIN = os.getenv("DOMAIN", "localhost:8000")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+
+# Configure logging
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
+
+# Create specific loggers for different components
+upload_logger = logging.getLogger("upload")
+tiktok_logger = logging.getLogger("tiktok")
+youtube_logger = logging.getLogger("youtube")
 
 # OAuth Credentials from environment variables
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
@@ -549,12 +564,10 @@ def auth_tiktok(request: Request, response: Response):
     auth_url = f"{TIKTOK_AUTH_URL}?{query_string}"
     
     # Debug logging
-    print(f"[TikTok OAuth] Initiating auth flow")
-    print(f"  Client Key: {TIKTOK_CLIENT_KEY[:4]}...{TIKTOK_CLIENT_KEY[-4:]}")
-    print(f"  Redirect URI: {redirect_uri}")
-    print(f"  Scope: {scope_string}")
-    print(f"  State: {state[:16]}...")
-    print(f"  Full Auth URL: {auth_url}")
+    tiktok_logger.info("Initiating auth flow")
+    tiktok_logger.debug(f"Client Key: {TIKTOK_CLIENT_KEY[:4]}...{TIKTOK_CLIENT_KEY[-4:]}, "
+                       f"Redirect URI: {redirect_uri}, Scope: {scope_string}, "
+                       f"State: {state[:16]}..., Full Auth URL: {auth_url}")
     
     return {"url": auth_url}
 
@@ -570,23 +583,23 @@ async def auth_tiktok_callback(
 ):
     """Handle TikTok OAuth callback"""
     
-    print(f"[TikTok Callback] Received callback")
-    print(f"  Code: {'present' if code else 'MISSING'}")
-    print(f"  State: {state[:16] + '...' if state else 'MISSING'}")
-    print(f"  Error: {error or 'none'}")
+    tiktok_logger.info("Received callback")
+    tiktok_logger.debug(f"Code: {'present' if code else 'MISSING'}, "
+                       f"State: {state[:16] + '...' if state else 'MISSING'}, "
+                       f"Error: {error or 'none'}")
     
     # Check for errors from TikTok
     if error:
         error_msg = f"TikTok OAuth error: {error}"
         if error_description:
             error_msg += f" - {error_description}"
-        print(f"  ERROR: {error_msg}")
+        tiktok_logger.error(error_msg)
         # Redirect to frontend with error
         return RedirectResponse(f"{FRONTEND_URL}?error=tiktok_auth_failed")
     
     # Validate required parameters
     if not code or not state:
-        print("  ERROR: Missing code or state")
+        tiktok_logger.error("Missing code or state")
         return RedirectResponse(f"{FRONTEND_URL}?error=tiktok_auth_failed")
     
     # Validate configuration
@@ -617,10 +630,9 @@ async def auth_tiktok_callback(
             "redirect_uri": redirect_uri,
         }
         
-        print(f"  Exchanging code for token...")
-        print(f"  Token URL: {TIKTOK_TOKEN_URL}")
-        print(f"  Redirect URI: {redirect_uri}")
-        print(f"  Client Key: {TIKTOK_CLIENT_KEY[:4]}...{TIKTOK_CLIENT_KEY[-4:]}")
+        tiktok_logger.debug(f"Exchanging code for token - Token URL: {TIKTOK_TOKEN_URL}, "
+                           f"Redirect URI: {redirect_uri}, "
+                           f"Client Key: {TIKTOK_CLIENT_KEY[:4]}...{TIKTOK_CLIENT_KEY[-4:]}")
         
         async with httpx.AsyncClient() as client:
             token_response = await client.post(
@@ -629,25 +641,23 @@ async def auth_tiktok_callback(
                 headers={"Content-Type": "application/x-www-form-urlencoded"}
             )
             
-            print(f"  Token response status: {token_response.status_code}")
-            print(f"  Token response headers: {dict(token_response.headers)}")
+            tiktok_logger.debug(f"Token response status: {token_response.status_code}, "
+                              f"headers: {dict(token_response.headers)}")
             
             if token_response.status_code != 200:
                 error_text = token_response.text
-                print(f"  Token exchange failed: {error_text}")
-                print(f"  Full response: {error_text[:500]}")
+                tiktok_logger.error(f"Token exchange failed: {error_text[:500]}")
                 return RedirectResponse(f"{FRONTEND_URL}?error=tiktok_token_failed")
             
             token_json = token_response.json()
             
             # Validate response
             if "access_token" not in token_json:
-                print(f"  ERROR: No access_token in response")
+                tiktok_logger.error("No access_token in response")
                 return RedirectResponse(f"{FRONTEND_URL}?error=tiktok_token_failed")
             
-            print(f"  Token exchange successful!")
-            print(f"  Open ID: {token_json.get('open_id', 'N/A')}")
-            print(f"  Expires in: {token_json.get('expires_in', 'N/A')} seconds")
+            tiktok_logger.info(f"Token exchange successful - Open ID: {token_json.get('open_id', 'N/A')}, "
+                             f"Expires in: {token_json.get('expires_in', 'N/A')} seconds")
             
             # Store credentials in session
             session["tiktok_creds"] = {
@@ -672,15 +682,13 @@ async def auth_tiktok_callback(
                 samesite="lax"
             )
             
-            print(f"  Session saved: {session_id[:16]}...")
+            tiktok_logger.info(f"Session saved: {session_id[:16]}...")
             
             # Redirect to frontend with success
             return RedirectResponse(f"{FRONTEND_URL}?connected=tiktok")
             
     except Exception as e:
-        print(f"[TikTok Callback] Exception: {e}")
-        import traceback
-        traceback.print_exc()
+        tiktok_logger.error(f"Callback exception: {e}", exc_info=True)
         return RedirectResponse(f"{FRONTEND_URL}?error=tiktok_auth_failed")
 
 
@@ -694,7 +702,7 @@ def disconnect_tiktok(request: Request, response: Response):
     session["destinations"]["tiktok"]["enabled"] = False
     save_session(session_id)
     
-    print(f"[TikTok] Disconnected session: {session_id[:16]}...")
+    tiktok_logger.info(f"Disconnected session: {session_id[:16]}...")
     
     return {"message": "TikTok disconnected successfully"}
 
@@ -1135,12 +1143,12 @@ def upload_video_to_youtube(video, session):
     youtube_settings = session["youtube_settings"]
     upload_progress = session["upload_progress"]
     
-    print(f"[YouTube Upload] Starting upload for {video['filename']}")
+    youtube_logger.info(f"Starting upload for {video['filename']}")
     
     if not youtube_creds:
         video['status'] = 'failed'
         video['error'] = 'No YouTube credentials'
-        print(f"[YouTube Upload] ERROR: No YouTube credentials")
+        youtube_logger.error("No YouTube credentials")
         return
     
     # Credentials should always be complete (fixed in load_session if old session)
@@ -1148,14 +1156,14 @@ def upload_video_to_youtube(video, session):
         video['status'] = 'failed'
         error_msg = 'YouTube credentials are incomplete. Please disconnect and reconnect YouTube.'
         video['error'] = error_msg
-        print(f"[YouTube Upload] ERROR: {error_msg}")
+        youtube_logger.error(error_msg)
         return
     
     try:
         video['status'] = 'uploading'
         upload_progress[video['id']] = 0
         
-        print(f"[YouTube Upload] Building YouTube API client...")
+        youtube_logger.debug("Building YouTube API client...")
         youtube = build('youtube', 'v3', credentials=youtube_creds)
         
         # Check for custom settings, otherwise use global settings and templates
@@ -1223,10 +1231,8 @@ def upload_video_to_youtube(video, session):
         if tags:
             snippet_body['tags'] = tags
         
-        print(f"[YouTube Upload] Preparing upload request...")
-        print(f"  Title: {title[:50]}...")
-        print(f"  Visibility: {visibility}")
-        print(f"  Video path: {video['path']}")
+        youtube_logger.info(f"Preparing upload request - Title: {title[:50]}..., Visibility: {visibility}")
+        youtube_logger.debug(f"Video path: {video['path']}")
         
         request = youtube.videos().insert(
             part='snippet,status',
@@ -1240,7 +1246,7 @@ def upload_video_to_youtube(video, session):
             media_body=MediaFileUpload(video['path'], resumable=True)
         )
         
-        print(f"[YouTube Upload] Starting resumable upload...")
+        youtube_logger.info("Starting resumable upload...")
         response = None
         chunk_count = 0
         while response is None:
@@ -1250,19 +1256,17 @@ def upload_video_to_youtube(video, session):
                 upload_progress[video['id']] = progress
                 chunk_count += 1
                 if chunk_count % 10 == 0 or progress == 100:  # Log every 10 chunks or at completion
-                    print(f"[YouTube Upload] Progress: {progress}%")
+                    youtube_logger.info(f"Upload progress: {progress}%")
         
         video['status'] = 'uploaded'
         video['youtube_id'] = response['id']
         upload_progress[video['id']] = 100
-        print(f"[YouTube Upload] Successfully uploaded {video['filename']}, YouTube ID: {response['id']}")
+        youtube_logger.info(f"Successfully uploaded {video['filename']}, YouTube ID: {response['id']}")
         
     except Exception as e:
         video['status'] = 'failed'
         video['error'] = str(e)
-        print(f"[YouTube Upload] ERROR uploading {video['filename']}: {str(e)}")
-        import traceback
-        print(f"[YouTube Upload] Traceback: {traceback.format_exc()}")
+        youtube_logger.error(f"Error uploading {video['filename']}: {str(e)}", exc_info=True)
         if video['id'] in upload_progress:
             del upload_progress[video['id']]
 
@@ -1333,7 +1337,7 @@ def map_privacy_level_to_tiktok(privacy_level, creator_info):
     # Validate against available options
     available_options = creator_info.get("privacy_level_options", [])
     if available_options and tiktok_privacy not in available_options:
-        print(f"[TikTok] Privacy '{tiktok_privacy}' not available, using '{available_options[0]}'")
+        tiktok_logger.warning(f"Privacy '{tiktok_privacy}' not available, using '{available_options[0]}'")
         tiktok_privacy = available_options[0]
     
     return tiktok_privacy
@@ -1397,7 +1401,7 @@ def upload_video_to_tiktok(video, session, session_id=None):
         allow_duet = custom_settings.get('allow_duet', tiktok_settings.get('allow_duet', True))
         allow_stitch = custom_settings.get('allow_stitch', tiktok_settings.get('allow_stitch', True))
         
-        print(f"[TikTok] Uploading {video['filename']} ({video_size / (1024*1024):.2f} MB)")
+        tiktok_logger.info(f"Uploading {video['filename']} ({video_size / (1024*1024):.2f} MB)")
         upload_progress[video['id']] = 5
         
         # Step 1: Initialize upload
@@ -1426,18 +1430,46 @@ def upload_video_to_tiktok(video, session, session_id=None):
         )
         
         if init_response.status_code != 200:
-            error = init_response.json().get("error", {})
-            raise Exception(f"Init failed: {error.get('message', 'Unknown error')}")
+            import json as json_module
+            
+            # Log the request that was sent
+            request_body = {
+                "post_info": {
+                    "title": title,
+                    "privacy_level": tiktok_privacy,
+                    "disable_duet": not allow_duet,
+                    "disable_comment": not allow_comments,
+                    "disable_stitch": not allow_stitch
+                },
+                "source_info": {
+                    "source": "FILE_UPLOAD",
+                    "video_size": video_size,
+                    "chunk_size": video_size,
+                    "total_chunk_count": 1
+                }
+            }
+            tiktok_logger.debug(f"Request body: {json_module.dumps(request_body, indent=2)}")
+            
+            # Log the full response
+            tiktok_logger.error(f"Init failed with status {init_response.status_code}")
+            try:
+                response_data = init_response.json()
+                tiktok_logger.error(f"Full response: {json_module.dumps(response_data, indent=2)}")
+                error = response_data.get("error", {})
+                raise Exception(f"Init failed: {error.get('message', 'Unknown error')}")
+            except Exception as parse_error:
+                tiktok_logger.error(f"Raw response text: {init_response.text}")
+                raise Exception(f"Init failed: {init_response.status_code} - {init_response.text}")
         
         init_data = init_response.json()
         publish_id = init_data["data"]["publish_id"]
         upload_url = init_data["data"]["upload_url"]
         
-        print(f"[TikTok] Initialized, publish_id: {publish_id}")
+        tiktok_logger.info(f"Initialized, publish_id: {publish_id}")
         upload_progress[video['id']] = 10
         
         # Step 2: Upload video file
-        print(f"[TikTok] Uploading video...")
+        tiktok_logger.info("Uploading video file...")
         
         file_ext = video['filename'].rsplit('.', 1)[-1].lower()
         content_type = {'mp4': 'video/mp4', 'mov': 'video/quicktime', 'webm': 'video/webm'}.get(file_ext, 'video/mp4')
@@ -1454,7 +1486,16 @@ def upload_video_to_tiktok(video, session, session_id=None):
             )
         
         if upload_response.status_code not in [200, 201]:
-            raise Exception(f"Upload failed: {upload_response.status_code} - {upload_response.text}")
+            import json as json_module
+            tiktok_logger.error(f"Upload failed with status {upload_response.status_code}")
+            try:
+                response_data = upload_response.json()
+                tiktok_logger.error(f"Full upload response: {json_module.dumps(response_data, indent=2)}")
+                error_msg = response_data.get("error", {}).get("message", upload_response.text)
+            except:
+                tiktok_logger.error(f"Raw upload response: {upload_response.text}")
+                error_msg = upload_response.text
+            raise Exception(f"Upload failed: {upload_response.status_code} - {error_msg}")
         
         # Success
         upload_progress[video['id']] = 100
@@ -1462,12 +1503,12 @@ def upload_video_to_tiktok(video, session, session_id=None):
         video['status'] = 'uploaded'
         video['tiktok_id'] = publish_id
         
-        print(f"[TikTok] Success! publish_id: {publish_id}")
+        tiktok_logger.info(f"Success! publish_id: {publish_id}")
         
     except Exception as e:
         video['status'] = 'failed'
         video['error'] = f'TikTok upload failed: {str(e)}'
-        print(f"[TikTok] Error: {str(e)}")
+        tiktok_logger.error(f"Upload error: {str(e)}", exc_info=True)
         upload_progress.pop(video['id'], None)
             
 # Register upload functions
@@ -1533,8 +1574,8 @@ def upload_videos(request: Request, response: Response):
     destinations = session.get("destinations", {})
     enabled_destinations = []
     
-    print(f"[Upload] Checking destinations for session {session_id[:16]}...")
-    print(f"  Destinations config: {destinations}")
+    upload_logger.debug(f"Checking destinations for session {session_id[:16]}...")
+    upload_logger.debug(f"Destinations config: {destinations}")
     
     for dest_name, uploader_func in DESTINATION_UPLOADERS.items():
         if not uploader_func:
@@ -1545,29 +1586,29 @@ def upload_videos(request: Request, response: Response):
         creds_key = f"{dest_name}_creds"
         has_creds = session.get(creds_key) is not None
         
-        print(f"  {dest_name}: enabled={is_enabled}, has_creds={has_creds}")
+        upload_logger.debug(f"{dest_name}: enabled={is_enabled}, has_creds={has_creds}")
         
         if is_enabled and has_creds:
             enabled_destinations.append(dest_name)
     
-    print(f"[Upload] Enabled destinations: {enabled_destinations}")
+    upload_logger.info(f"Enabled destinations: {enabled_destinations}")
     
     if not enabled_destinations:
         error_msg = "No enabled and connected destinations. Enable at least one destination and ensure it's connected."
-        print(f"[Upload] ERROR: {error_msg}")
+        upload_logger.error(error_msg)
         raise HTTPException(400, error_msg)
     
     # Debug: Show all videos and their statuses
-    print(f"[Upload] Total videos in session: {len(session['videos'])}")
+    upload_logger.debug(f"Total videos in session: {len(session['videos'])}")
     for v in session["videos"]:
-        print(f"  Video {v.get('id', '?')}: {v.get('filename', '?')} - status: {v.get('status', '?')}")
+        upload_logger.debug(f"Video {v.get('id', '?')}: {v.get('filename', '?')} - status: {v.get('status', '?')}")
     
     # Get videos that can be uploaded: pending, failed (retry), or uploading (retry if stuck)
     # Exclude: 'uploaded' (already done), 'scheduled' (will be handled by scheduler)
     pending_videos = [v for v in session["videos"] 
                       if v['status'] in ['pending', 'failed', 'uploading']]
     
-    print(f"[Upload] Videos ready to upload: {len(pending_videos)}")
+    upload_logger.info(f"Videos ready to upload: {len(pending_videos)}")
     
     if not pending_videos:
         # Check what statuses videos actually have
@@ -1576,7 +1617,7 @@ def upload_videos(request: Request, response: Response):
             status = v.get('status', 'unknown')
             statuses[status] = statuses.get(status, 0) + 1
         error_msg = f"No videos ready to upload. Add videos first. Current video statuses: {statuses}"
-        print(f"[Upload] ERROR: {error_msg}")
+        upload_logger.error(error_msg)
         raise HTTPException(400, error_msg)
     
     # Use YouTube settings for scheduling (can be made destination-agnostic later)
@@ -1597,7 +1638,7 @@ def upload_videos(request: Request, response: Response):
             for dest_name in enabled_destinations:
                 uploader_func = DESTINATION_UPLOADERS[dest_name]
                 if uploader_func:
-                    print(f"[Upload] Uploading {video['filename']} to {dest_name}")
+                    upload_logger.info(f"Uploading {video['filename']} to {dest_name}")
                     
                     # Store status before upload (might be 'uploading' or 'pending')
                     status_before = video.get('status', 'pending')
@@ -1611,19 +1652,19 @@ def upload_videos(request: Request, response: Response):
                     # Check if this destination succeeded by looking for success markers
                     # YouTube success: has 'youtube_id'
                     # TikTok success: has 'tiktok_id' or 'tiktok_publish_id'
-                    print(f"[Upload] Checking upload result for {dest_name}...")
-                    print(f"  Video status: {video.get('status', 'unknown')}")
-                    print(f"  Has youtube_id: {'youtube_id' in video}")
-                    print(f"  Has tiktok_id: {'tiktok_id' in video}")
-                    print(f"  Has tiktok_publish_id: {'tiktok_publish_id' in video}")
-                    print(f"  Has error: {'error' in video}")
+                    upload_logger.debug(f"Checking upload result for {dest_name}...")
+                    upload_logger.debug(f"Video status: {video.get('status', 'unknown')}, "
+                                      f"youtube_id: {'youtube_id' in video}, "
+                                      f"tiktok_id: {'tiktok_id' in video}, "
+                                      f"tiktok_publish_id: {'tiktok_publish_id' in video}, "
+                                      f"error: {'error' in video}")
                     
                     if dest_name == 'youtube' and 'youtube_id' in video:
                         succeeded_destinations.append(dest_name)
-                        print(f"[Upload] ✓ YouTube upload succeeded")
+                        upload_logger.info(f"YouTube upload succeeded for {video['filename']}")
                     elif dest_name == 'tiktok' and ('tiktok_id' in video or 'tiktok_publish_id' in video):
                         succeeded_destinations.append(dest_name)
-                        print(f"[Upload] ✓ TikTok upload succeeded")
+                        upload_logger.info(f"TikTok upload succeeded for {video['filename']}")
                     else:
                         # Check if upload function set an error
                         if video.get('status') == 'failed' or 'error' in video:
@@ -1632,19 +1673,19 @@ def upload_videos(request: Request, response: Response):
                             if 'upload_errors' not in video:
                                 video['upload_errors'] = {}
                             video['upload_errors'][dest_name] = video.get('error', 'Upload failed')
-                            print(f"[Upload] ✗ {dest_name} upload failed: {video.get('error', 'Unknown error')}")
+                            upload_logger.error(f"{dest_name} upload failed for {video['filename']}: {video.get('error', 'Unknown error')}")
                         else:
                             # Upload might still be in progress or status unclear
-                            print(f"[Upload] ⚠ {dest_name} upload status unclear - checking status...")
+                            upload_logger.warning(f"{dest_name} upload status unclear for {video['filename']} - checking status...")
                             # If status is 'uploading', it might still be in progress
                             # But since we're synchronous, this shouldn't happen
                             if video.get('status') == 'uploading':
-                                print(f"[Upload] ⚠ {dest_name} still shows 'uploading' - may have failed silently")
+                                upload_logger.warning(f"{dest_name} still shows 'uploading' for {video['filename']} - may have failed silently")
                                 failed_destinations.append(dest_name)
                             else:
                                 # Status is neither success nor failed - treat as failed
                                 failed_destinations.append(dest_name)
-                                print(f"[Upload] ✗ {dest_name} upload failed: no success marker and status is '{video.get('status', 'unknown')}'")
+                                upload_logger.error(f"{dest_name} upload failed for {video['filename']}: no success marker and status is '{video.get('status', 'unknown')}'")
             
             # Determine final status based on results
             # Only mark as 'uploaded' if ALL enabled destinations succeeded

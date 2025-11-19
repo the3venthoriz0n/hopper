@@ -11,15 +11,22 @@ help:
 	@echo "  make prod         - Deploy to prod environment (uses .env.prod, ports 3001/8001)"
 	@echo "  make clean-dev    - Fresh rebuild on dev"
 	@echo "  make clean-prod   - Fresh rebuild on prod"
-	@echo "  make logs [ENV=dev|prod] [SERVICE=frontend|backend]"
+	@echo "  make logs [ENV=dev|prod] [SERVICE=frontend|backend] - Follow logs (live)"
+	@echo "  make logs-hist [ENV=dev|prod] [SERVICE=...] - View last 100 lines"
+	@echo "  make logs-tail LINES=50 [ENV=dev|prod] [SERVICE=...] - View last N lines"
 	@echo "  make shell [ENV=dev|prod]"
 	@echo "  make down [ENV=dev|prod]"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make logs                    - View all dev logs"
-	@echo "  make logs ENV=prod           - View all prod logs"
-	@echo "  make logs SERVICE=frontend   - View dev frontend logs"
-	@echo "  make logs ENV=prod SERVICE=backend - View prod backend logs"
+	@echo "  make logs                    - Follow all dev logs (live)"
+	@echo "  make logs ENV=prod           - Follow all prod logs"
+	@echo "  make logs SERVICE=backend    - Follow dev backend logs"
+	@echo "  make logs-hist SERVICE=backend - View last 100 lines of backend logs"
+	@echo "  make logs-tail LINES=200     - View last 200 lines"
+	@echo ""
+	@echo "Log locations:"
+	@echo "  Docker logs: /var/lib/docker/containers/<container-id>/<container-id>-json.log"
+	@echo "  Log rotation: Automatic (max 10MB per file, 3 files for dev, 5 for prod)"
 	@echo ""
 	@echo "Note: Copy env.example to .env.dev and .env.prod and fill in your values"
 	@echo "      Dev: hopper-dev.dunkbox.net (ports 3000/8000)"
@@ -48,6 +55,7 @@ clean-prod: down prod
 	@echo "✅ Fresh rebuild on prod complete!"
 
 # Unified logs command with optional ENV and SERVICE parameters
+# Use -f to follow logs, or omit -f to see historical logs
 logs:
 	@if [ "$(ENV)" = "prod" ]; then \
 		if [ -n "$(SERVICE)" ]; then \
@@ -60,6 +68,39 @@ logs:
 			$(DEV_COMPOSE) logs -f $(SERVICE); \
 		else \
 			$(DEV_COMPOSE) logs -f; \
+		fi \
+	fi
+
+# View logs without following (historical logs)
+logs-hist:
+	@if [ "$(ENV)" = "prod" ]; then \
+		if [ -n "$(SERVICE)" ]; then \
+			$(PROD_COMPOSE) logs --tail=100 $(SERVICE); \
+		else \
+			$(PROD_COMPOSE) logs --tail=100; \
+		fi \
+	else \
+		if [ -n "$(SERVICE)" ]; then \
+			$(DEV_COMPOSE) logs --tail=100 $(SERVICE); \
+		else \
+			$(DEV_COMPOSE) logs --tail=100; \
+		fi \
+	fi
+
+# View last N lines of logs
+logs-tail:
+	@LINES=$${LINES:-100}; \
+	if [ "$(ENV)" = "prod" ]; then \
+		if [ -n "$(SERVICE)" ]; then \
+			$(PROD_COMPOSE) logs --tail=$$LINES $(SERVICE); \
+		else \
+			$(PROD_COMPOSE) logs --tail=$$LINES; \
+		fi \
+	else \
+		if [ -n "$(SERVICE)" ]; then \
+			$(DEV_COMPOSE) logs --tail=$$LINES $(SERVICE); \
+		else \
+			$(DEV_COMPOSE) logs --tail=$$LINES; \
 		fi \
 	fi
 
