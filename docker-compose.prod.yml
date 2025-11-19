@@ -37,6 +37,8 @@ services:
         REACT_APP_BACKEND_URL: ${BACKEND_URL}
         REACT_APP_DOMAIN: ${DOMAIN}
         REACT_APP_FRONTEND_URL: ${FRONTEND_URL}
+        REACT_APP_ENVIRONMENT: production
+        ENVIRONMENT: prod
     container_name: hopper-prod-frontend
     ports:
       - "3001:3000"
@@ -46,6 +48,7 @@ services:
       - REACT_APP_BACKEND_URL=${BACKEND_URL}
       - REACT_APP_DOMAIN=${DOMAIN}
       - REACT_APP_FRONTEND_URL=${FRONTEND_URL}
+      - REACT_APP_ENVIRONMENT=production
     logging:
       driver: "json-file"
       options:

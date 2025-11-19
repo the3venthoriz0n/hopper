@@ -6,17 +6,27 @@ WORKDIR /app
 ARG REACT_APP_BACKEND_URL
 ARG REACT_APP_DOMAIN
 ARG REACT_APP_FRONTEND_URL
+ARG REACT_APP_ENVIRONMENT=development
+ARG ENVIRONMENT=dev
 
 # Set as ENV so they're available at runtime too
 ENV REACT_APP_BACKEND_URL=${REACT_APP_BACKEND_URL}
 ENV REACT_APP_DOMAIN=${REACT_APP_DOMAIN}
 ENV REACT_APP_FRONTEND_URL=${REACT_APP_FRONTEND_URL}
+ENV REACT_APP_ENVIRONMENT=${REACT_APP_ENVIRONMENT}
 
 COPY package*.json ./
 RUN npm install
 
 # Copy source files (node_modules will be in volume for dev)
 COPY . .
+
+# Copy the appropriate index.html based on environment
+RUN if [ "$ENVIRONMENT" = "prod" ]; then \
+      cp public/index.html.prod public/index.html; \
+    else \
+      cp public/index.html.dev public/index.html; \
+    fi
 
 EXPOSE 3000
 
@@ -26,5 +36,6 @@ EXPOSE 3000
 CMD sh -c 'echo "REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL" > .env && \
            echo "REACT_APP_DOMAIN=$REACT_APP_DOMAIN" >> .env && \
            echo "REACT_APP_FRONTEND_URL=$REACT_APP_FRONTEND_URL" >> .env && \
+           echo "REACT_APP_ENVIRONMENT=$REACT_APP_ENVIRONMENT" >> .env && \
            npm start'
 

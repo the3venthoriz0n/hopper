@@ -10,7 +10,7 @@ services:
       - /mnt/y/Misc/_DevRemote/hopper_sync/backend:/app
     environment:
       - PYTHONUNBUFFERED=1
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - CLOUDFLARE_ACCESS_AUD_TAG=${CLOUDFLARE_ACCESS_AUD_TAG}
       - CLOUDFLARE_ACCESS_TEAM_DOMAIN=${CLOUDFLARE_ACCESS_TEAM_DOMAIN}
       - ENVIRONMENT=${ENVIRONMENT}
@@ -38,6 +38,8 @@ services:
         REACT_APP_BACKEND_URL: ${BACKEND_URL}
         REACT_APP_DOMAIN: ${DOMAIN}
         REACT_APP_FRONTEND_URL: ${FRONTEND_URL}
+        REACT_APP_ENVIRONMENT: development
+        ENVIRONMENT: dev
     container_name: hopper-dev-frontend
     ports:
       - "3000:3000"
@@ -50,6 +52,7 @@ services:
       - REACT_APP_BACKEND_URL=${BACKEND_URL}
       - REACT_APP_DOMAIN=${DOMAIN}
       - REACT_APP_FRONTEND_URL=${FRONTEND_URL}
+      - REACT_APP_ENVIRONMENT=development
       - CHOKIDAR_USEPOLLING=true
       - WATCHPACK_POLLING=true
     logging:

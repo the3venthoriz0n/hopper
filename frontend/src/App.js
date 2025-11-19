@@ -13,6 +13,8 @@ function App() {
   };
   
   const API = getApiUrl();
+  const isProduction = process.env.REACT_APP_ENVIRONMENT === 'production';
+  const appTitle = isProduction ? '🐸 hopper' : '🐸 DEV hopper';
   const [youtube, setYoutube] = useState({ connected: false, enabled: false });
   const [tiktok, setTiktok] = useState({ connected: false, enabled: false });
   const [videos, setVideos] = useState([]);
@@ -569,7 +571,7 @@ function App() {
 
   return (
     <div className="app">
-      <h1>🐸 DEV hopper</h1>
+      <h1>{appTitle}</h1>
       
       {message && <div className="message">{message}</div>}
       
