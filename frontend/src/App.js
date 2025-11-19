@@ -15,7 +15,13 @@ function App() {
   const API = getApiUrl();
   const isProduction = process.env.REACT_APP_ENVIRONMENT === 'production';
   const appTitle = isProduction ? '🐸 hopper' : '🐸 DEV hopper';
-  const [youtube, setYoutube] = useState({ connected: false, enabled: false });
+  
+  // Set document title based on environment
+  useEffect(() => {
+    document.title = isProduction ? 'HOPPER' : 'DEV HOPPER';
+  }, [isProduction]);
+  
+  const [youtube, setYoutube] = useState({ connected: false, enabled: false, account: null });
   const [tiktok, setTiktok] = useState({ connected: false, enabled: false });
   const [videos, setVideos] = useState([]);
   const [message, setMessage] = useState('');
@@ -72,6 +78,10 @@ function App() {
     if (window.location.search.includes('connected=youtube')) {
       setMessage('✅ YouTube connected!');
       loadDestinations();
+      // Small delay to ensure account info is available
+      setTimeout(() => {
+        loadYoutubeAccount();
+      }, 1000);
       window.history.replaceState({}, '', '/');
     } else if (window.location.search.includes('connected=tiktok')) {
       setMessage('✅ TikTok connected!');
@@ -104,10 +114,37 @@ function App() {
     }
   };
 
+  const loadYoutubeAccount = async () => {
+    try {
+      const res = await axios.get(`${API}/auth/youtube/account`);
+      if (res.data.account) {
+        setYoutube(prev => ({ ...prev, account: res.data.account }));
+      }
+    } catch (error) {
+      console.error('Error loading YouTube account:', error);
+    }
+  };
+
   const loadDestinations = async () => {
-    const res = await axios.get(`${API}/destinations`);
-    setYoutube(res.data.youtube);
-    setTiktok(res.data.tiktok);
+    try {
+      const res = await axios.get(`${API}/destinations`);
+      setYoutube({ 
+        connected: res.data.youtube.connected, 
+        enabled: res.data.youtube.enabled,
+        account: null  // Will be loaded separately
+      });
+      setTiktok({ 
+        connected: res.data.tiktok.connected, 
+        enabled: res.data.tiktok.enabled 
+      });
+      
+      // Load account info if connected
+      if (res.data.youtube.connected) {
+        loadYoutubeAccount();
+      }
+    } catch (error) {
+      console.error('Error loading destinations:', error);
+    }
   };
 
   const loadGlobalSettings = async () => {
@@ -204,7 +241,7 @@ function App() {
   const disconnectYoutube = async () => {
     try {
       await axios.post(`${API}/auth/youtube/disconnect`);
-      setYoutube({ connected: false, enabled: false });
+      setYoutube({ connected: false, enabled: false, account: null });
       setMessage('✅ Disconnected from YouTube');
     } catch (err) {
       setMessage('❌ Error disconnecting');
@@ -679,7 +716,16 @@ function App() {
         <div className="destination">
           <div>
             <span>▶️ YouTube</span>
-            {youtube.connected && <span className="badge">Connected</span>}
+            {youtube.connected && (
+              <>
+                <span className="badge">Connected</span>
+                {youtube.account && (
+                  <span className="account-info" style={{ marginLeft: '8px', fontSize: '0.9em', color: '#666' }}>
+                    ({youtube.account.channel_name ? `${youtube.account.channel_name}${youtube.account.email ? ` - ${youtube.account.email}` : ''}` : youtube.account.email || 'Loading...'})
+                  </span>
+                )}
+              </>
+            )}
           </div>
           {youtube.connected ? (
             <>

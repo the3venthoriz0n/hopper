@@ -442,6 +442,64 @@ def get_destinations(request: Request, response: Response):
         "scheduled_videos": scheduled_count
     }
 
+@app.get("/api/auth/youtube/account")
+def get_youtube_account(request: Request, response: Response):
+    """Get YouTube account information (channel name/email)"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    
+    if not session.get("youtube_creds"):
+        return {"account": None}
+    
+    # Check if we have cached account info
+    if "youtube_account_info" in session:
+        return {"account": session["youtube_account_info"]}
+    
+    try:
+        youtube_creds = session["youtube_creds"]
+        youtube = build('youtube', 'v3', credentials=youtube_creds)
+        
+        # Get channel info
+        channels_response = youtube.channels().list(
+            part='snippet',
+            mine=True
+        ).execute()
+        
+        account_info = None
+        if channels_response.get('items') and len(channels_response['items']) > 0:
+            channel = channels_response['items'][0]
+            account_info = {
+                "channel_name": channel['snippet']['title'],
+                "channel_id": channel['id'],
+                "thumbnail": channel['snippet'].get('thumbnails', {}).get('default', {}).get('url')
+            }
+        
+        # Also get email from Google OAuth2 userinfo
+        try:
+            userinfo_response = httpx.get(
+                'https://www.googleapis.com/oauth2/v2/userinfo',
+                headers={'Authorization': f'Bearer {youtube_creds.token}'},
+                timeout=10.0
+            )
+            if userinfo_response.status_code == 200:
+                userinfo = userinfo_response.json()
+                if account_info:
+                    account_info['email'] = userinfo.get('email')
+                else:
+                    account_info = {'email': userinfo.get('email')}
+        except Exception as e:
+            youtube_logger.debug(f"Could not fetch email: {str(e)}")
+            # Email is optional, continue without it
+        
+        # Cache it in session
+        session["youtube_account_info"] = account_info
+        save_session(session_id)
+        
+        return {"account": account_info}
+    except Exception as e:
+        youtube_logger.error(f"Error getting YouTube account info: {str(e)}", exc_info=True)
+        return {"account": None, "error": str(e)}
+
 @app.post("/api/global/wordbank")
 def add_wordbank_word(request: Request, response: Response, word: str):
     """Add a word to the global wordbank"""
@@ -522,6 +580,9 @@ def disconnect_youtube(request: Request, response: Response):
     
     session["youtube_creds"] = None
     session["destinations"]["youtube"]["enabled"] = False
+    # Clear cached account info
+    if "youtube_account_info" in session:
+        del session["youtube_account_info"]
     save_session(session_id)
     return {"message": "Disconnected"}
 

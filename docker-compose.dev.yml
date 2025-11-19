@@ -39,7 +39,6 @@ services:
         REACT_APP_DOMAIN: ${DOMAIN}
         REACT_APP_FRONTEND_URL: ${FRONTEND_URL}
         REACT_APP_ENVIRONMENT: development
-        ENVIRONMENT: dev
     container_name: hopper-dev-frontend
     ports:
       - "3000:3000"
