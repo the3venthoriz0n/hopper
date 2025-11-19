@@ -600,8 +600,6 @@ function App() {
     <div className="app">
       <h1>{appTitle}</h1>
       
-      {message && <div className="message">{message}</div>}
-      
       {/* Global Settings */}
       <div className="card">
         <div className="card-header" onClick={() => setShowGlobalSettings(!showGlobalSettings)}>
@@ -611,7 +609,13 @@ function App() {
         {showGlobalSettings && (
           <div className="settings-panel">
             <div className="setting-group">
-              <label>Video Title Template <span className="char-counter">{globalSettings.title_template.length}/100</span></label>
+              <label>
+                Video Title Template <span className="char-counter">{globalSettings.title_template.length}/100</span>
+                <span className="tooltip-wrapper">
+                  <span className="tooltip-icon">i</span>
+                  <span className="tooltip-text">Use {'{filename}'} for filename, {'{random}'} for random wordbank word</span>
+                </span>
+              </label>
               <input 
                 type="text"
                 value={globalSettings.title_template}
@@ -621,11 +625,16 @@ function App() {
                 className="input-text"
                 maxLength="100"
               />
-              <small className="hint">Use {'{filename}'} for filename, {'{random}'} for random wordbank word</small>
             </div>
 
             <div className="setting-group">
-              <label>Video Description Template</label>
+              <label>
+                Video Description Template
+                <span className="tooltip-wrapper">
+                  <span className="tooltip-icon">i</span>
+                  <span className="tooltip-text">Use {'{filename}'} for filename, {'{random}'} for random wordbank word</span>
+                </span>
+              </label>
               <textarea 
                 value={globalSettings.description_template}
                 onChange={(e) => setGlobalSettings({...globalSettings, description_template: e.target.value})}
@@ -634,7 +643,6 @@ function App() {
                 className="textarea-text"
                 rows="3"
               />
-              <small className="hint">Use {'{filename}'} for filename, {'{random}'} for random wordbank word</small>
             </div>
 
             <div className="setting-divider"></div>
@@ -642,7 +650,13 @@ function App() {
             <div className="setting-group">
               <div className="wordbank-label">
                 <div className="wordbank-title">
-                  <span>Random Wordbank ({globalSettings.wordbank.length} words)</span>
+                  <span>
+                    Random Wordbank ({globalSettings.wordbank.length} words)
+                    <span className="tooltip-wrapper">
+                      <span className="tooltip-icon">i</span>
+                      <span className="tooltip-text">Words to use with {'{random}'} placeholder. Enter comma-separated words to add multiple at once</span>
+                    </span>
+                  </span>
                   {globalSettings.wordbank.length > 0 && (
                     <span 
                       className={`wordbank-caret ${wordbankExpanded ? 'expanded' : ''}`}
@@ -683,7 +697,6 @@ function App() {
                   Add
                 </button>
               </div>
-              <small className="hint">Words to use with {'{random}'} placeholder. Enter comma-separated words to add multiple at once</small>
               
               {globalSettings.wordbank.length > 0 && wordbankExpanded && (
                 <div className="wordbank-list">
@@ -707,9 +720,14 @@ function App() {
                   onChange={(e) => updateGlobalSettings('upload_immediately', e.target.checked)}
                   className="checkbox"
                 />
-                <span>Upload Immediately</span>
+                <span>
+                  Upload Immediately
+                  <span className="tooltip-wrapper" style={{ marginLeft: '6px' }}>
+                    <span className="tooltip-icon">i</span>
+                    <span className="tooltip-text">If disabled, videos will be scheduled</span>
+                  </span>
+                </span>
               </label>
-              <small className="hint">If disabled, videos will be scheduled</small>
             </div>
 
             {!globalSettings.upload_immediately && (
@@ -728,7 +746,13 @@ function App() {
 
                 {globalSettings.schedule_mode === 'spaced' ? (
                   <div className="setting-group">
-                    <label>Upload Interval</label>
+                    <label>
+                      Upload Interval
+                      <span className="tooltip-wrapper">
+                        <span className="tooltip-icon">i</span>
+                        <span className="tooltip-text">Videos upload one at a time with this interval</span>
+                      </span>
+                    </label>
                     <div className="interval-input">
                       <input 
                         type="number"
@@ -754,18 +778,22 @@ function App() {
                         <option value="days">Days</option>
                       </select>
                     </div>
-                    <small className="hint">Videos upload one at a time with this interval</small>
                   </div>
                 ) : (
                   <div className="setting-group">
-                    <label>Start Time</label>
+                    <label>
+                      Start Time
+                      <span className="tooltip-wrapper">
+                        <span className="tooltip-icon">i</span>
+                        <span className="tooltip-text">All videos will upload at this time</span>
+                      </span>
+                    </label>
                     <input 
                       type="datetime-local"
                       value={globalSettings.schedule_start_time}
                       onChange={(e) => updateGlobalSettings('schedule_start_time', e.target.value)}
                       className="input-text"
                     />
-                    <small className="hint">All videos will upload at this time</small>
                   </div>
                 )}
               </>
@@ -781,9 +809,14 @@ function App() {
                   onChange={(e) => updateGlobalSettings('allow_duplicates', e.target.checked)}
                   className="checkbox"
                 />
-                <span>Allow Duplicate Videos</span>
+                <span>
+                  Allow Duplicate Videos
+                  <span className="tooltip-wrapper" style={{ marginLeft: '6px' }}>
+                    <span className="tooltip-icon">i</span>
+                    <span className="tooltip-text">Allow uploading videos with the same filename</span>
+                  </span>
+                </span>
               </label>
-              <small className="hint">Allow uploading videos with the same filename</small>
             </div>
           </div>
         )}
@@ -869,7 +902,13 @@ function App() {
             </div>
 
             <div className="setting-group">
-              <label>YouTube Title Template (Override) <span className="char-counter">{youtubeSettings.title_template?.length || 0}/100</span></label>
+              <label>
+                YouTube Title Template (Override) <span className="char-counter">{youtubeSettings.title_template?.length || 0}/100</span>
+                <span className="tooltip-wrapper">
+                  <span className="tooltip-icon">i</span>
+                  <span className="tooltip-text">Override global title template for YouTube only. Leave empty to use global</span>
+                </span>
+              </label>
               <input 
                 type="text"
                 value={youtubeSettings.title_template || ''}
@@ -879,11 +918,16 @@ function App() {
                 className="input-text"
                 maxLength="100"
               />
-              <small className="hint">Override global title template for YouTube only. Leave empty to use global</small>
             </div>
 
             <div className="setting-group">
-              <label>YouTube Description Template (Override)</label>
+              <label>
+                YouTube Description Template (Override)
+                <span className="tooltip-wrapper">
+                  <span className="tooltip-icon">i</span>
+                  <span className="tooltip-text">Override global description template for YouTube only. Leave empty to use global</span>
+                </span>
+              </label>
               <textarea 
                 value={youtubeSettings.description_template || ''}
                 onChange={(e) => setYoutubeSettings({...youtubeSettings, description_template: e.target.value})}
@@ -892,11 +936,16 @@ function App() {
                 className="textarea-text"
                 rows="3"
               />
-              <small className="hint">Override global description template for YouTube only. Leave empty to use global</small>
             </div>
 
             <div className="setting-group">
-              <label>Video Tags Template</label>
+              <label>
+                Video Tags Template
+                <span className="tooltip-wrapper">
+                  <span className="tooltip-icon">i</span>
+                  <span className="tooltip-text">Comma-separated tags. Use {'{filename}'} or {'{random}'}</span>
+                </span>
+              </label>
               <input 
                 type="text"
                 value={youtubeSettings.tags_template}
@@ -905,7 +954,6 @@ function App() {
                 placeholder="tag1, tag2, tag3"
                 className="input-text"
               />
-              <small className="hint">Comma-separated tags. Use {'{filename}'} or {'{random}'}</small>
             </div>
             
             <div className="setting-divider"></div>
@@ -1028,7 +1076,13 @@ function App() {
             </div>
 
             <div className="setting-group">
-              <label>TikTok Title Template (Caption) (Override) <span className="char-counter">{tiktokSettings.title_template?.length || 0}/2200</span></label>
+              <label>
+                TikTok Title Template (Caption) (Override) <span className="char-counter">{tiktokSettings.title_template?.length || 0}/2200</span>
+                <span className="tooltip-wrapper">
+                  <span className="tooltip-icon">i</span>
+                  <span className="tooltip-text">Override global title template for TikTok only. This is the video caption (max 2200 characters). Leave empty to use global</span>
+                </span>
+              </label>
               <input 
                 type="text"
                 value={tiktokSettings.title_template || ''}
@@ -1038,11 +1092,16 @@ function App() {
                 className="input-text"
                 maxLength="2200"
               />
-              <small className="hint">Override global title template for TikTok only. This is the video caption (max 2200 characters). Leave empty to use global</small>
             </div>
 
             <div className="setting-group">
-              <label>TikTok Description Template (Override) <span className="hint-text">(Not used - TikTok only uses caption)</span></label>
+              <label>
+                TikTok Description Template (Override)
+                <span className="tooltip-wrapper">
+                  <span className="tooltip-icon">i</span>
+                  <span className="tooltip-text">TikTok only uses the caption (title) field. Description is not supported by TikTok API.</span>
+                </span>
+              </label>
               <textarea 
                 value={tiktokSettings.description_template || ''}
                 onChange={(e) => setTiktokSettings({...tiktokSettings, description_template: e.target.value})}
@@ -1052,7 +1111,6 @@ function App() {
                 rows="3"
                 disabled
               />
-              <small className="hint">TikTok only uses the caption (title) field. Description is not supported by TikTok API.</small>
             </div>
             
             <div className="setting-divider"></div>
@@ -1085,6 +1143,23 @@ function App() {
         )}
       </div>
       
+      {/* Upload Button */}
+      {videos.length > 0 && (youtube.enabled || tiktok.enabled) && (
+        <>
+          <button className="upload-btn" onClick={upload} disabled={isUploading}>
+            {isUploading ? 'Uploading...' : 
+             globalSettings.upload_immediately ? 'Upload' : 'Schedule Videos'}
+          </button>
+          
+          {/* Cancel Scheduled Button */}
+          {videos.some(v => v.status === 'scheduled') && (
+            <button className="cancel-scheduled-btn" onClick={cancelScheduled}>
+              Cancel Scheduled ({videos.filter(v => v.status === 'scheduled').length})
+            </button>
+          )}
+        </>
+      )}
+      
       {/* Drop Zone */}
       <div 
         className="dropzone"
@@ -1103,24 +1178,8 @@ function App() {
         />
       </div>
       
-      {/* Upload Button */}
-      {videos.length > 0 && (youtube.enabled || tiktok.enabled) && (
-        <>
-          <button className="upload-btn" onClick={upload} disabled={isUploading}>
-            {isUploading ? 'Uploading...' : 
-             globalSettings.upload_immediately ? 'Upload' : 'Schedule Videos'}
-          </button>
-          
-          {/* Cancel Scheduled Button */}
-          {videos.some(v => v.status === 'scheduled') && (
-            <button className="cancel-scheduled-btn" onClick={cancelScheduled}>
-              Cancel Scheduled ({videos.filter(v => v.status === 'scheduled').length})
-            </button>
-          )}
-        </>
-      )}
-      
       {/* Queue */}
+      {message && <div className="message">{message}</div>}
       <div className="card">
         <h2>Queue ({videos.length})</h2>
         {videos.length === 0 ? (
@@ -1241,11 +1300,22 @@ function App() {
                   maxLength="100"
                   onInput={(e) => setEditTitleLength(e.target.value.length)}
                 />
-                <small className="hint">Leave empty to use template. Click "Recompute" to regenerate from current template.</small>
+                <div style={{ marginTop: '0.5rem' }}>
+                  <span className="tooltip-wrapper">
+                    <span className="tooltip-icon">i</span>
+                    <span className="tooltip-text">Leave empty to use template. Click "Recompute" to regenerate from current template.</span>
+                  </span>
+                </div>
               </div>
               
               <div className="form-group">
-                <label>Description</label>
+                <label>
+                  Description
+                  <span className="tooltip-wrapper">
+                    <span className="tooltip-icon">i</span>
+                    <span className="tooltip-text">Leave empty to use global template</span>
+                  </span>
+                </label>
                 <textarea 
                   defaultValue={editingVideo.custom_settings?.description || ''}
                   id="edit-description"
@@ -1253,11 +1323,16 @@ function App() {
                   rows="4"
                   placeholder="Video description"
                 />
-                <small className="hint">Leave empty to use global template</small>
               </div>
               
               <div className="form-group">
-                <label>Tags</label>
+                <label>
+                  Tags
+                  <span className="tooltip-wrapper">
+                    <span className="tooltip-icon">i</span>
+                    <span className="tooltip-text">Comma-separated tags. Leave empty to use global template</span>
+                  </span>
+                </label>
                 <input 
                   type="text"
                   defaultValue={editingVideo.custom_settings?.tags || ''}
@@ -1265,7 +1340,6 @@ function App() {
                   className="input-text"
                   placeholder="tag1, tag2, tag3"
                 />
-                <small className="hint">Comma-separated tags. Leave empty to use global template</small>
               </div>
               
               <div className="form-group">
@@ -1294,7 +1368,13 @@ function App() {
               </div>
               
               <div className="form-group">
-                <label>Scheduled Time</label>
+                <label>
+                  Scheduled Time
+                  <span className="tooltip-wrapper">
+                    <span className="tooltip-icon">i</span>
+                    <span className="tooltip-text">Leave empty for immediate upload (if enabled) or use global schedule</span>
+                  </span>
+                </label>
                 <input 
                   type="datetime-local"
                   defaultValue={editingVideo.scheduled_time ? (() => {
@@ -1305,7 +1385,6 @@ function App() {
                   id="edit-scheduled-time"
                   className="input-text"
                 />
-                <small className="hint">Leave empty for immediate upload (if enabled) or use global schedule</small>
               </div>
             </div>
             <div className="modal-footer">

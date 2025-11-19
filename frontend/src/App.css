@@ -18,12 +18,13 @@ body {
 
 h1 {
   font-size: 2.5rem;
-  margin-bottom: 2rem;
+  margin-bottom: 1.5rem;
 }
 
 h2 {
   font-size: 1.1rem;
   margin-bottom: 1rem;
+  margin-top: 0;
   color: #999;
 }
 
@@ -32,6 +33,7 @@ h2 {
   padding: 1rem;
   border-radius: 8px;
   margin-bottom: 1.5rem;
+  margin-top: 0;
 }
 
 .card {
@@ -50,6 +52,7 @@ h2 {
   padding: 1.5rem;
   border-radius: 12px 12px 0 0;
   transition: background 0.2s;
+  margin-bottom: 0;
 }
 
 .card-header:hover {
@@ -58,6 +61,7 @@ h2 {
 
 .card-header h2 {
   margin: 0;
+  margin-bottom: 0;
 }
 
 .settings-toggle {
@@ -78,10 +82,6 @@ h2 {
   transform: scale(1.05);
 }
 
-.settings-panel {
-  margin-top: 1.5rem;
-}
-
 .destination {
   display: flex;
   justify-content: space-between;
@@ -90,6 +90,11 @@ h2 {
   padding: 1rem;
   border-radius: 8px;
   gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.destination:last-child {
+  margin-bottom: 0;
 }
 
 .destination > div {
@@ -325,7 +330,7 @@ button:disabled {
   font-size: 1.1rem;
   background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
   color: white;
-  margin-bottom: 0.75rem;
+  margin-bottom: 1.5rem;
 }
 
 .cancel-scheduled-btn {
@@ -379,14 +384,14 @@ button:disabled {
 
 .settings-panel {
   margin-top: 1rem;
-  padding: 1rem;
+  padding: 1.5rem;
   background: rgba(255, 255, 255, 0.03);
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .settings-panel h3 {
-  margin: 0 0 1rem 0;
+  margin: 0 0 1.5rem 0;
   font-size: 0.95rem;
   color: #999;
 }
@@ -394,7 +399,12 @@ button:disabled {
 .setting-group {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.setting-group:last-child {
+  margin-bottom: 0;
 }
 
 .setting-group label {
@@ -477,7 +487,7 @@ button:disabled {
 .wordbank-input {
   display: flex;
   gap: 0.5rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
 }
 
 .wordbank-input .input-text {
@@ -511,7 +521,7 @@ button:disabled {
   justify-content: space-between;
   gap: 1rem;
   width: 100%;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
 }
 
 .wordbank-title {
@@ -555,6 +565,7 @@ button:disabled {
   border-radius: 6px;
   max-height: 200px;
   overflow-y: auto;
+  margin-bottom: 0;
 }
 
 .wordbank-item {
@@ -611,7 +622,8 @@ button:disabled {
 .setting-divider {
   height: 1px;
   background: rgba(255, 255, 255, 0.1);
-  margin: 1.5rem 0;
+  margin: 2rem 0;
+  border: none;
 }
 
 .interval-input {
@@ -795,5 +807,73 @@ button:disabled {
 .btn-save:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
+}
+
+/* Tooltip styles */
+.tooltip-wrapper {
+  position: relative;
+  display: inline-block;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.tooltip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 11px;
+  font-weight: bold;
+  font-style: normal;
+  cursor: help;
+  line-height: 1;
+  transition: all 0.2s;
+}
+
+.tooltip-icon:hover {
+  background: rgba(255, 255, 255, 0.3);
+  color: white;
+}
+
+.tooltip-text {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  bottom: 125%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.95);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  z-index: 1000;
+  pointer-events: none;
+  transition: opacity 0.2s, visibility 0.2s;
+  max-width: 250px;
+  white-space: normal;
+  text-align: left;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.tooltip-text::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: rgba(0, 0, 0, 0.95);
+}
+
+.tooltip-wrapper:hover .tooltip-text {
+  visibility: visible;
+  opacity: 1;
 }
 
