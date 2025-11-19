@@ -33,15 +33,15 @@ function App() {
     schedule_mode: 'spaced',
     schedule_interval_value: 1,
     schedule_interval_unit: 'hours',
-    schedule_start_time: ''
+    schedule_start_time: '',
+    allow_duplicates: false
   });
   const [youtubeSettings, setYoutubeSettings] = useState({ 
     visibility: 'private', 
     made_for_kids: false,
     title_template: '',
     description_template: '',
-    tags_template: '',
-    allow_duplicates: false
+    tags_template: ''
   });
   const [tiktokSettings, setTiktokSettings] = useState({
     privacy_level: 'private',
@@ -49,8 +49,7 @@ function App() {
     allow_duet: true,
     allow_stitch: true,
     title_template: '',
-    description_template: '',
-    allow_duplicates: false
+    description_template: ''
   });
   const [showSettings, setShowSettings] = useState(false);
   const [showTiktokSettings, setShowTiktokSettings] = useState(false);
@@ -188,8 +187,6 @@ function App() {
         setMessage(`✅ Default visibility set to ${value}`);
       } else if (key === 'made_for_kids') {
         setMessage(`✅ Made for kids: ${value ? 'Yes' : 'No'}`);
-      } else if (key === 'allow_duplicates') {
-        setMessage(`✅ Duplicates: ${value ? 'Allowed' : 'Blocked'}`);
       } else if (key === 'title_template' || key === 'description_template') {
         setMessage(`✅ Settings updated`);
       } else {
@@ -218,8 +215,6 @@ function App() {
       
       if (key === 'privacy_level') {
         setMessage(`✅ Privacy level set to ${value}`);
-      } else if (key === 'allow_duplicates') {
-        setMessage(`✅ Duplicates: ${value ? 'Allowed' : 'Blocked'}`);
       } else {
         setMessage(`✅ TikTok settings updated`);
       }
@@ -775,6 +770,21 @@ function App() {
                 )}
               </>
             )}
+
+            <div className="setting-divider"></div>
+
+            <div className="setting-group">
+              <label className="checkbox-label">
+                <input 
+                  type="checkbox"
+                  checked={globalSettings.allow_duplicates}
+                  onChange={(e) => updateGlobalSettings('allow_duplicates', e.target.checked)}
+                  className="checkbox"
+                />
+                <span>Allow Duplicate Videos</span>
+              </label>
+              <small className="hint">Allow uploading videos with the same filename</small>
+            </div>
           </div>
         )}
       </div>
@@ -856,19 +866,6 @@ function App() {
                 />
                 <span>Made for Kids</span>
               </label>
-            </div>
-
-            <div className="setting-group">
-              <label className="checkbox-label">
-                <input 
-                  type="checkbox"
-                  checked={youtubeSettings.allow_duplicates}
-                  onChange={(e) => updateYoutubeSettings('allow_duplicates', e.target.checked)}
-                  className="checkbox"
-                />
-                <span>Allow Duplicate Videos</span>
-              </label>
-              <small className="hint">Allow uploading videos with the same filename</small>
             </div>
 
             <div className="setting-group">
@@ -1028,19 +1025,6 @@ function App() {
                 />
                 <span>Allow Stitch</span>
               </label>
-            </div>
-
-            <div className="setting-group">
-              <label className="checkbox-label">
-                <input 
-                  type="checkbox"
-                  checked={tiktokSettings.allow_duplicates}
-                  onChange={(e) => updateTiktokSettings('allow_duplicates', e.target.checked)}
-                  className="checkbox"
-                />
-                <span>Allow Duplicate Videos</span>
-              </label>
-              <small className="hint">Allow uploading videos with the same filename</small>
             </div>
 
             <div className="setting-group">

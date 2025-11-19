@@ -143,7 +143,8 @@ def get_default_global_settings():
         "schedule_mode": "spaced",
         "schedule_interval_value": 1,
         "schedule_interval_unit": "hours",
-        "schedule_start_time": ""
+        "schedule_start_time": "",
+        "allow_duplicates": False
     }
 
 def get_default_youtube_settings():
@@ -153,8 +154,7 @@ def get_default_youtube_settings():
         "made_for_kids": False,
         "tags_template": "",
         "title_template": "",  # Empty means use global
-        "description_template": "",  # Empty means use global
-        "allow_duplicates": False
+        "description_template": ""  # Empty means use global
     }
 
 def get_default_tiktok_settings():
@@ -165,8 +165,7 @@ def get_default_tiktok_settings():
         "allow_duet": True,
         "allow_stitch": True,
         "title_template": "",  # Empty means use global
-        "description_template": "",  # Empty means use global (TikTok combines title+description)
-        "allow_duplicates": False
+        "description_template": ""  # Empty means use global (TikTok combines title+description)
     }
 
 def get_session(session_id: str):
@@ -306,8 +305,6 @@ def load_session(session_id: str):
                 del session_data["youtube_settings"]["wordbank"]
         
         # Add missing settings for backwards compatibility
-        if "allow_duplicates" not in session_data["youtube_settings"]:
-            session_data["youtube_settings"]["allow_duplicates"] = False
         if "tags_template" not in session_data["youtube_settings"]:
             session_data["youtube_settings"]["tags_template"] = ""
         
@@ -853,7 +850,8 @@ def update_global_settings(
     schedule_mode: str = None,
     schedule_interval_value: int = None,
     schedule_interval_unit: str = None,
-    schedule_start_time: str = None
+    schedule_start_time: str = None,
+    allow_duplicates: bool = None
 ):
     """Update global settings"""
     session_id = get_or_create_session_id(request, response)
@@ -889,6 +887,9 @@ def update_global_settings(
     if schedule_start_time is not None:
         settings["schedule_start_time"] = schedule_start_time
     
+    if allow_duplicates is not None:
+        settings["allow_duplicates"] = allow_duplicates
+    
     save_session(session_id)
     return settings
 
@@ -907,8 +908,7 @@ def update_youtube_settings(
     made_for_kids: bool = None,
     title_template: str = None,
     description_template: str = None,
-    tags_template: str = None,
-    allow_duplicates: bool = None
+    tags_template: str = None
 ):
     """Update YouTube upload settings"""
     session_id = get_or_create_session_id(request, response)
@@ -934,9 +934,6 @@ def update_youtube_settings(
     if tags_template is not None:
         settings["tags_template"] = tags_template
     
-    if allow_duplicates is not None:
-        settings["allow_duplicates"] = allow_duplicates
-    
     save_session(session_id)
     return settings
 
@@ -957,8 +954,7 @@ def update_tiktok_settings(
     allow_duet: bool = None,
     allow_stitch: bool = None,
     title_template: str = None,
-    description_template: str = None,
-    allow_duplicates: bool = None
+    description_template: str = None
 ):
     """Update TikTok upload settings"""
     session_id = get_or_create_session_id(request, response)
@@ -987,9 +983,6 @@ def update_tiktok_settings(
     if description_template is not None:
         settings["description_template"] = description_template
     
-    if allow_duplicates is not None:
-        settings["allow_duplicates"] = allow_duplicates
-    
     save_session(session_id)
     return settings
 
@@ -1000,7 +993,8 @@ async def add_video(file: UploadFile = File(...), request: Request = None, respo
     session = get_session(session_id)
     
     # Check for duplicates if not allowed
-    if not session["youtube_settings"].get("allow_duplicates", False):
+    global_settings = session.get("global_settings", {})
+    if not global_settings.get("allow_duplicates", False):
         existing_filenames = [v["filename"] for v in session["videos"]]
         if file.filename in existing_filenames:
             raise HTTPException(400, f"Duplicate video: {file.filename} is already in the queue")
