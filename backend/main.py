@@ -17,6 +17,7 @@ from typing import Optional
 
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request as GoogleRequest
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
@@ -354,9 +355,13 @@ def auth_youtube(request: Request, response: Response):
     redirect_uri = f"{protocol}://{host}/api/auth/youtube/callback"
     
     # Create Flow from config dict instead of file
+    # Request both upload and readonly scopes - readonly needed for account info
     flow = Flow.from_client_config(
         google_config,
-        scopes=['https://www.googleapis.com/auth/youtube.upload'],
+        scopes=[
+            'https://www.googleapis.com/auth/youtube.upload',
+            'https://www.googleapis.com/auth/youtube.readonly'
+        ],
         redirect_uri=redirect_uri
     )
     
@@ -393,9 +398,13 @@ def auth_callback(code: str, state: str, request: Request, response: Response):
     if not google_config:
         raise HTTPException(400, "Google OAuth credentials not configured")
     
+    # Request both upload and readonly scopes - readonly needed for account info
     flow = Flow.from_client_config(
         google_config,
-        scopes=['https://www.googleapis.com/auth/youtube.upload'],
+        scopes=[
+            'https://www.googleapis.com/auth/youtube.upload',
+            'https://www.googleapis.com/auth/youtube.readonly'
+        ],
         redirect_uri=redirect_uri
     )
     
@@ -459,6 +468,17 @@ def get_youtube_account(request: Request, response: Response):
     
     try:
         youtube_creds = session["youtube_creds"]
+        
+        # Refresh token if needed (Google API client does this automatically, but we ensure it's valid)
+        if youtube_creds.expired and youtube_creds.refresh_token:
+            try:
+                youtube_creds.refresh(GoogleRequest())
+                session["youtube_creds"] = youtube_creds
+                save_session(session_id)
+            except Exception as refresh_error:
+                youtube_logger.warning(f"Token refresh failed: {str(refresh_error)}")
+                # Continue anyway, the API client might handle it
+        
         youtube = build('youtube', 'v3', credentials=youtube_creds)
         
         # Get channel info
@@ -478,6 +498,12 @@ def get_youtube_account(request: Request, response: Response):
         
         # Also get email from Google OAuth2 userinfo
         try:
+            # Ensure we have a valid token for the userinfo request
+            if youtube_creds.expired and youtube_creds.refresh_token:
+                youtube_creds.refresh(GoogleRequest())
+                session["youtube_creds"] = youtube_creds
+                save_session(session_id)
+            
             userinfo_response = httpx.get(
                 'https://www.googleapis.com/oauth2/v2/userinfo',
                 headers={'Authorization': f'Bearer {youtube_creds.token}'},
@@ -489,17 +515,24 @@ def get_youtube_account(request: Request, response: Response):
                     account_info['email'] = userinfo.get('email')
                 else:
                     account_info = {'email': userinfo.get('email')}
+            elif userinfo_response.status_code == 401:
+                youtube_logger.warning("Userinfo request unauthorized, token may need refresh")
         except Exception as e:
             youtube_logger.debug(f"Could not fetch email: {str(e)}")
             # Email is optional, continue without it
         
         # Cache it in session
-        session["youtube_account_info"] = account_info
-        save_session(session_id)
+        if account_info:
+            session["youtube_account_info"] = account_info
+            save_session(session_id)
         
         return {"account": account_info}
     except Exception as e:
         youtube_logger.error(f"Error getting YouTube account info: {str(e)}", exc_info=True)
+        # Clear cached account info on error so it retries next time
+        if "youtube_account_info" in session:
+            del session["youtube_account_info"]
+            save_session(session_id)
         return {"account": None, "error": str(e)}
 
 @app.post("/api/global/wordbank")

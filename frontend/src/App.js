@@ -117,9 +117,14 @@ function App() {
   const loadYoutubeAccount = async () => {
     try {
       const res = await axios.get(`${API}/auth/youtube/account`);
-      setYoutube(prev => ({ ...prev, account: res.data.account || null }));
+      if (res.data.error) {
+        console.error('Error loading YouTube account:', res.data.error);
+        setYoutube(prev => ({ ...prev, account: null }));
+      } else {
+        setYoutube(prev => ({ ...prev, account: res.data.account || null }));
+      }
     } catch (error) {
-      console.error('Error loading YouTube account:', error);
+      console.error('Error loading YouTube account:', error.response?.data || error.message);
       setYoutube(prev => ({ ...prev, account: null }));
     }
   };
