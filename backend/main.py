@@ -138,7 +138,12 @@ def get_default_global_settings():
     return {
         "title_template": "{filename}",
         "description_template": "Uploaded via Hopper",
-        "wordbank": []
+        "wordbank": [],
+        "upload_immediately": True,
+        "schedule_mode": "spaced",
+        "schedule_interval_value": 1,
+        "schedule_interval_unit": "hours",
+        "schedule_start_time": ""
     }
 
 def get_default_youtube_settings():
@@ -149,11 +154,6 @@ def get_default_youtube_settings():
         "tags_template": "",
         "title_template": "",  # Empty means use global
         "description_template": "",  # Empty means use global
-        "upload_immediately": True,
-        "schedule_mode": "spaced",
-        "schedule_interval_value": 1,
-        "schedule_interval_unit": "hours",
-        "schedule_start_time": "",
         "allow_duplicates": False
     }
 
@@ -166,11 +166,6 @@ def get_default_tiktok_settings():
         "allow_stitch": True,
         "title_template": "",  # Empty means use global
         "description_template": "",  # Empty means use global (TikTok combines title+description)
-        "upload_immediately": True,
-        "schedule_mode": "spaced",
-        "schedule_interval_value": 1,
-        "schedule_interval_unit": "hours",
-        "schedule_start_time": "",
         "allow_duplicates": False
     }
 
@@ -853,7 +848,12 @@ def update_global_settings(
     request: Request,
     response: Response,
     title_template: str = None,
-    description_template: str = None
+    description_template: str = None,
+    upload_immediately: bool = None,
+    schedule_mode: str = None,
+    schedule_interval_value: int = None,
+    schedule_interval_unit: str = None,
+    schedule_start_time: str = None
 ):
     """Update global settings"""
     session_id = get_or_create_session_id(request, response)
@@ -867,6 +867,27 @@ def update_global_settings(
     
     if description_template is not None:
         settings["description_template"] = description_template
+    
+    if upload_immediately is not None:
+        settings["upload_immediately"] = upload_immediately
+    
+    if schedule_mode is not None:
+        if schedule_mode not in ["spaced", "specific_time"]:
+            raise HTTPException(400, "Invalid schedule mode")
+        settings["schedule_mode"] = schedule_mode
+    
+    if schedule_interval_value is not None:
+        if schedule_interval_value < 1:
+            raise HTTPException(400, "Interval value must be at least 1")
+        settings["schedule_interval_value"] = schedule_interval_value
+    
+    if schedule_interval_unit is not None:
+        if schedule_interval_unit not in ["minutes", "hours", "days"]:
+            raise HTTPException(400, "Invalid interval unit")
+        settings["schedule_interval_unit"] = schedule_interval_unit
+    
+    if schedule_start_time is not None:
+        settings["schedule_start_time"] = schedule_start_time
     
     save_session(session_id)
     return settings
@@ -887,11 +908,6 @@ def update_youtube_settings(
     title_template: str = None,
     description_template: str = None,
     tags_template: str = None,
-    upload_immediately: bool = None,
-    schedule_mode: str = None,
-    schedule_interval_value: int = None,
-    schedule_interval_unit: str = None,
-    schedule_start_time: str = None,
     allow_duplicates: bool = None
 ):
     """Update YouTube upload settings"""
@@ -918,27 +934,6 @@ def update_youtube_settings(
     if tags_template is not None:
         settings["tags_template"] = tags_template
     
-    if upload_immediately is not None:
-        settings["upload_immediately"] = upload_immediately
-    
-    if schedule_mode is not None:
-        if schedule_mode not in ["spaced", "specific_time"]:
-            raise HTTPException(400, "Invalid schedule mode")
-        settings["schedule_mode"] = schedule_mode
-    
-    if schedule_interval_value is not None:
-        if schedule_interval_value < 1:
-            raise HTTPException(400, "Interval value must be at least 1")
-        settings["schedule_interval_value"] = schedule_interval_value
-    
-    if schedule_interval_unit is not None:
-        if schedule_interval_unit not in ["minutes", "hours", "days"]:
-            raise HTTPException(400, "Invalid interval unit")
-        settings["schedule_interval_unit"] = schedule_interval_unit
-    
-    if schedule_start_time is not None:
-        settings["schedule_start_time"] = schedule_start_time
-    
     if allow_duplicates is not None:
         settings["allow_duplicates"] = allow_duplicates
     
@@ -963,11 +958,6 @@ def update_tiktok_settings(
     allow_stitch: bool = None,
     title_template: str = None,
     description_template: str = None,
-    upload_immediately: bool = None,
-    schedule_mode: str = None,
-    schedule_interval_value: int = None,
-    schedule_interval_unit: str = None,
-    schedule_start_time: str = None,
     allow_duplicates: bool = None
 ):
     """Update TikTok upload settings"""
@@ -996,27 +986,6 @@ def update_tiktok_settings(
     
     if description_template is not None:
         settings["description_template"] = description_template
-    
-    if upload_immediately is not None:
-        settings["upload_immediately"] = upload_immediately
-    
-    if schedule_mode is not None:
-        if schedule_mode not in ["spaced", "specific_time"]:
-            raise HTTPException(400, "Invalid schedule mode")
-        settings["schedule_mode"] = schedule_mode
-    
-    if schedule_interval_value is not None:
-        if schedule_interval_value < 1:
-            raise HTTPException(400, "Interval value must be at least 1")
-        settings["schedule_interval_value"] = schedule_interval_value
-    
-    if schedule_interval_unit is not None:
-        if schedule_interval_unit not in ["minutes", "hours", "days"]:
-            raise HTTPException(400, "Invalid interval unit")
-        settings["schedule_interval_unit"] = schedule_interval_unit
-    
-    if schedule_start_time is not None:
-        settings["schedule_start_time"] = schedule_start_time
     
     if allow_duplicates is not None:
         settings["allow_duplicates"] = allow_duplicates
@@ -1706,6 +1675,10 @@ def upload_videos(request: Request, response: Response):
     
     upload_logger.info(f"Videos ready to upload: {len(pending_videos)}")
     
+    # Get global settings for upload behavior
+    global_settings = session.get("global_settings", {})
+    upload_immediately = global_settings.get('upload_immediately', True)
+    
     if not pending_videos:
         # Check what statuses videos actually have
         statuses = {}
@@ -1716,9 +1689,9 @@ def upload_videos(request: Request, response: Response):
         upload_logger.error(error_msg)
         raise HTTPException(400, error_msg)
     
-    # Use YouTube settings for scheduling (can be made destination-agnostic later)
-    # For now, all destinations follow the same schedule settings
-    upload_immediately = session["youtube_settings"].get('upload_immediately', True)
+    # Get global settings for upload behavior
+    global_settings = session.get("global_settings", {})
+    upload_immediately = global_settings.get('upload_immediately', True)
     
     # If upload immediately is enabled, upload all at once to all enabled destinations
     if upload_immediately:
@@ -1811,10 +1784,10 @@ def upload_videos(request: Request, response: Response):
         }
     
     # Otherwise, mark for scheduled upload
-    if session["youtube_settings"]['schedule_mode'] == 'spaced':
+    if global_settings['schedule_mode'] == 'spaced':
         # Calculate interval in minutes
-        value = session["youtube_settings"]['schedule_interval_value']
-        unit = session["youtube_settings"]['schedule_interval_unit']
+        value = global_settings['schedule_interval_value']
+        unit = global_settings['schedule_interval_unit']
         
         if unit == 'minutes':
             interval_minutes = value
@@ -1838,17 +1811,17 @@ def upload_videos(request: Request, response: Response):
             "message": f"Videos scheduled with {value} {unit} interval"
         }
     
-    elif session["youtube_settings"]['schedule_mode'] == 'specific_time':
+    elif global_settings['schedule_mode'] == 'specific_time':
         # Schedule all for a specific time
-        if session["youtube_settings"]['schedule_start_time']:
+        if global_settings['schedule_start_time']:
             for video in pending_videos:
-                video['scheduled_time'] = session["youtube_settings"]['schedule_start_time']
+                video['scheduled_time'] = global_settings['schedule_start_time']
                 video['status'] = 'scheduled'
             
             save_session(session_id)
             return {
                 "scheduled": len(pending_videos),
-                "message": f"Videos scheduled for {session['youtube_settings']['schedule_start_time']}"
+                "message": f"Videos scheduled for {global_settings['schedule_start_time']}"
             }
         else:
             raise HTTPException(400, "No start time specified for scheduled upload")

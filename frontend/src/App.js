@@ -28,7 +28,12 @@ function App() {
   const [globalSettings, setGlobalSettings] = useState({
     title_template: '{filename}',
     description_template: 'Uploaded via Hopper',
-    wordbank: []
+    wordbank: [],
+    upload_immediately: true,
+    schedule_mode: 'spaced',
+    schedule_interval_value: 1,
+    schedule_interval_unit: 'hours',
+    schedule_start_time: ''
   });
   const [youtubeSettings, setYoutubeSettings] = useState({ 
     visibility: 'private', 
@@ -36,11 +41,6 @@ function App() {
     title_template: '',
     description_template: '',
     tags_template: '',
-    upload_immediately: true,
-    schedule_mode: 'spaced',
-    schedule_interval_value: 1,
-    schedule_interval_unit: 'hours',
-    schedule_start_time: '',
     allow_duplicates: false
   });
   const [tiktokSettings, setTiktokSettings] = useState({
@@ -50,11 +50,6 @@ function App() {
     allow_stitch: true,
     title_template: '',
     description_template: '',
-    upload_immediately: true,
-    schedule_mode: 'spaced',
-    schedule_interval_value: 1,
-    schedule_interval_unit: 'hours',
-    schedule_start_time: '',
     allow_duplicates: false
   });
   const [showSettings, setShowSettings] = useState(false);
@@ -193,8 +188,6 @@ function App() {
         setMessage(`✅ Default visibility set to ${value}`);
       } else if (key === 'made_for_kids') {
         setMessage(`✅ Made for kids: ${value ? 'Yes' : 'No'}`);
-      } else if (key === 'upload_immediately') {
-        setMessage(`✅ Upload mode: ${value ? 'Immediate' : 'Scheduled'}`);
       } else if (key === 'allow_duplicates') {
         setMessage(`✅ Duplicates: ${value ? 'Allowed' : 'Blocked'}`);
       } else if (key === 'title_template' || key === 'description_template') {
@@ -225,8 +218,6 @@ function App() {
       
       if (key === 'privacy_level') {
         setMessage(`✅ Privacy level set to ${value}`);
-      } else if (key === 'upload_immediately') {
-        setMessage(`✅ Upload mode: ${value ? 'Immediate' : 'Scheduled'}`);
       } else if (key === 'allow_duplicates') {
         setMessage(`✅ Duplicates: ${value ? 'Allowed' : 'Blocked'}`);
       } else {
@@ -565,7 +556,7 @@ function App() {
     }
     
     setIsUploading(true);
-    const isScheduling = !youtubeSettings.upload_immediately;
+    const isScheduling = !globalSettings.upload_immediately;
     setMessage(isScheduling ? '⏳ Scheduling videos...' : '⏳ Uploading...');
     
     // Only poll for progress if uploading immediately
@@ -710,6 +701,80 @@ function App() {
                 </div>
               )}
             </div>
+
+            <div className="setting-divider"></div>
+
+            <div className="setting-group">
+              <label className="checkbox-label">
+                <input 
+                  type="checkbox"
+                  checked={globalSettings.upload_immediately}
+                  onChange={(e) => updateGlobalSettings('upload_immediately', e.target.checked)}
+                  className="checkbox"
+                />
+                <span>Upload Immediately</span>
+              </label>
+              <small className="hint">If disabled, videos will be scheduled</small>
+            </div>
+
+            {!globalSettings.upload_immediately && (
+              <>
+                <div className="setting-group">
+                  <label>Schedule Mode</label>
+                  <select 
+                    value={globalSettings.schedule_mode}
+                    onChange={(e) => updateGlobalSettings('schedule_mode', e.target.value)}
+                    className="select"
+                  >
+                    <option value="spaced">Spaced Interval</option>
+                    <option value="specific_time">Specific Time</option>
+                  </select>
+                </div>
+
+                {globalSettings.schedule_mode === 'spaced' ? (
+                  <div className="setting-group">
+                    <label>Upload Interval</label>
+                    <div className="interval-input">
+                      <input 
+                        type="number"
+                        min="1"
+                        value={globalSettings.schedule_interval_value}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value) || 1;
+                          setGlobalSettings({...globalSettings, schedule_interval_value: val});
+                        }}
+                        onBlur={(e) => {
+                          const val = parseInt(e.target.value) || 1;
+                          updateGlobalSettings('schedule_interval_value', val);
+                        }}
+                        className="input-number"
+                      />
+                      <select 
+                        value={globalSettings.schedule_interval_unit}
+                        onChange={(e) => updateGlobalSettings('schedule_interval_unit', e.target.value)}
+                        className="select-unit"
+                      >
+                        <option value="minutes">Minutes</option>
+                        <option value="hours">Hours</option>
+                        <option value="days">Days</option>
+                      </select>
+                    </div>
+                    <small className="hint">Videos upload one at a time with this interval</small>
+                  </div>
+                ) : (
+                  <div className="setting-group">
+                    <label>Start Time</label>
+                    <input 
+                      type="datetime-local"
+                      value={globalSettings.schedule_start_time}
+                      onChange={(e) => updateGlobalSettings('schedule_start_time', e.target.value)}
+                      className="input-text"
+                    />
+                    <small className="hint">All videos will upload at this time</small>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
       </div>
@@ -845,80 +910,6 @@ function App() {
               />
               <small className="hint">Comma-separated tags. Use {'{filename}'} or {'{random}'}</small>
             </div>
-
-            <div className="setting-divider"></div>
-
-            <div className="setting-group">
-              <label className="checkbox-label">
-                <input 
-                  type="checkbox"
-                  checked={youtubeSettings.upload_immediately}
-                  onChange={(e) => updateYoutubeSettings('upload_immediately', e.target.checked)}
-                  className="checkbox"
-                />
-                <span>Upload Immediately</span>
-              </label>
-              <small className="hint">If disabled, videos will be scheduled</small>
-            </div>
-
-            {!youtubeSettings.upload_immediately && (
-              <>
-                <div className="setting-group">
-                  <label>Schedule Mode</label>
-                  <select 
-                    value={youtubeSettings.schedule_mode}
-                    onChange={(e) => updateYoutubeSettings('schedule_mode', e.target.value)}
-                    className="select"
-                  >
-                    <option value="spaced">Spaced Interval</option>
-                    <option value="specific_time">Specific Time</option>
-                  </select>
-                </div>
-
-                {youtubeSettings.schedule_mode === 'spaced' ? (
-                  <div className="setting-group">
-                    <label>Upload Interval</label>
-                    <div className="interval-input">
-                      <input 
-                        type="number"
-                        min="1"
-                        value={youtubeSettings.schedule_interval_value}
-                        onChange={(e) => {
-                          const val = parseInt(e.target.value) || 1;
-                          setYoutubeSettings({...youtubeSettings, schedule_interval_value: val});
-                        }}
-                        onBlur={(e) => {
-                          const val = parseInt(e.target.value) || 1;
-                          updateYoutubeSettings('schedule_interval_value', val);
-                        }}
-                        className="input-number"
-                      />
-                      <select 
-                        value={youtubeSettings.schedule_interval_unit}
-                        onChange={(e) => updateYoutubeSettings('schedule_interval_unit', e.target.value)}
-                        className="select-unit"
-                      >
-                        <option value="minutes">Minutes</option>
-                        <option value="hours">Hours</option>
-                        <option value="days">Days</option>
-                      </select>
-                    </div>
-                    <small className="hint">Videos upload one at a time with this interval</small>
-                  </div>
-                ) : (
-                  <div className="setting-group">
-                    <label>Start Time</label>
-                    <input 
-                      type="datetime-local"
-                      value={youtubeSettings.schedule_start_time}
-                      onChange={(e) => updateYoutubeSettings('schedule_start_time', e.target.value)}
-                      className="input-text"
-                    />
-                    <small className="hint">All videos will upload at this time</small>
-                  </div>
-                )}
-              </>
-            )}
             
             <div className="setting-divider"></div>
             
@@ -1079,72 +1070,6 @@ function App() {
               />
               <small className="hint">TikTok only uses the caption (title) field. Description is not supported by TikTok API.</small>
             </div>
-
-            <div className="setting-divider"></div>
-
-            <div className="setting-group">
-              <label className="checkbox-label">
-                <input 
-                  type="checkbox"
-                  checked={tiktokSettings.upload_immediately}
-                  onChange={(e) => updateTiktokSettings('upload_immediately', e.target.checked)}
-                  className="checkbox"
-                />
-                <span>Upload Immediately (Overrides Scheduler)</span>
-              </label>
-            </div>
-
-            {!tiktokSettings.upload_immediately && (
-              <>
-                <div className="setting-group">
-                  <label>Schedule Mode</label>
-                  <select 
-                    value={tiktokSettings.schedule_mode}
-                    onChange={(e) => updateTiktokSettings('schedule_mode', e.target.value)}
-                    className="select"
-                  >
-                    <option value="spaced">Spaced Intervals</option>
-                    <option value="specific_time">Specific Time</option>
-                  </select>
-                </div>
-
-                {tiktokSettings.schedule_mode === 'spaced' ? (
-                  <div className="setting-group">
-                    <label>Interval Between Uploads</label>
-                    <div style={{ display: 'flex', gap: '10px' }}>
-                      <input 
-                        type="number"
-                        min="1"
-                        value={tiktokSettings.schedule_interval_value}
-                        onChange={(e) => updateTiktokSettings('schedule_interval_value', parseInt(e.target.value))}
-                        className="input-number"
-                      />
-                      <select 
-                        value={tiktokSettings.schedule_interval_unit}
-                        onChange={(e) => updateTiktokSettings('schedule_interval_unit', e.target.value)}
-                        className="select-unit"
-                      >
-                        <option value="minutes">Minutes</option>
-                        <option value="hours">Hours</option>
-                        <option value="days">Days</option>
-                      </select>
-                    </div>
-                    <small className="hint">Videos upload one at a time with this interval</small>
-                  </div>
-                ) : (
-                  <div className="setting-group">
-                    <label>Start Time</label>
-                    <input 
-                      type="datetime-local"
-                      value={tiktokSettings.schedule_start_time}
-                      onChange={(e) => updateTiktokSettings('schedule_start_time', e.target.value)}
-                      className="input-text"
-                    />
-                    <small className="hint">All videos will upload at this time</small>
-                  </div>
-                )}
-              </>
-            )}
             
             <div className="setting-divider"></div>
             
@@ -1199,7 +1124,7 @@ function App() {
         <>
           <button className="upload-btn" onClick={upload} disabled={isUploading}>
             {isUploading ? 'Uploading...' : 
-             youtubeSettings.upload_immediately ? 'Upload' : 'Schedule Videos'}
+             globalSettings.upload_immediately ? 'Upload' : 'Schedule Videos'}
           </button>
           
           {/* Cancel Scheduled Button */}
