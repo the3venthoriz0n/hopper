@@ -117,11 +117,10 @@ function App() {
   const loadYoutubeAccount = async () => {
     try {
       const res = await axios.get(`${API}/auth/youtube/account`);
-      if (res.data.account) {
-        setYoutube(prev => ({ ...prev, account: res.data.account }));
-      }
+      setYoutube(prev => ({ ...prev, account: res.data.account || null }));
     } catch (error) {
       console.error('Error loading YouTube account:', error);
+      setYoutube(prev => ({ ...prev, account: null }));
     }
   };
 
@@ -714,17 +713,30 @@ function App() {
       <div className="card">
         <h2>Destinations</h2>
         <div className="destination">
-          <div>
-            <span>▶️ YouTube</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" fill="#FF0000"/>
+              </svg>
+              YouTube
+            </span>
+            <div style={{ 
+              width: '10px', 
+              height: '10px', 
+              borderRadius: '50%', 
+              backgroundColor: youtube.connected ? '#22c55e' : '#ef4444',
+              flexShrink: 0
+            }}></div>
             {youtube.connected && (
-              <>
-                <span className="badge">Connected</span>
-                {youtube.account && (
-                  <span className="account-info" style={{ marginLeft: '8px', fontSize: '0.9em', color: '#666' }}>
-                    ({youtube.account.channel_name ? `${youtube.account.channel_name}${youtube.account.email ? ` - ${youtube.account.email}` : ''}` : youtube.account.email || 'Loading...'})
-                  </span>
+              <span className="account-info" style={{ fontSize: '0.9em', color: '#999', marginLeft: '4px' }}>
+                {youtube.account ? (
+                  youtube.account.channel_name ? 
+                    youtube.account.channel_name + (youtube.account.email ? ` (${youtube.account.email})` : '') : 
+                    youtube.account.email || 'Unknown account'
+                ) : (
+                  'Loading account...'
                 )}
-              </>
+              </span>
             )}
           </div>
           {youtube.connected ? (
@@ -739,9 +751,6 @@ function App() {
               </label>
               <button onClick={() => setShowSettings(!showSettings)} className="btn-settings">
                 ⚙️
-              </button>
-              <button onClick={disconnectYoutube} className="btn-disconnect">
-                Disconnect
               </button>
             </>
           ) : (
@@ -905,14 +914,52 @@ function App() {
                 )}
               </>
             )}
+            
+            <div className="setting-divider"></div>
+            
+            <div className="setting-group">
+              <button onClick={disconnectYoutube} className="btn-logout" style={{
+                width: '100%',
+                padding: '0.75rem',
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                borderRadius: '6px',
+                color: '#ef4444',
+                cursor: 'pointer',
+                fontSize: '0.9rem',
+                fontWeight: '500',
+                transition: 'all 0.2s'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.background = 'rgba(239, 68, 68, 0.2)';
+                e.target.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.background = 'rgba(239, 68, 68, 0.1)';
+                e.target.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+              }}>
+                Log Out
+              </button>
+            </div>
           </div>
         )}
 
         {/* TikTok Destination */}
         <div className="destination">
-          <div>
-            <span>🎵 TikTok</span>
-            {tiktok.connected && <span className="badge">Connected</span>}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z" fill="#FFFFFF"/>
+              </svg>
+              TikTok
+            </span>
+            <div style={{ 
+              width: '10px', 
+              height: '10px', 
+              borderRadius: '50%', 
+              backgroundColor: tiktok.connected ? '#22c55e' : '#ef4444',
+              flexShrink: 0
+            }}></div>
           </div>
           {tiktok.connected ? (
             <>
@@ -926,9 +973,6 @@ function App() {
               </label>
               <button onClick={() => setShowTiktokSettings(!showTiktokSettings)} className="btn-settings">
                 ⚙️
-              </button>
-              <button onClick={disconnectTiktok} className="btn-disconnect">
-                Disconnect
               </button>
             </>
           ) : (
@@ -1096,6 +1140,33 @@ function App() {
                 )}
               </>
             )}
+            
+            <div className="setting-divider"></div>
+            
+            <div className="setting-group">
+              <button onClick={disconnectTiktok} className="btn-logout" style={{
+                width: '100%',
+                padding: '0.75rem',
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                borderRadius: '6px',
+                color: '#ef4444',
+                cursor: 'pointer',
+                fontSize: '0.9rem',
+                fontWeight: '500',
+                transition: 'all 0.2s'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.background = 'rgba(239, 68, 68, 0.2)';
+                e.target.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.background = 'rgba(239, 68, 68, 0.1)';
+                e.target.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+              }}>
+                Log Out
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -1154,8 +1225,11 @@ function App() {
               <div className="drag-handle" title="Drag to reorder">⋮⋮</div>
               <div className="video-info-container">
                 <div className="video-titles">
-                  <div className="youtube-title">
-                    ▶️ {v.youtube_title || v.filename}
+                  <div className="youtube-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" fill="#FF0000"/>
+                    </svg>
+                    {v.youtube_title || v.filename}
                     {v.title_too_long && (
                       <span className="title-warning" title={`Title truncated from ${v.title_original_length} to 100 characters`}>
                         ⚠️ {v.title_original_length}

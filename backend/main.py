@@ -412,6 +412,8 @@ def auth_callback(code: str, state: str, request: Request, response: Response):
         client_secret=GOOGLE_CLIENT_SECRET,
         scopes=flow_creds.scopes
     )
+    # Enable YouTube destination by default after login
+    session["destinations"]["youtube"]["enabled"] = True
     save_session(session_id)
     
     # Redirect back to frontend using environment variable or construct from request
