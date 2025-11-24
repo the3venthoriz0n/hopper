@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, Link } from 'react-router-dom';
 import axios from 'axios';
 import './App.css';
 import Terms from './Terms';
@@ -21,7 +21,7 @@ function Home() {
   
   // Set document title based on environment
   useEffect(() => {
-    document.title = isProduction ? 'HOPPER' : 'DEV HOPPER';
+    document.title = isProduction ? 'hopper' : 'DEV HOPPER';
   }, [isProduction]);
   
   const [youtube, setYoutube] = useState({ connected: false, enabled: false, account: null });
@@ -642,7 +642,7 @@ function Home() {
                 value={globalSettings.description_template}
                 onChange={(e) => setGlobalSettings({...globalSettings, description_template: e.target.value})}
                 onBlur={(e) => updateGlobalSettings('description_template', e.target.value)}
-                placeholder="Uploaded via Hopper"
+                placeholder="Uploaded via hopper"
                 className="textarea-text"
                 rows="3"
               />
@@ -1420,6 +1420,44 @@ function Home() {
           </div>
         </div>
       )}
+      
+      {/* Footer */}
+      <footer style={{
+        marginTop: '3rem',
+        padding: '1.5rem',
+        textAlign: 'center',
+        borderTop: '1px solid #eee',
+        color: '#666',
+        fontSize: '0.9rem'
+      }}>
+        <Link 
+          to="/terms" 
+          style={{ 
+            color: '#666', 
+            textDecoration: 'none', 
+            marginRight: '1rem',
+            transition: 'color 0.2s'
+          }}
+          onMouseEnter={(e) => e.target.style.color = '#0066cc'}
+          onMouseLeave={(e) => e.target.style.color = '#666'}
+        >
+          Terms of Service
+        </Link>
+        <span style={{ color: '#ccc' }}>|</span>
+        <Link 
+          to="/privacy" 
+          style={{ 
+            color: '#666', 
+            textDecoration: 'none', 
+            marginLeft: '1rem',
+            transition: 'color 0.2s'
+          }}
+          onMouseEnter={(e) => e.target.style.color = '#0066cc'}
+          onMouseLeave={(e) => e.target.style.color = '#666'}
+        >
+          Privacy Policy
+        </Link>
+      </footer>
     </div>
   );
 }
