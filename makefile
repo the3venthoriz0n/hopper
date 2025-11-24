@@ -44,7 +44,7 @@ down:
 	@echo "🛑 Stopping $(ENV) environment..."
 	@$(COMPOSE) down $(SERVICE)
 
-rebuild: down
+rebuild: down sync
 	@echo "🔨 Rebuilding $(ENV) from scratch..."
 	@$(COMPOSE) build --no-cache $(SERVICE)
 	@$(COMPOSE) up -d $(SERVICE)

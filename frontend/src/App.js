@@ -1217,7 +1217,7 @@ function Home() {
                 <div className="status">
                   {v.status === 'uploading' ? (
                     v.upload_progress !== undefined ? (
-                      <span>Uploading to YouTube {v.upload_progress}%</span>
+                      <span>Uploading {v.upload_progress}%</span>
                     ) : v.progress !== undefined && v.progress < 100 ? (
                       <span>Uploading to server {v.progress}%</span>
                     ) : (

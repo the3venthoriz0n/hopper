@@ -1077,6 +1077,45 @@ def delete_video(video_id: int, request: Request, response: Response):
     save_session(session_id)
     return {"ok": True}
 
+@app.post("/api/videos/{video_id}/recompute-title")
+def recompute_video_title(video_id: int, request: Request, response: Response):
+    """Recompute video title from current template"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    
+    # Find the video
+    video = None
+    for v in session["videos"]:
+        if v['id'] == video_id:
+            video = v
+            break
+    
+    if not video:
+        raise HTTPException(404, "Video not found")
+    
+    # Remove custom title if it exists
+    if "custom_settings" in video and "title" in video["custom_settings"]:
+        del video["custom_settings"]["title"]
+    
+    # Regenerate title using current template
+    filename_no_ext = video['filename'].rsplit('.', 1)[0]
+    youtube_settings = session.get("youtube_settings", {})
+    global_settings = session.get("global_settings", {})
+    title_template = youtube_settings.get('title_template', '') or global_settings.get('title_template', '{filename}')
+    
+    new_title = replace_template_placeholders(
+        title_template,
+        filename_no_ext,
+        global_settings.get('wordbank', [])
+    )
+    
+    # Update the generated_title
+    video['generated_title'] = new_title
+    
+    save_session(session_id)
+    
+    return {"ok": True, "title": new_title[:100]}
+
 @app.patch("/api/videos/{video_id}")
 def update_video(
     video_id: int,
