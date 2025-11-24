@@ -1457,6 +1457,22 @@ function Home() {
         >
           Privacy Policy
         </Link>
+        <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#999' }}>
+          <a 
+            href="https://github.com/the3venthoriz0n/hopper" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            style={{ 
+              color: '#999', 
+              textDecoration: 'none',
+              transition: 'color 0.2s'
+            }}
+            onMouseEnter={(e) => e.target.style.color = '#0066cc'}
+            onMouseLeave={(e) => e.target.style.color = '#999'}
+          >
+            {process.env.REACT_APP_VERSION || 'dev'}
+          </a>
+        </div>
       </footer>
     </div>
   );

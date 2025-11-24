@@ -3,6 +3,12 @@
 # Default environment (can be overridden: make up ENV=prod)
 ENV ?= dev
 
+# Get git version (tag or short commit hash)
+GIT_VERSION := $(shell git describe --tags --always 2>/dev/null || echo "dev")
+
+# Export GIT_VERSION so docker-compose can use it
+export GIT_VERSION
+
 # Compose command builder
 COMPOSE = docker compose -p hopper-$(ENV) -f docker-compose.$(ENV).yml --env-file .env.$(ENV)
 
