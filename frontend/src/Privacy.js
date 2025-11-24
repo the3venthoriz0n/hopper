@@ -4,7 +4,7 @@ import './App.css';
 
 function Privacy() {
   useEffect(() => {
-    document.title = 'Privacy Policy - Hopper';
+    document.title = 'Privacy Policy - hopper';
   }, []);
 
   return (

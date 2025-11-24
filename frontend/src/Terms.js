@@ -4,7 +4,7 @@ import './App.css';
 
 function Terms() {
   useEffect(() => {
-    document.title = 'Terms of Service - Hopper';
+    document.title = 'Terms of Service - hopper';
   }, []);
 
   return (
