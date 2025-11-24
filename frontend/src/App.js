@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
+import { Routes, Route } from 'react-router-dom';
 import axios from 'axios';
 import './App.css';
+import Terms from './Terms';
+import Privacy from './Privacy';
 
 // Configure axios to send cookies with every request
 axios.defaults.withCredentials = true;
 
-function App() {
+function Home() {
   // Build API URL at runtime - always use HTTPS
   const getApiUrl = () => {
     const backendUrl = process.env.REACT_APP_BACKEND_URL || `https://${window.location.hostname}`;
@@ -1418,6 +1421,16 @@ function App() {
         </div>
       )}
     </div>
+  );
+}
+
+function App() {
+  return (
+    <Routes>
+      <Route path="/" element={<Home />} />
+      <Route path="/terms" element={<Terms />} />
+      <Route path="/privacy" element={<Privacy />} />
+    </Routes>
   );
 }
 

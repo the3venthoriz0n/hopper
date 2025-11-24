@@ -1,7 +1,7 @@
 from urllib.parse import urlencode, unquote
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Response, Cookie
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, HTMLResponse
 from pathlib import Path
 import uvicorn
 import os
@@ -1821,6 +1821,137 @@ def upload_videos(request: Request, response: Response):
             raise HTTPException(400, "No start time specified for scheduled upload")
     
     return {"message": "Upload processing"}
+
+@app.get("/terms", response_class=HTMLResponse)
+def terms_of_service():
+    """Terms of Service page"""
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Terms of Service</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 2rem;
+                line-height: 1.6;
+                color: #333;
+            }
+            h1 {
+                color: #222;
+                border-bottom: 2px solid #eee;
+                padding-bottom: 0.5rem;
+            }
+            h2 {
+                color: #444;
+                margin-top: 2rem;
+            }
+            p {
+                margin: 1rem 0;
+            }
+            a {
+                color: #0066cc;
+                text-decoration: none;
+            }
+            a:hover {
+                text-decoration: underline;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Terms of Service</h1>
+        <p><strong>Last updated:</strong> {date}</p>
+        
+        <h2>1. Acceptance of Terms</h2>
+        <p>By accessing and using this service, you accept and agree to be bound by these Terms of Service.</p>
+        
+        <h2>2. Use of Service</h2>
+        <p>You agree to use this service only for lawful purposes and in accordance with these Terms. You are responsible for all content you upload or transmit through the service.</p>
+        
+        <h2>3. User Responsibilities</h2>
+        <p>You are responsible for maintaining the confidentiality of your account credentials and for all activities that occur under your account.</p>
+        
+        <h2>4. Limitation of Liability</h2>
+        <p>The service is provided "as is" without warranties of any kind. We are not liable for any damages arising from your use of the service.</p>
+        
+        <h2>5. Changes to Terms</h2>
+        <p>We reserve the right to modify these Terms at any time. Continued use of the service after changes constitutes acceptance of the modified Terms.</p>
+        
+        <p><a href="/privacy">Privacy Policy</a> | <a href="/">Home</a></p>
+    </body>
+    </html>
+    """.format(date=datetime.now().strftime("%B %d, %Y"))
+
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy_policy():
+    """Privacy Policy page"""
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Privacy Policy</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 2rem;
+                line-height: 1.6;
+                color: #333;
+            }
+            h1 {
+                color: #222;
+                border-bottom: 2px solid #eee;
+                padding-bottom: 0.5rem;
+            }
+            h2 {
+                color: #444;
+                margin-top: 2rem;
+            }
+            p {
+                margin: 1rem 0;
+            }
+            a {
+                color: #0066cc;
+                text-decoration: none;
+            }
+            a:hover {
+                text-decoration: underline;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Privacy Policy</h1>
+        <p><strong>Last updated:</strong> {date}</p>
+        
+        <h2>1. Information We Collect</h2>
+        <p>We collect information you provide directly to us, including account credentials and content you upload. We also collect usage data and technical information automatically when you use the service.</p>
+        
+        <h2>2. How We Use Information</h2>
+        <p>We use the information we collect to provide, maintain, and improve our services, process your requests, and communicate with you.</p>
+        
+        <h2>3. Information Sharing</h2>
+        <p>We do not sell your personal information. We may share information with third-party service providers who assist us in operating our service, subject to confidentiality obligations.</p>
+        
+        <h2>4. Data Security</h2>
+        <p>We implement appropriate technical and organizational measures to protect your information. However, no method of transmission over the internet is 100% secure.</p>
+        
+        <h2>5. Your Rights</h2>
+        <p>You have the right to access, update, or delete your personal information. You may also opt out of certain data collection practices.</p>
+        
+        <h2>6. Changes to Privacy Policy</h2>
+        <p>We may update this Privacy Policy from time to time. We will notify you of any changes by posting the new policy on this page.</p>
+        
+        <p><a href="/terms">Terms of Service</a> | <a href="/">Home</a></p>
+    </body>
+    </html>
+    """.format(date=datetime.now().strftime("%B %d, %Y"))
 
 if __name__ == "__main__":
     # Use reload=True in development for hot reload
