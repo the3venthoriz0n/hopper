@@ -46,6 +46,11 @@ function Home() {
     description_template: '',
     tags_template: ''
   });
+  const [youtubeVideos, setYoutubeVideos] = useState([]);
+  const [youtubeVideosPage, setYoutubeVideosPage] = useState(1);
+  const [youtubeVideosTotalPages, setYoutubeVideosTotalPages] = useState(0);
+  const [loadingYoutubeVideos, setLoadingYoutubeVideos] = useState(false);
+  const [expandedVideos, setExpandedVideos] = useState(new Set());
   const [tiktokSettings, setTiktokSettings] = useState({
     privacy_level: 'private',
     allow_comments: true,
@@ -220,6 +225,23 @@ function Home() {
       }
     } catch (err) {
       setMessage('❌ Error updating settings');
+    }
+  };
+
+  const loadYoutubeVideos = async (page = 1, hideShorts = false) => {
+    if (!youtube.connected) return;
+    
+    setLoadingYoutubeVideos(true);
+    try {
+      const res = await axios.get(`${API}/youtube/videos?page=${page}&per_page=50&hide_shorts=${hideShorts}`);
+      setYoutubeVideos(res.data.videos);
+      setYoutubeVideosPage(res.data.page);
+      setYoutubeVideosTotalPages(res.data.total_pages);
+    } catch (err) {
+      console.error('Error loading YouTube videos:', err);
+      setMessage('❌ Error loading YouTube videos');
+    } finally {
+      setLoadingYoutubeVideos(false);
     }
   };
 
@@ -981,7 +1003,9 @@ function Home() {
                 className="input-text"
               />
             </div>
-            
+
+            <div className="setting-divider"></div>
+
             <div className="setting-divider"></div>
             
             <div className="setting-group">
@@ -1222,78 +1246,146 @@ function Home() {
         {videos.length === 0 ? (
           <p className="empty">No videos</p>
         ) : (
-          videos.map(v => (
-            <div 
-              key={v.id} 
-              className={`video ${draggedVideo?.id === v.id ? 'dragging' : ''}`}
-              draggable={v.status !== 'uploading'}
-              onDragStart={(e) => handleDragStart(e, v)}
-              onDragEnd={handleDragEnd}
-              onDragOver={handleDragOver}
-              onDrop={(e) => handleDrop(e, v)}
-            >
-              <div className="drag-handle" title="Drag to reorder">⋮⋮</div>
-              <div className="video-info-container">
-                <div className="video-titles">
-                  <div className="youtube-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" fill="#FF0000"/>
-                    </svg>
-                    {v.youtube_title || v.filename}
-                    {v.title_too_long && (
-                      <span className="title-warning" title={`Title truncated from ${v.title_original_length} to 100 characters`}>
-                        ⚠️ {v.title_original_length}
-                      </span>
+          videos.map(v => {
+            const isExpanded = expandedVideos.has(v.id);
+            const uploadProps = v.upload_properties || {};
+            const youtubeProps = uploadProps.youtube || {};
+            
+            return (
+              <div 
+                key={v.id} 
+                className={`video ${draggedVideo?.id === v.id ? 'dragging' : ''}`}
+                draggable={v.status !== 'uploading'}
+                onDragStart={(e) => handleDragStart(e, v)}
+                onDragEnd={handleDragEnd}
+                onDragOver={handleDragOver}
+                onDrop={(e) => handleDrop(e, v)}
+              >
+                <div className="drag-handle" title="Drag to reorder">⋮⋮</div>
+                <div className="video-info-container" style={{ flex: 1 }}>
+                  <div className="video-titles">
+                    <div className="youtube-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M8 5v14l11-7z" fill="currentColor"/>
+                      </svg>
+                      {v.youtube_title || v.filename}
+                      {v.title_too_long && (
+                        <span className="title-warning" title={`Title truncated from ${v.title_original_length} to 100 characters`}>
+                          ⚠️ {v.title_original_length}
+                        </span>
+                      )}
+                    </div>
+                    <div className="filename">File: {v.filename}</div>
+                  </div>
+                  <div className="status">
+                    {v.status === 'uploading' ? (
+                      v.upload_progress !== undefined ? (
+                        <span>Uploading {v.upload_progress}%</span>
+                      ) : v.progress !== undefined && v.progress < 100 ? (
+                        <span>Uploading to server {v.progress}%</span>
+                      ) : (
+                        <span>Processing...</span>
+                      )
+                    ) : v.status === 'scheduled' && v.scheduled_time ? (
+                      <span>Scheduled for {new Date(v.scheduled_time).toLocaleString(undefined, {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit'
+                      })}</span>
+                    ) : (
+                      <span>{v.status}</span>
                     )}
                   </div>
-                  <div className="filename">File: {v.filename}</div>
-                </div>
-                <div className="status">
-                  {v.status === 'uploading' ? (
-                    v.upload_progress !== undefined ? (
-                      <span>Uploading {v.upload_progress}%</span>
-                    ) : v.progress !== undefined && v.progress < 100 ? (
-                      <span>Uploading to server {v.progress}%</span>
-                    ) : (
-                      <span>Processing...</span>
-                    )
-                  ) : v.status === 'scheduled' && v.scheduled_time ? (
-                    <span>Scheduled for {new Date(v.scheduled_time).toLocaleString(undefined, {
-                      year: 'numeric',
-                      month: 'short',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit'
-                    })}</span>
-                  ) : (
-                    <span>{v.status}</span>
+                  {v.status === 'uploading' && (
+                    <div className="progress-bar">
+                      <div 
+                        className="progress-fill" 
+                        style={{ 
+                          width: `${v.upload_progress !== undefined ? v.upload_progress : (v.progress || 0)}%` 
+                        }}
+                      ></div>
+                    </div>
+                  )}
+                  {isExpanded && (
+                    <div style={{ 
+                      marginTop: '1rem', 
+                      padding: '1rem', 
+                      background: 'rgba(0, 0, 0, 0.2)', 
+                      borderRadius: '8px',
+                      fontSize: '0.9rem'
+                    }}>
+                      <div style={{ fontWeight: 'bold', marginBottom: '0.5rem' }}>Upload Properties:</div>
+                      {youtubeProps.title && (
+                        <div style={{ marginBottom: '0.5rem' }}>
+                          <strong>YouTube:</strong>
+                          <div style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                            <div>Title: {youtubeProps.title}</div>
+                            <div>Visibility: {youtubeProps.visibility}</div>
+                            <div>Made for Kids: {youtubeProps.made_for_kids ? 'Yes' : 'No'}</div>
+                            {youtubeProps.description && <div>Description: {youtubeProps.description.substring(0, 100)}{youtubeProps.description.length > 100 ? '...' : ''}</div>}
+                            {youtubeProps.tags && <div>Tags: {youtubeProps.tags}</div>}
+                          </div>
+                        </div>
+                      )}
+                      {uploadProps.tiktok && (
+                        <div style={{ marginBottom: '0.5rem' }}>
+                          <strong>TikTok:</strong>
+                          <div style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                            <div>Title: {uploadProps.tiktok.title}</div>
+                            <div>Privacy: {uploadProps.tiktok.privacy_level}</div>
+                            <div>Allow Comments: {uploadProps.tiktok.allow_comments ? 'Yes' : 'No'}</div>
+                            <div>Allow Duet: {uploadProps.tiktok.allow_duet ? 'Yes' : 'No'}</div>
+                            <div>Allow Stitch: {uploadProps.tiktok.allow_stitch ? 'Yes' : 'No'}</div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
-                {v.status === 'uploading' && (
-                  <div className="progress-bar">
-                    <div 
-                      className="progress-fill" 
-                      style={{ 
-                        width: `${v.upload_progress !== undefined ? v.upload_progress : (v.progress || 0)}%` 
-                      }}
-                    ></div>
-                  </div>
-                )}
+                <div className="video-actions">
+                  {v.status !== 'uploading' && v.status !== 'uploaded' && (
+                    <>
+                      <button 
+                        onClick={() => {
+                          const newExpanded = new Set(expandedVideos);
+                          if (isExpanded) {
+                            newExpanded.delete(v.id);
+                          } else {
+                            newExpanded.add(v.id);
+                          }
+                          setExpandedVideos(newExpanded);
+                        }}
+                        className="btn-edit" 
+                        title={isExpanded ? "Collapse properties" : "Expand properties"}
+                        style={{ 
+                          marginRight: '4px', 
+                          fontSize: '0.85rem',
+                          width: '24px',
+                          height: '24px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          padding: 0
+                        }}
+                      >
+                        {isExpanded ? '▼' : '▾'}
+                      </button>
+                      <button onClick={() => {
+                        setEditingVideo(v);
+                        setEditTitleLength((v.custom_settings?.title || v.youtube_title || '').length);
+                      }} className="btn-edit" title="Edit video settings">
+                        ✏️
+                      </button>
+                    </>
+                  )}
+                  <button onClick={() => removeVideo(v.id)} disabled={v.status === 'uploading'}>×</button>
+                </div>
               </div>
-              <div className="video-actions">
-                {v.status !== 'uploading' && v.status !== 'uploaded' && (
-                  <button onClick={() => {
-                    setEditingVideo(v);
-                    setEditTitleLength((v.custom_settings?.title || v.youtube_title || '').length);
-                  }} className="btn-edit" title="Edit video settings">
-                    ✏️
-                  </button>
-                )}
-                <button onClick={() => removeVideo(v.id)} disabled={v.status === 'uploading'}>×</button>
-              </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
       
@@ -1403,7 +1495,7 @@ function Home() {
                   <span>Made for Kids</span>
                 </label>
               </div>
-              
+
               <div className="form-group">
                 <label>
                   Scheduled Time

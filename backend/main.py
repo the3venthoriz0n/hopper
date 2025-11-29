@@ -12,6 +12,7 @@ import random
 import re
 import httpx
 import logging
+import subprocess
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -1020,6 +1021,147 @@ def update_youtube_settings(
     save_session(session_id)
     return settings
 
+@app.get("/api/youtube/videos")
+def get_youtube_videos(
+    request: Request,
+    response: Response,
+    page: int = 1,
+    per_page: int = 50,
+    hide_shorts: bool = False
+):
+    """Get user's YouTube videos (paginated)"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    
+    if not session.get("youtube_creds"):
+        raise HTTPException(401, "YouTube not connected")
+    
+    youtube_creds = session["youtube_creds"]
+    
+    try:
+        youtube = build('youtube', 'v3', credentials=youtube_creds)
+        
+        # Get channel ID first
+        channels_response = youtube.channels().list(
+            part='contentDetails',
+            mine=True
+        ).execute()
+        
+        if not channels_response.get('items'):
+            return {
+                "videos": [],
+                "total": 0,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": 0
+            }
+        
+        channel_id = channels_response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+        
+        # Get videos from uploads playlist
+        # Calculate offset
+        offset = (page - 1) * per_page
+        
+        # Fetch more than needed to filter shorts
+        fetch_count = per_page * 2 if hide_shorts else per_page
+        max_results = min(fetch_count + offset, 50)  # YouTube API max is 50 per request
+        
+        playlist_items = []
+        next_page_token = None
+        fetched = 0
+        
+        # Fetch in batches if needed
+        while fetched < offset + fetch_count:
+            request_count = min(50, offset + fetch_count - fetched)
+            
+            playlist_response = youtube.playlistItems().list(
+                part='contentDetails',
+                playlistId=channel_id,
+                maxResults=request_count,
+                pageToken=next_page_token
+            ).execute()
+            
+            playlist_items.extend(playlist_response.get('items', []))
+            fetched += len(playlist_response.get('items', []))
+            next_page_token = playlist_response.get('nextPageToken')
+            
+            if not next_page_token or fetched >= offset + fetch_count:
+                break
+        
+        # Get video IDs
+        video_ids = [item['contentDetails']['videoId'] for item in playlist_items[offset:offset + fetch_count]]
+        
+        if not video_ids:
+            return {
+                "videos": [],
+                "total": len(playlist_items),
+                "page": page,
+                "per_page": per_page,
+                "total_pages": (len(playlist_items) + per_page - 1) // per_page
+            }
+        
+        # Get video details (title, duration, category)
+        videos_response = youtube.videos().list(
+            part='snippet,contentDetails,status',
+            id=','.join(video_ids)
+        ).execute()
+        
+        videos = []
+        for video in videos_response.get('items', []):
+            video_id = video['id']
+            snippet = video['snippet']
+            
+            # Parse duration (ISO 8601 format: PT1H2M10S)
+            duration_str = video['contentDetails']['duration']
+            duration_seconds = 0
+            if duration_str:
+                import re
+                # Parse PT1H2M10S format
+                hours = re.search(r'(\d+)H', duration_str)
+                minutes = re.search(r'(\d+)M', duration_str)
+                seconds = re.search(r'(\d+)S', duration_str)
+                duration_seconds = (int(hours.group(1)) * 3600 if hours else 0) + \
+                                 (int(minutes.group(1)) * 60 if minutes else 0) + \
+                                 (int(seconds.group(1)) if seconds else 0)
+            
+            # Check if it's a short (category 15 is "People & Blogs" but shorts are typically < 60 seconds)
+            # YouTube Shorts are videos < 60 seconds
+            is_short = duration_seconds > 0 and duration_seconds < 60
+            
+            # Also check category - category 15 might indicate shorts, but duration is more reliable
+            category_id = snippet.get('categoryId', '')
+            
+            if hide_shorts and is_short:
+                continue
+            
+            videos.append({
+                "id": video_id,
+                "title": snippet.get('title', 'Untitled'),
+                "duration_seconds": duration_seconds,
+                "is_short": is_short,
+                "category_id": category_id,
+                "thumbnail": snippet.get('thumbnails', {}).get('default', {}).get('url', ''),
+                "published_at": snippet.get('publishedAt', '')
+            })
+        
+        # Limit to per_page
+        videos = videos[:per_page]
+        
+        # Calculate total (approximate - we'd need to fetch all to get exact count)
+        total = len(playlist_items)
+        
+        return {
+            "videos": videos,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": (total + per_page - 1) // per_page
+        }
+        
+    except Exception as e:
+        youtube_logger.error(f"Error fetching YouTube videos: {str(e)}", exc_info=True)
+        raise HTTPException(500, f"Error fetching videos: {str(e)}")
+
 # TikTok settings endpoints
 @app.get("/api/tiktok/settings")
 def get_tiktok_settings(request: Request, response: Response):
@@ -1146,6 +1288,80 @@ def get_videos(request: Request, response: Response):
         video_copy['youtube_title'] = youtube_title[:100] if len(youtube_title) > 100 else youtube_title
         video_copy['title_too_long'] = len(youtube_title) > 100
         video_copy['title_original_length'] = len(youtube_title)
+        
+        # Get video duration and dimensions to determine if it's a short
+        video_duration = get_video_duration_seconds(video['path'])
+        video_width, video_height = get_video_dimensions(video['path'])
+        video_copy['duration_seconds'] = video_duration
+        video_copy['width'] = video_width
+        video_copy['height'] = video_height
+        video_copy['is_short'] = is_video_short(video['path'])
+        
+        # Compute upload properties (what will be uploaded)
+        upload_props = {}
+        
+        # YouTube properties
+        if session.get("destinations", {}).get("youtube", {}).get("enabled") and session.get("youtube_creds"):
+            youtube_settings = session.get("youtube_settings", {})
+            
+            # Title
+            upload_props['youtube'] = {
+                'title': video_copy['youtube_title'],
+                'visibility': custom_settings.get('visibility', youtube_settings.get('visibility', 'private')),
+                'made_for_kids': custom_settings.get('made_for_kids', youtube_settings.get('made_for_kids', False)),
+            }
+            
+            # Description
+            if 'description' in custom_settings:
+                upload_props['youtube']['description'] = custom_settings['description']
+            else:
+                filename_no_ext = video['filename'].rsplit('.', 1)[0]
+                desc_template = youtube_settings.get('description_template', '') or session["global_settings"].get('description_template', '')
+                upload_props['youtube']['description'] = replace_template_placeholders(
+                    desc_template,
+                    filename_no_ext,
+                    session["global_settings"].get('wordbank', [])
+                ) if desc_template else ''
+            
+            # Tags
+            if 'tags' in custom_settings:
+                upload_props['youtube']['tags'] = custom_settings['tags']
+            else:
+                filename_no_ext = video['filename'].rsplit('.', 1)[0]
+                tags_template = youtube_settings.get('tags_template', '')
+                upload_props['youtube']['tags'] = replace_template_placeholders(
+                    tags_template,
+                    filename_no_ext,
+                    session["global_settings"].get('wordbank', [])
+                ) if tags_template else ''
+            
+        # TikTok properties
+        if session.get("destinations", {}).get("tiktok", {}).get("enabled") and session.get("tiktok_creds"):
+            tiktok_settings = session.get("tiktok_settings", {})
+            filename_no_ext = video['filename'].rsplit('.', 1)[0]
+            
+            # Title (caption)
+            if 'title' in custom_settings:
+                tiktok_title = custom_settings['title']
+            elif 'generated_title' in video:
+                tiktok_title = video['generated_title']
+            else:
+                title_template = tiktok_settings.get('title_template', '') or session["global_settings"].get('title_template', '{filename}')
+                tiktok_title = replace_template_placeholders(
+                    title_template,
+                    filename_no_ext,
+                    session["global_settings"].get('wordbank', [])
+                )
+            
+            upload_props['tiktok'] = {
+                'title': tiktok_title[:2200] if len(tiktok_title) > 2200 else tiktok_title,
+                'privacy_level': custom_settings.get('privacy_level', tiktok_settings.get('privacy_level', 'public')),
+                'allow_comments': custom_settings.get('allow_comments', tiktok_settings.get('allow_comments', True)),
+                'allow_duet': custom_settings.get('allow_duet', tiktok_settings.get('allow_duet', True)),
+                'allow_stitch': custom_settings.get('allow_stitch', tiktok_settings.get('allow_stitch', True))
+            }
+        
+        video_copy['upload_properties'] = upload_props
         
         videos_with_info.append(video_copy)
     return videos_with_info
@@ -1317,6 +1533,73 @@ def cancel_scheduled_videos(request: Request, response: Response):
     
     return {"ok": True, "cancelled": cancelled_count}
 
+
+def get_video_duration_seconds(video_path):
+    """Get video duration in seconds using ffprobe"""
+    try:
+        result = subprocess.run(
+            ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            duration = float(result.stdout.strip())
+            youtube_logger.debug(f"Video duration: {duration}s for {video_path}")
+            return duration
+        else:
+            youtube_logger.warning(f"ffprobe returned non-zero exit code or empty output for {video_path}: {result.returncode}, stdout: {result.stdout}, stderr: {result.stderr}")
+    except FileNotFoundError:
+        youtube_logger.error(f"ffprobe not found. Make sure ffmpeg is installed.")
+    except Exception as e:
+        youtube_logger.warning(f"Could not get video duration for {video_path}: {str(e)}")
+    return None
+
+def get_video_dimensions(video_path):
+    """Get video width and height using ffprobe"""
+    try:
+        result = subprocess.run(
+            ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=s=x:p=0', str(video_path)],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            parts = result.stdout.strip().split('x')
+            if len(parts) == 2:
+                width = int(parts[0])
+                height = int(parts[1])
+                youtube_logger.debug(f"Video dimensions: {width}x{height} for {video_path}")
+                return width, height
+        else:
+            youtube_logger.warning(f"ffprobe returned non-zero exit code or empty output for dimensions {video_path}: {result.returncode}, stdout: {result.stdout}, stderr: {result.stderr}")
+    except FileNotFoundError:
+        youtube_logger.error(f"ffprobe not found. Make sure ffmpeg is installed.")
+    except Exception as e:
+        youtube_logger.warning(f"Could not get video dimensions for {video_path}: {str(e)}")
+    return None, None
+
+def is_video_short(video_path):
+    """Check if video is a short: <= 60 seconds AND vertical aspect ratio"""
+    duration = get_video_duration_seconds(video_path)
+    if duration is None:
+        youtube_logger.warning(f"Could not determine duration for {video_path}, assuming not a short")
+        return False
+    
+    if duration > 60:
+        youtube_logger.debug(f"Video duration {duration}s > 60s, not a short")
+        return False
+    
+    width, height = get_video_dimensions(video_path)
+    if width is None or height is None:
+        youtube_logger.warning(f"Could not determine dimensions for {video_path}, assuming not a short")
+        return False
+    
+    # Vertical aspect ratio: height > width
+    is_vertical = height > width
+    youtube_logger.debug(f"Video {video_path}: duration={duration}s, dimensions={width}x{height}, is_vertical={is_vertical}, is_short={is_vertical}")
+    
+    return is_vertical
 
 def upload_video_to_youtube(video, session):
     """Helper function to upload a single video to YouTube"""
