@@ -304,6 +304,10 @@ async def require_session(request: Request, response: Response) -> str:
     
     return session_id
 
+async def get_or_create_session(request: Request, response: Response) -> str:
+    """Dependency: Get existing session or create new one (for GET endpoints)"""
+    return get_or_create_session_id(request, response)
+
 async def require_csrf(
     request: Request,
     session_id: str = Depends(require_session),
@@ -812,7 +816,7 @@ def auth_callback(code: str, state: str, request: Request, response: Response):
     return RedirectResponse(frontend_url)
 
 @app.get("/api/destinations")
-def get_destinations(session_id: str = Depends(require_session)):
+def get_destinations(session_id: str = Depends(get_or_create_session)):
     """Get destination status"""
     session = get_session(session_id)
     
@@ -834,7 +838,7 @@ def get_destinations(session_id: str = Depends(require_session)):
     }
 
 @app.get("/api/auth/youtube/account")
-def get_youtube_account(session_id: str = Depends(require_session)):
+def get_youtube_account(session_id: str = Depends(get_or_create_session)):
     """Get YouTube account information (channel name/email)"""
     session = get_session(session_id)
     
@@ -1177,7 +1181,7 @@ async def auth_tiktok_callback(
 
 
 @app.get("/api/auth/tiktok/account")
-def get_tiktok_account(session_id: str = Depends(require_session)):
+def get_tiktok_account(session_id: str = Depends(get_or_create_session)):
     """Get TikTok account information (display name/username)"""
     session = get_session(session_id)
     
@@ -1440,9 +1444,20 @@ async def complete_instagram_auth(request: Request, response: Response):
             pages_data = pages_response.json()
             pages = pages_data.get("data", [])
             
+            instagram_logger.debug(f"Found {len(pages)} Facebook Pages")
+            
             if not pages:
-                instagram_logger.error("No Facebook pages found")
-                return {"success": False, "error": "No Facebook Pages found"}
+                instagram_logger.error("No Facebook Pages found. User needs to create a Facebook Page and link it to their Instagram Business account.")
+                return {
+                    "success": False, 
+                    "error": "No Facebook Pages found. Please create a Facebook Page and link it to your Instagram Business account."
+                }
+            
+            # Log all pages for debugging
+            for page in pages:
+                page_name = page.get("name", "Unknown")
+                has_ig = "instagram_business_account" in page
+                instagram_logger.debug(f"Page: {page_name}, Has Instagram: {has_ig}")
             
             # Find first page with Instagram Business Account
             instagram_page = None
@@ -1452,8 +1467,12 @@ async def complete_instagram_auth(request: Request, response: Response):
                     break
             
             if not instagram_page:
-                instagram_logger.error("No Facebook page with Instagram Business Account found")
-                return {"success": False, "error": "No Instagram Business Account linked to Facebook Page"}
+                instagram_logger.error(f"Found {len(pages)} Facebook Page(s), but none are linked to an Instagram Business Account")
+                page_names = [p.get("name", "Unknown") for p in pages]
+                return {
+                    "success": False, 
+                    "error": f"Found Facebook Pages ({', '.join(page_names)}), but none are linked to an Instagram Business Account. Please link your Instagram Business account to a Facebook Page."
+                }
             
             page_id = instagram_page.get("id")
             page_access_token = instagram_page.get("access_token")
@@ -1508,7 +1527,7 @@ async def complete_instagram_auth(request: Request, response: Response):
         return {"success": False, "error": str(e)}
 
 @app.get("/api/auth/instagram/account")
-async def get_instagram_account(session_id: str = Depends(require_session)):
+async def get_instagram_account(session_id: str = Depends(get_or_create_session)):
     """Get Instagram account information (username)"""
     session = get_session(session_id)
     
@@ -1702,7 +1721,7 @@ async def refresh_tiktok_token(session_id: str) -> dict:
         return session["tiktok_creds"]
 
 @app.get("/api/global/settings")
-def get_global_settings(session_id: str = Depends(require_session)):
+def get_global_settings(session_id: str = Depends(get_or_create_session)):
     """Get global settings"""
     session = get_session(session_id)
     return session["global_settings"]
@@ -1759,7 +1778,7 @@ def update_global_settings(
     return settings
 
 @app.get("/api/youtube/settings")
-def get_youtube_settings(session_id: str = Depends(require_session)):
+def get_youtube_settings(session_id: str = Depends(get_or_create_session)):
     """Get YouTube upload settings"""
     session = get_session(session_id)
     return session["youtube_settings"]
@@ -1940,7 +1959,7 @@ def get_youtube_videos(
 
 # TikTok settings endpoints
 @app.get("/api/tiktok/settings")
-def get_tiktok_settings(session_id: str = Depends(require_session)):
+def get_tiktok_settings(session_id: str = Depends(get_or_create_session)):
     """Get TikTok upload settings"""
     session = get_session(session_id)
     return session["tiktok_settings"]
@@ -1986,7 +2005,7 @@ def update_tiktok_settings(
 
 # Instagram settings endpoints
 @app.get("/api/instagram/settings")
-def get_instagram_settings(session_id: str = Depends(require_session)):
+def get_instagram_settings(session_id: str = Depends(get_or_create_session)):
     """Get Instagram upload settings"""
     session = get_session(session_id)
     return session["instagram_settings"]
@@ -2059,7 +2078,7 @@ async def add_video(file: UploadFile = File(...), session_id: str = Depends(requ
     return video
 
 @app.get("/api/videos")
-def get_videos(session_id: str = Depends(require_session)):
+def get_videos(session_id: str = Depends(get_or_create_session)):
     """Get video queue with progress and computed titles"""
     session = get_session(session_id)
     
