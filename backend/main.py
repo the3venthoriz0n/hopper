@@ -780,6 +780,51 @@ async def auth_tiktok_callback(
         return RedirectResponse(f"{FRONTEND_URL}?error=tiktok_auth_failed")
 
 
+@app.get("/api/auth/tiktok/account")
+def get_tiktok_account(request: Request, response: Response):
+    """Get TikTok account information (display name/username)"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    
+    if not session.get("tiktok_creds"):
+        return {"account": None}
+    
+    # Check if we have cached account info
+    if "tiktok_account_info" in session:
+        return {"account": session["tiktok_account_info"]}
+    
+    try:
+        # Get creator info (this is cached in session by get_tiktok_creator_info)
+        creator_info = get_tiktok_creator_info(session)
+        
+        # Extract account information from creator info
+        account_info = {}
+        
+        # TikTok creator info typically includes display_name or username
+        if "display_name" in creator_info:
+            account_info["display_name"] = creator_info["display_name"]
+        if "username" in creator_info:
+            account_info["username"] = creator_info["username"]
+        if "open_id" in creator_info:
+            account_info["open_id"] = creator_info["open_id"]
+        # Also get open_id from creds if available
+        if not account_info.get("open_id") and session.get("tiktok_creds", {}).get("open_id"):
+            account_info["open_id"] = session["tiktok_creds"]["open_id"]
+        
+        # Cache it in session
+        if account_info:
+            session["tiktok_account_info"] = account_info
+            save_session(session_id)
+        
+        return {"account": account_info if account_info else None}
+    except Exception as e:
+        tiktok_logger.error(f"Error getting TikTok account info: {str(e)}", exc_info=True)
+        # Clear cached account info on error so it retries next time
+        if "tiktok_account_info" in session:
+            del session["tiktok_account_info"]
+            save_session(session_id)
+        return {"account": None, "error": str(e)}
+
 @app.post("/api/auth/tiktok/disconnect")
 def disconnect_tiktok(request: Request, response: Response):
     """Disconnect TikTok account"""
@@ -788,6 +833,11 @@ def disconnect_tiktok(request: Request, response: Response):
     
     session["tiktok_creds"] = None
     session["destinations"]["tiktok"]["enabled"] = False
+    # Clear cached account info
+    if "tiktok_account_info" in session:
+        del session["tiktok_account_info"]
+    if "tiktok_creator_info" in session:
+        del session["tiktok_creator_info"]
     save_session(session_id)
     
     tiktok_logger.info(f"Disconnected session: {session_id[:16]}...")

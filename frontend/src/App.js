@@ -25,7 +25,7 @@ function Home() {
   }, [isProduction]);
   
   const [youtube, setYoutube] = useState({ connected: false, enabled: false, account: null });
-  const [tiktok, setTiktok] = useState({ connected: false, enabled: false });
+  const [tiktok, setTiktok] = useState({ connected: false, enabled: false, account: null });
   const [videos, setVideos] = useState([]);
   const [message, setMessage] = useState('');
   const [globalSettings, setGlobalSettings] = useState({
@@ -83,6 +83,10 @@ function Home() {
     } else if (window.location.search.includes('connected=tiktok')) {
       setMessage('✅ TikTok connected!');
       loadDestinations();
+      // Small delay to ensure account info is available
+      setTimeout(() => {
+        loadTiktokAccount();
+      }, 1000);
       window.history.replaceState({}, '', '/');
     }
     
@@ -126,6 +130,21 @@ function Home() {
     }
   };
 
+  const loadTiktokAccount = async () => {
+    try {
+      const res = await axios.get(`${API}/auth/tiktok/account`);
+      if (res.data.error) {
+        console.error('Error loading TikTok account:', res.data.error);
+        setTiktok(prev => ({ ...prev, account: null }));
+      } else {
+        setTiktok(prev => ({ ...prev, account: res.data.account || null }));
+      }
+    } catch (error) {
+      console.error('Error loading TikTok account:', error.response?.data || error.message);
+      setTiktok(prev => ({ ...prev, account: null }));
+    }
+  };
+
   const loadDestinations = async () => {
     try {
       const res = await axios.get(`${API}/destinations`);
@@ -136,12 +155,16 @@ function Home() {
       });
       setTiktok({ 
         connected: res.data.tiktok.connected, 
-        enabled: res.data.tiktok.enabled 
+        enabled: res.data.tiktok.enabled,
+        account: null  // Will be loaded separately
       });
       
       // Load account info if connected
       if (res.data.youtube.connected) {
         loadYoutubeAccount();
+      }
+      if (res.data.tiktok.connected) {
+        loadTiktokAccount();
       }
     } catch (error) {
       console.error('Error loading destinations:', error);
@@ -255,7 +278,7 @@ function Home() {
   const disconnectTiktok = async () => {
     try {
       await axios.post(`${API}/auth/tiktok/disconnect`);
-      setTiktok({ connected: false, enabled: false });
+      setTiktok({ connected: false, enabled: false, account: null });
       setMessage('✅ Disconnected from TikTok');
     } catch (err) {
       setMessage('❌ Error disconnecting from TikTok');
@@ -1004,6 +1027,17 @@ function Home() {
               backgroundColor: tiktok.connected ? '#22c55e' : '#ef4444',
               flexShrink: 0
             }}></div>
+            {tiktok.connected && (
+              <span className="account-info" style={{ fontSize: '0.9em', color: '#999', marginLeft: '4px' }}>
+                {tiktok.account ? (
+                  tiktok.account.display_name ? 
+                    tiktok.account.display_name + (tiktok.account.username ? ` (@${tiktok.account.username})` : '') : 
+                    tiktok.account.username ? `@${tiktok.account.username}` : 'Unknown account'
+                ) : (
+                  'Loading account...'
+                )}
+              </span>
+            )}
           </div>
           {tiktok.connected ? (
             <>
