@@ -1056,12 +1056,18 @@ async def auth_instagram_callback(
             
             token_json = token_response.json()
             
-            # Instagram Business Login returns: {"data": [{"access_token": "...", "user_id": "...", "permissions": "..."}]}
-            if "data" not in token_json or not token_json["data"]:
-                instagram_logger.error(f"No data in token response: {token_json}")
+            # Instagram Business Login can return either:
+            # 1. Direct format: {"access_token": "...", "user_id": "...", "permissions": [...]}
+            # 2. Wrapped format: {"data": [{"access_token": "...", "user_id": "...", "permissions": "..."}]}
+            if "data" in token_json and token_json["data"]:
+                # Wrapped format
+                token_data = token_json["data"][0]
+            elif "access_token" in token_json:
+                # Direct format (what we're actually getting)
+                token_data = token_json
+            else:
+                instagram_logger.error(f"Unexpected token response format: {token_json}")
                 return RedirectResponse(f"{FRONTEND_URL}?error=instagram_token_failed")
-            
-            token_data = token_json["data"][0]
             
             # Validate response
             if "access_token" not in token_data:
@@ -1070,7 +1076,12 @@ async def auth_instagram_callback(
             
             short_lived_token = token_data["access_token"]
             user_id = token_data.get("user_id")
-            permissions = token_data.get("permissions", "")
+            # Permissions can be a list or a comma-separated string
+            permissions_raw = token_data.get("permissions", "")
+            if isinstance(permissions_raw, list):
+                permissions = ",".join(permissions_raw)
+            else:
+                permissions = permissions_raw or ""
             
             instagram_logger.info(f"Short-lived token received - User ID: {user_id}, Permissions: {permissions}")
             
@@ -1088,37 +1099,44 @@ async def auth_instagram_callback(
                     timeout=10.0
                 )
                 
+                # Determine which token to use and fetch profile info
                 if long_lived_response.status_code == 200:
                     long_lived_json = long_lived_response.json()
-                    long_lived_token = long_lived_json.get("access_token")
+                    access_token_to_use = long_lived_json.get("access_token")
                     expires_in = long_lived_json.get("expires_in", 5183944)  # Default 60 days in seconds
-                    
+                    token_type = "long_lived"
                     instagram_logger.info(f"Long-lived token obtained - Expires in: {expires_in} seconds")
-                    
-                    # Store credentials in session
-                    session["instagram_creds"] = {
-                        "access_token": long_lived_token,
-                        "user_id": user_id,
-                        "expires_in": expires_in,
-                        "permissions": permissions,
-                        "token_type": "long_lived"
-                    }
                 else:
                     instagram_logger.warning(f"Failed to get long-lived token, using short-lived: {long_lived_response.text}")
-                    # Fallback to short-lived token
-                    session["instagram_creds"] = {
-                        "access_token": short_lived_token,
-                        "user_id": user_id,
-                        "expires_in": 3600,  # Short-lived tokens expire in 1 hour
-                        "permissions": permissions,
-                        "token_type": "short_lived"
-                    }
+                    access_token_to_use = short_lived_token
+                    expires_in = 3600  # Short-lived tokens expire in 1 hour
+                    token_type = "short_lived"
+                
+                # Fetch profile info using the token we'll be storing (root cause fix: single call, no duplication)
+                profile_info = await fetch_instagram_profile(access_token_to_use)
+                
+                # Store credentials in session
+                session["instagram_creds"] = {
+                    "access_token": access_token_to_use,
+                    "user_id": user_id,  # From token response (Instagram-scoped user ID)
+                    "business_account_id": profile_info.get("business_account_id"),  # From /me endpoint (for posting content)
+                    "username": profile_info.get("username"),  # Cache username for display
+                    "expires_in": expires_in,
+                    "permissions": permissions,
+                    "token_type": token_type
+                }
             except Exception as e:
                 instagram_logger.warning(f"Error exchanging for long-lived token, using short-lived: {str(e)}")
+                
+                # Fetch profile info with short-lived token (root cause fix: use helper function)
+                profile_info = await fetch_instagram_profile(short_lived_token)
+                
                 # Fallback to short-lived token
                 session["instagram_creds"] = {
                     "access_token": short_lived_token,
                     "user_id": user_id,
+                    "business_account_id": profile_info.get("business_account_id"),
+                    "username": profile_info.get("username"),
                     "expires_in": 3600,  # Short-lived tokens expire in 1 hour
                     "permissions": permissions,
                     "token_type": "short_lived"
@@ -1160,39 +1178,41 @@ async def get_instagram_account(request: Request, response: Response):
     
     try:
         access_token = session["instagram_creds"].get("access_token")
-        user_id = session["instagram_creds"].get("user_id")
         
-        if not access_token or not user_id:
+        if not access_token:
             return {"account": None}
         
-        # Get user info from Instagram Graph API
-        async with httpx.AsyncClient() as client:
-            account_response = await client.get(
-                f"{INSTAGRAM_GRAPH_API_BASE}/{user_id}",
-                params={
-                    "fields": "id,username",
-                    "access_token": access_token
-                },
-                timeout=10.0
-            )
+        # Check if we have cached username and business_account_id
+        cached_username = session["instagram_creds"].get("username")
+        cached_business_account_id = session["instagram_creds"].get("business_account_id")
+        if cached_username and cached_business_account_id:
+            return {"account": {"username": cached_username, "user_id": cached_business_account_id}}
         
-        if account_response.status_code != 200:
-            instagram_logger.error(f"Failed to fetch account info: {account_response.text}")
+        # Fetch profile info using helper function (root cause fix: reuse centralized logic)
+        profile_info = await fetch_instagram_profile(access_token)
+        
+        # Update cached info in credentials
+        username = profile_info.get("username")
+        business_account_id = profile_info.get("business_account_id")
+        if username or business_account_id:
+            session["instagram_creds"]["username"] = username
+            session["instagram_creds"]["business_account_id"] = business_account_id
+            save_session(session_id)
+        
+        if not username or not business_account_id:
+            instagram_logger.error("Failed to fetch Instagram profile info - missing username or business_account_id")
             return {"account": None, "error": "Failed to fetch account info"}
         
-        account_data = account_response.json()
-        
         account_info = {
-            "username": account_data.get("username"),
-            "user_id": account_data.get("id")
+            "username": username,
+            "user_id": business_account_id  # This is the Business Account ID
         }
         
         # Cache it in session
-        if account_info:
-            session["instagram_account_info"] = account_info
-            save_session(session_id)
+        session["instagram_account_info"] = account_info
+        save_session(session_id)
         
-        return {"account": account_info if account_info else None}
+        return {"account": account_info}
     except Exception as e:
         instagram_logger.error(f"Error getting Instagram account info: {str(e)}", exc_info=True)
         # Clear cached account info on error so it retries next time
@@ -1218,6 +1238,44 @@ def disconnect_instagram(request: Request, response: Response):
     
     return {"message": "Instagram disconnected successfully"}
 
+
+# Helper: Fetch Instagram profile info (username and Business Account ID)
+async def fetch_instagram_profile(access_token: str) -> dict:
+    """
+    Fetch Instagram profile information using /me endpoint.
+    Returns dict with 'username' and 'business_account_id' (or None for each if failed).
+    This is the root cause fix - centralizes profile fetching logic.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            me_response = await client.get(
+                f"{INSTAGRAM_GRAPH_API_BASE}/me",
+                params={
+                    "fields": "id,username,account_type",
+                    "access_token": access_token
+                },
+                timeout=10.0
+            )
+            
+            if me_response.status_code == 200:
+                me_data = me_response.json()
+                username = me_data.get("username")
+                account_type = me_data.get("account_type")
+                # The id from /me is the Instagram Business Account ID (for posting content)
+                business_account_id = me_data.get("id")
+                instagram_logger.info(f"Profile fetched - Username: {username}, Account Type: {account_type}, Business Account ID: {business_account_id}")
+                return {
+                    "username": username,
+                    "business_account_id": business_account_id,
+                    "account_type": account_type
+                }
+            else:
+                error_text = me_response.text[:500]
+                instagram_logger.warning(f"Failed to fetch profile info (status {me_response.status_code}): {error_text}")
+                return {"username": None, "business_account_id": None, "account_type": None}
+    except Exception as e:
+        instagram_logger.warning(f"Error fetching profile info: {str(e)}")
+        return {"username": None, "business_account_id": None, "account_type": None}
 
 # Helper: Refresh Instagram long-lived access token
 async def refresh_instagram_token(session_id: str) -> dict:
@@ -2451,10 +2509,13 @@ def upload_video_to_instagram(video, session):
         upload_progress[video['id']] = 0
         
         access_token = instagram_creds.get("access_token")
-        user_id = instagram_creds.get("user_id")
+        business_account_id = instagram_creds.get("business_account_id")
         
-        if not access_token or not user_id:
-            raise Exception("No Instagram access token or user ID")
+        if not access_token:
+            raise Exception("No Instagram access token")
+        
+        if not business_account_id:
+            raise Exception("No Instagram Business Account ID. Please reconnect your Instagram account.")
         
         # Get video file
         video_path = Path(video['path'])
