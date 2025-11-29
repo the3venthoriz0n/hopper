@@ -1420,13 +1420,56 @@ async def complete_instagram_auth(request: Request, response: Response):
         
         session = get_session(session_id)
         
-        # Use long-lived token if provided, otherwise use access_token
-        access_token_to_use = long_lived_token if long_lived_token else access_token
-        
-        instagram_logger.info(f"Using access token: {access_token_to_use[:20]}...")
-        
-        # Debug: Check what permissions this token has
+        # Exchange short-lived token for long-lived token if needed
         async with httpx.AsyncClient() as client:
+            access_token_to_use = long_lived_token if long_lived_token else access_token
+            
+            # If we don't have a long-lived token, exchange the short-lived one
+            if not long_lived_token:
+                instagram_logger.info("Exchanging short-lived token for long-lived token...")
+                try:
+                    exchange_url = f"{INSTAGRAM_GRAPH_API_BASE}/v21.0/oauth/access_token"
+                    exchange_params = {
+                        "grant_type": "fb_exchange_token",
+                        "client_id": FACEBOOK_APP_ID,
+                        "client_secret": FACEBOOK_APP_SECRET,
+                        "fb_exchange_token": access_token
+                    }
+                    exchange_response = await client.get(exchange_url, params=exchange_params)
+                    exchange_response.raise_for_status()
+                    exchange_data = exchange_response.json()
+                    access_token_to_use = exchange_data.get("access_token")
+                    expires_in = exchange_data.get("expires_in")
+                    instagram_logger.info(f"Successfully exchanged for long-lived token (expires in {expires_in}s)")
+                except httpx.HTTPStatusError as e:
+                    error_detail = e.response.json() if e.response.headers.get('content-type', '').startswith('application/json') else e.response.text
+                    instagram_logger.error(f"Failed to exchange token for long-lived: {error_detail}", exc_info=True)
+                    # Fallback to short-lived token if exchange fails
+                    instagram_logger.warning("Proceeding with short-lived token due to exchange failure.")
+                    access_token_to_use = access_token
+                except Exception as e:
+                    instagram_logger.error(f"Error during token exchange: {str(e)}", exc_info=True)
+                    instagram_logger.warning("Proceeding with short-lived token due to exchange failure.")
+                    access_token_to_use = access_token
+            
+            instagram_logger.info(f"Using access token: {access_token_to_use[:20]}...")
+            
+            # Debug: Use /debug_token to get detailed token information
+            debug_token_url = f"{INSTAGRAM_GRAPH_API_BASE}/v21.0/debug_token"
+            debug_token_params = {
+                "input_token": access_token_to_use,
+                "access_token": f"{FACEBOOK_APP_ID}|{FACEBOOK_APP_SECRET}"  # App access token
+            }
+            instagram_logger.info("Debugging access token with /debug_token...")
+            debug_token_response = await client.get(debug_token_url, params=debug_token_params)
+            if debug_token_response.status_code == 200:
+                debug_token_data = debug_token_response.json()
+                instagram_logger.info(f"Token debug info: {json.dumps(debug_token_data, indent=2)}")
+                token_info = debug_token_data.get("data", {})
+                scopes = token_info.get("scopes", [])
+                instagram_logger.info(f"Token scopes: {', '.join(scopes)}")
+            
+            # Debug: Check what permissions this token has
             debug_url = f"{INSTAGRAM_GRAPH_API_BASE}/v21.0/me/permissions"
             debug_params = {"access_token": access_token_to_use}
             
@@ -1448,6 +1491,8 @@ async def complete_instagram_auth(request: Request, response: Response):
                     }
             
             # Debug: Check which Facebook user this token belongs to
+            user_id = None
+            user_name = None
             me_url = f"{INSTAGRAM_GRAPH_API_BASE}/v21.0/me"
             me_params = {"fields": "id,name,email", "access_token": access_token_to_use}
             me_response = await client.get(me_url, params=me_params)
@@ -1518,9 +1563,13 @@ async def complete_instagram_auth(request: Request, response: Response):
                 instagram_logger.warning("2. The account isn't an admin/manager of any Pages")
                 instagram_logger.warning("3. The Pages exist but aren't accessible via this API")
                 
+                # Get user info for better error message
+                user_info = f"Logged in as: {user_name} (ID: {user_id})" if user_name and user_id else "Could not identify Facebook user"
+                user_id_str = str(user_id) if user_id else "unknown"
+                
                 return {
                     "success": False, 
-                    "error": "No Facebook Pages found. Please verify: 1) You're logged in with the Facebook account that OWNS/MANAGES the Page, 2) The Page actually exists (check facebook.com/pages), 3) You have admin or manager role on the Page."
+                    "error": f"No Facebook Pages found for {user_info}. Both /me/accounts and /{user_id_str}/accounts returned empty. Please verify: 1) You're logged in with the Facebook account that OWNS/MANAGES the Page (not just a personal account), 2) The Page actually exists and you can access it at facebook.com/pages, 3) You have admin or manager role on the Page (check Page Settings > Page Roles), 4) The Page is linked to an Instagram Business Account."
                 }
             
             # Log all pages for debugging
