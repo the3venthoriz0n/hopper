@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 upload_logger = logging.getLogger("upload")
 tiktok_logger = logging.getLogger("tiktok")
 youtube_logger = logging.getLogger("youtube")
+instagram_logger = logging.getLogger("instagram")
 
 # OAuth Credentials from environment variables
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
@@ -50,6 +51,8 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 GOOGLE_PROJECT_ID = os.getenv("GOOGLE_PROJECT_ID")
 TIKTOK_CLIENT_KEY = os.getenv("TIKTOK_CLIENT_KEY")
 TIKTOK_CLIENT_SECRET = os.getenv("TIKTOK_CLIENT_SECRET")
+INSTAGRAM_APP_ID = os.getenv("INSTAGRAM_APP_ID")
+INSTAGRAM_APP_SECRET = os.getenv("INSTAGRAM_APP_SECRET")
 
 # TikTok OAuth Configuration
 TIKTOK_AUTH_URL = "https://www.tiktok.com/v2/auth/authorize"
@@ -67,11 +70,18 @@ tiktok_rate_limiter = {}  # {session_id: [timestamps]}
 TIKTOK_RATE_LIMIT_REQUESTS = 6
 TIKTOK_RATE_LIMIT_WINDOW = 60  # seconds
 
+# Instagram OAuth Configuration (Instagram Graph API)
+INSTAGRAM_AUTH_URL = "https://api.instagram.com/oauth/authorize"
+INSTAGRAM_TOKEN_URL = "https://api.instagram.com/oauth/access_token"
+INSTAGRAM_GRAPH_API_BASE = "https://graph.instagram.com"
+INSTAGRAM_SCOPES = ["user_profile", "user_media"]
+
 # Destination upload functions registry
 # This allows easy addition of new destinations in the future
 DESTINATION_UPLOADERS = {
     "youtube": None,  # Will be set below
     "tiktok": None,   # Will be set below
+    "instagram": None,  # Will be set below
 }
 
 
@@ -169,22 +179,36 @@ def get_default_tiktok_settings():
         "description_template": ""  # Empty means use global (TikTok combines title+description)
     }
 
+def get_default_instagram_settings():
+    """Return default Instagram-specific settings"""
+    return {
+        "caption_template": "",  # Empty means use global (Instagram uses caption, not separate title/description)
+        "location_id": "",  # Optional location ID
+        "disable_comments": False,
+        "disable_likes": False
+    }
+
 def get_session(session_id: str):
     """Get or create a session"""
     if session_id not in sessions:
         sessions[session_id] = {
             "youtube_creds": None,
             "tiktok_creds": None,
+            "instagram_creds": None,
             "videos": [],
             "global_settings": get_default_global_settings(),
             "youtube_settings": get_default_youtube_settings(),
             "tiktok_settings": get_default_tiktok_settings(),
+            "instagram_settings": get_default_instagram_settings(),
             "upload_progress": {},
             "destinations": {
                 "youtube": {
                     "enabled": False
                 },
                 "tiktok": {
+                    "enabled": False
+                },
+                "instagram": {
                     "enabled": False
                 }
             }
@@ -270,6 +294,9 @@ def load_session(session_id: str):
                 },
                 "tiktok": {
                     "enabled": False
+                },
+                "instagram": {
+                    "enabled": False
                 }
             }
         
@@ -277,13 +304,25 @@ def load_session(session_id: str):
         if "tiktok" not in session_data["destinations"]:
             session_data["destinations"]["tiktok"] = {"enabled": False}
         
+        # Add instagram if missing from old sessions
+        if "instagram" not in session_data["destinations"]:
+            session_data["destinations"]["instagram"] = {"enabled": False}
+        
         # Add tiktok_creds if missing
         if "tiktok_creds" not in session_data:
             session_data["tiktok_creds"] = None
         
+        # Add instagram_creds if missing
+        if "instagram_creds" not in session_data:
+            session_data["instagram_creds"] = None
+        
         # Add tiktok_settings if missing
         if "tiktok_settings" not in session_data:
             session_data["tiktok_settings"] = get_default_tiktok_settings()
+        
+        # Add instagram_settings if missing
+        if "instagram_settings" not in session_data:
+            session_data["instagram_settings"] = get_default_instagram_settings()
         
         # Ensure all required fields exist
         if "upload_progress" not in session_data:
@@ -443,6 +482,10 @@ def get_destinations(request: Request, response: Response):
             "connected": session["tiktok_creds"] is not None,
             "enabled": session["destinations"]["tiktok"]["enabled"]
         },
+        "instagram": {
+            "connected": session["instagram_creds"] is not None,
+            "enabled": session["destinations"]["instagram"]["enabled"]
+        },
         "scheduled_videos": scheduled_count
     }
 
@@ -597,6 +640,22 @@ def toggle_tiktok(request: Request, response: Response, enabled: bool):
         "tiktok": {
             "connected": session["tiktok_creds"] is not None,
             "enabled": session["destinations"]["tiktok"]["enabled"]
+        }
+    }
+
+@app.post("/api/destinations/instagram/toggle")
+def toggle_instagram(request: Request, response: Response, enabled: bool):
+    """Toggle Instagram destination on/off"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    
+    session["destinations"]["instagram"]["enabled"] = enabled
+    save_session(session_id)
+    
+    return {
+        "instagram": {
+            "connected": session["instagram_creds"] is not None,
+            "enabled": session["destinations"]["instagram"]["enabled"]
         }
     }
 
@@ -877,6 +936,236 @@ def disconnect_tiktok(request: Request, response: Response):
     tiktok_logger.info(f"Disconnected session: {session_id[:16]}...")
     
     return {"message": "TikTok disconnected successfully"}
+
+@app.get("/api/auth/instagram")
+def auth_instagram(request: Request, response: Response):
+    """Initiate Instagram OAuth flow"""
+    
+    # Validate configuration
+    if not INSTAGRAM_APP_ID or not INSTAGRAM_APP_SECRET:
+        raise HTTPException(
+            status_code=500,
+            detail="Instagram OAuth not configured. Missing INSTAGRAM_APP_ID or INSTAGRAM_APP_SECRET."
+        )
+    
+    # Get or create session
+    session_id = get_or_create_session_id(request, response)
+    
+    # Generate CSRF token (using session_id for state)
+    state = session_id
+    
+    # Build redirect URI
+    redirect_uri = f"{BACKEND_URL.rstrip('/')}/api/auth/instagram/callback"
+    
+    # Build scope string (comma-separated)
+    scope_string = ",".join(INSTAGRAM_SCOPES)
+    
+    # Build authorization URL
+    params = {
+        "client_id": INSTAGRAM_APP_ID,
+        "redirect_uri": redirect_uri,
+        "scope": scope_string,
+        "response_type": "code",
+        "state": state,
+    }
+    
+    query_string = urlencode(params, doseq=False)
+    auth_url = f"{INSTAGRAM_AUTH_URL}?{query_string}"
+    
+    instagram_logger.info("Initiating Instagram auth flow")
+    instagram_logger.debug(f"Redirect URI: {redirect_uri}, Scope: {scope_string}, Auth URL: {auth_url}")
+    
+    return {"url": auth_url}
+
+@app.get("/api/auth/instagram/callback")
+async def auth_instagram_callback(
+    request: Request,
+    response: Response,
+    code: str = None,
+    state: str = None,
+    error: str = None,
+    error_description: str = None
+):
+    """Handle Instagram OAuth callback"""
+    
+    instagram_logger.info("Received Instagram callback")
+    instagram_logger.debug(f"Code: {'present' if code else 'MISSING'}, "
+                          f"State: {state[:16] + '...' if state else 'MISSING'}, "
+                          f"Error: {error or 'none'}")
+    
+    # Check for errors from Instagram
+    if error:
+        error_msg = f"Instagram OAuth error: {error}"
+        if error_description:
+            error_msg += f" - {error_description}"
+        instagram_logger.error(error_msg)
+        return RedirectResponse(f"{FRONTEND_URL}?error=instagram_auth_failed")
+    
+    # Validate required parameters
+    if not code or not state:
+        instagram_logger.error("Missing code or state")
+        return RedirectResponse(f"{FRONTEND_URL}?error=instagram_auth_failed")
+    
+    # Validate configuration
+    if not INSTAGRAM_APP_ID or not INSTAGRAM_APP_SECRET:
+        raise HTTPException(
+            status_code=500,
+            detail="Instagram OAuth not configured. Missing credentials."
+        )
+    
+    # Validate state (CSRF protection)
+    session_id = state
+    session = get_session(session_id)
+    
+    try:
+        redirect_uri = f"{BACKEND_URL.rstrip('/')}/api/auth/instagram/callback"
+        
+        # Exchange code for access token
+        token_data = {
+            "client_id": INSTAGRAM_APP_ID,
+            "client_secret": INSTAGRAM_APP_SECRET,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+            "code": code
+        }
+        
+        instagram_logger.debug(f"Exchanging code for token, Redirect URI: {redirect_uri}")
+        
+        async with httpx.AsyncClient() as client:
+            token_response = await client.post(
+                INSTAGRAM_TOKEN_URL,
+                data=token_data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"}
+            )
+            
+            instagram_logger.debug(f"Token response status: {token_response.status_code}")
+            
+            if token_response.status_code != 200:
+                error_text = token_response.text
+                instagram_logger.error(f"Token exchange failed: {error_text[:500]}")
+                return RedirectResponse(f"{FRONTEND_URL}?error=instagram_token_failed")
+            
+            token_json = token_response.json()
+            
+            # Validate response
+            if "access_token" not in token_json:
+                instagram_logger.error("No access_token in response")
+                return RedirectResponse(f"{FRONTEND_URL}?error=instagram_token_failed")
+            
+            instagram_logger.info(f"Token exchange successful - User ID: {token_json.get('user_id', 'N/A')}")
+            
+            # Store credentials in session
+            session["instagram_creds"] = {
+                "access_token": token_json["access_token"],
+                "user_id": token_json.get("user_id"),
+                "expires_in": token_json.get("expires_in"),
+            }
+            
+            session["destinations"]["instagram"]["enabled"] = True
+            save_session(session_id)
+            
+            # Set session cookie
+            response.set_cookie(
+                key="session_id",
+                value=session_id,
+                httponly=True,
+                max_age=30*24*60*60,  # 30 days
+                samesite="lax"
+            )
+            
+            instagram_logger.info(f"Session saved: {session_id[:16]}...")
+            
+            # Redirect to frontend with success
+            return RedirectResponse(f"{FRONTEND_URL}?connected=instagram")
+            
+    except Exception as e:
+        instagram_logger.error(f"Callback exception: {e}", exc_info=True)
+        return RedirectResponse(f"{FRONTEND_URL}?error=instagram_auth_failed")
+
+@app.get("/api/auth/instagram/account")
+def get_instagram_account(request: Request, response: Response):
+    """Get Instagram account information (username)"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    
+    if not session.get("instagram_creds"):
+        return {"account": None}
+    
+    # Check if we have cached account info
+    if "instagram_account_info" in session:
+        return {"account": session["instagram_account_info"]}
+    
+    try:
+        access_token = session["instagram_creds"].get("access_token")
+        user_id = session["instagram_creds"].get("user_id")
+        
+        if not access_token or not user_id:
+            return {"account": None}
+        
+        # Get user info from Instagram Graph API
+        async def fetch_account_info():
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{INSTAGRAM_GRAPH_API_BASE}/{user_id}",
+                    params={
+                        "fields": "id,username",
+                        "access_token": access_token
+                    },
+                    timeout=10.0
+                )
+                return response
+        
+        # Use asyncio to run the async function
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        account_response = loop.run_until_complete(fetch_account_info())
+        
+        if account_response.status_code != 200:
+            instagram_logger.error(f"Failed to fetch account info: {account_response.text}")
+            return {"account": None, "error": "Failed to fetch account info"}
+        
+        account_data = account_response.json()
+        
+        account_info = {
+            "username": account_data.get("username"),
+            "user_id": account_data.get("id")
+        }
+        
+        # Cache it in session
+        if account_info:
+            session["instagram_account_info"] = account_info
+            save_session(session_id)
+        
+        return {"account": account_info if account_info else None}
+    except Exception as e:
+        instagram_logger.error(f"Error getting Instagram account info: {str(e)}", exc_info=True)
+        # Clear cached account info on error so it retries next time
+        if "instagram_account_info" in session:
+            del session["instagram_account_info"]
+            save_session(session_id)
+        return {"account": None, "error": str(e)}
+
+@app.post("/api/auth/instagram/disconnect")
+def disconnect_instagram(request: Request, response: Response):
+    """Disconnect Instagram account"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    
+    session["instagram_creds"] = None
+    session["destinations"]["instagram"]["enabled"] = False
+    # Clear cached account info
+    if "instagram_account_info" in session:
+        del session["instagram_account_info"]
+    save_session(session_id)
+    
+    instagram_logger.info(f"Disconnected session: {session_id[:16]}...")
+    
+    return {"message": "Instagram disconnected successfully"}
 
 
 # Helper: Refresh TikTok access token
@@ -1211,6 +1500,45 @@ def update_tiktok_settings(
     save_session(session_id)
     return settings
 
+# Instagram settings endpoints
+@app.get("/api/instagram/settings")
+def get_instagram_settings(request: Request, response: Response):
+    """Get Instagram upload settings"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    return session["instagram_settings"]
+
+@app.post("/api/instagram/settings")
+def update_instagram_settings(
+    request: Request,
+    response: Response,
+    caption_template: str = None,
+    location_id: str = None,
+    disable_comments: bool = None,
+    disable_likes: bool = None
+):
+    """Update Instagram upload settings"""
+    session_id = get_or_create_session_id(request, response)
+    session = get_session(session_id)
+    settings = session["instagram_settings"]
+    
+    if caption_template is not None:
+        if len(caption_template) > 2200:
+            raise HTTPException(400, "Caption template must be 2200 characters or less")
+        settings["caption_template"] = caption_template
+    
+    if location_id is not None:
+        settings["location_id"] = location_id
+    
+    if disable_comments is not None:
+        settings["disable_comments"] = disable_comments
+    
+    if disable_likes is not None:
+        settings["disable_likes"] = disable_likes
+    
+    save_session(session_id)
+    return settings
+
 @app.post("/api/videos")
 async def add_video(file: UploadFile = File(...), request: Request = None, response: Response = None):
     """Add video to queue"""
@@ -1359,6 +1687,32 @@ def get_videos(request: Request, response: Response):
                 'allow_comments': custom_settings.get('allow_comments', tiktok_settings.get('allow_comments', True)),
                 'allow_duet': custom_settings.get('allow_duet', tiktok_settings.get('allow_duet', True)),
                 'allow_stitch': custom_settings.get('allow_stitch', tiktok_settings.get('allow_stitch', True))
+            }
+        
+        # Instagram properties
+        if session.get("destinations", {}).get("instagram", {}).get("enabled") and session.get("instagram_creds"):
+            instagram_settings = session.get("instagram_settings", {})
+            filename_no_ext = video['filename'].rsplit('.', 1)[0]
+            
+            # Caption (Instagram uses caption, not separate title/description)
+            if 'title' in custom_settings:
+                caption = custom_settings['title']
+            elif 'generated_title' in video:
+                caption = video['generated_title']
+            else:
+                global_settings = session.get("global_settings", {})
+                caption_template = instagram_settings.get('caption_template', '') or global_settings.get('title_template', '{filename}')
+                caption = replace_template_placeholders(
+                    caption_template,
+                    filename_no_ext,
+                    global_settings.get('wordbank', [])
+                )
+            
+            upload_props['instagram'] = {
+                'caption': caption[:2200] if len(caption) > 2200 else caption,
+                'location_id': instagram_settings.get('location_id', ''),
+                'disable_comments': instagram_settings.get('disable_comments', False),
+                'disable_likes': instagram_settings.get('disable_likes', False)
             }
         
         video_copy['upload_properties'] = upload_props
@@ -1983,9 +2337,87 @@ def upload_video_to_tiktok(video, session, session_id=None):
         tiktok_logger.error(f"Upload error: {str(e)}", exc_info=True)
         upload_progress.pop(video['id'], None)
             
+def upload_video_to_instagram(video, session):
+    """Upload video to Instagram using Graph API"""
+    instagram_creds = session.get("instagram_creds")
+    instagram_settings = session.get("instagram_settings", {})
+    upload_progress = session["upload_progress"]
+    
+    instagram_logger.info(f"Starting upload for {video['filename']}")
+    
+    if not instagram_creds:
+        video['status'] = 'failed'
+        video['error'] = 'No Instagram credentials'
+        instagram_logger.error("No Instagram credentials")
+        return
+    
+    try:
+        video['status'] = 'uploading'
+        upload_progress[video['id']] = 0
+        
+        access_token = instagram_creds.get("access_token")
+        user_id = instagram_creds.get("user_id")
+        
+        if not access_token or not user_id:
+            raise Exception("No Instagram access token or user ID")
+        
+        # Get video file
+        video_path = Path(video['path'])
+        if not video_path.exists():
+            raise Exception(f"Video file not found: {video['path']}")
+        
+        # Prepare caption
+        custom_settings = video.get('custom_settings', {})
+        filename_no_ext = video['filename'].rsplit('.', 1)[0]
+        
+        # Get caption (priority: custom > generated > template > global)
+        if 'title' in custom_settings:
+            caption = custom_settings['title']
+        elif 'generated_title' in video:
+            caption = video['generated_title']
+        else:
+            global_settings = session.get("global_settings", {})
+            caption_template = instagram_settings.get('caption_template', '') or global_settings.get('title_template', '{filename}')
+            caption = replace_template_placeholders(
+                caption_template,
+                filename_no_ext,
+                global_settings.get('wordbank', [])
+            )
+        
+        # Instagram caption limit is 2200 characters
+        caption = (caption or filename_no_ext)[:2200]
+        
+        # Get settings
+        location_id = instagram_settings.get('location_id', '')
+        disable_comments = instagram_settings.get('disable_comments', False)
+        disable_likes = instagram_settings.get('disable_likes', False)
+        
+        instagram_logger.info(f"Uploading {video['filename']} to Instagram")
+        upload_progress[video['id']] = 10
+        
+        # Note: Instagram Graph API video upload requires:
+        # 1. Instagram Business or Creator account
+        # 2. Facebook Page linked to Instagram account
+        # 3. Container creation, then publishing
+        # This is a simplified implementation - full implementation would require
+        # Facebook Page ID and more complex API calls
+        
+        # For now, log that this needs full implementation
+        instagram_logger.warning("Instagram upload requires full Graph API implementation with Facebook Page")
+        video['status'] = 'failed'
+        video['error'] = 'Instagram upload not fully implemented. Requires Facebook Page integration.'
+        upload_progress.pop(video['id'], None)
+        
+    except Exception as e:
+        video['status'] = 'failed'
+        video['error'] = f'Instagram upload failed: {str(e)}'
+        instagram_logger.error(f"Error uploading {video['filename']}: {str(e)}", exc_info=True)
+        upload_progress.pop(video['id'], None)
+
 # Register upload functions
 DESTINATION_UPLOADERS["youtube"] = upload_video_to_youtube
 DESTINATION_UPLOADERS["tiktok"] = upload_video_to_tiktok
+DESTINATION_UPLOADERS["instagram"] = upload_video_to_instagram
 
 async def scheduler_task():
     """Background task that checks for scheduled videos and uploads them to all enabled destinations"""

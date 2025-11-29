@@ -26,6 +26,7 @@ function Home() {
   
   const [youtube, setYoutube] = useState({ connected: false, enabled: false, account: null });
   const [tiktok, setTiktok] = useState({ connected: false, enabled: false, account: null });
+  const [instagram, setInstagram] = useState({ connected: false, enabled: false, account: null });
   const [videos, setVideos] = useState([]);
   const [message, setMessage] = useState('');
   const [globalSettings, setGlobalSettings] = useState({
@@ -59,8 +60,15 @@ function Home() {
     title_template: '',
     description_template: ''
   });
+  const [instagramSettings, setInstagramSettings] = useState({
+    caption_template: '',
+    location_id: '',
+    disable_comments: false,
+    disable_likes: false
+  });
   const [showSettings, setShowSettings] = useState(false);
   const [showTiktokSettings, setShowTiktokSettings] = useState(false);
+  const [showInstagramSettings, setShowInstagramSettings] = useState(false);
   const [showGlobalSettings, setShowGlobalSettings] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [editingVideo, setEditingVideo] = useState(null);
@@ -244,6 +252,7 @@ function Home() {
     loadGlobalSettings();
     loadYoutubeSettings();
     loadTiktokSettings();
+    loadInstagramSettings();
     loadVideos();
     
     // Check OAuth callback
@@ -261,6 +270,14 @@ function Home() {
       // Small delay to ensure account info is available
       setTimeout(() => {
         loadTiktokAccount();
+      }, 1000);
+      window.history.replaceState({}, '', '/');
+    } else if (window.location.search.includes('connected=instagram')) {
+      setMessage('✅ Instagram connected!');
+      loadDestinations();
+      // Small delay to ensure account info is available
+      setTimeout(() => {
+        loadInstagramAccount();
       }, 1000);
       window.history.replaceState({}, '', '/');
     }
@@ -320,6 +337,21 @@ function Home() {
     }
   };
 
+  const loadInstagramAccount = async () => {
+    try {
+      const res = await axios.get(`${API}/auth/instagram/account`);
+      if (res.data.error) {
+        console.error('Error loading Instagram account:', res.data.error);
+        setInstagram(prev => ({ ...prev, account: null }));
+      } else {
+        setInstagram(prev => ({ ...prev, account: res.data.account || null }));
+      }
+    } catch (error) {
+      console.error('Error loading Instagram account:', error.response?.data || error.message);
+      setInstagram(prev => ({ ...prev, account: null }));
+    }
+  };
+
   const loadDestinations = async () => {
     try {
       const res = await axios.get(`${API}/destinations`);
@@ -333,6 +365,11 @@ function Home() {
         enabled: res.data.tiktok.enabled,
         account: null  // Will be loaded separately
       });
+      setInstagram({ 
+        connected: res.data.instagram.connected, 
+        enabled: res.data.instagram.enabled,
+        account: null  // Will be loaded separately
+      });
       
       // Load account info if connected
       if (res.data.youtube.connected) {
@@ -340,6 +377,9 @@ function Home() {
       }
       if (res.data.tiktok.connected) {
         loadTiktokAccount();
+      }
+      if (res.data.instagram.connected) {
+        loadInstagramAccount();
       }
     } catch (error) {
       console.error('Error loading destinations:', error);
@@ -441,6 +481,27 @@ function Home() {
     }
   };
 
+  const loadInstagramSettings = async () => {
+    try {
+      const res = await axios.get(`${API}/instagram/settings`);
+      setInstagramSettings(res.data);
+    } catch (err) {
+      console.error('Error loading Instagram settings:', err);
+    }
+  };
+
+  const updateInstagramSettings = async (key, value) => {
+    try {
+      const params = new URLSearchParams();
+      params.append(key, value);
+      const res = await axios.post(`${API}/instagram/settings?${params.toString()}`);
+      setInstagramSettings(res.data);
+      setMessage(`✅ Instagram settings updated`);
+    } catch (err) {
+      setMessage('❌ Error updating Instagram settings');
+    }
+  };
+
   const connectYoutube = async () => {
     const res = await axios.get(`${API}/auth/youtube`);
     window.location.href = res.data.url;
@@ -475,6 +536,42 @@ function Home() {
     } catch (err) {
       setMessage('❌ Error disconnecting from TikTok');
       console.error('Error disconnecting TikTok:', err);
+    }
+  };
+
+  const connectInstagram = async () => {
+    try {
+      const res = await axios.get(`${API}/auth/instagram`);
+      window.location.href = res.data.url;
+    } catch (err) {
+      setMessage(`❌ Error connecting to Instagram: ${err.response?.data?.detail || err.message}`);
+      console.error('Error connecting Instagram:', err);
+    }
+  };
+
+  const disconnectInstagram = async () => {
+    try {
+      await axios.post(`${API}/auth/instagram/disconnect`);
+      setInstagram({ connected: false, enabled: false, account: null });
+      setMessage('✅ Disconnected from Instagram');
+    } catch (err) {
+      setMessage('❌ Error disconnecting from Instagram');
+      console.error('Error disconnecting Instagram:', err);
+    }
+  };
+
+  const toggleInstagram = async () => {
+    const newEnabled = !instagram.enabled;
+    setInstagram({ ...instagram, enabled: newEnabled });
+    
+    try {
+      const params = new URLSearchParams();
+      params.append('enabled', newEnabled);
+      await axios.post(`${API}/destinations/instagram/toggle?${params.toString()}`);
+    } catch (err) {
+      console.error('Error toggling Instagram:', err);
+      // Revert on error
+      setInstagram({ ...instagram, enabled: !newEnabled });
     }
   };
 
@@ -1372,8 +1469,150 @@ function Home() {
         )}
       </div>
       
+        {/* Instagram Destination */}
+        <div className="destination">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" fill="#E4405F"/>
+              </svg>
+              Instagram
+            </span>
+            <div style={{ 
+              width: '10px', 
+              height: '10px', 
+              borderRadius: '50%', 
+              backgroundColor: instagram.connected ? '#22c55e' : '#ef4444',
+              flexShrink: 0
+            }}></div>
+            {instagram.connected && (
+              <span className="account-info" style={{ fontSize: '0.9em', color: '#999', marginLeft: '4px' }}>
+                {instagram.account ? (
+                  instagram.account.username ? 
+                    `@${instagram.account.username}` : 'Unknown account'
+                ) : (
+                  'Loading account...'
+                )}
+              </span>
+            )}
+          </div>
+          {instagram.connected ? (
+            <>
+              <label className="toggle">
+                <input 
+                  type="checkbox" 
+                  checked={instagram.enabled}
+                  onChange={toggleInstagram}
+                />
+                <span className="slider"></span>
+              </label>
+              <button onClick={() => setShowInstagramSettings(!showInstagramSettings)} className="btn-settings">
+                ⚙️
+              </button>
+            </>
+          ) : (
+            <button onClick={connectInstagram}>Connect</button>
+          )}
+        </div>
+
+        {/* Instagram Settings */}
+        {showInstagramSettings && instagram.connected && (
+          <div className="settings-panel">
+            <h3>Instagram Settings</h3>
+            
+            <div className="setting-group">
+              <label>
+                Caption Template (Override) <span className="char-counter">{instagramSettings.caption_template?.length || 0}/2200</span>
+                <span className="tooltip-wrapper">
+                  <span className="tooltip-icon">i</span>
+                  <span className="tooltip-text">Override global title template for Instagram only. This is the video caption (max 2200 characters). Leave empty to use global</span>
+                </span>
+              </label>
+              <input 
+                type="text"
+                value={instagramSettings.caption_template || ''}
+                onChange={(e) => setInstagramSettings({...instagramSettings, caption_template: e.target.value})}
+                onBlur={(e) => updateInstagramSettings('caption_template', e.target.value)}
+                placeholder="Leave empty to use global template"
+                className="input-text"
+                maxLength="2200"
+              />
+            </div>
+
+            <div className="setting-group">
+              <label>
+                Location ID
+                <span className="tooltip-wrapper">
+                  <span className="tooltip-icon">i</span>
+                  <span className="tooltip-text">Optional Instagram location ID for geotagging</span>
+                </span>
+              </label>
+              <input 
+                type="text"
+                value={instagramSettings.location_id || ''}
+                onChange={(e) => setInstagramSettings({...instagramSettings, location_id: e.target.value})}
+                onBlur={(e) => updateInstagramSettings('location_id', e.target.value)}
+                placeholder="Location ID (optional)"
+                className="input-text"
+              />
+            </div>
+
+            <div className="setting-group">
+              <label className="checkbox-label">
+                <input 
+                  type="checkbox"
+                  checked={instagramSettings.disable_comments}
+                  onChange={(e) => updateInstagramSettings('disable_comments', e.target.checked)}
+                  className="checkbox"
+                />
+                <span>Disable Comments</span>
+              </label>
+            </div>
+
+            <div className="setting-group">
+              <label className="checkbox-label">
+                <input 
+                  type="checkbox"
+                  checked={instagramSettings.disable_likes}
+                  onChange={(e) => updateInstagramSettings('disable_likes', e.target.checked)}
+                  className="checkbox"
+                />
+                <span>Disable Likes</span>
+              </label>
+            </div>
+            
+            <div className="setting-divider"></div>
+            
+            <div className="setting-group">
+              <button onClick={disconnectInstagram} className="btn-logout" style={{
+                width: '100%',
+                padding: '0.75rem',
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                borderRadius: '6px',
+                color: '#ef4444',
+                cursor: 'pointer',
+                fontSize: '0.9rem',
+                fontWeight: '500',
+                transition: 'all 0.2s'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.background = 'rgba(239, 68, 68, 0.2)';
+                e.target.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.background = 'rgba(239, 68, 68, 0.1)';
+                e.target.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+              }}>
+                Log Out
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      
       {/* Upload Button */}
-      {videos.length > 0 && (youtube.enabled || tiktok.enabled) && (
+      {videos.length > 0 && (youtube.enabled || tiktok.enabled || instagram.enabled) && (
         <>
           <button className="upload-btn" onClick={upload} disabled={isUploading}>
             {isUploading ? 'Uploading...' : 
@@ -1507,6 +1746,17 @@ function Home() {
                             <div>Allow Comments: {uploadProps.tiktok.allow_comments ? 'Yes' : 'No'}</div>
                             <div>Allow Duet: {uploadProps.tiktok.allow_duet ? 'Yes' : 'No'}</div>
                             <div>Allow Stitch: {uploadProps.tiktok.allow_stitch ? 'Yes' : 'No'}</div>
+                          </div>
+                        </div>
+                      )}
+                      {uploadProps.instagram && (
+                        <div style={{ marginBottom: '0.5rem' }}>
+                          <strong>Instagram:</strong>
+                          <div style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
+                            <div>Caption: {uploadProps.instagram.caption}</div>
+                            {uploadProps.instagram.location_id && <div>Location ID: {uploadProps.instagram.location_id}</div>}
+                            <div>Disable Comments: {uploadProps.instagram.disable_comments ? 'Yes' : 'No'}</div>
+                            <div>Disable Likes: {uploadProps.instagram.disable_likes ? 'Yes' : 'No'}</div>
                           </div>
                         </div>
                       )}
