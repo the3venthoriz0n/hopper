@@ -8,6 +8,40 @@ import Privacy from './Privacy';
 // Configure axios to send cookies with every request
 axios.defaults.withCredentials = true;
 
+// CSRF Token Management
+let csrfToken = null;
+
+// Intercept GET responses to extract CSRF token
+axios.interceptors.response.use(
+  (response) => {
+    // Extract CSRF token from response header (axios normalizes headers to lowercase)
+    const token = response.headers['x-csrf-token'] || response.headers['X-CSRF-Token'];
+    if (token) {
+      csrfToken = token;
+    }
+    return response;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// Intercept POST/PATCH/DELETE/PUT requests to add CSRF token
+axios.interceptors.request.use(
+  (config) => {
+    // Add CSRF token to state-changing requests
+    if (['post', 'patch', 'delete', 'put'].includes(config.method?.toLowerCase())) {
+      if (csrfToken) {
+        config.headers['X-CSRF-Token'] = csrfToken;
+      }
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
 function Home() {
   // Build API URL at runtime - always use HTTPS
   const getApiUrl = () => {

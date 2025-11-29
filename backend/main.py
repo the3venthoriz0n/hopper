@@ -228,11 +228,36 @@ def validate_origin_referer(request: Request) -> bool:
 
 # FastAPI Dependencies for Security
 async def require_session(request: Request, response: Response) -> str:
-    """Dependency: Require valid session, return session_id"""
-    session_id = get_or_create_session_id(request, response)
+    """Dependency: Require valid existing session, return session_id"""
+    # Check if session cookie exists
+    session_id = request.cookies.get("session_id")
     
-    # Ensure session exists
-    get_session(session_id)
+    if not session_id:
+        security_logger.warning(
+            f"Session validation failed - No session cookie, "
+            f"IP: {request.client.host if request.client else 'unknown'}, "
+            f"Path: {request.url.path}"
+        )
+        raise HTTPException(
+            status_code=401,
+            detail="Session required. Please visit the frontend to create a session."
+        )
+    
+    # Validate that session exists (don't create new one)
+    if session_id not in sessions:
+        # Try to load from disk
+        load_session(session_id)
+        # If still doesn't exist, reject
+        if session_id not in sessions:
+            security_logger.warning(
+                f"Session validation failed - Invalid session ID: {session_id[:16]}..., "
+                f"IP: {request.client.host if request.client else 'unknown'}, "
+                f"Path: {request.url.path}"
+            )
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid or expired session"
+            )
     
     return session_id
 
