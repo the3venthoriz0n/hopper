@@ -2777,10 +2777,10 @@ async def upload_video_to_instagram(video, session):
         instagram_logger.info(f"Uploading {video['filename']} to Instagram")
         upload_progress[video['id']] = 10
         
-        # Instagram Graph API video upload process:
-        # 1. Create a resumable upload session
-        # 2. Upload video file to the upload URL
-        # 3. Create media container with uploaded video
+        # Instagram Graph API video upload process (per official docs):
+        # 1. Create a container with media_type=REELS and upload_type=resumable
+        # 2. Upload video to rupload.facebook.com
+        # 3. Check container status
         # 4. Publish the container
         
         # Read video file
@@ -2791,56 +2791,52 @@ async def upload_video_to_instagram(video, session):
         upload_progress[video['id']] = 20
         
         async with httpx.AsyncClient(timeout=300.0) as client:
-            # Step 1: Initialize resumable upload session
-            init_url = f"https://graph.instagram.com/v21.0/{business_account_id}/video_stories"
-            init_params = {
-                "upload_phase": "start",
+            # Step 1: Create resumable upload container
+            container_url = f"https://graph.instagram.com/v21.0/{business_account_id}/media"
+            container_params = {
+                "media_type": "REELS",
+                "upload_type": "resumable",
+                "caption": caption,
                 "access_token": access_token
             }
             
-            instagram_logger.info(f"Initializing resumable upload for {video['filename']}")
+            # Add optional params
+            if location_id:
+                container_params["location_id"] = location_id
             
-            init_response = await client.post(init_url, data=init_params)
+            instagram_logger.info(f"Creating resumable upload container for {video['filename']}")
             
-            if init_response.status_code != 200:
-                error_data = init_response.json() if init_response.headers.get('content-type', '').startswith('application/json') else init_response.text
-                instagram_logger.error(f"Failed to initialize upload: {error_data}")
-                raise Exception(f"Failed to initialize resumable upload: {error_data}")
+            container_response = await client.post(container_url, data=container_params)
             
-            init_result = init_response.json()
-            upload_id = init_result.get('video_id')
+            if container_response.status_code != 200:
+                error_data = container_response.json() if container_response.headers.get('content-type', '').startswith('application/json') else container_response.text
+                instagram_logger.error(f"Failed to create container: {error_data}")
+                raise Exception(f"Failed to create resumable upload container: {error_data}")
             
-            if not upload_id:
-                raise Exception(f"No upload ID in response: {init_result}")
+            container_result = container_response.json()
+            container_id = container_result.get('id')
             
-            instagram_logger.info(f"Got upload ID: {upload_id}")
-            upload_progress[video['id']] = 30
+            if not container_id:
+                raise Exception(f"No container ID in response: {container_result}")
             
-            # Step 2: Upload video data
-            upload_url = f"https://graph.instagram.com/v21.0/{business_account_id}/video_stories"
+            instagram_logger.info(f"Created container {container_id}")
+            video['instagram_container_id'] = container_id
+            upload_progress[video['id']] = 40
+            
+            # Step 2: Upload video to rupload.facebook.com
+            upload_url = f"https://rupload.facebook.com/ig-api-upload/v21.0/{container_id}"
             upload_headers = {
-                "Authorization": f"Bearer {access_token}",
+                "Authorization": f"OAuth {access_token}",
                 "offset": "0",
                 "file_size": str(video_size)
             }
             
-            upload_params = {
-                "upload_phase": "transfer",
-                "video_id": upload_id,
-                "access_token": access_token
-            }
-            
-            instagram_logger.info(f"Uploading video data ({video_size} bytes)")
-            
-            files = {
-                'video_file': (video['filename'], video_data, 'video/mp4')
-            }
+            instagram_logger.info(f"Uploading video data ({video_size} bytes) to rupload.facebook.com")
             
             upload_response = await client.post(
                 upload_url,
-                data=upload_params,
-                files=files,
-                headers=upload_headers
+                headers=upload_headers,
+                content=video_data
             )
             
             if upload_response.status_code != 200:
@@ -2848,39 +2844,43 @@ async def upload_video_to_instagram(video, session):
                 instagram_logger.error(f"Failed to upload video: {error_data}")
                 raise Exception(f"Failed to upload video data: {error_data}")
             
-            instagram_logger.info(f"Video data uploaded successfully")
-            upload_progress[video['id']] = 60
+            upload_result = upload_response.json()
+            if not upload_result.get('success'):
+                raise Exception(f"Upload failed: {upload_result}")
             
-            # Step 3: Finalize upload and create container
-            finalize_params = {
-                "upload_phase": "finish",
-                "video_id": upload_id,
-                "access_token": access_token,
-                "caption": caption
+            instagram_logger.info(f"Video uploaded successfully")
+            upload_progress[video['id']] = 70
+            
+            # Step 3: Wait for Instagram to process the video and check status
+            instagram_logger.info(f"Waiting for Instagram to process video")
+            await asyncio.sleep(5)
+            
+            # Check container status
+            status_url = f"https://graph.instagram.com/v21.0/{container_id}"
+            status_params = {
+                "fields": "status_code",
+                "access_token": access_token
             }
             
-            # Add optional params
-            if location_id:
-                finalize_params["location_id"] = location_id
+            for attempt in range(5):  # Check up to 5 times (once per minute for 5 minutes max)
+                status_response = await client.get(status_url, params=status_params)
+                if status_response.status_code == 200:
+                    status_result = status_response.json()
+                    status_code = status_result.get('status_code')
+                    instagram_logger.info(f"Container status (attempt {attempt + 1}): {status_code}")
+                    
+                    if status_code == 'FINISHED':
+                        break
+                    elif status_code == 'ERROR':
+                        raise Exception(f"Container processing failed")
+                    elif status_code == 'EXPIRED':
+                        raise Exception(f"Container expired")
+                    # IN_PROGRESS - wait and retry
+                
+                if attempt < 4:
+                    await asyncio.sleep(60)  # Wait 60 seconds before checking again (per docs: once per minute)
             
-            instagram_logger.info(f"Finalizing upload and creating container")
-            
-            finalize_response = await client.post(upload_url, data=finalize_params)
-            
-            if finalize_response.status_code != 200:
-                error_data = finalize_response.json() if finalize_response.headers.get('content-type', '').startswith('application/json') else finalize_response.text
-                instagram_logger.error(f"Failed to finalize: {error_data}")
-                raise Exception(f"Failed to finalize upload: {error_data}")
-            
-            finalize_result = finalize_response.json()
-            container_id = finalize_result.get('id') or upload_id
-            
-            instagram_logger.info(f"Upload finalized, container ID: {container_id}")
-            video['instagram_container_id'] = container_id
-            upload_progress[video['id']] = 80
-            
-            # Wait for Instagram to process
-            await asyncio.sleep(5)
+            upload_progress[video['id']] = 85
             
             # Step 4: Publish the container
             publish_url = f"https://graph.instagram.com/v21.0/{business_account_id}/media_publish"
