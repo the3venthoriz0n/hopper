@@ -1271,7 +1271,7 @@ def disconnect_tiktok(session_id: str = Depends(require_csrf)):
 
 @app.get("/api/auth/instagram")
 def auth_instagram(request: Request, response: Response):
-    """Initiate Instagram OAuth flow via Facebook Login"""
+    """Initiate Instagram OAuth flow via Facebook Login for Business"""
     
     # Validate configuration
     if not INSTAGRAM_APP_ID or not INSTAGRAM_APP_SECRET:
@@ -1283,29 +1283,29 @@ def auth_instagram(request: Request, response: Response):
     # Get or create session
     session_id = get_or_create_session_id(request, response)
     
-    # Generate CSRF token (using session_id for state)
-    state = session_id
-    
     # Build redirect URI
     redirect_uri = f"{BACKEND_URL.rstrip('/')}/api/auth/instagram/callback"
     
     # Build scope string (comma-separated for Facebook)
     scope_string = ",".join(INSTAGRAM_SCOPES)
     
-    # Build Facebook authorization URL
+    # Build Facebook Login for Business authorization URL
+    # Per docs: https://developers.facebook.com/docs/instagram-platform/instagram-api-with-facebook-login/business-login-for-instagram
     params = {
         "client_id": INSTAGRAM_APP_ID,
         "redirect_uri": redirect_uri,
         "scope": scope_string,
-        "response_type": "code",
-        "state": state,
+        "response_type": "token",  # Token-based flow, not code-based
+        "display": "page",  # Required for Business Login
+        "extras": '{"setup":{"channel":"IG_API_ONBOARDING"}}',  # Required for Business Login onboarding
+        "state": session_id  # For CSRF protection
     }
     
     query_string = urlencode(params, doseq=False)
     auth_url = f"{INSTAGRAM_AUTH_URL}?{query_string}"
     
-    instagram_logger.info("Initiating Instagram auth flow via Facebook Login")
-    instagram_logger.debug(f"Redirect URI: {redirect_uri}, Scope: {scope_string}, Auth URL: {auth_url}")
+    instagram_logger.info("Initiating Instagram auth flow via Facebook Login for Business")
+    instagram_logger.debug(f"Redirect URI: {redirect_uri}, Scope: {scope_string}")
     
     return {"url": auth_url}
 
@@ -1313,17 +1313,19 @@ def auth_instagram(request: Request, response: Response):
 async def auth_instagram_callback(
     request: Request,
     response: Response,
-    code: str = None,
     state: str = None,
     error: str = None,
     error_description: str = None
 ):
-    """Handle Instagram OAuth callback (via Facebook Login)"""
+    """Handle Instagram OAuth callback (via Facebook Login for Business)
+    
+    Note: Facebook Login for Business uses token-based flow with URL fragments (#access_token).
+    Since URL fragments are not sent to the server, we need to handle this on the frontend.
+    This endpoint will serve an HTML page that extracts tokens from the URL fragment
+    and redirects to the frontend with the tokens.
+    """
     
     instagram_logger.info("Received Instagram/Facebook callback")
-    instagram_logger.debug(f"Code: {'present' if code else 'MISSING'}, "
-                          f"State: {state[:16] + '...' if state else 'MISSING'}, "
-                          f"Error: {error or 'none'}")
     
     # Check for errors from Facebook
     if error:
@@ -1333,111 +1335,136 @@ async def auth_instagram_callback(
         instagram_logger.error(error_msg)
         return RedirectResponse(f"{FRONTEND_URL}?error=instagram_auth_failed")
     
-    # Validate required parameters
-    if not code or not state:
-        instagram_logger.error("Missing code or state")
-        return RedirectResponse(f"{FRONTEND_URL}?error=instagram_auth_failed")
+    # Since this is a token-based flow, tokens are in URL fragment
+    # We need to serve HTML that extracts the fragment and makes a backend call
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Instagram OAuth Callback</title>
+    </head>
+    <body>
+        <p>Processing Instagram authentication...</p>
+        <script>
+            // Extract tokens from URL fragment
+            const fragment = window.location.hash.substring(1);
+            const params = new URLSearchParams(fragment);
+            
+            const accessToken = params.get('access_token');
+            const longLivedToken = params.get('long_lived_token');
+            const expiresIn = params.get('expires_in');
+            const error = params.get('error');
+            const state = params.get('state') || '{state or ""}';
+            
+            if (error) {{
+                window.location.href = '{FRONTEND_URL}?error=instagram_auth_failed&reason=' + error;
+            }} else if (accessToken && longLivedToken) {{
+                // Send tokens to backend to complete authentication
+                fetch('/api/auth/instagram/complete', {{
+                    method: 'POST',
+                    headers: {{
+                        'Content-Type': 'application/json',
+                    }},
+                    credentials: 'include',
+                    body: JSON.stringify({{
+                        access_token: accessToken,
+                        long_lived_token: longLivedToken,
+                        expires_in: expiresIn,
+                        state: state
+                    }})
+                }})
+                .then(res => res.json())
+                .then(data => {{
+                    if (data.success) {{
+                        window.location.href = '{FRONTEND_URL}?connected=instagram';
+                    }} else {{
+                        window.location.href = '{FRONTEND_URL}?error=instagram_auth_failed';
+                    }}
+                }})
+                .catch(err => {{
+                    console.error('Error completing auth:', err);
+                    window.location.href = '{FRONTEND_URL}?error=instagram_auth_failed';
+                }});
+            }} else {{
+                window.location.href = '{FRONTEND_URL}?error=instagram_auth_failed&reason=missing_tokens';
+            }}
+        </script>
+    </body>
+    </html>
+    """
     
-    # Validate configuration
-    if not INSTAGRAM_APP_ID or not INSTAGRAM_APP_SECRET:
-        raise HTTPException(
-            status_code=500,
-            detail="Instagram OAuth not configured. Missing credentials."
-        )
-    
-    # Validate state (CSRF protection)
-    session_id = state
-    session = get_session(session_id)
-    
+    return HTMLResponse(content=html_content)
+
+@app.post("/api/auth/instagram/complete")
+async def complete_instagram_auth(request: Request, response: Response):
+    """Complete Instagram authentication after receiving tokens from callback page"""
     try:
-        redirect_uri = f"{BACKEND_URL.rstrip('/')}/api/auth/instagram/callback"
+        body = await request.json()
+        access_token = body.get("access_token")
+        long_lived_token = body.get("long_lived_token")
+        state = body.get("state")
         
-        # Exchange code for Facebook access token
-        token_params = {
-            "client_id": INSTAGRAM_APP_ID,
-            "client_secret": INSTAGRAM_APP_SECRET,
-            "redirect_uri": redirect_uri,
-            "code": code
-        }
+        if not access_token or not long_lived_token:
+            instagram_logger.error("Missing tokens in complete auth request")
+            return {{"success": False, "error": "Missing tokens"}}
         
-        instagram_logger.debug(f"Exchanging code for Facebook token, Redirect URI: {redirect_uri}")
+        # Validate state (CSRF protection)
+        session_id = state or request.cookies.get("session_id")
+        if not session_id:
+            instagram_logger.error("Missing session_id")
+            return {{"success": False, "error": "Missing session"}}
+        
+        session = get_session(session_id)
+        
+        # Use long-lived token for API calls
+        access_token_to_use = long_lived_token
         
         async with httpx.AsyncClient() as client:
-            token_response = await client.get(
-                INSTAGRAM_TOKEN_URL,
-                params=token_params
-            )
-            
-            instagram_logger.debug(f"Token response status: {token_response.status_code}")
-            
-            if token_response.status_code != 200:
-                error_text = token_response.text
-                instagram_logger.error(f"Token exchange failed: {error_text[:500]}")
-                return RedirectResponse(f"{FRONTEND_URL}?error=instagram_token_failed")
-            
-            token_json = token_response.json()
-            facebook_access_token = token_json.get("access_token")
-            
-            if not facebook_access_token:
-                instagram_logger.error(f"No access_token in response: {token_json}")
-                return RedirectResponse(f"{FRONTEND_URL}?error=instagram_token_failed")
-            
-            instagram_logger.info(f"Facebook token received")
-            
             # Get Facebook Pages the user manages
             pages_url = f"{INSTAGRAM_GRAPH_API_BASE}/v21.0/me/accounts"
-            pages_params = {
-                "access_token": facebook_access_token
-            }
+            pages_params = {{
+                "fields": "id,name,access_token,instagram_business_account",
+                "access_token": access_token_to_use
+            }}
+            
+            instagram_logger.info("Fetching Facebook Pages")
             
             pages_response = await client.get(pages_url, params=pages_params)
             
             if pages_response.status_code != 200:
-                instagram_logger.error(f"Failed to get Facebook pages: {pages_response.text}")
-                return RedirectResponse(f"{FRONTEND_URL}?error=instagram_token_failed")
+                instagram_logger.error(f"Failed to get Facebook pages: {{pages_response.text}}")
+                return {{"success": False, "error": "Failed to get Facebook Pages"}}
             
             pages_data = pages_response.json()
             pages = pages_data.get("data", [])
             
             if not pages:
                 instagram_logger.error("No Facebook pages found")
-                return RedirectResponse(f"{FRONTEND_URL}?error=instagram_no_pages")
+                return {{"success": False, "error": "No Facebook Pages found"}}
             
-            # Use the first page (or you could prompt user to select)
-            page = pages[0]
-            page_id = page.get("id")
-            page_access_token = page.get("access_token")
+            # Find first page with Instagram Business Account
+            instagram_page = None
+            for page in pages:
+                if page.get("instagram_business_account"):
+                    instagram_page = page
+                    break
             
-            instagram_logger.info(f"Using Facebook Page ID: {page_id}")
+            if not instagram_page:
+                instagram_logger.error("No Facebook page with Instagram Business Account found")
+                return {{"success": False, "error": "No Instagram Business Account linked to Facebook Page"}}
             
-            # Get Instagram Business Account connected to this Facebook Page
-            ig_account_url = f"{INSTAGRAM_GRAPH_API_BASE}/v21.0/{page_id}"
-            ig_account_params = {
-                "fields": "instagram_business_account",
-                "access_token": page_access_token
-            }
+            page_id = instagram_page.get("id")
+            page_access_token = instagram_page.get("access_token")
+            business_account_id = instagram_page["instagram_business_account"]["id"]
             
-            ig_account_response = await client.get(ig_account_url, params=ig_account_params)
-            
-            if ig_account_response.status_code != 200:
-                instagram_logger.error(f"Failed to get Instagram account: {ig_account_response.text}")
-                return RedirectResponse(f"{FRONTEND_URL}?error=instagram_no_business_account")
-            
-            ig_account_data = ig_account_response.json()
-            ig_business_account = ig_account_data.get("instagram_business_account")
-            
-            if not ig_business_account:
-                instagram_logger.error("No Instagram Business Account linked to Facebook Page")
-                return RedirectResponse(f"{FRONTEND_URL}?error=instagram_no_business_account")
-            
-            business_account_id = ig_business_account.get("id")
+            instagram_logger.info(f"Using Facebook Page ID: {{page_id}}, Instagram Business Account: {{business_account_id}}")
             
             # Get Instagram username
-            username_url = f"{INSTAGRAM_GRAPH_API_BASE}/v21.0/{business_account_id}"
-            username_params = {
+            username_url = f"{INSTAGRAM_GRAPH_API_BASE}/v21.0/{{business_account_id}}"
+            username_params = {{
                 "fields": "username",
                 "access_token": page_access_token
-            }
+            }}
             
             username_response = await client.get(username_url, params=username_params)
             username = "Unknown"
@@ -1445,16 +1472,16 @@ async def auth_instagram_callback(
                 username_data = username_response.json()
                 username = username_data.get("username", "Unknown")
             
-            instagram_logger.info(f"Instagram Business Account: {business_account_id}, Username: @{username}")
+            instagram_logger.info(f"Instagram Username: @{{username}}")
             
             # Store credentials in session (using Page access token for API calls)
-            session["instagram_creds"] = {
-                "access_token": page_access_token,  # Use Page access token
-                "facebook_user_token": facebook_access_token,  # Store user token too
+            session["instagram_creds"] = {{
+                "access_token": page_access_token,  # Page access token (for API calls)
+                "user_access_token": access_token_to_use,  # User long-lived token
                 "page_id": page_id,
                 "business_account_id": business_account_id,
                 "username": username
-            }
+            }}
             
             # Enable Instagram destination
             session["destinations"]["instagram"]["enabled"] = True
@@ -1470,39 +1497,13 @@ async def auth_instagram_callback(
             
             save_session(session_id)
             
-            instagram_logger.info(f"Session saved: {session_id[:16]}...")
+            instagram_logger.info(f"Session saved: {{session_id[:16]}}...")
             
-            # Redirect to frontend with success
-            return RedirectResponse(f"{FRONTEND_URL}?connected=instagram")
-            
-    except Exception as e:
-        instagram_logger.error(f"Callback exception: {e}", exc_info=True)
-        return RedirectResponse(f"{FRONTEND_URL}?error=instagram_auth_failed")
-                    "expires_in": 3600,  # Short-lived tokens expire in 1 hour
-                    "permissions": permissions,
-                    "token_type": "short_lived"
-                }
-            
-            session["destinations"]["instagram"]["enabled"] = True
-            save_session(session_id)
-            
-            # Set session cookie
-            response.set_cookie(
-                key="session_id",
-                value=session_id,
-                httponly=True,
-                max_age=30*24*60*60,  # 30 days
-                samesite="lax"
-            )
-            
-            instagram_logger.info(f"Session saved: {session_id[:16]}...")
-            
-            # Redirect to frontend with success
-            return RedirectResponse(f"{FRONTEND_URL}?connected=instagram")
+            return {{"success": True}}
             
     except Exception as e:
-        instagram_logger.error(f"Callback exception: {e}", exc_info=True)
-        return RedirectResponse(f"{FRONTEND_URL}?error=instagram_auth_failed")
+        instagram_logger.error(f"Complete auth exception: {{e}}", exc_info=True)
+        return {{"success": False, "error": str(e)}}
 
 @app.get("/api/auth/instagram/account")
 async def get_instagram_account(session_id: str = Depends(require_session)):
