@@ -1597,7 +1597,15 @@ async def complete_instagram_auth(request: Request, response: Response):
             page_access_token = instagram_page.get("access_token")
             business_account_id = instagram_page["instagram_business_account"]["id"]
             
+            if not page_access_token or not isinstance(page_access_token, str) or len(page_access_token.strip()) == 0:
+                instagram_logger.error(f"Page access token is missing or invalid. Page ID: {page_id}")
+                return {
+                    "success": False,
+                    "error": "Failed to get Page access token. The Facebook Page may not have proper permissions. Please check your Facebook Page settings."
+                }
+            
             instagram_logger.info(f"Using Facebook Page ID: {page_id}, Instagram Business Account: {business_account_id}")
+            instagram_logger.debug(f"Page access token: {page_access_token[:20]}... (length: {len(page_access_token)})")
             
             # Get Instagram username
             username_url = f"{INSTAGRAM_GRAPH_API_BASE}/v21.0/{business_account_id}"
@@ -2885,6 +2893,14 @@ async def upload_video_to_instagram(video, session):
         instagram_logger.error("No Instagram credentials")
         return
     
+    # Log what credentials we have (without exposing full token)
+    instagram_logger.debug(f"Instagram creds keys: {list(instagram_creds.keys())}")
+    instagram_logger.debug(f"Has access_token: {'access_token' in instagram_creds}")
+    instagram_logger.debug(f"Has business_account_id: {'business_account_id' in instagram_creds}")
+    if 'access_token' in instagram_creds:
+        token = instagram_creds.get("access_token")
+        instagram_logger.debug(f"Access token type: {type(token)}, length: {len(str(token)) if token else 0}")
+    
     try:
         video['status'] = 'uploading'
         upload_progress[video['id']] = 0
@@ -2897,6 +2913,14 @@ async def upload_video_to_instagram(video, session):
         
         if not business_account_id:
             raise Exception("No Instagram Business Account ID. Please reconnect your Instagram account.")
+        
+        # Validate token format (should be a non-empty string)
+        if not isinstance(access_token, str) or len(access_token.strip()) == 0:
+            instagram_logger.error(f"Invalid access token format. Type: {type(access_token)}, Value: {access_token[:50] if access_token else 'None'}...")
+            raise Exception("Invalid Instagram access token format. Please reconnect your Instagram account.")
+        
+        instagram_logger.debug(f"Using access token: {access_token[:20]}... (length: {len(access_token)})")
+        instagram_logger.debug(f"Using business account ID: {business_account_id}")
         
         # Get video file
         video_path = Path(video['path'])
@@ -2947,25 +2971,45 @@ async def upload_video_to_instagram(video, session):
         
         async with httpx.AsyncClient(timeout=300.0) as client:
             # Step 1: Create resumable upload container
-            container_url = f"https://graph.instagram.com/v21.0/{business_account_id}/media"
+            # Per docs: POST https://graph.facebook.com/<API_VERSION>/<IG_USER_ID>/media?upload_type=resumable
+            container_url = f"https://graph.facebook.com/v21.0/{business_account_id}/media"
             container_params = {
                 "media_type": "REELS",
                 "upload_type": "resumable",
-                "caption": caption,
-                "access_token": access_token
+                "caption": caption
             }
             
             # Add optional params
             if location_id:
                 container_params["location_id"] = location_id
             
-            instagram_logger.info(f"Creating resumable upload container for {video['filename']}")
+            # Per docs: Use Authorization header with Bearer token
+            container_headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
+            }
             
-            container_response = await client.post(container_url, data=container_params)
+            instagram_logger.info(f"Creating resumable upload container for {video['filename']}")
+            instagram_logger.debug(f"Container URL: {container_url}")
+            instagram_logger.debug(f"Container params: {dict((k, v) for k, v in container_params.items())}")
+            instagram_logger.debug(f"Access token length: {len(access_token)}, starts with: {access_token[:10]}...")
+            
+            container_response = await client.post(
+                container_url,
+                json=container_params,  # Use json instead of data for JSON body
+                headers=container_headers
+            )
             
             if container_response.status_code != 200:
                 error_data = container_response.json() if container_response.headers.get('content-type', '').startswith('application/json') else container_response.text
                 instagram_logger.error(f"Failed to create container: {error_data}")
+                instagram_logger.error(f"Response status: {container_response.status_code}")
+                instagram_logger.error(f"Response headers: {dict(container_response.headers)}")
+                
+                # Check if it's a token expiration issue
+                if isinstance(error_data, dict) and error_data.get('error', {}).get('code') == 190:
+                    raise Exception("Instagram access token is invalid or expired. Please reconnect your Instagram account.")
+                
                 raise Exception(f"Failed to create resumable upload container: {error_data}")
             
             container_result = container_response.json()
@@ -3011,14 +3055,17 @@ async def upload_video_to_instagram(video, session):
             await asyncio.sleep(5)
             
             # Check container status
-            status_url = f"https://graph.instagram.com/v21.0/{container_id}"
+            # Per docs: GET /<IG_MEDIA_CONTAINER_ID>?fields=status_code
+            status_url = f"https://graph.facebook.com/v21.0/{container_id}"
             status_params = {
-                "fields": "status_code",
-                "access_token": access_token
+                "fields": "status_code"
+            }
+            status_headers = {
+                "Authorization": f"Bearer {access_token}"
             }
             
             for attempt in range(5):  # Check up to 5 times (once per minute for 5 minutes max)
-                status_response = await client.get(status_url, params=status_params)
+                status_response = await client.get(status_url, params=status_params, headers=status_headers)
                 if status_response.status_code == 200:
                     status_result = status_response.json()
                     status_code = status_result.get('status_code')
@@ -3038,15 +3085,19 @@ async def upload_video_to_instagram(video, session):
             upload_progress[video['id']] = 85
             
             # Step 4: Publish the container
-            publish_url = f"https://graph.instagram.com/v21.0/{business_account_id}/media_publish"
+            # Per docs: POST https://graph.facebook.com/<API_VERSION>/<IG_USER_ID>/media_publish?creation_id=<IG_MEDIA_CONTAINER_ID>
+            publish_url = f"https://graph.facebook.com/v21.0/{business_account_id}/media_publish"
             publish_params = {
-                "creation_id": container_id,
-                "access_token": access_token
+                "creation_id": container_id
+            }
+            publish_headers = {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json"
             }
             
             instagram_logger.info(f"Publishing container {container_id}")
             
-            publish_response = await client.post(publish_url, data=publish_params)
+            publish_response = await client.post(publish_url, json=publish_params, headers=publish_headers)
             
             if publish_response.status_code != 200:
                 error_data = publish_response.json() if publish_response.headers.get('content-type', '').startswith('application/json') else publish_response.text
