@@ -797,16 +797,49 @@ def get_tiktok_account(request: Request, response: Response):
         # Get creator info (this is cached in session by get_tiktok_creator_info)
         creator_info = get_tiktok_creator_info(session)
         
+        # Log the creator_info structure for debugging
+        tiktok_logger.debug(f"Creator info keys: {list(creator_info.keys())}")
+        tiktok_logger.debug(f"Creator info: {creator_info}")
+        
         # Extract account information from creator info
         account_info = {}
         
-        # TikTok creator info typically includes display_name or username
-        if "display_name" in creator_info:
+        # TikTok creator_info API returns: creator_nickname, creator_username, creator_avatar_url
+        # Map to our standard format: display_name, username, avatar_url
+        
+        # Display name: prefer creator_nickname, fallback to other variations
+        if "creator_nickname" in creator_info:
+            account_info["display_name"] = creator_info["creator_nickname"]
+        elif "display_name" in creator_info:
             account_info["display_name"] = creator_info["display_name"]
-        if "username" in creator_info:
+        elif "displayName" in creator_info:
+            account_info["display_name"] = creator_info["displayName"]
+        
+        # Username: prefer creator_username, fallback to other variations
+        if "creator_username" in creator_info:
+            account_info["username"] = creator_info["creator_username"]
+        elif "username" in creator_info:
             account_info["username"] = creator_info["username"]
+        elif "user_name" in creator_info:
+            account_info["username"] = creator_info["user_name"]
+        elif "userName" in creator_info:
+            account_info["username"] = creator_info["userName"]
+        
+        # Avatar URL: prefer creator_avatar_url, fallback to other variations
+        if "creator_avatar_url" in creator_info:
+            account_info["avatar_url"] = creator_info["creator_avatar_url"]
+        elif "avatar_url" in creator_info:
+            account_info["avatar_url"] = creator_info["avatar_url"]
+        elif "avatarUrl" in creator_info:
+            account_info["avatar_url"] = creator_info["avatarUrl"]
+        elif "avatar" in creator_info:
+            account_info["avatar_url"] = creator_info["avatar"]
+        
+        # Get open_id
         if "open_id" in creator_info:
             account_info["open_id"] = creator_info["open_id"]
+        elif "openId" in creator_info:
+            account_info["open_id"] = creator_info["openId"]
         # Also get open_id from creds if available
         if not account_info.get("open_id") and session.get("tiktok_creds", {}).get("open_id"):
             account_info["open_id"] = session["tiktok_creds"]["open_id"]
@@ -1465,8 +1498,16 @@ def get_tiktok_creator_info(session):
         error = response.json().get("error", {})
         raise Exception(f"Failed to query creator info: {error.get('code', 'unknown')} - {error.get('message', response.text)}")
     
+    # Log the full response for debugging
+    response_json = response.json()
+    tiktok_logger.debug(f"TikTok creator_info API response: {response_json}")
+    
     # Cache and return
-    session["tiktok_creator_info"] = response.json().get("data", {})
+    creator_info = response_json.get("data", {})
+    tiktok_logger.debug(f"Extracted creator_info keys: {list(creator_info.keys())}")
+    tiktok_logger.debug(f"Extracted creator_info: {creator_info}")
+    
+    session["tiktok_creator_info"] = creator_info
     return session["tiktok_creator_info"]
 
 
