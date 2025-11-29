@@ -75,17 +75,16 @@ TIKTOK_RATE_LIMIT_WINDOW = 60  # seconds
 
 # Instagram OAuth Configuration (Instagram Business Login)
 # See: https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/business-login
-INSTAGRAM_AUTH_URL = "https://www.instagram.com/oauth/authorize"
-INSTAGRAM_TOKEN_URL = "https://api.instagram.com/oauth/access_token"
-INSTAGRAM_GRAPH_API_BASE = "https://graph.instagram.com"
-INSTAGRAM_LONG_LIVED_TOKEN_URL = f"{INSTAGRAM_GRAPH_API_BASE}/access_token"
-INSTAGRAM_REFRESH_TOKEN_URL = f"{INSTAGRAM_GRAPH_API_BASE}/refresh_access_token"
-# New Instagram Business scopes (old ones deprecated Jan 27, 2025)
+# Instagram OAuth URLs - Using Facebook Login for Business (supports resumable uploads)
+INSTAGRAM_AUTH_URL = "https://www.facebook.com/v21.0/dialog/oauth"
+INSTAGRAM_TOKEN_URL = "https://graph.facebook.com/v21.0/oauth/access_token"
+INSTAGRAM_GRAPH_API_BASE = "https://graph.facebook.com"
+# Facebook Login scopes for Instagram API
 INSTAGRAM_SCOPES = [
-    "instagram_business_basic",
-    "instagram_business_content_publish",
-    "instagram_business_manage_messages",
-    "instagram_business_manage_comments"
+    "instagram_basic",
+    "instagram_content_publish",
+    "pages_read_engagement",
+    "pages_show_list"
 ]
 
 # Destination upload functions registry
@@ -1272,7 +1271,7 @@ def disconnect_tiktok(session_id: str = Depends(require_csrf)):
 
 @app.get("/api/auth/instagram")
 def auth_instagram(request: Request, response: Response):
-    """Initiate Instagram OAuth flow"""
+    """Initiate Instagram OAuth flow via Facebook Login"""
     
     # Validate configuration
     if not INSTAGRAM_APP_ID or not INSTAGRAM_APP_SECRET:
@@ -1290,10 +1289,10 @@ def auth_instagram(request: Request, response: Response):
     # Build redirect URI
     redirect_uri = f"{BACKEND_URL.rstrip('/')}/api/auth/instagram/callback"
     
-    # Build scope string (comma-separated)
+    # Build scope string (comma-separated for Facebook)
     scope_string = ",".join(INSTAGRAM_SCOPES)
     
-    # Build authorization URL
+    # Build Facebook authorization URL
     params = {
         "client_id": INSTAGRAM_APP_ID,
         "redirect_uri": redirect_uri,
@@ -1305,7 +1304,7 @@ def auth_instagram(request: Request, response: Response):
     query_string = urlencode(params, doseq=False)
     auth_url = f"{INSTAGRAM_AUTH_URL}?{query_string}"
     
-    instagram_logger.info("Initiating Instagram auth flow")
+    instagram_logger.info("Initiating Instagram auth flow via Facebook Login")
     instagram_logger.debug(f"Redirect URI: {redirect_uri}, Scope: {scope_string}, Auth URL: {auth_url}")
     
     return {"url": auth_url}
@@ -1319,16 +1318,16 @@ async def auth_instagram_callback(
     error: str = None,
     error_description: str = None
 ):
-    """Handle Instagram OAuth callback"""
+    """Handle Instagram OAuth callback (via Facebook Login)"""
     
-    instagram_logger.info("Received Instagram callback")
+    instagram_logger.info("Received Instagram/Facebook callback")
     instagram_logger.debug(f"Code: {'present' if code else 'MISSING'}, "
                           f"State: {state[:16] + '...' if state else 'MISSING'}, "
                           f"Error: {error or 'none'}")
     
-    # Check for errors from Instagram
+    # Check for errors from Facebook
     if error:
-        error_msg = f"Instagram OAuth error: {error}"
+        error_msg = f"Facebook OAuth error: {error}"
         if error_description:
             error_msg += f" - {error_description}"
         instagram_logger.error(error_msg)
@@ -1353,22 +1352,20 @@ async def auth_instagram_callback(
     try:
         redirect_uri = f"{BACKEND_URL.rstrip('/')}/api/auth/instagram/callback"
         
-        # Exchange code for access token
-        token_request_data = {
+        # Exchange code for Facebook access token
+        token_params = {
             "client_id": INSTAGRAM_APP_ID,
             "client_secret": INSTAGRAM_APP_SECRET,
-            "grant_type": "authorization_code",
             "redirect_uri": redirect_uri,
             "code": code
         }
         
-        instagram_logger.debug(f"Exchanging code for token, Redirect URI: {redirect_uri}")
+        instagram_logger.debug(f"Exchanging code for Facebook token, Redirect URI: {redirect_uri}")
         
         async with httpx.AsyncClient() as client:
-            token_response = await client.post(
+            token_response = await client.get(
                 INSTAGRAM_TOKEN_URL,
-                data=token_request_data,
-                headers={"Content-Type": "application/x-www-form-urlencoded"}
+                params=token_params
             )
             
             instagram_logger.debug(f"Token response status: {token_response.status_code}")
@@ -1379,88 +1376,108 @@ async def auth_instagram_callback(
                 return RedirectResponse(f"{FRONTEND_URL}?error=instagram_token_failed")
             
             token_json = token_response.json()
+            facebook_access_token = token_json.get("access_token")
             
-            # Instagram Business Login can return either:
-            # 1. Direct format: {"access_token": "...", "user_id": "...", "permissions": [...]}
-            # 2. Wrapped format: {"data": [{"access_token": "...", "user_id": "...", "permissions": "..."}]}
-            if "data" in token_json and token_json["data"]:
-                # Wrapped format
-                token_data = token_json["data"][0]
-            elif "access_token" in token_json:
-                # Direct format (what we're actually getting)
-                token_data = token_json
-            else:
-                instagram_logger.error(f"Unexpected token response format: {token_json}")
+            if not facebook_access_token:
+                instagram_logger.error(f"No access_token in response: {token_json}")
                 return RedirectResponse(f"{FRONTEND_URL}?error=instagram_token_failed")
             
-            # Validate response
-            if "access_token" not in token_data:
-                instagram_logger.error(f"No access_token in response data: {token_data}")
+            instagram_logger.info(f"Facebook token received")
+            
+            # Get Facebook Pages the user manages
+            pages_url = f"{INSTAGRAM_GRAPH_API_BASE}/v21.0/me/accounts"
+            pages_params = {
+                "access_token": facebook_access_token
+            }
+            
+            pages_response = await client.get(pages_url, params=pages_params)
+            
+            if pages_response.status_code != 200:
+                instagram_logger.error(f"Failed to get Facebook pages: {pages_response.text}")
                 return RedirectResponse(f"{FRONTEND_URL}?error=instagram_token_failed")
             
-            short_lived_token = token_data["access_token"]
-            user_id = token_data.get("user_id")
-            # Permissions can be a list or a comma-separated string
-            permissions_raw = token_data.get("permissions", "")
-            if isinstance(permissions_raw, list):
-                permissions = ",".join(permissions_raw)
-            else:
-                permissions = permissions_raw or ""
+            pages_data = pages_response.json()
+            pages = pages_data.get("data", [])
             
-            instagram_logger.info(f"Short-lived token received - User ID: {user_id}, Permissions: {permissions}")
+            if not pages:
+                instagram_logger.error("No Facebook pages found")
+                return RedirectResponse(f"{FRONTEND_URL}?error=instagram_no_pages")
             
-            # Exchange short-lived token for long-lived token (60 days)
-            try:
-                long_lived_params = {
-                    "grant_type": "ig_exchange_token",
-                    "client_secret": INSTAGRAM_APP_SECRET,
-                    "access_token": short_lived_token
-                }
-                
-                long_lived_response = await client.get(
-                    INSTAGRAM_LONG_LIVED_TOKEN_URL,
-                    params=long_lived_params,
-                    timeout=10.0
-                )
-                
-                # Determine which token to use and fetch profile info
-                if long_lived_response.status_code == 200:
-                    long_lived_json = long_lived_response.json()
-                    access_token_to_use = long_lived_json.get("access_token")
-                    expires_in = long_lived_json.get("expires_in", 5183944)  # Default 60 days in seconds
-                    token_type = "long_lived"
-                    instagram_logger.info(f"Long-lived token obtained - Expires in: {expires_in} seconds")
-                else:
-                    instagram_logger.warning(f"Failed to get long-lived token, using short-lived: {long_lived_response.text}")
-                    access_token_to_use = short_lived_token
-                    expires_in = 3600  # Short-lived tokens expire in 1 hour
-                    token_type = "short_lived"
-                
-                # Fetch profile info using the token we'll be storing (root cause fix: single call, no duplication)
-                profile_info = await fetch_instagram_profile(access_token_to_use)
-                
-                # Store credentials in session
-                session["instagram_creds"] = {
-                    "access_token": access_token_to_use,
-                    "user_id": user_id,  # From token response (Instagram-scoped user ID)
-                    "business_account_id": profile_info.get("business_account_id"),  # From /me endpoint (for posting content)
-                    "username": profile_info.get("username"),  # Cache username for display
-                    "expires_in": expires_in,
-                    "permissions": permissions,
-                    "token_type": token_type
-                }
-            except Exception as e:
-                instagram_logger.warning(f"Error exchanging for long-lived token, using short-lived: {str(e)}")
-                
-                # Fetch profile info with short-lived token (root cause fix: use helper function)
-                profile_info = await fetch_instagram_profile(short_lived_token)
-                
-                # Fallback to short-lived token
-                session["instagram_creds"] = {
-                    "access_token": short_lived_token,
-                    "user_id": user_id,
-                    "business_account_id": profile_info.get("business_account_id"),
-                    "username": profile_info.get("username"),
+            # Use the first page (or you could prompt user to select)
+            page = pages[0]
+            page_id = page.get("id")
+            page_access_token = page.get("access_token")
+            
+            instagram_logger.info(f"Using Facebook Page ID: {page_id}")
+            
+            # Get Instagram Business Account connected to this Facebook Page
+            ig_account_url = f"{INSTAGRAM_GRAPH_API_BASE}/v21.0/{page_id}"
+            ig_account_params = {
+                "fields": "instagram_business_account",
+                "access_token": page_access_token
+            }
+            
+            ig_account_response = await client.get(ig_account_url, params=ig_account_params)
+            
+            if ig_account_response.status_code != 200:
+                instagram_logger.error(f"Failed to get Instagram account: {ig_account_response.text}")
+                return RedirectResponse(f"{FRONTEND_URL}?error=instagram_no_business_account")
+            
+            ig_account_data = ig_account_response.json()
+            ig_business_account = ig_account_data.get("instagram_business_account")
+            
+            if not ig_business_account:
+                instagram_logger.error("No Instagram Business Account linked to Facebook Page")
+                return RedirectResponse(f"{FRONTEND_URL}?error=instagram_no_business_account")
+            
+            business_account_id = ig_business_account.get("id")
+            
+            # Get Instagram username
+            username_url = f"{INSTAGRAM_GRAPH_API_BASE}/v21.0/{business_account_id}"
+            username_params = {
+                "fields": "username",
+                "access_token": page_access_token
+            }
+            
+            username_response = await client.get(username_url, params=username_params)
+            username = "Unknown"
+            if username_response.status_code == 200:
+                username_data = username_response.json()
+                username = username_data.get("username", "Unknown")
+            
+            instagram_logger.info(f"Instagram Business Account: {business_account_id}, Username: @{username}")
+            
+            # Store credentials in session (using Page access token for API calls)
+            session["instagram_creds"] = {
+                "access_token": page_access_token,  # Use Page access token
+                "facebook_user_token": facebook_access_token,  # Store user token too
+                "page_id": page_id,
+                "business_account_id": business_account_id,
+                "username": username
+            }
+            
+            # Enable Instagram destination
+            session["destinations"]["instagram"]["enabled"] = True
+            
+            # Set cookie
+            response.set_cookie(
+                key="session_id",
+                value=session_id,
+                httponly=True,
+                max_age=30*24*60*60,
+                samesite="lax"
+            )
+            
+            save_session(session_id)
+            
+            instagram_logger.info(f"Session saved: {session_id[:16]}...")
+            
+            # Redirect to frontend with success
+            return RedirectResponse(f"{FRONTEND_URL}?connected=instagram")
+            
+    except Exception as e:
+        instagram_logger.error(f"Callback exception: {e}", exc_info=True)
+        return RedirectResponse(f"{FRONTEND_URL}?error=instagram_auth_failed")
                     "expires_in": 3600,  # Short-lived tokens expire in 1 hour
                     "permissions": permissions,
                     "token_type": "short_lived"
