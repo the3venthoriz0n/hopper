@@ -70,11 +70,20 @@ tiktok_rate_limiter = {}  # {session_id: [timestamps]}
 TIKTOK_RATE_LIMIT_REQUESTS = 6
 TIKTOK_RATE_LIMIT_WINDOW = 60  # seconds
 
-# Instagram OAuth Configuration (Instagram Graph API)
-INSTAGRAM_AUTH_URL = "https://api.instagram.com/oauth/authorize"
+# Instagram OAuth Configuration (Instagram Business Login)
+# See: https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/business-login
+INSTAGRAM_AUTH_URL = "https://www.instagram.com/oauth/authorize"
 INSTAGRAM_TOKEN_URL = "https://api.instagram.com/oauth/access_token"
 INSTAGRAM_GRAPH_API_BASE = "https://graph.instagram.com"
-INSTAGRAM_SCOPES = ["user_profile", "user_media"]
+INSTAGRAM_LONG_LIVED_TOKEN_URL = f"{INSTAGRAM_GRAPH_API_BASE}/access_token"
+INSTAGRAM_REFRESH_TOKEN_URL = f"{INSTAGRAM_GRAPH_API_BASE}/refresh_access_token"
+# New Instagram Business scopes (old ones deprecated Jan 27, 2025)
+INSTAGRAM_SCOPES = [
+    "instagram_business_basic",
+    "instagram_business_content_publish",
+    "instagram_business_manage_messages",
+    "instagram_business_manage_comments"
+]
 
 # Destination upload functions registry
 # This allows easy addition of new destinations in the future
@@ -1021,7 +1030,7 @@ async def auth_instagram_callback(
         redirect_uri = f"{BACKEND_URL.rstrip('/')}/api/auth/instagram/callback"
         
         # Exchange code for access token
-        token_data = {
+        token_request_data = {
             "client_id": INSTAGRAM_APP_ID,
             "client_secret": INSTAGRAM_APP_SECRET,
             "grant_type": "authorization_code",
@@ -1034,7 +1043,7 @@ async def auth_instagram_callback(
         async with httpx.AsyncClient() as client:
             token_response = await client.post(
                 INSTAGRAM_TOKEN_URL,
-                data=token_data,
+                data=token_request_data,
                 headers={"Content-Type": "application/x-www-form-urlencoded"}
             )
             
@@ -1047,19 +1056,73 @@ async def auth_instagram_callback(
             
             token_json = token_response.json()
             
-            # Validate response
-            if "access_token" not in token_json:
-                instagram_logger.error("No access_token in response")
+            # Instagram Business Login returns: {"data": [{"access_token": "...", "user_id": "...", "permissions": "..."}]}
+            if "data" not in token_json or not token_json["data"]:
+                instagram_logger.error(f"No data in token response: {token_json}")
                 return RedirectResponse(f"{FRONTEND_URL}?error=instagram_token_failed")
             
-            instagram_logger.info(f"Token exchange successful - User ID: {token_json.get('user_id', 'N/A')}")
+            token_data = token_json["data"][0]
             
-            # Store credentials in session
-            session["instagram_creds"] = {
-                "access_token": token_json["access_token"],
-                "user_id": token_json.get("user_id"),
-                "expires_in": token_json.get("expires_in"),
-            }
+            # Validate response
+            if "access_token" not in token_data:
+                instagram_logger.error(f"No access_token in response data: {token_data}")
+                return RedirectResponse(f"{FRONTEND_URL}?error=instagram_token_failed")
+            
+            short_lived_token = token_data["access_token"]
+            user_id = token_data.get("user_id")
+            permissions = token_data.get("permissions", "")
+            
+            instagram_logger.info(f"Short-lived token received - User ID: {user_id}, Permissions: {permissions}")
+            
+            # Exchange short-lived token for long-lived token (60 days)
+            try:
+                long_lived_params = {
+                    "grant_type": "ig_exchange_token",
+                    "client_secret": INSTAGRAM_APP_SECRET,
+                    "access_token": short_lived_token
+                }
+                
+                long_lived_response = await client.get(
+                    INSTAGRAM_LONG_LIVED_TOKEN_URL,
+                    params=long_lived_params,
+                    timeout=10.0
+                )
+                
+                if long_lived_response.status_code == 200:
+                    long_lived_json = long_lived_response.json()
+                    long_lived_token = long_lived_json.get("access_token")
+                    expires_in = long_lived_json.get("expires_in", 5183944)  # Default 60 days in seconds
+                    
+                    instagram_logger.info(f"Long-lived token obtained - Expires in: {expires_in} seconds")
+                    
+                    # Store credentials in session
+                    session["instagram_creds"] = {
+                        "access_token": long_lived_token,
+                        "user_id": user_id,
+                        "expires_in": expires_in,
+                        "permissions": permissions,
+                        "token_type": "long_lived"
+                    }
+                else:
+                    instagram_logger.warning(f"Failed to get long-lived token, using short-lived: {long_lived_response.text}")
+                    # Fallback to short-lived token
+                    session["instagram_creds"] = {
+                        "access_token": short_lived_token,
+                        "user_id": user_id,
+                        "expires_in": 3600,  # Short-lived tokens expire in 1 hour
+                        "permissions": permissions,
+                        "token_type": "short_lived"
+                    }
+            except Exception as e:
+                instagram_logger.warning(f"Error exchanging for long-lived token, using short-lived: {str(e)}")
+                # Fallback to short-lived token
+                session["instagram_creds"] = {
+                    "access_token": short_lived_token,
+                    "user_id": user_id,
+                    "expires_in": 3600,  # Short-lived tokens expire in 1 hour
+                    "permissions": permissions,
+                    "token_type": "short_lived"
+                }
             
             session["destinations"]["instagram"]["enabled"] = True
             save_session(session_id)
@@ -1154,6 +1217,50 @@ def disconnect_instagram(request: Request, response: Response):
     instagram_logger.info(f"Disconnected session: {session_id[:16]}...")
     
     return {"message": "Instagram disconnected successfully"}
+
+
+# Helper: Refresh Instagram long-lived access token
+async def refresh_instagram_token(session_id: str) -> dict:
+    """Refresh Instagram long-lived access token (valid for another 60 days)"""
+    session = get_session(session_id)
+    creds = session.get("instagram_creds")
+    
+    if not creds or not creds.get("access_token"):
+        raise HTTPException(400, "No Instagram credentials to refresh")
+    
+    # Only refresh long-lived tokens
+    if creds.get("token_type") != "long_lived":
+        raise HTTPException(400, "Can only refresh long-lived tokens")
+    
+    access_token = creds["access_token"]
+    
+    # Refresh token using Instagram Graph API
+    refresh_params = {
+        "grant_type": "ig_refresh_token",
+        "access_token": access_token
+    }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            INSTAGRAM_REFRESH_TOKEN_URL,
+            params=refresh_params,
+            timeout=10.0
+        )
+        
+        if response.status_code != 200:
+            raise HTTPException(400, f"Token refresh failed: {response.text}")
+        
+        token_json = response.json()
+        
+        # Update session with new token
+        session["instagram_creds"].update({
+            "access_token": token_json.get("access_token", access_token),
+            "expires_in": token_json.get("expires_in", creds.get("expires_in", 5183944)),
+            "token_type": "long_lived"
+        })
+        save_session(session_id)
+        
+        return session["instagram_creds"]
 
 
 # Helper: Refresh TikTok access token
