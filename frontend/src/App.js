@@ -14,7 +14,8 @@ let csrfToken = null;
 // Intercept GET responses to extract CSRF token
 axios.interceptors.response.use(
   (response) => {
-    // Extract CSRF token from response header (axios normalizes headers to lowercase)
+    // Extract CSRF token from response header
+    // Axios normalizes headers to lowercase
     const token = response.headers['x-csrf-token'] || response.headers['X-CSRF-Token'];
     if (token) {
       csrfToken = token;

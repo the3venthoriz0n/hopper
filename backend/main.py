@@ -114,11 +114,47 @@ def get_google_client_config():
         }
     }
 
-# CORS - allow production domain or all origins for development
-if ENVIRONMENT == "production":
-    allowed_origins = [FRONTEND_URL]
+# CORS Configuration
+# Build allowed origins list based on environment variables
+allowed_origins = []
+
+# Log environment configuration for debugging
+logger.info(f"=== Environment Configuration ===")
+logger.info(f"ENVIRONMENT: {ENVIRONMENT}")
+logger.info(f"FRONTEND_URL: {FRONTEND_URL or '(not set)'}")
+logger.info(f"BACKEND_URL: {BACKEND_URL or '(not set)'}")
+logger.info(f"DOMAIN: {DOMAIN}")
+
+# Determine if this is production based on environment
+is_production = ENVIRONMENT == "production"
+
+# Always include the configured frontend URL if set
+if FRONTEND_URL:
+    allowed_origins.append(FRONTEND_URL)
+    logger.info(f"CORS: Added FRONTEND_URL to allowed origins: {FRONTEND_URL}")
 else:
-    allowed_origins = ["*"]
+    logger.warning("CORS: FRONTEND_URL not set! CORS may fail.")
+
+# For non-production, be more permissive
+if not is_production:
+    # Add common dev URLs
+    dev_urls = ["http://localhost:3000", "http://localhost:8000", "http://127.0.0.1:3000"]
+    for url in dev_urls:
+        if url not in allowed_origins:
+            allowed_origins.append(url)
+    
+    # If no origins configured at all, allow everything as fallback for dev
+    if not allowed_origins:
+        logger.warning("CORS: No origins configured, allowing all origins for development")
+        allowed_origins = ["*"]
+
+# Log final configuration
+logger.info(f"CORS Configuration - Environment: {ENVIRONMENT}, Is Production: {is_production}")
+logger.info(f"CORS Allowed Origins: {allowed_origins}")
+
+# If we have no origins in production, this is a critical error
+if is_production and not allowed_origins:
+    raise RuntimeError("FATAL: FRONTEND_URL must be set in production environment for CORS")
 
 app.add_middleware(
     CORSMiddleware,
@@ -126,6 +162,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-CSRF-Token"],  # Expose CSRF token header to frontend
 )
 
 # ============================================================================
@@ -138,10 +175,17 @@ csrf_tokens = {}
 # Rate Limiter: {identifier: [timestamps]}
 # identifier can be session_id or IP address
 rate_limiter = defaultdict(list)
-RATE_LIMIT_REQUESTS = 100  # requests per window
-RATE_LIMIT_WINDOW = 60  # seconds
-RATE_LIMIT_STRICT_REQUESTS = 20  # stricter limit for state-changing operations
-RATE_LIMIT_STRICT_WINDOW = 60  # seconds
+# More permissive limits for development, stricter for production
+if ENVIRONMENT == "development":
+    RATE_LIMIT_REQUESTS = 1000  # requests per window
+    RATE_LIMIT_WINDOW = 60  # seconds
+    RATE_LIMIT_STRICT_REQUESTS = 200  # stricter limit for state-changing operations
+    RATE_LIMIT_STRICT_WINDOW = 60  # seconds
+else:
+    RATE_LIMIT_REQUESTS = 100  # requests per window
+    RATE_LIMIT_WINDOW = 60  # seconds
+    RATE_LIMIT_STRICT_REQUESTS = 20  # stricter limit for state-changing operations
+    RATE_LIMIT_STRICT_WINDOW = 60  # seconds
 
 # Allowed origins for Origin/Referer validation
 ALLOWED_ORIGINS = [FRONTEND_URL] if ENVIRONMENT == "production" else [FRONTEND_URL, "http://localhost:3000", "http://localhost:8000"]
@@ -755,13 +799,16 @@ def auth_callback(code: str, state: str, request: Request, response: Response):
     session["destinations"]["youtube"]["enabled"] = True
     save_session(session_id)
     
-    # Redirect back to frontend using environment variable or construct from request
-    if ENVIRONMENT == "production":
+    # Redirect back to frontend
+    # Always use FRONTEND_URL if set (works for both dev and prod)
+    if FRONTEND_URL:
         frontend_url = f"{FRONTEND_URL}?connected=youtube"
     else:
-        # Development: use request host and replace port
+        # Fallback: construct from request (only for pure localhost dev without env vars)
         host = request.headers.get("host", "localhost:8000")
-        frontend_url = f"http://{host.replace(':8000', ':3000')}?connected=youtube"
+        protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" else "http"
+        frontend_url = f"{protocol}://{host.replace(':8000', ':3000')}?connected=youtube"
+    
     return RedirectResponse(frontend_url)
 
 @app.get("/api/destinations")
