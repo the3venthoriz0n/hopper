@@ -1175,8 +1175,6 @@ function Home() {
             </div>
 
             <div className="setting-divider"></div>
-
-            <div className="setting-divider"></div>
             
             <div className="setting-group">
               <button onClick={disconnectYoutube} className="btn-logout" style={{
