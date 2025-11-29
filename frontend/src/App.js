@@ -69,6 +69,176 @@ function Home() {
   const [newWord, setNewWord] = useState('');
   const [wordbankExpanded, setWordbankExpanded] = useState(false);
 
+  // Tooltip positioning handler to keep tooltips on screen
+  useEffect(() => {
+    const adjustTooltipPosition = (tooltipWrapper) => {
+      const tooltip = tooltipWrapper.querySelector('.tooltip-text');
+      if (!tooltip) return;
+      
+      // Don't force visibility - let CSS hover handle it
+      // Only adjust positioning, not visibility/opacity
+      const wrapperRect = tooltipWrapper.getBoundingClientRect();
+      const margin = 10;
+      
+      // Find if we're inside a modal - use modal bounds instead of window
+      const modal = tooltipWrapper.closest('.modal');
+      let viewportWidth, viewportHeight, viewportLeft, viewportTop;
+      
+      if (modal) {
+        const modalRect = modal.getBoundingClientRect();
+        viewportWidth = modalRect.width;
+        viewportHeight = modalRect.height;
+        viewportLeft = modalRect.left;
+        viewportTop = modalRect.top;
+      } else {
+        viewportWidth = window.innerWidth;
+        viewportHeight = window.innerHeight;
+        viewportLeft = 0;
+        viewportTop = 0;
+      }
+      
+      // Reset positioning (but keep visibility/opacity from CSS)
+      tooltip.style.transform = '';
+      tooltip.style.left = '';
+      tooltip.style.right = '';
+      tooltip.style.bottom = '';
+      tooltip.style.top = '';
+      tooltip.style.maxHeight = '';
+      tooltip.style.overflowY = '';
+      tooltip.classList.remove('tooltip-below');
+      
+      // Get tooltip dimensions after reset
+      const rect = tooltip.getBoundingClientRect();
+      const tooltipHeight = rect.height;
+      
+      // Calculate available space relative to viewport
+      const spaceAbove = wrapperRect.top - viewportTop;
+      const spaceBelow = (viewportTop + viewportHeight) - wrapperRect.bottom;
+      
+      // Decide vertical position
+      let showBelow = spaceAbove < tooltipHeight + margin && spaceBelow > spaceAbove;
+      if (showBelow) {
+        tooltip.classList.add('tooltip-below');
+        tooltip.style.bottom = 'auto';
+        tooltip.style.top = '125%';
+      } else {
+        tooltip.style.top = 'auto';
+        tooltip.style.bottom = '125%';
+      }
+      
+      // Adjust horizontal position
+      requestAnimationFrame(() => {
+        const newRect = tooltip.getBoundingClientRect();
+        const tooltipLeft = newRect.left - viewportLeft;
+        const tooltipRight = newRect.right - viewportLeft;
+        
+        if (tooltipLeft < margin) {
+          // Too far left - align to left edge
+          tooltip.style.left = `${margin - (wrapperRect.left - viewportLeft)}px`;
+          tooltip.style.transform = 'translateX(0)';
+        } else if (tooltipRight > viewportWidth - margin) {
+          // Too far right - align to right edge
+          tooltip.style.left = 'auto';
+          tooltip.style.right = `${margin}px`;
+          tooltip.style.transform = 'translateX(0)';
+        } else {
+          // Center it
+          tooltip.style.left = '50%';
+          tooltip.style.transform = 'translateX(-50%)';
+        }
+        
+        // Final vertical check
+        requestAnimationFrame(() => {
+          const finalRect = tooltip.getBoundingClientRect();
+          const finalTop = finalRect.top - viewportTop;
+          const finalBottom = finalRect.bottom - viewportTop;
+          
+          if (finalTop < margin) {
+            tooltip.style.top = `${margin - (wrapperRect.top - viewportTop) + wrapperRect.height}px`;
+            tooltip.style.bottom = 'auto';
+          }
+          if (finalBottom > viewportHeight - margin) {
+            const availableHeight = viewportHeight - finalTop - margin - 10;
+            if (availableHeight > 50) {
+              tooltip.style.maxHeight = `${availableHeight}px`;
+              tooltip.style.overflowY = 'auto';
+            } else {
+              // Not enough space, try showing above
+              tooltip.style.top = 'auto';
+              tooltip.style.bottom = '125%';
+              tooltip.classList.remove('tooltip-below');
+            }
+          }
+        });
+      });
+    };
+    
+    const handleTooltipHover = (e) => {
+      const wrapper = e.currentTarget;
+      // Wait for CSS hover to apply, then adjust position
+      setTimeout(() => {
+        const tooltip = wrapper.querySelector('.tooltip-text');
+        if (tooltip) {
+          // Check if tooltip is actually visible (CSS hover applied)
+          const computedStyle = window.getComputedStyle(tooltip);
+          if (computedStyle.visibility === 'visible' || computedStyle.opacity !== '0') {
+            adjustTooltipPosition(wrapper);
+          }
+        }
+      }, 10);
+    };
+    
+    const handleTooltipLeave = (e) => {
+      const wrapper = e.currentTarget;
+      const tooltip = wrapper.querySelector('.tooltip-text');
+      if (tooltip) {
+        // Reset any positioning adjustments when leaving
+        tooltip.style.maxHeight = '';
+        tooltip.style.overflowY = '';
+      }
+    };
+    
+    // Add listeners to all tooltip wrappers
+    const addListeners = () => {
+      const tooltipWrappers = document.querySelectorAll('.tooltip-wrapper');
+      tooltipWrappers.forEach(wrapper => {
+        wrapper.removeEventListener('mouseenter', handleTooltipHover);
+        wrapper.removeEventListener('mouseleave', handleTooltipLeave);
+        wrapper.addEventListener('mouseenter', handleTooltipHover);
+        wrapper.addEventListener('mouseleave', handleTooltipLeave);
+      });
+    };
+    
+    // Initial setup
+    addListeners();
+    
+    // Re-setup when DOM changes
+    const observer = new MutationObserver(addListeners);
+    observer.observe(document.body, { childList: true, subtree: true });
+    
+    // Handle window resize and scroll
+    const handleResize = () => {
+      const visibleTooltips = document.querySelectorAll('.tooltip-wrapper:hover');
+      visibleTooltips.forEach(wrapper => {
+        adjustTooltipPosition(wrapper);
+      });
+    };
+    
+    window.addEventListener('resize', handleResize);
+    window.addEventListener('scroll', handleResize, true);
+    
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('scroll', handleResize, true);
+      const tooltipWrappers = document.querySelectorAll('.tooltip-wrapper');
+      tooltipWrappers.forEach(wrapper => {
+        wrapper.removeEventListener('mouseenter', handleTooltipHover);
+        wrapper.removeEventListener('mouseleave', handleTooltipLeave);
+      });
+    };
+  }, [videos, editingVideo, showSettings, showTiktokSettings, showGlobalSettings]);
+
   useEffect(() => {
     loadDestinations();
     loadGlobalSettings();
@@ -1362,16 +1532,19 @@ function Home() {
                         title={isExpanded ? "Collapse properties" : "Expand properties"}
                         style={{ 
                           marginRight: '4px', 
-                          fontSize: '0.85rem',
+                          fontSize: '1rem',
                           width: '24px',
                           height: '24px',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          padding: 0
+                          padding: 0,
+                          lineHeight: '1'
                         }}
                       >
-                        {isExpanded ? '▼' : '▾'}
+                        <span style={{ display: 'inline-block', width: '12px', textAlign: 'center' }}>
+                          {isExpanded ? '▼' : '▾'}
+                        </span>
                       </button>
                       <button onClick={() => {
                         setEditingVideo(v);
@@ -1400,7 +1573,13 @@ function Home() {
             <div className="modal-body">
               <div className="form-group">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <label>Video Title <span className="char-counter">{editTitleLength}/100</span></label>
+                  <label>
+                    Video Title <span className="char-counter">{editTitleLength}/100</span>
+                    <span className="tooltip-wrapper">
+                      <span className="tooltip-icon">i</span>
+                      <span className="tooltip-text">Leave empty to use template. Click "Recompute" to regenerate from current template.</span>
+                    </span>
+                  </label>
                   <button 
                     type="button"
                     onClick={() => recomputeVideoTitle(editingVideo.id)}
@@ -1429,12 +1608,6 @@ function Home() {
                   maxLength="100"
                   onInput={(e) => setEditTitleLength(e.target.value.length)}
                 />
-                <div style={{ marginTop: '0.5rem' }}>
-                  <span className="tooltip-wrapper">
-                    <span className="tooltip-icon">i</span>
-                    <span className="tooltip-text">Leave empty to use template. Click "Recompute" to regenerate from current template.</span>
-                  </span>
-                </div>
               </div>
               
               <div className="form-group">
