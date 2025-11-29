@@ -12,7 +12,6 @@ import random
 import re
 import httpx
 import logging
-import subprocess
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from collections import defaultdict
@@ -2077,14 +2076,6 @@ def get_videos(session_id: str = Depends(require_session)):
         video_copy['title_too_long'] = len(youtube_title) > 100
         video_copy['title_original_length'] = len(youtube_title)
         
-        # Get video duration and dimensions to determine if it's a short
-        video_duration = get_video_duration_seconds(video['path'])
-        video_width, video_height = get_video_dimensions(video['path'])
-        video_copy['duration_seconds'] = video_duration
-        video_copy['width'] = video_width
-        video_copy['height'] = video_height
-        video_copy['is_short'] = is_video_short(video['path'])
-        
         # Compute upload properties (what will be uploaded)
         upload_props = {}
         
@@ -2342,73 +2333,6 @@ def cancel_scheduled_videos(session_id: str = Depends(require_csrf)):
     
     return {"ok": True, "cancelled": cancelled_count}
 
-
-def get_video_duration_seconds(video_path):
-    """Get video duration in seconds using ffprobe"""
-    try:
-        result = subprocess.run(
-            ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            duration = float(result.stdout.strip())
-            youtube_logger.debug(f"Video duration: {duration}s for {video_path}")
-            return duration
-        else:
-            youtube_logger.warning(f"ffprobe returned non-zero exit code or empty output for {video_path}: {result.returncode}, stdout: {result.stdout}, stderr: {result.stderr}")
-    except FileNotFoundError:
-        youtube_logger.error(f"ffprobe not found. Make sure ffmpeg is installed.")
-    except Exception as e:
-        youtube_logger.warning(f"Could not get video duration for {video_path}: {str(e)}")
-    return None
-
-def get_video_dimensions(video_path):
-    """Get video width and height using ffprobe"""
-    try:
-        result = subprocess.run(
-            ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=s=x:p=0', str(video_path)],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            parts = result.stdout.strip().split('x')
-            if len(parts) == 2:
-                width = int(parts[0])
-                height = int(parts[1])
-                youtube_logger.debug(f"Video dimensions: {width}x{height} for {video_path}")
-                return width, height
-        else:
-            youtube_logger.warning(f"ffprobe returned non-zero exit code or empty output for dimensions {video_path}: {result.returncode}, stdout: {result.stdout}, stderr: {result.stderr}")
-    except FileNotFoundError:
-        youtube_logger.error(f"ffprobe not found. Make sure ffmpeg is installed.")
-    except Exception as e:
-        youtube_logger.warning(f"Could not get video dimensions for {video_path}: {str(e)}")
-    return None, None
-
-def is_video_short(video_path):
-    """Check if video is a short: <= 60 seconds AND vertical aspect ratio"""
-    duration = get_video_duration_seconds(video_path)
-    if duration is None:
-        youtube_logger.warning(f"Could not determine duration for {video_path}, assuming not a short")
-        return False
-    
-    if duration > 60:
-        youtube_logger.debug(f"Video duration {duration}s > 60s, not a short")
-        return False
-    
-    width, height = get_video_dimensions(video_path)
-    if width is None or height is None:
-        youtube_logger.warning(f"Could not determine dimensions for {video_path}, assuming not a short")
-        return False
-    
-    # Vertical aspect ratio: height > width
-    is_vertical = height > width
-    youtube_logger.debug(f"Video {video_path}: duration={duration}s, dimensions={width}x{height}, is_vertical={is_vertical}, is_short={is_vertical}")
-    
-    return is_vertical
 
 def upload_video_to_youtube(video, session):
     """Helper function to upload a single video to YouTube"""
@@ -2792,7 +2716,7 @@ def upload_video_to_tiktok(video, session, session_id=None):
         tiktok_logger.error(f"Upload error: {str(e)}", exc_info=True)
         upload_progress.pop(video['id'], None)
             
-def upload_video_to_instagram(video, session):
+async def upload_video_to_instagram(video, session):
     """Upload video to Instagram using Graph API"""
     instagram_creds = session.get("instagram_creds")
     instagram_settings = session.get("instagram_settings", {})
@@ -2853,18 +2777,117 @@ def upload_video_to_instagram(video, session):
         instagram_logger.info(f"Uploading {video['filename']} to Instagram")
         upload_progress[video['id']] = 10
         
-        # Note: Instagram Graph API video upload requires:
-        # 1. Instagram Business or Creator account
-        # 2. Facebook Page linked to Instagram account
-        # 3. Container creation, then publishing
-        # This is a simplified implementation - full implementation would require
-        # Facebook Page ID and more complex API calls
+        # Instagram Graph API video upload process:
+        # 1. Create a media container (initiate upload)
+        # 2. Publish the container
         
-        # For now, log that this needs full implementation
-        instagram_logger.warning("Instagram upload requires full Graph API implementation with Facebook Page")
-        video['status'] = 'failed'
-        video['error'] = 'Instagram upload not fully implemented. Requires Facebook Page integration.'
-        upload_progress.pop(video['id'], None)
+        # Step 1: Create media container
+        # For video, we need to provide a publicly accessible URL
+        # Since we're running locally, we'll need to upload the video first
+        
+        # Read video file
+        with open(video_path, 'rb') as f:
+            video_data = f.read()
+        
+        upload_progress[video['id']] = 20
+        
+        # Create container with video
+        # Note: Instagram requires video to be accessible via URL or uploaded as resumable upload
+        # For simplicity, we'll use the single-request upload for videos < 1GB
+        
+        container_url = f"https://graph.instagram.com/v21.0/{business_account_id}/media"
+        
+        # Build container params
+        container_params = {
+            "media_type": "REELS",  # Use REELS for video content
+            "caption": caption,
+            "access_token": access_token
+        }
+        
+        # Add optional params
+        if location_id:
+            container_params["location_id"] = location_id
+        
+        instagram_logger.info(f"Creating media container for {video['filename']}")
+        
+        # For video upload, Instagram requires the video to be uploaded to their servers first
+        # This is a two-step process:
+        # 1. POST video file to get upload ID
+        # 2. Create container with upload ID
+        
+        # Upload video file
+        upload_url = f"https://graph.instagram.com/v21.0/{business_account_id}/media"
+        
+        # Instagram video requirements:
+        # - Format: MP4, MOV
+        # - Aspect ratio: 9:16 (vertical), 1:1 (square), or 16:9 (landscape)
+        # - Duration: 3-60 seconds for Reels
+        # - Size: < 1GB
+        # - Codec: H.264, frame rate: 30fps recommended
+        
+        files = {
+            'video': (video['filename'], video_data, 'video/mp4')
+        }
+        
+        upload_progress[video['id']] = 40
+        
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            # Create container
+            response = await client.post(
+                upload_url,
+                data=container_params,
+                files=files
+            )
+            
+            if response.status_code != 200:
+                error_data = response.json() if response.headers.get('content-type') == 'application/json' else response.text
+                instagram_logger.error(f"Failed to create container: {error_data}")
+                raise Exception(f"Failed to create media container: {error_data}")
+            
+            result = response.json()
+            container_id = result.get('id')
+            
+            if not container_id:
+                raise Exception(f"No container ID in response: {result}")
+            
+            instagram_logger.info(f"Created container {container_id}")
+            video['instagram_container_id'] = container_id
+            upload_progress[video['id']] = 70
+            
+            # Step 2: Publish the container
+            # Wait a bit for Instagram to process the video
+            await asyncio.sleep(5)
+            
+            publish_url = f"https://graph.instagram.com/v21.0/{business_account_id}/media_publish"
+            publish_params = {
+                "creation_id": container_id,
+                "access_token": access_token
+            }
+            
+            instagram_logger.info(f"Publishing container {container_id}")
+            
+            publish_response = await client.post(publish_url, data=publish_params)
+            
+            if publish_response.status_code != 200:
+                error_data = publish_response.json() if publish_response.headers.get('content-type') == 'application/json' else publish_response.text
+                instagram_logger.error(f"Failed to publish: {error_data}")
+                raise Exception(f"Failed to publish media: {error_data}")
+            
+            publish_result = publish_response.json()
+            media_id = publish_result.get('id')
+            
+            if not media_id:
+                raise Exception(f"No media ID in publish response: {publish_result}")
+            
+            instagram_logger.info(f"Published to Instagram: {media_id}")
+            
+            video['instagram_id'] = media_id
+            video['status'] = 'completed'
+            upload_progress[video['id']] = 100
+            
+            # Clean up progress after a delay
+            await asyncio.sleep(2)
+            upload_progress.pop(video['id'], None)
         
     except Exception as e:
         video['status'] = 'failed'
@@ -2907,6 +2930,8 @@ async def scheduler_task():
                                             # Pass session_id for TikTok rate limiting
                                             if dest_name == "tiktok":
                                                 uploader_func(video, session, session_id)
+                                            elif dest_name == "instagram":
+                                                await uploader_func(video, session)
                                             else:
                                                 uploader_func(video, session)
                                 
@@ -2927,7 +2952,7 @@ async def startup_event():
     print("Scheduler task started")
 
 @app.post("/api/upload")
-def upload_videos(session_id: str = Depends(require_csrf)):
+async def upload_videos(session_id: str = Depends(require_csrf)):
     """Upload all pending videos to all enabled destinations (immediate or scheduled)"""
     session = get_session(session_id)
     
@@ -3011,6 +3036,8 @@ def upload_videos(session_id: str = Depends(require_csrf)):
                     # Pass session_id for TikTok rate limiting
                     if dest_name == "tiktok":
                         uploader_func(video, session, session_id)
+                    elif dest_name == "instagram":
+                        await uploader_func(video, session)
                     else:
                         uploader_func(video, session)
                     
