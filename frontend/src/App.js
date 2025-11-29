@@ -895,7 +895,7 @@ function Home() {
   };
 
   const upload = async () => {
-    if (!youtube.enabled && !tiktok.enabled) {
+    if (!youtube.enabled && !tiktok.enabled && !instagram.enabled) {
       setMessage('❌ Enable at least one destination first');
       return;
     }
