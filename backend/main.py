@@ -1,5 +1,5 @@
 from urllib.parse import urlencode, unquote
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Response, Cookie
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Response, Cookie, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, HTMLResponse
 from pathlib import Path
@@ -15,6 +15,8 @@ import logging
 import subprocess
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from collections import defaultdict
+from functools import wraps
 
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
@@ -44,6 +46,8 @@ upload_logger = logging.getLogger("upload")
 tiktok_logger = logging.getLogger("tiktok")
 youtube_logger = logging.getLogger("youtube")
 instagram_logger = logging.getLogger("instagram")
+security_logger = logging.getLogger("security")  # For security-related logs
+api_access_logger = logging.getLogger("api_access")  # For detailed API access logs
 
 # OAuth Credentials from environment variables
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
@@ -123,6 +127,266 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ============================================================================
+# SECURITY IMPLEMENTATION
+# ============================================================================
+
+# CSRF Token Storage: {session_id: csrf_token}
+csrf_tokens = {}
+
+# Rate Limiter: {identifier: [timestamps]}
+# identifier can be session_id or IP address
+rate_limiter = defaultdict(list)
+RATE_LIMIT_REQUESTS = 100  # requests per window
+RATE_LIMIT_WINDOW = 60  # seconds
+RATE_LIMIT_STRICT_REQUESTS = 20  # stricter limit for state-changing operations
+RATE_LIMIT_STRICT_WINDOW = 60  # seconds
+
+# Allowed origins for Origin/Referer validation
+ALLOWED_ORIGINS = [FRONTEND_URL] if ENVIRONMENT == "production" else [FRONTEND_URL, "http://localhost:3000", "http://localhost:8000"]
+
+def generate_csrf_token() -> str:
+    """Generate a secure CSRF token"""
+    return secrets.token_urlsafe(32)
+
+def get_csrf_token(session_id: str) -> str:
+    """Get or generate CSRF token for a session"""
+    if session_id not in csrf_tokens:
+        csrf_tokens[session_id] = generate_csrf_token()
+    return csrf_tokens[session_id]
+
+def validate_csrf_token(session_id: str, token: Optional[str]) -> bool:
+    """Validate CSRF token for a session"""
+    if session_id not in csrf_tokens:
+        return False
+    return secrets.compare_digest(csrf_tokens[session_id], token or "")
+
+def get_client_identifier(request: Request, session_id: Optional[str] = None) -> str:
+    """Get client identifier for rate limiting (prefer session_id, fallback to IP)"""
+    if session_id:
+        return f"session:{session_id}"
+    # Get IP from X-Forwarded-For (if behind proxy) or direct connection
+    ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    if not ip:
+        ip = request.client.host if request.client else "unknown"
+    return f"ip:{ip}"
+
+def check_rate_limit(identifier: str, strict: bool = False) -> bool:
+    """Check if request is within rate limit. Returns True if allowed, False if rate limited."""
+    now = datetime.now(timezone.utc)
+    window = RATE_LIMIT_STRICT_WINDOW if strict else RATE_LIMIT_WINDOW
+    max_requests = RATE_LIMIT_STRICT_REQUESTS if strict else RATE_LIMIT_REQUESTS
+    
+    # Clean old entries
+    cutoff = now - timedelta(seconds=window)
+    rate_limiter[identifier] = [
+        ts for ts in rate_limiter[identifier] 
+        if ts > cutoff
+    ]
+    
+    # Check limit
+    if len(rate_limiter[identifier]) >= max_requests:
+        return False
+    
+    # Add current request
+    rate_limiter[identifier].append(now)
+    return True
+
+def validate_origin_referer(request: Request) -> bool:
+    """Validate Origin or Referer header matches allowed origins"""
+    origin = request.headers.get("Origin")
+    referer = request.headers.get("Referer")
+    
+    # In development, allow requests without Origin/Referer (e.g., direct API calls)
+    if ENVIRONMENT != "production":
+        if not origin and not referer:
+            return True
+    
+    # Check Origin first (more reliable for CORS)
+    if origin:
+        # Remove protocol and normalize
+        origin_normalized = origin.rstrip("/")
+        for allowed in ALLOWED_ORIGINS:
+            allowed_normalized = allowed.rstrip("/")
+            if origin_normalized == allowed_normalized:
+                return True
+    
+    # Fallback to Referer
+    if referer:
+        try:
+            from urllib.parse import urlparse
+            referer_parsed = urlparse(referer)
+            referer_origin = f"{referer_parsed.scheme}://{referer_parsed.netloc}"
+            for allowed in ALLOWED_ORIGINS:
+                if referer_origin == allowed:
+                    return True
+        except Exception:
+            pass
+    
+    return False
+
+# FastAPI Dependencies for Security
+async def require_session(request: Request, response: Response) -> str:
+    """Dependency: Require valid session, return session_id"""
+    session_id = get_or_create_session_id(request, response)
+    
+    # Ensure session exists
+    get_session(session_id)
+    
+    return session_id
+
+async def require_csrf(
+    request: Request,
+    session_id: str = Depends(require_session),
+    x_csrf_token: Optional[str] = Header(None, alias="X-CSRF-Token")
+) -> str:
+    """Dependency: Require valid CSRF token for state-changing requests"""
+    # Get token from header or form data
+    csrf_token = x_csrf_token
+    if not csrf_token:
+        # Try to get from form data (for multipart/form-data)
+        try:
+            form_data = await request.form()
+            csrf_token = form_data.get("csrf_token")
+        except Exception:
+            pass
+    
+    if not validate_csrf_token(session_id, csrf_token):
+        security_logger.warning(
+            f"CSRF validation failed - Session: {session_id[:16]}..., "
+            f"IP: {request.client.host if request.client else 'unknown'}, "
+            f"Path: {request.url.path}"
+        )
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid or missing CSRF token"
+        )
+    
+    return session_id
+
+def log_api_access(
+    request: Request,
+    session_id: Optional[str] = None,
+    status_code: int = 200,
+    error: Optional[str] = None
+):
+    """Log detailed API access information"""
+    client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    if not client_ip:
+        client_ip = request.client.host if request.client else "unknown"
+    
+    user_agent = request.headers.get("User-Agent", "unknown")
+    origin = request.headers.get("Origin", "none")
+    referer = request.headers.get("Referer", "none")
+    
+    log_data = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "method": request.method,
+        "path": request.url.path,
+        "query": str(request.url.query) if request.url.query else None,
+        "session_id": session_id[:16] + "..." if session_id else None,
+        "client_ip": client_ip,
+        "user_agent": user_agent,
+        "origin": origin,
+        "referer": referer,
+        "status_code": status_code,
+        "error": error
+    }
+    
+    if error or status_code >= 400:
+        api_access_logger.warning(f"API Access: {json.dumps(log_data)}")
+    else:
+        api_access_logger.info(f"API Access: {json.dumps(log_data)}")
+
+# Middleware for API access logging and security checks
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    """Middleware for security checks and API access logging"""
+    start_time = datetime.now(timezone.utc)
+    session_id = None
+    status_code = 500
+    error = None
+    
+    try:
+        # Skip security checks for OAuth callbacks and static pages
+        path = request.url.path
+        is_callback = (
+            "/api/auth/youtube/callback" in path or
+            "/api/auth/tiktok/callback" in path or
+            "/api/auth/instagram/callback" in path or
+            path in ["/terms", "/privacy"]
+        )
+        
+        # Get session ID if available
+        session_id = request.cookies.get("session_id")
+        
+        # Rate limiting (apply to all endpoints except callbacks)
+        if not is_callback:
+            identifier = get_client_identifier(request, session_id)
+            # Stricter rate limiting for state-changing methods
+            is_state_changing = request.method in ["POST", "PATCH", "DELETE", "PUT"]
+            if not check_rate_limit(identifier, strict=is_state_changing):
+                error = "Rate limit exceeded"
+                security_logger.warning(
+                    f"Rate limit exceeded - Identifier: {identifier}, "
+                    f"Path: {path}, Method: {request.method}"
+                )
+                response = Response(
+                    content=json.dumps({"error": "Rate limit exceeded. Please try again later."}),
+                    status_code=429,
+                    media_type="application/json"
+                )
+                log_api_access(request, session_id, 429, error)
+                return response
+            
+            # Origin/Referer validation (skip for GET requests in dev)
+            if request.method != "GET" or ENVIRONMENT == "production":
+                if not validate_origin_referer(request):
+                    client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+                    if not client_ip:
+                        client_ip = request.client.host if request.client else "unknown"
+                    error = "Invalid origin or referer"
+                    security_logger.warning(
+                        f"Origin/Referer validation failed - "
+                        f"Origin: {request.headers.get('Origin', 'none')}, "
+                        f"Referer: {request.headers.get('Referer', 'none')}, "
+                        f"Path: {path}, IP: {client_ip}"
+                    )
+                    response = Response(
+                        content=json.dumps({"error": "Invalid origin or referer"}),
+                        status_code=403,
+                        media_type="application/json"
+                    )
+                    log_api_access(request, session_id, 403, error)
+                    return response
+        
+        # Process request
+        response = await call_next(request)
+        status_code = response.status_code
+        
+        # Set CSRF token in response header for GET requests (so frontend can read it)
+        if request.method == "GET" and session_id and not is_callback:
+            csrf_token = get_csrf_token(session_id)
+            response.headers["X-CSRF-Token"] = csrf_token
+        
+        return response
+        
+    except HTTPException as e:
+        status_code = e.status_code
+        error = e.detail
+        raise
+    except Exception as e:
+        error = str(e)
+        security_logger.error(f"Security middleware error: {error}", exc_info=True)
+        raise
+    finally:
+        # Log API access
+        log_api_access(request, session_id, status_code, error)
+
+# ============================================================================
+# END SECURITY IMPLEMENTATION
+# ============================================================================
 
 # Storage
 UPLOAD_DIR = Path("uploads")
@@ -476,9 +740,8 @@ def auth_callback(code: str, state: str, request: Request, response: Response):
     return RedirectResponse(frontend_url)
 
 @app.get("/api/destinations")
-def get_destinations(request: Request, response: Response):
+def get_destinations(session_id: str = Depends(require_session)):
     """Get destination status"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     scheduled_count = len([v for v in session["videos"] if v['status'] == 'scheduled'])
@@ -499,9 +762,8 @@ def get_destinations(request: Request, response: Response):
     }
 
 @app.get("/api/auth/youtube/account")
-def get_youtube_account(request: Request, response: Response):
+def get_youtube_account(session_id: str = Depends(require_session)):
     """Get YouTube account information (channel name/email)"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     if not session.get("youtube_creds"):
@@ -581,9 +843,8 @@ def get_youtube_account(request: Request, response: Response):
         return {"account": None, "error": str(e)}
 
 @app.post("/api/global/wordbank")
-def add_wordbank_word(request: Request, response: Response, word: str):
+def add_wordbank_word(word: str, session_id: str = Depends(require_csrf)):
     """Add a word to the global wordbank"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     # Strip whitespace and capitalize (first letter uppercase, rest lowercase)
@@ -598,9 +859,8 @@ def add_wordbank_word(request: Request, response: Response, word: str):
     return {"wordbank": session["global_settings"]["wordbank"]}
 
 @app.delete("/api/global/wordbank/{word}")
-def remove_wordbank_word(request: Request, response: Response, word: str):
+def remove_wordbank_word(word: str, session_id: str = Depends(require_csrf)):
     """Remove a word from the global wordbank"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     if word in session["global_settings"]["wordbank"]:
@@ -610,9 +870,8 @@ def remove_wordbank_word(request: Request, response: Response, word: str):
     return {"wordbank": session["global_settings"]["wordbank"]}
 
 @app.delete("/api/global/wordbank")
-def clear_wordbank(request: Request, response: Response):
+def clear_wordbank(session_id: str = Depends(require_csrf)):
     """Clear all words from the global wordbank"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     session["global_settings"]["wordbank"] = []
@@ -621,9 +880,8 @@ def clear_wordbank(request: Request, response: Response):
     return {"wordbank": []}
 
 @app.post("/api/destinations/youtube/toggle")
-def toggle_youtube(request: Request, response: Response, enabled: bool):
+def toggle_youtube(enabled: bool, session_id: str = Depends(require_csrf)):
     """Toggle YouTube destination on/off"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     session["destinations"]["youtube"]["enabled"] = enabled
@@ -637,9 +895,8 @@ def toggle_youtube(request: Request, response: Response, enabled: bool):
     }
 
 @app.post("/api/destinations/tiktok/toggle")
-def toggle_tiktok(request: Request, response: Response, enabled: bool):
+def toggle_tiktok(enabled: bool, session_id: str = Depends(require_csrf)):
     """Toggle TikTok destination on/off"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     session["destinations"]["tiktok"]["enabled"] = enabled
@@ -653,9 +910,8 @@ def toggle_tiktok(request: Request, response: Response, enabled: bool):
     }
 
 @app.post("/api/destinations/instagram/toggle")
-def toggle_instagram(request: Request, response: Response, enabled: bool):
+def toggle_instagram(enabled: bool, session_id: str = Depends(require_csrf)):
     """Toggle Instagram destination on/off"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     session["destinations"]["instagram"]["enabled"] = enabled
@@ -669,9 +925,8 @@ def toggle_instagram(request: Request, response: Response, enabled: bool):
     }
 
 @app.post("/api/auth/youtube/disconnect")
-def disconnect_youtube(request: Request, response: Response):
+def disconnect_youtube(session_id: str = Depends(require_csrf)):
     """Disconnect YouTube account"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     session["youtube_creds"] = None
@@ -850,9 +1105,8 @@ async def auth_tiktok_callback(
 
 
 @app.get("/api/auth/tiktok/account")
-def get_tiktok_account(request: Request, response: Response):
+def get_tiktok_account(session_id: str = Depends(require_session)):
     """Get TikTok account information (display name/username)"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     if not session.get("tiktok_creds"):
@@ -928,9 +1182,8 @@ def get_tiktok_account(request: Request, response: Response):
         return {"account": None, "error": str(e)}
 
 @app.post("/api/auth/tiktok/disconnect")
-def disconnect_tiktok(request: Request, response: Response):
+def disconnect_tiktok(session_id: str = Depends(require_csrf)):
     """Disconnect TikTok account"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     session["tiktok_creds"] = None
@@ -1164,9 +1417,8 @@ async def auth_instagram_callback(
         return RedirectResponse(f"{FRONTEND_URL}?error=instagram_auth_failed")
 
 @app.get("/api/auth/instagram/account")
-async def get_instagram_account(request: Request, response: Response):
+async def get_instagram_account(session_id: str = Depends(require_session)):
     """Get Instagram account information (username)"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     if not session.get("instagram_creds"):
@@ -1222,9 +1474,8 @@ async def get_instagram_account(request: Request, response: Response):
         return {"account": None, "error": str(e)}
 
 @app.post("/api/auth/instagram/disconnect")
-def disconnect_instagram(request: Request, response: Response):
+def disconnect_instagram(session_id: str = Depends(require_csrf)):
     """Disconnect Instagram account"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     session["instagram_creds"] = None
@@ -1360,16 +1611,14 @@ async def refresh_tiktok_token(session_id: str) -> dict:
         return session["tiktok_creds"]
 
 @app.get("/api/global/settings")
-def get_global_settings(request: Request, response: Response):
+def get_global_settings(session_id: str = Depends(require_session)):
     """Get global settings"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     return session["global_settings"]
 
 @app.post("/api/global/settings")
 def update_global_settings(
-    request: Request,
-    response: Response,
+    session_id: str = Depends(require_csrf),
     title_template: str = None,
     description_template: str = None,
     upload_immediately: bool = None,
@@ -1380,7 +1629,6 @@ def update_global_settings(
     allow_duplicates: bool = None
 ):
     """Update global settings"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     settings = session["global_settings"]
     
@@ -1420,16 +1668,14 @@ def update_global_settings(
     return settings
 
 @app.get("/api/youtube/settings")
-def get_youtube_settings(request: Request, response: Response):
+def get_youtube_settings(session_id: str = Depends(require_session)):
     """Get YouTube upload settings"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     return session["youtube_settings"]
 
 @app.post("/api/youtube/settings")
 def update_youtube_settings(
-    request: Request,
-    response: Response,
+    session_id: str = Depends(require_csrf),
     visibility: str = None, 
     made_for_kids: bool = None,
     title_template: str = None,
@@ -1437,7 +1683,6 @@ def update_youtube_settings(
     tags_template: str = None
 ):
     """Update YouTube upload settings"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     settings = session["youtube_settings"]
     
@@ -1465,14 +1710,12 @@ def update_youtube_settings(
 
 @app.get("/api/youtube/videos")
 def get_youtube_videos(
-    request: Request,
-    response: Response,
+    session_id: str = Depends(require_session),
     page: int = 1,
     per_page: int = 50,
     hide_shorts: bool = False
 ):
     """Get user's YouTube videos (paginated)"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     if not session.get("youtube_creds"):
@@ -1606,16 +1849,14 @@ def get_youtube_videos(
 
 # TikTok settings endpoints
 @app.get("/api/tiktok/settings")
-def get_tiktok_settings(request: Request, response: Response):
+def get_tiktok_settings(session_id: str = Depends(require_session)):
     """Get TikTok upload settings"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     return session["tiktok_settings"]
 
 @app.post("/api/tiktok/settings")
 def update_tiktok_settings(
-    request: Request,
-    response: Response,
+    session_id: str = Depends(require_csrf),
     privacy_level: str = None,
     allow_comments: bool = None,
     allow_duet: bool = None,
@@ -1624,7 +1865,6 @@ def update_tiktok_settings(
     description_template: str = None
 ):
     """Update TikTok upload settings"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     settings = session["tiktok_settings"]
     
@@ -1655,23 +1895,20 @@ def update_tiktok_settings(
 
 # Instagram settings endpoints
 @app.get("/api/instagram/settings")
-def get_instagram_settings(request: Request, response: Response):
+def get_instagram_settings(session_id: str = Depends(require_session)):
     """Get Instagram upload settings"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     return session["instagram_settings"]
 
 @app.post("/api/instagram/settings")
 def update_instagram_settings(
-    request: Request,
-    response: Response,
+    session_id: str = Depends(require_csrf),
     caption_template: str = None,
     location_id: str = None,
     disable_comments: bool = None,
     disable_likes: bool = None
 ):
     """Update Instagram upload settings"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     settings = session["instagram_settings"]
     
@@ -1693,9 +1930,8 @@ def update_instagram_settings(
     return settings
 
 @app.post("/api/videos")
-async def add_video(file: UploadFile = File(...), request: Request = None, response: Response = None):
+async def add_video(file: UploadFile = File(...), session_id: str = Depends(require_csrf)):
     """Add video to queue"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     # Check for duplicates if not allowed
@@ -1732,9 +1968,8 @@ async def add_video(file: UploadFile = File(...), request: Request = None, respo
     return video
 
 @app.get("/api/videos")
-def get_videos(request: Request, response: Response):
+def get_videos(session_id: str = Depends(require_session)):
     """Get video queue with progress and computed titles"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     # Add progress info and computed YouTube titles to videos
@@ -1874,9 +2109,8 @@ def get_videos(request: Request, response: Response):
     return videos_with_info
 
 @app.delete("/api/videos/{video_id}")
-def delete_video(video_id: int, request: Request, response: Response):
+def delete_video(video_id: int, session_id: str = Depends(require_csrf)):
     """Remove from queue"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     session["videos"] = [v for v in session["videos"] if v['id'] != video_id]
@@ -1884,9 +2118,8 @@ def delete_video(video_id: int, request: Request, response: Response):
     return {"ok": True}
 
 @app.post("/api/videos/{video_id}/recompute-title")
-def recompute_video_title(video_id: int, request: Request, response: Response):
+def recompute_video_title(video_id: int, session_id: str = Depends(require_csrf)):
     """Recompute video title from current template"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     # Find the video
@@ -1926,7 +2159,7 @@ def recompute_video_title(video_id: int, request: Request, response: Response):
 def update_video(
     video_id: int,
     request: Request,
-    response: Response,
+    session_id: str = Depends(require_csrf),
     title: str = None,
     description: str = None,
     tags: str = None,
@@ -1935,7 +2168,6 @@ def update_video(
     scheduled_time: str = None
 ):
     """Update video settings"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     # Find the video
@@ -1987,9 +2219,8 @@ def update_video(
     return video
 
 @app.post("/api/videos/reorder")
-async def reorder_videos(request: Request, response: Response):
+async def reorder_videos(request: Request, session_id: str = Depends(require_csrf)):
     """Reorder videos in the queue"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     try:
@@ -2023,9 +2254,8 @@ async def reorder_videos(request: Request, response: Response):
         raise HTTPException(500, f"Error reordering videos: {str(e)}")
 
 @app.post("/api/videos/cancel-scheduled")
-def cancel_scheduled_videos(request: Request, response: Response):
+def cancel_scheduled_videos(session_id: str = Depends(require_csrf)):
     """Cancel all scheduled videos and return them to pending status"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     cancelled_count = 0
@@ -2625,9 +2855,8 @@ async def startup_event():
     print("Scheduler task started")
 
 @app.post("/api/upload")
-def upload_videos(request: Request, response: Response):
+def upload_videos(session_id: str = Depends(require_csrf)):
     """Upload all pending videos to all enabled destinations (immediate or scheduled)"""
-    session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
     
     # Check if at least one destination is enabled and connected
