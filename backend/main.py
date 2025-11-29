@@ -1083,7 +1083,7 @@ async def auth_instagram_callback(
         return RedirectResponse(f"{FRONTEND_URL}?error=instagram_auth_failed")
 
 @app.get("/api/auth/instagram/account")
-def get_instagram_account(request: Request, response: Response):
+async def get_instagram_account(request: Request, response: Response):
     """Get Instagram account information (username)"""
     session_id = get_or_create_session_id(request, response)
     session = get_session(session_id)
@@ -1103,27 +1103,15 @@ def get_instagram_account(request: Request, response: Response):
             return {"account": None}
         
         # Get user info from Instagram Graph API
-        async def fetch_account_info():
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{INSTAGRAM_GRAPH_API_BASE}/{user_id}",
-                    params={
-                        "fields": "id,username",
-                        "access_token": access_token
-                    },
-                    timeout=10.0
-                )
-                return response
-        
-        # Use asyncio to run the async function
-        import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        account_response = loop.run_until_complete(fetch_account_info())
+        async with httpx.AsyncClient() as client:
+            account_response = await client.get(
+                f"{INSTAGRAM_GRAPH_API_BASE}/{user_id}",
+                params={
+                    "fields": "id,username",
+                    "access_token": access_token
+                },
+                timeout=10.0
+            )
         
         if account_response.status_code != 200:
             instagram_logger.error(f"Failed to fetch account info: {account_response.text}")
@@ -2560,11 +2548,14 @@ def upload_videos(request: Request, response: Response):
                     # Check if this destination succeeded by looking for success markers
                     # YouTube success: has 'youtube_id'
                     # TikTok success: has 'tiktok_id' or 'tiktok_publish_id'
+                    # Instagram success: has 'instagram_id' or 'instagram_container_id'
                     upload_logger.debug(f"Checking upload result for {dest_name}...")
                     upload_logger.debug(f"Video status: {video.get('status', 'unknown')}, "
                                       f"youtube_id: {'youtube_id' in video}, "
                                       f"tiktok_id: {'tiktok_id' in video}, "
                                       f"tiktok_publish_id: {'tiktok_publish_id' in video}, "
+                                      f"instagram_id: {'instagram_id' in video}, "
+                                      f"instagram_container_id: {'instagram_container_id' in video}, "
                                       f"error: {'error' in video}")
                     
                     if dest_name == 'youtube' and 'youtube_id' in video:
@@ -2573,6 +2564,9 @@ def upload_videos(request: Request, response: Response):
                     elif dest_name == 'tiktok' and ('tiktok_id' in video or 'tiktok_publish_id' in video):
                         succeeded_destinations.append(dest_name)
                         upload_logger.info(f"TikTok upload succeeded for {video['filename']}")
+                    elif dest_name == 'instagram' and ('instagram_id' in video or 'instagram_container_id' in video):
+                        succeeded_destinations.append(dest_name)
+                        upload_logger.info(f"Instagram upload succeeded for {video['filename']}")
                     else:
                         # Check if upload function set an error
                         if video.get('status') == 'failed' or 'error' in video:

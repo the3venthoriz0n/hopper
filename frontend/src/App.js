@@ -1467,8 +1467,7 @@ function Home() {
             </div>
           </div>
         )}
-      </div>
-      
+
         {/* Instagram Destination */}
         <div className="destination">
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
