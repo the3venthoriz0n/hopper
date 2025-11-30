@@ -1,4 +1,4 @@
-.PHONY: help sync up down rebuild logs shell clean test
+.PHONY: help sync up down rebuild logs shell clean test test-security
 
 # Default environment (can be overridden: make up ENV=prod)
 ENV ?= dev
@@ -20,6 +20,7 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  test          Run unit tests"
+	@echo "  test-security Run security tests (requires API to be running)"
 	@echo "  sync          Sync local code to remote server"
 	@echo "  up            Start services (with build, runs tests first)"
 	@echo "  down          Stop services"
@@ -42,12 +43,18 @@ help:
 sync:
 	@bash sync-rsync.sh
 
-test: sync
+test: sync test-security
 	@echo "🧪 Building backend image (to ensure pytest is installed)..."
 	@$(COMPOSE) build backend
-	@echo "🧪 Running tests..."
+	@echo "🧪 Running unit tests..."
 	@$(COMPOSE) run --rm backend python -m pytest /app/test_main.py -v
 	@echo "✅ All tests passed!"
+
+test-security:
+	@echo "🔒 Running security tests (requires API to be running)..."
+	@echo "⚠️  Make sure backend is running: make up ENV=$(ENV)"
+	@$(COMPOSE) run --rm -e TEST_BASE_URL=http://backend:8000 backend python -m pytest /app/test_security.py -v
+	@echo "✅ Security tests passed!"
 
 up: test sync
 	@echo "🚀 Starting $(ENV) environment..."
