@@ -1,4 +1,37 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hopper-prod-postgres
+    environment:
+      - POSTGRES_DB=hopper
+      - POSTGRES_USER=hopper
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - hopper_default
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        compress: "true"
+
+  redis:
+    image: redis:7-alpine
+    container_name: hopper-prod-redis
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - hopper_default
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+        compress: "true"
+
   backend:
     build: ./backend
     container_name: hopper-prod-backend
@@ -7,6 +40,9 @@ services:
     volumes:
       - backend_uploads:/app/uploads
       - backend_sessions:/app/sessions
+    depends_on:
+      - postgres
+      - redis
     environment:
       - PYTHONUNBUFFERED=1
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -23,6 +59,9 @@ services:
       - TIKTOK_CLIENT_SECRET=${TIKTOK_CLIENT_SECRET}
       - FACEBOOK_APP_ID=${FACEBOOK_APP_ID}
       - FACEBOOK_APP_SECRET=${FACEBOOK_APP_SECRET}
+      - DATABASE_URL=postgresql://hopper:${POSTGRES_PASSWORD}@postgres:5432/hopper
+      - REDIS_URL=redis://redis:6379/0
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
     logging:
       driver: "json-file"
       options:
@@ -67,6 +106,8 @@ networks:
     external: true
 
 volumes:
+  postgres_data:
+  redis_data:
   backend_uploads:
   backend_sessions:
 

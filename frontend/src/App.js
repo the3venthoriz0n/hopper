@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Routes, Route, Link } from 'react-router-dom';
+import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import './App.css';
 import Terms from './Terms';
 import Privacy from './Privacy';
+import Login from './Login';
 
 // Configure axios to send cookies with every request
 axios.defaults.withCredentials = true;
@@ -23,6 +24,11 @@ axios.interceptors.response.use(
     return response;
   },
   (error) => {
+    // Handle 401 errors globally - force re-authentication
+    if (error.response?.status === 401 && !error.config.url?.includes('/auth/')) {
+      // Clear user state and let the auth check redirect to login
+      window.location.reload();
+    }
     return Promise.reject(error);
   }
 );
@@ -44,6 +50,8 @@ axios.interceptors.request.use(
 );
 
 function Home() {
+  const navigate = useNavigate();
+  
   // Build API URL at runtime - always use HTTPS
   const getApiUrl = () => {
     const backendUrl = process.env.REACT_APP_BACKEND_URL || `https://${window.location.hostname}`;
@@ -54,10 +62,69 @@ function Home() {
   const isProduction = process.env.REACT_APP_ENVIRONMENT === 'production';
   const appTitle = isProduction ? '🐸 hopper' : '🐸 DEV hopper';
   
+  // Authentication state
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  
+  // Check if user is authenticated
+  useEffect(() => {
+    checkAuth();
+  }, []);
+  
+  const checkAuth = async () => {
+    try {
+      const res = await axios.get(`${API}/auth/me`);
+      if (res.data.user) {
+        setUser(res.data.user);
+      } else {
+        setUser(null);
+      }
+    } catch (err) {
+      console.error('Auth check failed:', err);
+      setUser(null);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+  
+  const handleLogout = async () => {
+    try {
+      await axios.post(`${API}/auth/logout`);
+      setUser(null);
+      setMessage('✅ Logged out successfully');
+    } catch (err) {
+      console.error('Logout failed:', err);
+      setMessage('❌ Logout failed');
+    }
+  };
+  
   // Set document title based on environment
   useEffect(() => {
     document.title = isProduction ? 'hopper' : 'DEV HOPPER';
   }, [isProduction]);
+  
+  // Show login page if not authenticated
+  if (authLoading) {
+    return (
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        minHeight: '100vh',
+        background: '#1a1a2e',
+        color: 'white'
+      }}>
+        <div>Loading...</div>
+      </div>
+    );
+  }
+  
+  if (!user) {
+    return <Login onLoginSuccess={(userData) => {
+      setUser(userData);
+      checkAuth();
+    }} />;
+  }
   
   const [youtube, setYoutube] = useState({ connected: false, enabled: false, account: null });
   const [tiktok, setTiktok] = useState({ connected: false, enabled: false, account: null });
@@ -963,7 +1030,29 @@ function Home() {
 
   return (
     <div className="app">
-      <h1>{appTitle}</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <h1>{appTitle}</h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <span style={{ color: '#999', fontSize: '0.9rem' }}>
+            {user.email}
+          </span>
+          <button 
+            onClick={handleLogout}
+            style={{
+              padding: '0.5rem 1rem',
+              background: 'rgba(239, 68, 68, 0.1)',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              borderRadius: '4px',
+              color: '#ef4444',
+              cursor: 'pointer',
+              fontSize: '0.9rem',
+              fontWeight: '500'
+            }}
+          >
+            Logout
+          </button>
+        </div>
+      </div>
       
       {/* Global Settings */}
       <div className="card">

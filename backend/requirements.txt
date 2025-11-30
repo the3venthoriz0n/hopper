@@ -8,4 +8,12 @@ httpx==0.26.0
 PyJWT==2.8.0
 cryptography==42.0.0
 pytest==8.0.0
+# Database
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
+alembic==1.13.1
+# Redis
+redis==5.0.1
+# Password hashing
+bcrypt==4.1.2
 

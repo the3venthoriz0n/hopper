@@ -13,7 +13,7 @@ import re
 import httpx
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Optional, List, Dict, Any
 from collections import defaultdict
 from functools import wraps
 
@@ -23,7 +23,55 @@ from google.auth.transport.requests import Request as GoogleRequest
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
+# Database and auth imports
+from models import init_db, get_db, User, Video, Setting, OAuthToken
+from auth import hash_password, verify_password, create_user, authenticate_user, get_user_by_id
+import redis_client
+from pydantic import BaseModel, EmailStr
+import db_helpers
+from encryption import encrypt, decrypt
+
 app = FastAPI()
+
+# ============================================================================
+# DATABASE AND REDIS INITIALIZATION
+# ============================================================================
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database and connections on startup"""
+    logger.info("Initializing database...")
+    try:
+        init_db()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+        raise
+    
+    logger.info("Testing Redis connection...")
+    try:
+        redis_client.redis_client.ping()
+        logger.info("Redis connection successful")
+    except Exception as e:
+        logger.error(f"Redis connection failed: {e}")
+        raise
+
+# ============================================================================
+# REQUEST/RESPONSE MODELS
+# ============================================================================
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+class UserResponse(BaseModel):
+    id: int
+    email: str
+    created_at: str
 
 # Get domain from environment or default to localhost for development
 DOMAIN = os.getenv("DOMAIN", "localhost:8000")
@@ -271,7 +319,7 @@ def validate_origin_referer(request: Request) -> bool:
 
 # FastAPI Dependencies for Security
 async def require_session(request: Request, response: Response) -> str:
-    """Dependency: Require valid existing session, return session_id"""
+    """Dependency: Require valid existing session, return session_id (OLD - FILE BASED)"""
     # Check if session cookie exists
     session_id = request.cookies.get("session_id")
     
@@ -303,6 +351,52 @@ async def require_session(request: Request, response: Response) -> str:
             )
     
     return session_id
+
+# ============================================================================
+# NEW REDIS-BASED SESSION DEPENDENCIES
+# ============================================================================
+
+def require_auth(request: Request) -> int:
+    """Dependency: Require authentication, return user_id"""
+    session_id = request.cookies.get("session_id")
+    
+    if not session_id:
+        raise HTTPException(401, "Not authenticated. Please log in.")
+    
+    user_id = redis_client.get_session(session_id)
+    if not user_id:
+        raise HTTPException(401, "Session expired. Please log in again.")
+    
+    return user_id
+
+async def require_csrf_new(
+    request: Request,
+    user_id: int = Depends(require_auth),
+    x_csrf_token: Optional[str] = Header(None, alias="X-CSRF-Token")
+) -> int:
+    """Dependency: Require auth + valid CSRF token, return user_id"""
+    session_id = request.cookies.get("session_id")
+    
+    # Get CSRF token from header or form data
+    csrf_token = x_csrf_token
+    if not csrf_token:
+        try:
+            form_data = await request.form()
+            csrf_token = form_data.get("csrf_token")
+        except Exception:
+            pass
+    
+    # Get expected CSRF token from Redis
+    expected_csrf = redis_client.get_csrf_token(session_id)
+    if not expected_csrf or csrf_token != expected_csrf:
+        security_logger.warning(
+            f"CSRF validation failed - User: {user_id}, "
+            f"IP: {request.client.host if request.client else 'unknown'}, "
+            f"Path: {request.url.path}"
+        )
+        raise HTTPException(403, "Invalid or missing CSRF token")
+    
+    return user_id
 
 async def get_or_create_session(request: Request, response: Response) -> str:
     """Dependency: Get existing session or create new one (for GET endpoints)"""
@@ -461,18 +555,14 @@ async def security_middleware(request: Request, call_next):
 # END SECURITY IMPLEMENTATION
 # ============================================================================
 
-# Storage
+# Storage - only need UPLOAD_DIR now (no more SESSIONS_DIR)
 UPLOAD_DIR = Path("uploads")
-SESSIONS_DIR = Path("sessions")
 try:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 except Exception:
     pass  # Directory already exists or mounted
 
-# Session storage: {session_id: {youtube_creds, videos, youtube_settings, upload_progress}}
-sessions = {}
-
+# Helper functions for template replacement
 def replace_template_placeholders(template: str, filename: str, wordbank: list) -> str:
     """Replace template placeholders with actual values"""
     # Replace {filename}
@@ -489,120 +579,6 @@ def replace_template_placeholders(template: str, filename: str, wordbank: list) 
         result = result.replace('{random}', '')
     
     return result
-
-def get_default_global_settings():
-    """Return default global settings"""
-    return {
-        "title_template": "{filename}",
-        "description_template": "Uploaded via Hopper",
-        "wordbank": [],
-        "upload_immediately": True,
-        "schedule_mode": "spaced",
-        "schedule_interval_value": 1,
-        "schedule_interval_unit": "hours",
-        "schedule_start_time": "",
-        "allow_duplicates": False
-    }
-
-def get_default_youtube_settings():
-    """Return default YouTube-specific settings"""
-    return {
-        "visibility": "private",
-        "made_for_kids": False,
-        "tags_template": "",
-        "title_template": "",  # Empty means use global
-        "description_template": ""  # Empty means use global
-    }
-
-def get_default_tiktok_settings():
-    """Return default TikTok-specific settings"""
-    return {
-        "privacy_level": "private",  # private, friends, public
-        "allow_comments": True,
-        "allow_duet": True,
-        "allow_stitch": True,
-        "title_template": "",  # Empty means use global
-        "description_template": ""  # Empty means use global (TikTok combines title+description)
-    }
-
-def get_default_instagram_settings():
-    """Return default Instagram-specific settings"""
-    return {
-        "caption_template": "",  # Empty means use global (Instagram uses caption, not separate title/description)
-        "location_id": "",  # Optional location ID
-        "disable_comments": False,
-        "disable_likes": False
-    }
-
-def get_session(session_id: str):
-    """Get or create a session"""
-    if session_id not in sessions:
-        sessions[session_id] = {
-            "youtube_creds": None,
-            "tiktok_creds": None,
-            "instagram_creds": None,
-            "videos": [],
-            "global_settings": get_default_global_settings(),
-            "youtube_settings": get_default_youtube_settings(),
-            "tiktok_settings": get_default_tiktok_settings(),
-            "instagram_settings": get_default_instagram_settings(),
-            "upload_progress": {},
-            "destinations": {
-                "youtube": {
-                    "enabled": False
-                },
-                "tiktok": {
-                    "enabled": False
-                },
-                "instagram": {
-                    "enabled": False
-                }
-            }
-        }
-        # Try to load from disk
-        load_session(session_id)
-    
-    return sessions[session_id]
-
-def save_session(session_id: str):
-    """Save session to disk"""
-    if session_id not in sessions:
-        return
-    
-    session_data = sessions[session_id].copy()
-    
-    # Convert Credentials object to dict for JSON serialization
-    if session_data["youtube_creds"]:
-        creds = session_data["youtube_creds"]
-        session_data["youtube_creds"] = {
-            "token": creds.token,
-            "refresh_token": creds.refresh_token,
-            "token_uri": creds.token_uri,
-            "client_id": creds.client_id,
-            "client_secret": creds.client_secret,
-            "scopes": creds.scopes
-        }
-    
-    session_file = SESSIONS_DIR / f"{session_id}.json"
-    try:
-        with open(session_file, 'w') as f:
-            json.dump(session_data, f, indent=2)
-    except Exception as e:
-        print(f"Error saving session: {e}")
-
-def load_session(session_id: str):
-    """Load session from disk"""
-    session_file = SESSIONS_DIR / f"{session_id}.json"
-    if not session_file.exists():
-        return
-    
-    try:
-        with open(session_file, 'r') as f:
-            session_data = json.load(f)
-        
-        # Convert credentials dict back to Credentials object
-        if session_data.get("youtube_creds"):
-            creds_data = session_data["youtube_creds"]
             # For old sessions that might be missing fields, use env vars as fallback
             # New sessions will always have these fields from the OAuth callback
             client_id = creds_data.get("client_id") or GOOGLE_CLIENT_ID
@@ -699,41 +675,171 @@ def load_session(session_id: str):
     except Exception as e:
         print(f"Error loading session: {e}")
 
-def get_or_create_session_id(request: Request, response: Response) -> str:
-    """Get existing session ID from cookie or create new one"""
+
+# ============================================================================
+# AUTHENTICATION ENDPOINTS
+# ============================================================================
+
+@app.post("/api/auth/register")
+def register(request_data: RegisterRequest, response: Response):
+    """Register a new user"""
+    try:
+        # Validate password strength (minimum 8 characters)
+        if len(request_data.password) < 8:
+            raise HTTPException(400, "Password must be at least 8 characters long")
+        
+        # Create user
+        user = create_user(request_data.email, request_data.password)
+        
+        # Create session
+        session_id = secrets.token_urlsafe(32)
+        redis_client.set_session(session_id, user.id)
+        
+        # Set session cookie
+        response.set_cookie(
+            key="session_id",
+            value=session_id,
+            httponly=True,
+            max_age=30*24*60*60,
+            samesite="lax",
+            secure=ENVIRONMENT == "production"
+        )
+        
+        logger.info(f"User registered: {user.email} (ID: {user.id})")
+        
+        return {
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "created_at": user.created_at.isoformat()
+            }
+        }
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.error(f"Registration error: {e}", exc_info=True)
+        raise HTTPException(500, "Registration failed")
+
+
+@app.post("/api/auth/login")
+def login(request_data: LoginRequest, response: Response):
+    """Login user"""
+    try:
+        # Authenticate user
+        user = authenticate_user(request_data.email, request_data.password)
+        if not user:
+            raise HTTPException(401, "Invalid email or password")
+        
+        # Create session
+        session_id = secrets.token_urlsafe(32)
+        redis_client.set_session(session_id, user.id)
+        
+        # Set session cookie
+        response.set_cookie(
+            key="session_id",
+            value=session_id,
+            httponly=True,
+            max_age=30*24*60*60,
+            samesite="lax",
+            secure=ENVIRONMENT == "production"
+        )
+        
+        logger.info(f"User logged in: {user.email} (ID: {user.id})")
+        
+        return {
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "created_at": user.created_at.isoformat()
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Login error: {e}", exc_info=True)
+        raise HTTPException(500, "Login failed")
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request, response: Response):
+    """Logout user"""
+    session_id = request.cookies.get("session_id")
+    if session_id:
+        redis_client.delete_session(session_id)
+        response.delete_cookie("session_id")
+        logger.info(f"User logged out (session: {session_id[:16]}...)")
+    return {"message": "Logged out successfully"}
+
+
+@app.get("/api/auth/me")
+def get_current_user(request: Request):
+    """Get current logged-in user"""
     session_id = request.cookies.get("session_id")
     if not session_id:
+        return {"user": None}
+    
+    user_id = redis_client.get_session(session_id)
+    if not user_id:
+        return {"user": None}
+    
+    user = get_user_by_id(user_id)
+    if not user:
+        return {"user": None}
+    
+    return {
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "created_at": user.created_at.isoformat()
+        }
+    }
+
+
+@app.get("/api/auth/csrf")
+def get_csrf(request: Request, response: Response):
+    """Get or generate CSRF token for the current session"""
+    session_id = request.cookies.get("session_id")
+    
+    if not session_id:
+        # Create new session for unauthenticated users
         session_id = secrets.token_urlsafe(32)
         response.set_cookie(
             key="session_id",
             value=session_id,
             httponly=True,
-            max_age=30*24*60*60,  # 30 days
-            samesite="lax"
+            max_age=30*24*60*60,
+            samesite="lax",
+            secure=ENVIRONMENT == "production"
         )
-    return session_id
+    
+    # Generate CSRF token and store in Redis
+    csrf_token = secrets.token_urlsafe(32)
+    redis_client.set_csrf_token(session_id, csrf_token)
+    
+    # Return token in both response body and header
+    response.headers["X-CSRF-Token"] = csrf_token
+    return {"csrf_token": csrf_token}
+
+
+# ============================================================================
+# OAUTH ENDPOINTS (YouTube, TikTok, Instagram)
+# ============================================================================
 
 @app.get("/api/auth/youtube")
-def auth_youtube(request: Request, response: Response):
-    """Start YouTube OAuth"""
+def auth_youtube(request: Request, user_id: int = Depends(require_auth)):
+    """Start YouTube OAuth - requires authentication"""
     google_config = get_google_client_config()
     if not google_config:
         raise HTTPException(400, "Google OAuth credentials not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_PROJECT_ID environment variables.")
     
-    # Ensure session exists
-    session_id = get_or_create_session_id(request, response)
-    
     # Build redirect URI dynamically based on request
-    # Check for HTTPS from cloudflared (X-Forwarded-Proto) or use environment
     protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" or ENVIRONMENT == "production" else "http"
     host = request.headers.get("host", DOMAIN)
-    # Remove port if present (cloudflared doesn't expose ports)
     if ":" in host:
         host = host.split(":")[0]
     redirect_uri = f"{protocol}://{host}/api/auth/youtube/callback"
     
-    # Create Flow from config dict instead of file
-    # Request both upload and readonly scopes - readonly needed for account info
+    # Create Flow from config dict
     flow = Flow.from_client_config(
         google_config,
         scopes=[
@@ -743,31 +849,27 @@ def auth_youtube(request: Request, response: Response):
         redirect_uri=redirect_uri
     )
     
-    # Store session_id in state parameter
-    url, state = flow.authorization_url(access_type='offline', state=session_id)
+    # Store user_id in state parameter
+    url, state = flow.authorization_url(access_type='offline', state=str(user_id))
     return {"url": url}
 
 @app.get("/api/auth/youtube/callback")
 def auth_callback(code: str, state: str, request: Request, response: Response):
-    """OAuth callback"""
-    # Get session from state parameter
-    session_id = state
-    session = get_session(session_id)
+    """OAuth callback - stores credentials in database"""
+    # Get user_id from state parameter
+    try:
+        user_id = int(state)
+    except (ValueError, TypeError):
+        raise HTTPException(400, "Invalid state parameter")
     
-    # Set session cookie
-    response.set_cookie(
-        key="session_id",
-        value=session_id,
-        httponly=True,
-        max_age=30*24*60*60,
-        samesite="lax"
-    )
+    # Verify user exists
+    user = get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(404, "User not found")
     
     # Build redirect URI dynamically
-    # Check for HTTPS from cloudflared (X-Forwarded-Proto) or use environment
     protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" or ENVIRONMENT == "production" else "http"
     host = request.headers.get("host", DOMAIN)
-    # Remove port if present (cloudflared doesn't expose ports)
     if ":" in host:
         host = host.split(":")[0]
     redirect_uri = f"{protocol}://{host}/api/auth/youtube/callback"
@@ -776,7 +878,7 @@ def auth_callback(code: str, state: str, request: Request, response: Response):
     if not google_config:
         raise HTTPException(400, "Google OAuth credentials not configured")
     
-    # Request both upload and readonly scopes - readonly needed for account info
+    # Create flow and fetch token
     flow = Flow.from_client_config(
         google_config,
         scopes=[
