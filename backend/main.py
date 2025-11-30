@@ -14,7 +14,6 @@ import httpx
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
-from collections import defaultdict
 from functools import wraps
 
 from google_auth_oauthlib.flow import Flow
@@ -117,8 +116,6 @@ TIKTOK_CREATOR_INFO_URL = f"{TIKTOK_API_BASE}/post/publish/creator_info/query/"
 TIKTOK_INIT_UPLOAD_URL = f"{TIKTOK_API_BASE}/post/publish/video/init/"
 
 # TikTok Rate Limiting: 6 requests per minute per user
-# Simple rate limiter: track last request time per session
-tiktok_rate_limiter = {}  # {session_id: [timestamps]}
 TIKTOK_RATE_LIMIT_REQUESTS = 6
 TIKTOK_RATE_LIMIT_WINDOW = 60  # seconds
 
@@ -282,10 +279,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 # SECURITY IMPLEMENTATION
 # ============================================================================
 
-# Rate Limiter: {identifier: [timestamps]} - in-memory is fine
-# identifier can be session_id or IP address
-rate_limiter = defaultdict(list)
-# Rate limiting: more permissive for production (real users), reasonable for development
+# Rate limiting configuration: more permissive for production (real users), reasonable for development
 if ENVIRONMENT == "development":
     RATE_LIMIT_REQUESTS = 1000  # requests per window
     RATE_LIMIT_WINDOW = 60  # seconds
@@ -311,24 +305,17 @@ def get_client_identifier(request: Request, session_id: Optional[str] = None) ->
     return f"ip:{ip}"
 
 def check_rate_limit(identifier: str, strict: bool = False) -> bool:
-    """Check if request is within rate limit. Returns True if allowed, False if rate limited."""
-    now = datetime.now(timezone.utc)
+    """Check if request is within rate limit using Redis. Returns True if allowed, False if rate limited."""
     window = RATE_LIMIT_STRICT_WINDOW if strict else RATE_LIMIT_WINDOW
     max_requests = RATE_LIMIT_STRICT_REQUESTS if strict else RATE_LIMIT_REQUESTS
     
-    # Clean old entries
-    cutoff = now - timedelta(seconds=window)
-    rate_limiter[identifier] = [
-        ts for ts in rate_limiter[identifier] 
-        if ts > cutoff
-    ]
+    # Increment counter in Redis (with TTL)
+    current_count = redis_client.increment_rate_limit(identifier, window)
     
-    # Check limit
-    if len(rate_limiter[identifier]) >= max_requests:
+    # Check if limit exceeded
+    if current_count > max_requests:
         return False
     
-    # Add current request
-    rate_limiter[identifier].append(now)
     return True
 
 def validate_origin_referer(request: Request) -> bool:
@@ -958,8 +945,6 @@ def add_wordbank_word(word: str, user_id: int = Depends(require_csrf_new)):
     
     # Return updated settings
     return db_helpers.get_user_settings(user_id, "global")
-    
-    return {"wordbank": session["global_settings"]["wordbank"]}
 
 @app.delete("/api/global/wordbank/{word}")
 def remove_wordbank_word(word: str, user_id: int = Depends(require_csrf_new)):
@@ -2396,7 +2381,7 @@ def upload_video_to_youtube(video, session):
     """Helper function to upload a single video to YouTube"""
     youtube_creds = session["youtube_creds"]
     youtube_settings = session["youtube_settings"]
-    upload_progress = session["upload_progress"]
+    user_id = session["user_id"]
     
     youtube_logger.info(f"Starting upload for {video['filename']}")
     
@@ -2416,7 +2401,7 @@ def upload_video_to_youtube(video, session):
     
     try:
         video['status'] = 'uploading'
-        upload_progress[video['id']] = 0
+        redis_client.set_upload_progress(user_id, video['id'], 0)
         
         youtube_logger.debug("Building YouTube API client...")
         youtube = build('youtube', 'v3', credentials=youtube_creds)
@@ -2508,52 +2493,43 @@ def upload_video_to_youtube(video, session):
             status, response = request.next_chunk()
             if status:
                 progress = int(status.progress() * 100)
-                upload_progress[video['id']] = progress
+                redis_client.set_upload_progress(user_id, video['id'], progress)
                 chunk_count += 1
                 if chunk_count % 10 == 0 or progress == 100:  # Log every 10 chunks or at completion
                     youtube_logger.info(f"Upload progress: {progress}%")
         
         video['status'] = 'uploaded'
         video['youtube_id'] = response['id']
-        upload_progress[video['id']] = 100
+        redis_client.set_upload_progress(user_id, video['id'], 100)
         youtube_logger.info(f"Successfully uploaded {video['filename']}, YouTube ID: {response['id']}")
-        
+    
     except Exception as e:
         video['status'] = 'failed'
         video['error'] = str(e)
         youtube_logger.error(f"Error uploading {video['filename']}: {str(e)}", exc_info=True)
-        if video['id'] in upload_progress:
-            del upload_progress[video['id']]
+        redis_client.delete_upload_progress(user_id, video['id'])
 
 
 def check_tiktok_rate_limit(session_id):
-    """Check if TikTok API rate limit is exceeded (6 requests per minute)"""
-    import time
-    current_time = time.time()
+    """Check if TikTok API rate limit is exceeded (6 requests per minute) using Redis"""
+    if not session_id:
+        raise Exception("No session_id provided for TikTok rate limiting")
     
-    if session_id not in tiktok_rate_limiter:
-        tiktok_rate_limiter[session_id] = []
+    # Use session_id as identifier for rate limiting
+    identifier = f"tiktok:{session_id}"
     
-    # Keep only recent requests
-    tiktok_rate_limiter[session_id] = [
-        ts for ts in tiktok_rate_limiter[session_id]
-        if current_time - ts < TIKTOK_RATE_LIMIT_WINDOW
-    ]
+    # Increment counter in Redis (with TTL)
+    current_count = redis_client.increment_rate_limit(identifier, TIKTOK_RATE_LIMIT_WINDOW)
     
-    # Check limit
-    if len(tiktok_rate_limiter[session_id]) >= TIKTOK_RATE_LIMIT_REQUESTS:
-        wait_time = int(TIKTOK_RATE_LIMIT_WINDOW - (current_time - min(tiktok_rate_limiter[session_id])))
+    # Check if limit exceeded
+    if current_count > TIKTOK_RATE_LIMIT_REQUESTS:
+        # Calculate wait time (approximate, since we're using fixed window)
+        wait_time = TIKTOK_RATE_LIMIT_WINDOW
         raise Exception(f"TikTok rate limit exceeded. Wait {wait_time}s before trying again.")
-    
-    tiktok_rate_limiter[session_id].append(current_time)
 
 
 def get_tiktok_creator_info(session):
-    """Query TikTok creator info and cache it in session"""
-    # Return cached if available
-    if session.get("tiktok_creator_info"):
-        return session["tiktok_creator_info"]
-    
+    """Query TikTok creator info"""
     access_token = session.get("tiktok_creds", {}).get("access_token")
     if not access_token:
         raise Exception("No TikTok access token")
@@ -2576,13 +2552,12 @@ def get_tiktok_creator_info(session):
     response_json = response.json()
     tiktok_logger.debug(f"TikTok creator_info API response: {response_json}")
     
-    # Cache and return
+    # Extract and return
     creator_info = response_json.get("data", {})
     tiktok_logger.debug(f"Extracted creator_info keys: {list(creator_info.keys())}")
     tiktok_logger.debug(f"Extracted creator_info: {creator_info}")
     
-    session["tiktok_creator_info"] = creator_info
-    return session["tiktok_creator_info"]
+    return creator_info
 
 
 def map_privacy_level_to_tiktok(privacy_level, creator_info):
@@ -2610,10 +2585,12 @@ def upload_video_to_tiktok(video, session, session_id=None):
     """Upload video to TikTok using Content Posting API"""
     tiktok_creds = session.get("tiktok_creds")
     tiktok_settings = session.get("tiktok_settings", {})
-    upload_progress = session["upload_progress"]
+    user_id = session.get("user_id")
     
-    # Get user_id for logging
-    user_id = session.get("user_id", "unknown")
+    if not user_id:
+        video['status'] = 'failed'
+        video['error'] = 'No user_id in session'
+        return
     
     if not tiktok_creds:
         video['status'] = 'failed'
@@ -2622,7 +2599,7 @@ def upload_video_to_tiktok(video, session, session_id=None):
     
     try:
         video['status'] = 'uploading'
-        upload_progress[video['id']] = 0
+        redis_client.set_upload_progress(user_id, video['id'], 0)
         
         access_token = tiktok_creds.get("access_token")
         if not access_token:
@@ -2664,7 +2641,7 @@ def upload_video_to_tiktok(video, session, session_id=None):
         allow_stitch = custom_settings.get('allow_stitch', tiktok_settings.get('allow_stitch', True))
         
         tiktok_logger.info(f"Uploading {video['filename']} ({video_size / (1024*1024):.2f} MB)")
-        upload_progress[video['id']] = 5
+        redis_client.set_upload_progress(user_id, video['id'], 5)
         
         # Step 1: Initialize upload
         init_response = httpx.post(
@@ -2728,7 +2705,7 @@ def upload_video_to_tiktok(video, session, session_id=None):
         upload_url = init_data["data"]["upload_url"]
         
         tiktok_logger.info(f"Initialized, publish_id: {publish_id}")
-        upload_progress[video['id']] = 10
+        redis_client.set_upload_progress(user_id, video['id'], 10)
         
         # Step 2: Upload video file
         tiktok_logger.info("Uploading video file...")
@@ -2760,7 +2737,7 @@ def upload_video_to_tiktok(video, session, session_id=None):
             raise Exception(f"Upload failed: {upload_response.status_code} - {error_msg}")
         
         # Success
-        upload_progress[video['id']] = 100
+        redis_client.set_upload_progress(user_id, video['id'], 100)
         video['tiktok_publish_id'] = publish_id
         video['status'] = 'uploaded'
         video['tiktok_id'] = publish_id
@@ -2771,15 +2748,20 @@ def upload_video_to_tiktok(video, session, session_id=None):
         video['status'] = 'failed'
         video['error'] = f'TikTok upload failed: {str(e)}'
         tiktok_logger.error(f"Upload error: {str(e)}", exc_info=True)
-        upload_progress.pop(video['id'], None)
+        redis_client.delete_upload_progress(user_id, video['id'])
             
 async def upload_video_to_instagram(video, session):
     """Upload video to Instagram using Graph API"""
     instagram_creds = session.get("instagram_creds")
     instagram_settings = session.get("instagram_settings", {})
-    upload_progress = session["upload_progress"]
+    user_id = session.get("user_id")
     
     instagram_logger.info(f"Starting upload for {video['filename']}")
+    
+    if not user_id:
+        video['status'] = 'failed'
+        video['error'] = 'No user_id in session'
+        return
     
     if not instagram_creds:
         video['status'] = 'failed'
@@ -2797,7 +2779,7 @@ async def upload_video_to_instagram(video, session):
     
     try:
         video['status'] = 'uploading'
-        upload_progress[video['id']] = 0
+        redis_client.set_upload_progress(user_id, video['id'], 0)
         
         access_token = instagram_creds.get("access_token")
         business_account_id = instagram_creds.get("business_account_id")
@@ -2848,7 +2830,7 @@ async def upload_video_to_instagram(video, session):
         disable_likes = instagram_settings.get('disable_likes', False)
         
         instagram_logger.info(f"Uploading {video['filename']} to Instagram")
-        upload_progress[video['id']] = 10
+        redis_client.set_upload_progress(user_id, video['id'], 10)
         
         # Instagram Graph API video upload process (per official docs):
         # 1. Create a container with media_type=REELS and upload_type=resumable
@@ -2861,7 +2843,7 @@ async def upload_video_to_instagram(video, session):
             video_data = f.read()
         
         video_size = len(video_data)
-        upload_progress[video['id']] = 20
+        redis_client.set_upload_progress(user_id, video['id'], 20)
         
         async with httpx.AsyncClient(timeout=300.0) as client:
             # Step 1: Create resumable upload container
@@ -2914,7 +2896,7 @@ async def upload_video_to_instagram(video, session):
             
             instagram_logger.info(f"Created container {container_id}")
             video['instagram_container_id'] = container_id
-            upload_progress[video['id']] = 40
+            redis_client.set_upload_progress(user_id, video['id'], 40)
             
             # Step 2: Upload video to rupload.facebook.com
             upload_url = f"https://rupload.facebook.com/ig-api-upload/v21.0/{container_id}"
@@ -2942,7 +2924,7 @@ async def upload_video_to_instagram(video, session):
                 raise Exception(f"Upload failed: {upload_result}")
             
             instagram_logger.info(f"Video uploaded successfully")
-            upload_progress[video['id']] = 70
+            redis_client.set_upload_progress(user_id, video['id'], 70)
             
             # Step 3: Wait for Instagram to process the video and check status
             instagram_logger.info(f"Waiting for Instagram to process video")
@@ -2976,7 +2958,7 @@ async def upload_video_to_instagram(video, session):
                 if attempt < 4:
                     await asyncio.sleep(60)  # Wait 60 seconds before checking again (per docs: once per minute)
             
-            upload_progress[video['id']] = 85
+            redis_client.set_upload_progress(user_id, video['id'], 85)
             
             # Step 4: Publish the container
             # Per docs: POST https://graph.facebook.com/<API_VERSION>/<IG_USER_ID>/media_publish?creation_id=<IG_MEDIA_CONTAINER_ID>
@@ -3008,17 +2990,17 @@ async def upload_video_to_instagram(video, session):
             
             video['instagram_id'] = media_id
             video['status'] = 'completed'
-            upload_progress[video['id']] = 100
+            redis_client.set_upload_progress(user_id, video['id'], 100)
             
             # Clean up progress after a delay
             await asyncio.sleep(2)
-            upload_progress.pop(video['id'], None)
+            redis_client.delete_upload_progress(user_id, video['id'])
         
     except Exception as e:
         video['status'] = 'failed'
         video['error'] = f'Instagram upload failed: {str(e)}'
         instagram_logger.error(f"Error uploading {video['filename']}: {str(e)}", exc_info=True)
-        upload_progress.pop(video['id'], None)
+        redis_client.delete_upload_progress(user_id, video['id'])
 
 # Register upload functions
 DESTINATION_UPLOADERS["youtube"] = upload_video_to_youtube
@@ -3076,18 +3058,29 @@ async def scheduler_task():
                                         "youtube_settings": db_helpers.get_user_settings(user_id, "youtube") or {},
                                         "tiktok_settings": db_helpers.get_user_settings(user_id, "tiktok") or {},
                                         "instagram_settings": db_helpers.get_user_settings(user_id, "instagram") or {},
+                                        "global_settings": db_helpers.get_user_settings(user_id, "global") or {},
                                     }
                                     
                                     # Load OAuth tokens
                                     for dest_name in enabled_destinations:
                                         token = db_helpers.get_oauth_token(user_id, dest_name)
                                         if token:
-                                            creds = {
-                                                "access_token": decrypt(token.access_token),
-                                                "refresh_token": decrypt(token.refresh_token) if token.refresh_token else None,
-                                            }
-                                            if token.extra_data:
-                                                creds.update(token.extra_data)
+                                            if dest_name == "youtube":
+                                                # Convert OAuth token to Google Credentials object
+                                                creds = db_helpers.oauth_token_to_credentials(token)
+                                                if not creds:
+                                                    print(f"  Failed to convert {dest_name} token to credentials")
+                                                    continue
+                                            else:
+                                                # For TikTok and Instagram, use dict format
+                                                creds = {
+                                                    "access_token": decrypt(token.access_token),
+                                                    "refresh_token": decrypt(token.refresh_token) if token.refresh_token else None,
+                                                    "expires_at": token.expires_at.isoformat() if token.expires_at else None,
+                                                }
+                                                # Add extra_data fields
+                                                if token.extra_data:
+                                                    creds.update(token.extra_data)
                                             temp_session[f"{dest_name}_creds"] = creds
                                     
                                     # Convert video object to dict for uploader functions
@@ -3206,20 +3199,30 @@ async def upload_videos(user_id: int = Depends(require_csrf_new)):
                 "youtube_settings": db_helpers.get_user_settings(user_id, "youtube") or {},
                 "tiktok_settings": db_helpers.get_user_settings(user_id, "tiktok") or {},
                 "instagram_settings": db_helpers.get_user_settings(user_id, "instagram") or {},
+                "global_settings": global_settings,
+                "upload_progress": {},  # Dictionary to track upload progress per video
             }
             
             # Load OAuth tokens for enabled destinations
             for dest_name in enabled_destinations:
                 token = db_helpers.get_oauth_token(user_id, dest_name)
                 if token:
-                    creds = {
-                        "access_token": decrypt(token.access_token),
-                        "refresh_token": decrypt(token.refresh_token) if token.refresh_token else None,
-                        "expires_at": token.expires_at.isoformat() if token.expires_at else None,
-                    }
-                    # Add extra_data fields
-                    if token.extra_data:
-                        creds.update(token.extra_data)
+                    if dest_name == "youtube":
+                        # Convert OAuth token to Google Credentials object
+                        creds = db_helpers.oauth_token_to_credentials(token)
+                        if not creds:
+                            upload_logger.error(f"Failed to convert {dest_name} token to credentials")
+                            continue
+                    else:
+                        # For TikTok and Instagram, use dict format
+                        creds = {
+                            "access_token": decrypt(token.access_token),
+                            "refresh_token": decrypt(token.refresh_token) if token.refresh_token else None,
+                            "expires_at": token.expires_at.isoformat() if token.expires_at else None,
+                        }
+                        # Add extra_data fields
+                        if token.extra_data:
+                            creds.update(token.extra_data)
                     temp_session[f"{dest_name}_creds"] = creds
             
             # Convert video object to dict for uploader functions (they expect dict format)

@@ -63,13 +63,22 @@ def delete_upload_progress(user_id: int, video_id: int) -> None:
 
 
 def increment_rate_limit(identifier: str, window: int) -> int:
-    """Increment rate limit counter and return current count"""
+    """Increment rate limit counter and return current count.
+    Uses Lua script to atomically increment and set TTL only for new keys (fixed window rate limiting)."""
     key = f"ratelimit:{identifier}"
-    pipe = redis_client.pipeline()
-    pipe.incr(key)
-    pipe.expire(key, window)
-    results = pipe.execute()
-    return results[0]
+    
+    # Lua script: increment counter, set TTL if key is new (count == 1), return count
+    lua_script = """
+    local count = redis.call('INCR', KEYS[1])
+    if count == 1 then
+        redis.call('EXPIRE', KEYS[1], ARGV[1])
+    end
+    return count
+    """
+    
+    # Execute Lua script atomically
+    count = redis_client.eval(lua_script, 1, key, window)
+    return int(count)
 
 
 def get_rate_limit_count(identifier: str) -> int:
