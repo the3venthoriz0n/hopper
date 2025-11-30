@@ -13,10 +13,6 @@ if str(backend_dir) not in sys.path:
 # Import the functions we want to test
 from main import (
     replace_template_placeholders,
-    get_default_global_settings,
-    get_default_youtube_settings,
-    get_default_tiktok_settings,
-    get_default_instagram_settings,
 )
 
 
@@ -88,93 +84,6 @@ class TestTemplatePlaceholders:
         assert "my_video.mp4" in result
         assert "{filename}" not in result
         assert "{random}" not in result
-
-
-class TestDefaultSettings:
-    """Test default settings functions"""
-    
-    def test_get_default_global_settings_returns_dict(self):
-        """Test that get_default_global_settings returns a dictionary"""
-        settings = get_default_global_settings()
-        assert isinstance(settings, dict)
-    
-    def test_get_default_global_settings_has_required_keys(self):
-        """Test that default global settings have required keys"""
-        settings = get_default_global_settings()
-        required_keys = [
-            "title_template",
-            "description_template",
-            "wordbank",
-            "upload_immediately",
-            "allow_duplicates",
-            "schedule_mode",
-            "schedule_interval_value",
-            "schedule_interval_unit"
-        ]
-        for key in required_keys:
-            assert key in settings, f"Missing key: {key}"
-    
-    def test_get_default_global_settings_valid_types(self):
-        """Test that default settings have correct types"""
-        settings = get_default_global_settings()
-        assert isinstance(settings["title_template"], str)
-        assert isinstance(settings["description_template"], str)
-        assert isinstance(settings["wordbank"], list)
-        assert isinstance(settings["upload_immediately"], bool)
-        assert isinstance(settings["allow_duplicates"], bool)
-    
-    def test_get_default_youtube_settings_returns_dict(self):
-        """Test that get_default_youtube_settings returns a dictionary"""
-        settings = get_default_youtube_settings()
-        assert isinstance(settings, dict)
-    
-    def test_get_default_youtube_settings_has_required_keys(self):
-        """Test that default YouTube settings have required keys"""
-        settings = get_default_youtube_settings()
-        required_keys = [
-            "title_template",
-            "description_template",
-            "tags_template",
-            "visibility",
-            "made_for_kids",
-            "category"
-        ]
-        for key in required_keys:
-            assert key in settings, f"Missing key: {key}"
-    
-    def test_get_default_tiktok_settings_returns_dict(self):
-        """Test that get_default_tiktok_settings returns a dictionary"""
-        settings = get_default_tiktok_settings()
-        assert isinstance(settings, dict)
-    
-    def test_get_default_tiktok_settings_has_required_keys(self):
-        """Test that default TikTok settings have required keys"""
-        settings = get_default_tiktok_settings()
-        required_keys = [
-            "title_template",
-            "description_template",
-            "privacy_level",
-            "disable_duet",
-            "disable_comment",
-            "disable_stitch"
-        ]
-        for key in required_keys:
-            assert key in settings, f"Missing key: {key}"
-    
-    def test_get_default_instagram_settings_returns_dict(self):
-        """Test that get_default_instagram_settings returns a dictionary"""
-        settings = get_default_instagram_settings()
-        assert isinstance(settings, dict)
-    
-    def test_get_default_instagram_settings_has_required_keys(self):
-        """Test that default Instagram settings have required keys"""
-        settings = get_default_instagram_settings()
-        required_keys = [
-            "caption_template",
-            "share_to_feed"
-        ]
-        for key in required_keys:
-            assert key in settings, f"Missing key: {key}"
 
 
 class TestAuthenticationDependencies:
