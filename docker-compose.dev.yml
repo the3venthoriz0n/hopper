@@ -9,7 +9,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "5433:5432"  # Map host 5433 to container 5432 to avoid conflict
     networks:
       - hopper_default
     logging:
@@ -25,7 +25,7 @@ services:
     volumes:
       - redis_data:/data
     ports:
-      - "6379:6379"
+      - "6380:6379"  # Map host 6380 to container 6379 to avoid conflict
     networks:
       - hopper_default
     logging:
