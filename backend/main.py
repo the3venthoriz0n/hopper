@@ -216,10 +216,7 @@ app.add_middleware(
 # SECURITY IMPLEMENTATION
 # ============================================================================
 
-# CSRF Token Storage: {session_id: csrf_token}
-csrf_tokens = {}
-
-# Rate Limiter: {identifier: [timestamps]}
+# Rate Limiter: {identifier: [timestamps]} - in-memory is fine
 # identifier can be session_id or IP address
 rate_limiter = defaultdict(list)
 # Rate limiting: more permissive for production (real users), reasonable for development
@@ -236,22 +233,6 @@ else:
 
 # Allowed origins for Origin/Referer validation
 ALLOWED_ORIGINS = [FRONTEND_URL] if ENVIRONMENT == "production" else [FRONTEND_URL, "http://localhost:3000", "http://localhost:8000"]
-
-def generate_csrf_token() -> str:
-    """Generate a secure CSRF token"""
-    return secrets.token_urlsafe(32)
-
-def get_csrf_token(session_id: str) -> str:
-    """Get or generate CSRF token for a session"""
-    if session_id not in csrf_tokens:
-        csrf_tokens[session_id] = generate_csrf_token()
-    return csrf_tokens[session_id]
-
-def validate_csrf_token(session_id: str, token: Optional[str]) -> bool:
-    """Validate CSRF token for a session"""
-    if session_id not in csrf_tokens:
-        return False
-    return secrets.compare_digest(csrf_tokens[session_id], token or "")
 
 def get_client_identifier(request: Request, session_id: Optional[str] = None) -> str:
     """Get client identifier for rate limiting (prefer session_id, fallback to IP)"""
@@ -317,43 +298,8 @@ def validate_origin_referer(request: Request) -> bool:
     
     return False
 
-# FastAPI Dependencies for Security
-async def require_session(request: Request, response: Response) -> str:
-    """Dependency: Require valid existing session, return session_id (OLD - FILE BASED)"""
-    # Check if session cookie exists
-    session_id = request.cookies.get("session_id")
-    
-    if not session_id:
-        security_logger.warning(
-            f"Session validation failed - No session cookie, "
-            f"IP: {request.client.host if request.client else 'unknown'}, "
-            f"Path: {request.url.path}"
-        )
-        raise HTTPException(
-            status_code=401,
-            detail="Session required. Please visit the frontend to create a session."
-        )
-    
-    # Validate that session exists (don't create new one)
-    if session_id not in sessions:
-        # Try to load from disk
-        load_session(session_id)
-        # If still doesn't exist, reject
-        if session_id not in sessions:
-            security_logger.warning(
-                f"Session validation failed - Invalid session ID: {session_id[:16]}..., "
-                f"IP: {request.client.host if request.client else 'unknown'}, "
-                f"Path: {request.url.path}"
-            )
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid or expired session"
-            )
-    
-    return session_id
-
 # ============================================================================
-# NEW REDIS-BASED SESSION DEPENDENCIES
+# FastAPI Dependencies for Security (REDIS-BASED)
 # ============================================================================
 
 def require_auth(request: Request) -> int:
@@ -397,39 +343,6 @@ async def require_csrf_new(
         raise HTTPException(403, "Invalid or missing CSRF token")
     
     return user_id
-
-async def get_or_create_session(request: Request, response: Response) -> str:
-    """Dependency: Get existing session or create new one (for GET endpoints)"""
-    return get_or_create_session_id(request, response)
-
-async def require_csrf(
-    request: Request,
-    session_id: str = Depends(require_session),
-    x_csrf_token: Optional[str] = Header(None, alias="X-CSRF-Token")
-) -> str:
-    """Dependency: Require valid CSRF token for state-changing requests"""
-    # Get token from header or form data
-    csrf_token = x_csrf_token
-    if not csrf_token:
-        # Try to get from form data (for multipart/form-data)
-        try:
-            form_data = await request.form()
-            csrf_token = form_data.get("csrf_token")
-        except Exception:
-            pass
-    
-    if not validate_csrf_token(session_id, csrf_token):
-        security_logger.warning(
-            f"CSRF validation failed - Session: {session_id[:16]}..., "
-            f"IP: {request.client.host if request.client else 'unknown'}, "
-            f"Path: {request.url.path}"
-        )
-        raise HTTPException(
-            status_code=403,
-            detail="Invalid or missing CSRF token"
-        )
-    
-    return session_id
 
 def log_api_access(
     request: Request,
@@ -534,7 +447,7 @@ async def security_middleware(request: Request, call_next):
         
         # Set CSRF token in response header for GET requests (so frontend can read it)
         if request.method == "GET" and session_id and not is_callback:
-            csrf_token = get_csrf_token(session_id)
+            csrf_token = redis_client.get_csrf_token(session_id)
             response.headers["X-CSRF-Token"] = csrf_token
         
         return response
@@ -1740,87 +1653,6 @@ async def fetch_instagram_profile(access_token: str) -> dict:
         instagram_logger.warning(f"Error fetching profile info: {str(e)}")
         return {"username": None, "business_account_id": None, "account_type": None}
 
-# Helper: Refresh Instagram long-lived access token
-async def refresh_instagram_token(session_id: str) -> dict:
-    """Refresh Instagram long-lived access token (valid for another 60 days)"""
-    session = get_session(session_id)
-    creds = session.get("instagram_creds")
-    
-    if not creds or not creds.get("access_token"):
-        raise HTTPException(400, "No Instagram credentials to refresh")
-    
-    # Only refresh long-lived tokens
-    if creds.get("token_type") != "long_lived":
-        raise HTTPException(400, "Can only refresh long-lived tokens")
-    
-    access_token = creds["access_token"]
-    
-    # Refresh token using Instagram Graph API
-    refresh_params = {
-        "grant_type": "ig_refresh_token",
-        "access_token": access_token
-    }
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            f"{INSTAGRAM_GRAPH_API_BASE}/refresh_access_token",
-            params=refresh_params,
-            timeout=10.0
-        )
-        
-        if response.status_code != 200:
-            raise HTTPException(400, f"Token refresh failed: {response.text}")
-        
-        token_json = response.json()
-        
-        # Update session with new token
-        session["instagram_creds"].update({
-            "access_token": token_json.get("access_token", access_token),
-            "expires_in": token_json.get("expires_in", creds.get("expires_in", 5183944)),
-            "token_type": "long_lived"
-        })
-        save_session(session_id)
-        
-        return session["instagram_creds"]
-
-
-# Helper: Refresh TikTok access token
-async def refresh_tiktok_token(session_id: str) -> dict:
-    """Refresh TikTok access token using refresh token"""
-    session = get_session(session_id)
-    creds = session.get("tiktok_creds")
-    
-    if not creds or not creds.get("refresh_token"):
-        raise HTTPException(400, "No TikTok credentials to refresh")
-    
-    refresh_data = {
-        "client_key": TIKTOK_CLIENT_KEY,
-        "client_secret": TIKTOK_CLIENT_SECRET,
-        "grant_type": "refresh_token",
-        "refresh_token": creds["refresh_token"],
-    }
-    
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            TIKTOK_TOKEN_URL,
-            data=refresh_data,
-            headers={"Content-Type": "application/x-www-form-urlencoded"}
-        )
-        
-        if response.status_code != 200:
-            raise HTTPException(400, f"Token refresh failed: {response.text}")
-        
-        token_json = response.json()
-        
-        # Update session with new tokens
-        session["tiktok_creds"].update({
-            "access_token": token_json["access_token"],
-            "refresh_token": token_json.get("refresh_token", creds["refresh_token"]),
-            "expires_in": token_json.get("expires_in"),
-        })
-        save_session(session_id)
-        
-        return session["tiktok_creds"]
 
 @app.get("/api/global/settings")
 def get_global_settings(user_id: int = Depends(require_auth)):
@@ -2491,7 +2323,7 @@ def upload_video_to_youtube(video, session):
         youtube_logger.error("No YouTube credentials")
         return
     
-    # Credentials should always be complete (fixed in load_session if old session)
+    # Validate credentials are complete
     if not youtube_creds.client_id or not youtube_creds.client_secret or not youtube_creds.token_uri:
         video['status'] = 'failed'
         error_msg = 'YouTube credentials are incomplete. Please disconnect and reconnect YouTube.'
@@ -2697,9 +2529,8 @@ def upload_video_to_tiktok(video, session, session_id=None):
     tiktok_settings = session.get("tiktok_settings", {})
     upload_progress = session["upload_progress"]
     
-    # Get session_id for rate limiting
-    if not session_id:
-        session_id = next((sid for sid, sess in sessions.items() if sess == session), "unknown")
+    # Get user_id for logging
+    user_id = session.get("user_id", "unknown")
     
     if not tiktok_creds:
         video['status'] = 'failed'
@@ -3119,39 +2950,92 @@ async def scheduler_task():
             
             current_time = datetime.now(timezone.utc)
             
-            # Check all sessions for scheduled videos
-            for session_id, session in list(sessions.items()):
-                for video in session["videos"]:
-                    if video['status'] == 'scheduled' and 'scheduled_time' in video:
-                        try:
-                            scheduled_time = datetime.fromisoformat(video['scheduled_time'])
-                            
-                            # If scheduled time has passed, upload the video to all enabled destinations
-                            if current_time >= scheduled_time:
-                                print(f"Uploading scheduled video for session {session_id}: {video['filename']}")
+            # Get all users from database
+            with db_helpers.get_db() as db:
+                from models import User
+                users = db.query(User).all()
+                
+                for user in users:
+                    user_id = user.id
+                    
+                    # Get user's scheduled videos
+                    videos = db_helpers.get_user_videos(user_id)
+                    
+                    for video in videos:
+                        if video.get('status') == 'scheduled' and video.get('scheduled_time'):
+                            try:
+                                scheduled_time = datetime.fromisoformat(video['scheduled_time'])
                                 
-                                # Upload to all enabled destinations
-                                destinations = session.get("destinations", {})
-                                for dest_name, uploader_func in DESTINATION_UPLOADERS.items():
-                                    if uploader_func and destinations.get(dest_name, {}).get("enabled", False):
-                                        # Check if credentials exist for this destination
-                                        creds_key = f"{dest_name}_creds"
-                                        if session.get(creds_key):
-                                            print(f"  Uploading to {dest_name}...")
-                                            # Pass session_id for TikTok rate limiting
-                                            if dest_name == "tiktok":
-                                                uploader_func(video, session, session_id)
-                                            elif dest_name == "instagram":
-                                                await uploader_func(video, session)
-                                            else:
-                                                uploader_func(video, session)
-                                
-                                save_session(session_id)
-                        except Exception as e:
-                            print(f"Error processing scheduled video {video['filename']}: {e}")
-                            video['status'] = 'failed'
-                            video['error'] = str(e)
-                            save_session(session_id)
+                                # If scheduled time has passed, upload the video
+                                if current_time >= scheduled_time:
+                                    video_id = video.get('id')
+                                    print(f"Uploading scheduled video for user {user_id}: {video['filename']}")
+                                    
+                                    # Mark as uploading
+                                    db_helpers.update_user_video(user_id, video_id, {"status": "uploading"})
+                                    
+                                    # Get enabled destinations
+                                    enabled_destinations = []
+                                    for dest_name in ["youtube", "tiktok", "instagram"]:
+                                        is_enabled = db_helpers.get_user_setting(user_id, "destinations", f"{dest_name}_enabled", False)
+                                        has_token = db_helpers.get_oauth_token(user_id, dest_name) is not None
+                                        if is_enabled and has_token:
+                                            enabled_destinations.append(dest_name)
+                                    
+                                    if not enabled_destinations:
+                                        print(f"  No enabled destinations for user {user_id}, skipping")
+                                        continue
+                                    
+                                    # Build temporary session-like structure for uploader functions
+                                    temp_session = {
+                                        "user_id": user_id,
+                                        "youtube_settings": db_helpers.get_user_settings(user_id, "youtube_settings") or {},
+                                        "tiktok_settings": db_helpers.get_user_settings(user_id, "tiktok_settings") or {},
+                                        "instagram_settings": db_helpers.get_user_settings(user_id, "instagram_settings") or {},
+                                    }
+                                    
+                                    # Load OAuth tokens
+                                    for dest_name in enabled_destinations:
+                                        token = db_helpers.get_oauth_token(user_id, dest_name)
+                                        if token:
+                                            creds = {
+                                                "access_token": decrypt(token.access_token),
+                                                "refresh_token": decrypt(token.refresh_token) if token.refresh_token else None,
+                                            }
+                                            if token.extra_data:
+                                                creds.update(token.extra_data)
+                                            temp_session[f"{dest_name}_creds"] = creds
+                                    
+                                    # Upload to each enabled destination
+                                    success_count = 0
+                                    for dest_name in enabled_destinations:
+                                        uploader_func = DESTINATION_UPLOADERS.get(dest_name)
+                                        if uploader_func:
+                                            try:
+                                                print(f"  Uploading to {dest_name}...")
+                                                if dest_name == "instagram":
+                                                    await uploader_func(video, temp_session)
+                                                else:
+                                                    uploader_func(video, temp_session)
+                                                success_count += 1
+                                            except Exception as upload_err:
+                                                print(f"  Error uploading to {dest_name}: {upload_err}")
+                                    
+                                    # Update final status
+                                    if success_count == len(enabled_destinations):
+                                        db_helpers.update_user_video(user_id, video_id, {"status": "uploaded"})
+                                    else:
+                                        db_helpers.update_user_video(user_id, video_id, {
+                                            "status": "failed",
+                                            "error": f"Upload failed for some destinations"
+                                        })
+                                        
+                            except Exception as e:
+                                print(f"Error processing scheduled video {video['filename']}: {e}")
+                                db_helpers.update_user_video(user_id, video_id, {
+                                    "status": "failed",
+                                    "error": str(e)
+                                })
         except Exception as e:
             print(f"Error in scheduler task: {e}")
             await asyncio.sleep(30)
