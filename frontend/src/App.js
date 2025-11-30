@@ -687,6 +687,11 @@ function Home() {
     const form = new FormData();
     form.append('file', file);
     
+    // Add CSRF token to form data as fallback (backend checks both header and form data)
+    if (csrfToken) {
+      form.append('csrf_token', csrfToken);
+    }
+    
     // Add temp entry with uploading status
     const tempId = Date.now();
     const tempVideo = {
@@ -714,7 +719,17 @@ function Home() {
         setMessage(`✅ Added ${file.name}`);
       } catch (err) {
         setVideos(prev => prev.filter(v => v.id !== tempId));
-        const errorMsg = err.response?.data?.detail || 'Error adding video';
+        let errorMsg = err.response?.data?.detail || err.message || 'Error adding video';
+        
+        // Provide more helpful error messages
+        if (err.response?.status === 403 && errorMsg.includes('CSRF')) {
+          errorMsg = 'CSRF token error. Please refresh the page and try again.';
+        } else if (err.response?.status === 401) {
+          errorMsg = 'Session expired. Please refresh the page.';
+        } else if (!err.response) {
+          errorMsg = 'Network error. Please check your connection.';
+        }
+        
         setMessage(`❌ ${errorMsg}`);
         console.error('Error adding video:', err);
       }

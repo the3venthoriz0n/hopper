@@ -174,16 +174,16 @@ csrf_tokens = {}
 # Rate Limiter: {identifier: [timestamps]}
 # identifier can be session_id or IP address
 rate_limiter = defaultdict(list)
-# More permissive limits for development, stricter for production
+# Rate limiting: more permissive for production (real users), reasonable for development
 if ENVIRONMENT == "development":
     RATE_LIMIT_REQUESTS = 1000  # requests per window
     RATE_LIMIT_WINDOW = 60  # seconds
     RATE_LIMIT_STRICT_REQUESTS = 200  # stricter limit for state-changing operations
     RATE_LIMIT_STRICT_WINDOW = 60  # seconds
 else:
-    RATE_LIMIT_REQUESTS = 100  # requests per window
+    RATE_LIMIT_REQUESTS = 5000  # requests per window (increased for production)
     RATE_LIMIT_WINDOW = 60  # seconds
-    RATE_LIMIT_STRICT_REQUESTS = 20  # stricter limit for state-changing operations
+    RATE_LIMIT_STRICT_REQUESTS = 1000  # stricter limit for state-changing operations (increased for production)
     RATE_LIMIT_STRICT_WINDOW = 60  # seconds
 
 # Allowed origins for Origin/Referer validation
