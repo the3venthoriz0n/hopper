@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import './App.css';
@@ -66,66 +66,7 @@ function Home() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   
-  // Check if user is authenticated
-  useEffect(() => {
-    checkAuth();
-  }, []);
-  
-  const checkAuth = async () => {
-    try {
-      const res = await axios.get(`${API}/auth/me`);
-      if (res.data.user) {
-        setUser(res.data.user);
-      } else {
-        setUser(null);
-      }
-    } catch (err) {
-      console.error('Auth check failed:', err);
-      setUser(null);
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-  
-  const handleLogout = async () => {
-    try {
-      await axios.post(`${API}/auth/logout`);
-      setUser(null);
-      setMessage('✅ Logged out successfully');
-    } catch (err) {
-      console.error('Logout failed:', err);
-      setMessage('❌ Logout failed');
-    }
-  };
-  
-  // Set document title based on environment
-  useEffect(() => {
-    document.title = isProduction ? 'hopper' : 'DEV HOPPER';
-  }, [isProduction]);
-  
-  // Show login page if not authenticated
-  if (authLoading) {
-    return (
-      <div style={{
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        minHeight: '100vh',
-        background: '#1a1a2e',
-        color: 'white'
-      }}>
-        <div>Loading...</div>
-      </div>
-    );
-  }
-  
-  if (!user) {
-    return <Login onLoginSuccess={(userData) => {
-      setUser(userData);
-      checkAuth();
-    }} />;
-  }
-  
+  // All state hooks must be declared before any conditional returns (Rules of Hooks)
   const [youtube, setYoutube] = useState({ connected: false, enabled: false, account: null });
   const [tiktok, setTiktok] = useState({ connected: false, enabled: false, account: null });
   const [instagram, setInstagram] = useState({ connected: false, enabled: false, account: null });
@@ -179,8 +120,49 @@ function Home() {
   const [newWord, setNewWord] = useState('');
   const [wordbankExpanded, setWordbankExpanded] = useState(false);
 
-  // Tooltip positioning handler to keep tooltips on screen
+  // Check if user is authenticated
   useEffect(() => {
+    checkAuth();
+  }, []);
+  
+  const checkAuth = async () => {
+    try {
+      const res = await axios.get(`${API}/auth/me`);
+      if (res.data.user) {
+        setUser(res.data.user);
+      } else {
+        setUser(null);
+      }
+    } catch (err) {
+      console.error('Auth check failed:', err);
+      setUser(null);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+  
+  const handleLogout = async () => {
+    try {
+      await axios.post(`${API}/auth/logout`);
+      setUser(null);
+      setMessage('✅ Logged out successfully');
+    } catch (err) {
+      console.error('Logout failed:', err);
+      setMessage('❌ Logout failed');
+    }
+  };
+  
+  // Set document title based on environment
+  useEffect(() => {
+    document.title = isProduction ? 'hopper' : 'DEV HOPPER';
+  }, [isProduction]);
+
+  // Tooltip positioning handler to keep tooltips on screen
+  // This useEffect must be declared before conditional returns (Rules of Hooks)
+  useEffect(() => {
+    // Only set up tooltips if user is authenticated
+    if (!user) return;
+    
     const adjustTooltipPosition = (tooltipWrapper) => {
       const tooltip = tooltipWrapper.querySelector('.tooltip-text');
       if (!tooltip) return;
@@ -347,58 +329,15 @@ function Home() {
         wrapper.removeEventListener('mouseleave', handleTooltipLeave);
       });
     };
-  }, [videos, editingVideo, showSettings, showTiktokSettings, showGlobalSettings]);
+  }, [videos, editingVideo, showSettings, showTiktokSettings, showGlobalSettings, user]);
 
-  useEffect(() => {
-    loadDestinations();
-    loadGlobalSettings();
-    loadYoutubeSettings();
-    loadTiktokSettings();
-    loadInstagramSettings();
-    loadVideos();
-    
-    // Check OAuth callback
-    if (window.location.search.includes('connected=youtube')) {
-      setMessage('✅ YouTube connected!');
-      loadDestinations();
-      // Small delay to ensure account info is available
-      setTimeout(() => {
-        loadYoutubeAccount();
-      }, 1000);
-      window.history.replaceState({}, '', '/');
-    } else if (window.location.search.includes('connected=tiktok')) {
-      setMessage('✅ TikTok connected!');
-      loadDestinations();
-      // Small delay to ensure account info is available
-      setTimeout(() => {
-        loadTiktokAccount();
-      }, 1000);
-      window.history.replaceState({}, '', '/');
-    } else if (window.location.search.includes('connected=instagram')) {
-      setMessage('✅ Instagram connected!');
-      loadDestinations();
-      // Small delay to ensure account info is available
-      setTimeout(() => {
-        loadInstagramAccount();
-      }, 1000);
-      window.history.replaceState({}, '', '/');
-    }
-    
-    // Poll for video updates every 5 seconds to catch scheduled uploads
-    const pollInterval = setInterval(() => {
-      loadVideos();
-    }, 5000);
-    
-    return () => clearInterval(pollInterval);
-  }, []);
-  
-  const loadVideos = async () => {
+  // Define all load functions using useCallback BEFORE the useEffect that uses them
+  // This ensures they're available when the useEffect runs
+  const loadVideos = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/videos`);
-      // Only update if the data has actually changed to avoid unnecessary re-renders
       setVideos(prevVideos => {
         const newData = res.data;
-        // Check if the data is different
         if (JSON.stringify(prevVideos) === JSON.stringify(newData)) {
           return prevVideos;
         }
@@ -407,9 +346,9 @@ function Home() {
     } catch (err) {
       console.error('Error loading videos:', err);
     }
-  };
+  }, [API]);
 
-  const loadYoutubeAccount = async () => {
+  const loadYoutubeAccount = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/auth/youtube/account`);
       if (res.data.error) {
@@ -422,9 +361,9 @@ function Home() {
       console.error('Error loading YouTube account:', error.response?.data || error.message);
       setYoutube(prev => ({ ...prev, account: null }));
     }
-  };
+  }, [API]);
 
-  const loadTiktokAccount = async () => {
+  const loadTiktokAccount = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/auth/tiktok/account`);
       if (res.data.error) {
@@ -437,9 +376,9 @@ function Home() {
       console.error('Error loading TikTok account:', error.response?.data || error.message);
       setTiktok(prev => ({ ...prev, account: null }));
     }
-  };
+  }, [API]);
 
-  const loadInstagramAccount = async () => {
+  const loadInstagramAccount = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/auth/instagram/account`);
       if (res.data.error) {
@@ -452,28 +391,27 @@ function Home() {
       console.error('Error loading Instagram account:', error.response?.data || error.message);
       setInstagram(prev => ({ ...prev, account: null }));
     }
-  };
+  }, [API]);
 
-  const loadDestinations = async () => {
+  const loadDestinations = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/destinations`);
       setYoutube({ 
         connected: res.data.youtube.connected, 
         enabled: res.data.youtube.enabled,
-        account: null  // Will be loaded separately
+        account: null
       });
       setTiktok({ 
         connected: res.data.tiktok.connected, 
         enabled: res.data.tiktok.enabled,
-        account: null  // Will be loaded separately
+        account: null
       });
       setInstagram({ 
         connected: res.data.instagram.connected, 
         enabled: res.data.instagram.enabled,
-        account: null  // Will be loaded separately
+        account: null
       });
       
-      // Load account info if connected
       if (res.data.youtube.connected) {
         loadYoutubeAccount();
       }
@@ -486,16 +424,110 @@ function Home() {
     } catch (error) {
       console.error('Error loading destinations:', error);
     }
-  };
+  }, [API, loadYoutubeAccount, loadTiktokAccount, loadInstagramAccount]);
 
-  const loadGlobalSettings = async () => {
+  const loadGlobalSettings = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/global/settings`);
       setGlobalSettings(res.data);
     } catch (err) {
       console.error('Error loading global settings:', err);
     }
-  };
+  }, [API]);
+
+  const loadYoutubeSettings = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API}/youtube/settings`);
+      setYoutubeSettings(res.data);
+    } catch (err) {
+      console.error('Error loading settings:', err);
+    }
+  }, [API]);
+
+  const loadTiktokSettings = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API}/tiktok/settings`);
+      setTiktokSettings(res.data);
+    } catch (err) {
+      console.error('Error loading TikTok settings:', err);
+    }
+  }, [API]);
+
+  const loadInstagramSettings = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API}/instagram/settings`);
+      setInstagramSettings(res.data);
+    } catch (err) {
+      console.error('Error loading Instagram settings:', err);
+    }
+  }, [API]);
+
+  // Data loading useEffect - must be declared before conditional returns (Rules of Hooks)
+  useEffect(() => {
+    // Only load data if user is authenticated
+    if (!user) return;
+    
+    loadDestinations();
+    loadGlobalSettings();
+    loadYoutubeSettings();
+    loadTiktokSettings();
+    loadInstagramSettings();
+    loadVideos();
+    
+    // Check OAuth callback
+    if (window.location.search.includes('connected=youtube')) {
+      setMessage('✅ YouTube connected!');
+      loadDestinations();
+      setTimeout(() => {
+        loadYoutubeAccount();
+      }, 1000);
+      window.history.replaceState({}, '', '/');
+    } else if (window.location.search.includes('connected=tiktok')) {
+      setMessage('✅ TikTok connected!');
+      loadDestinations();
+      setTimeout(() => {
+        loadTiktokAccount();
+      }, 1000);
+      window.history.replaceState({}, '', '/');
+    } else if (window.location.search.includes('connected=instagram')) {
+      setMessage('✅ Instagram connected!');
+      loadDestinations();
+      setTimeout(() => {
+        loadInstagramAccount();
+      }, 1000);
+      window.history.replaceState({}, '', '/');
+    }
+    
+    // Poll for video updates every 5 seconds
+    const pollInterval = setInterval(() => {
+      loadVideos();
+    }, 5000);
+    
+    return () => clearInterval(pollInterval);
+  }, [user, loadDestinations, loadGlobalSettings, loadYoutubeSettings, loadTiktokSettings, loadInstagramSettings, loadVideos, loadYoutubeAccount, loadTiktokAccount, loadInstagramAccount]);
+  
+  // Show login page if not authenticated (AFTER all hooks are declared)
+  if (authLoading) {
+    return (
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        minHeight: '100vh',
+        background: '#1a1a2e',
+        color: 'white'
+      }}>
+        <div>Loading...</div>
+      </div>
+    );
+  }
+  
+  if (!user) {
+    return <Login onLoginSuccess={(userData) => {
+      setUser(userData);
+      checkAuth();
+    }} />;
+  }
 
   const updateGlobalSettings = async (key, value) => {
     try {
@@ -507,15 +539,6 @@ function Home() {
     } catch (err) {
       setMessage('❌ Error updating settings');
       console.error('Error updating settings:', err);
-    }
-  };
-
-  const loadYoutubeSettings = async () => {
-    try {
-      const res = await axios.get(`${API}/youtube/settings`);
-      setYoutubeSettings(res.data);
-    } catch (err) {
-      console.error('Error loading settings:', err);
     }
   };
 
@@ -557,15 +580,6 @@ function Home() {
     }
   };
 
-  const loadTiktokSettings = async () => {
-    try {
-      const res = await axios.get(`${API}/tiktok/settings`);
-      setTiktokSettings(res.data);
-    } catch (err) {
-      console.error('Error loading TikTok settings:', err);
-    }
-  };
-
   const updateTiktokSettings = async (key, value) => {
     try {
       const params = new URLSearchParams();
@@ -580,15 +594,6 @@ function Home() {
       }
     } catch (err) {
       setMessage('❌ Error updating TikTok settings');
-    }
-  };
-
-  const loadInstagramSettings = async () => {
-    try {
-      const res = await axios.get(`${API}/instagram/settings`);
-      setInstagramSettings(res.data);
-    } catch (err) {
-      console.error('Error loading Instagram settings:', err);
     }
   };
 

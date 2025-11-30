@@ -184,11 +184,32 @@ else:
 
 # For non-production, be more permissive
 if not is_production:
-    # Add common dev URLs
-    dev_urls = ["http://localhost:3000", "http://localhost:8000", "http://127.0.0.1:3000"]
+    # Add common dev URLs (both HTTP and HTTPS)
+    dev_urls = [
+        "http://localhost:3000", 
+        "http://localhost:8000", 
+        "http://127.0.0.1:3000",
+        "https://localhost:3000",
+        "https://localhost:8000"
+    ]
     for url in dev_urls:
         if url not in allowed_origins:
             allowed_origins.append(url)
+    
+    # Also check if FRONTEND_URL contains a dev domain pattern and add HTTPS variant
+    if FRONTEND_URL and "dev" in FRONTEND_URL.lower():
+        # If FRONTEND_URL is HTTP, also allow HTTPS variant
+        if FRONTEND_URL.startswith("http://"):
+            https_variant = FRONTEND_URL.replace("http://", "https://")
+            if https_variant not in allowed_origins:
+                allowed_origins.append(https_variant)
+                logger.info(f"CORS: Added HTTPS variant to allowed origins: {https_variant}")
+        # If FRONTEND_URL is HTTPS, also allow HTTP variant
+        elif FRONTEND_URL.startswith("https://"):
+            http_variant = FRONTEND_URL.replace("https://", "http://")
+            if http_variant not in allowed_origins:
+                allowed_origins.append(http_variant)
+                logger.info(f"CORS: Added HTTP variant to allowed origins: {http_variant}")
     
     # If no origins configured at all, allow everything as fallback for dev
     if not allowed_origins:
@@ -211,6 +232,51 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["X-CSRF-Token"],  # Expose CSRF token header to frontend
 )
+
+# Global exception handler to ensure all error responses include CORS headers
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Handle all exceptions and ensure CORS headers are present"""
+    origin = request.headers.get("Origin")
+    
+    # Determine if origin is allowed (handle wildcard case)
+    origin_allowed = False
+    if origin:
+        if "*" in allowed_origins:
+            # Wildcard allows all origins, but can't use with credentials
+            # In dev mode, we'll allow it but without credentials header
+            origin_allowed = True
+        elif origin in allowed_origins:
+            origin_allowed = True
+    
+    # If it's an HTTPException, use its status code and detail
+    if isinstance(exc, HTTPException):
+        response = Response(
+            content=json.dumps({"detail": exc.detail}),
+            status_code=exc.status_code,
+            media_type="application/json"
+        )
+    else:
+        # For other exceptions, return 500
+        logger.error(f"Unhandled exception: {exc}", exc_info=True)
+        response = Response(
+            content=json.dumps({"detail": "Internal server error"}),
+            status_code=500,
+            media_type="application/json"
+        )
+    
+    # Add CORS headers if origin is allowed
+    if origin_allowed:
+        if "*" in allowed_origins:
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            # Can't use credentials with wildcard
+        else:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    return response
 
 # ============================================================================
 # SECURITY IMPLEMENTATION
@@ -417,6 +483,11 @@ async def security_middleware(request: Request, call_next):
                     status_code=429,
                     media_type="application/json"
                 )
+                # Add CORS headers to error response
+                origin = request.headers.get("Origin")
+                if origin and origin in allowed_origins:
+                    response.headers["Access-Control-Allow-Origin"] = origin
+                    response.headers["Access-Control-Allow-Credentials"] = "true"
                 log_api_access(request, session_id, 429, error)
                 return response
             
@@ -438,6 +509,11 @@ async def security_middleware(request: Request, call_next):
                         status_code=403,
                         media_type="application/json"
                     )
+                    # Add CORS headers to error response
+                    origin = request.headers.get("Origin")
+                    if origin and origin in allowed_origins:
+                        response.headers["Access-Control-Allow-Origin"] = origin
+                        response.headers["Access-Control-Allow-Credentials"] = "true"
                     log_api_access(request, session_id, 403, error)
                     return response
         
@@ -448,7 +524,13 @@ async def security_middleware(request: Request, call_next):
         # Set CSRF token in response header for GET requests (so frontend can read it)
         if request.method == "GET" and session_id and not is_callback:
             csrf_token = redis_client.get_csrf_token(session_id)
-            response.headers["X-CSRF-Token"] = csrf_token
+            # Generate CSRF token if it doesn't exist
+            if not csrf_token:
+                csrf_token = secrets.token_urlsafe(32)
+                redis_client.set_csrf_token(session_id, csrf_token)
+            # Only set header if token exists (should always exist after generation above)
+            if csrf_token:
+                response.headers["X-CSRF-Token"] = csrf_token
         
         return response
         
@@ -592,25 +674,30 @@ def logout(request: Request, response: Response):
 @app.get("/api/auth/me")
 def get_current_user(request: Request):
     """Get current logged-in user"""
-    session_id = request.cookies.get("session_id")
-    if not session_id:
-        return {"user": None}
-    
-    user_id = redis_client.get_session(session_id)
-    if not user_id:
-        return {"user": None}
-    
-    user = get_user_by_id(user_id)
-    if not user:
-        return {"user": None}
-    
-    return {
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "created_at": user.created_at.isoformat()
+    try:
+        session_id = request.cookies.get("session_id")
+        if not session_id:
+            return {"user": None}
+        
+        user_id = redis_client.get_session(session_id)
+        if not user_id:
+            return {"user": None}
+        
+        user = get_user_by_id(user_id)
+        if not user:
+            return {"user": None}
+        
+        return {
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "created_at": user.created_at.isoformat()
+            }
         }
-    }
+    except Exception as e:
+        logger.error(f"Error in /api/auth/me: {e}", exc_info=True)
+        # Return None user instead of raising error to prevent 500
+        return {"user": None}
 
 
 @app.get("/api/auth/csrf")
@@ -2297,13 +2384,9 @@ async def cancel_scheduled_videos(user_id: int = Depends(require_csrf_new)):
     cancelled_count = 0
     
     for video in videos:
-        if video.get('status') == "scheduled":
-            video_id = video.get('id')
-            db_helpers.update_user_video(
-                user_id,
-                video_id,
-                {"status": "pending", "scheduled_time": None}
-            )
+        if video.status == "scheduled":
+            video_id = video.id
+            db_helpers.update_video(video_id, user_id, status="pending", scheduled_time=None)
             cancelled_count += 1
     
     return {"ok": True, "cancelled": cancelled_count}
@@ -2962,22 +3045,23 @@ async def scheduler_task():
                     videos = db_helpers.get_user_videos(user_id)
                     
                     for video in videos:
-                        if video.get('status') == 'scheduled' and video.get('scheduled_time'):
+                        if video.status == 'scheduled' and video.scheduled_time:
                             try:
-                                scheduled_time = datetime.fromisoformat(video['scheduled_time'])
+                                scheduled_time = datetime.fromisoformat(video.scheduled_time) if isinstance(video.scheduled_time, str) else video.scheduled_time
                                 
                                 # If scheduled time has passed, upload the video
                                 if current_time >= scheduled_time:
-                                    video_id = video.get('id')
-                                    print(f"Uploading scheduled video for user {user_id}: {video['filename']}")
+                                    video_id = video.id
+                                    print(f"Uploading scheduled video for user {user_id}: {video.filename}")
                                     
                                     # Mark as uploading
-                                    db_helpers.update_user_video(user_id, video_id, {"status": "uploading"})
+                                    db_helpers.update_video(video_id, user_id, status="uploading")
                                     
                                     # Get enabled destinations
+                                    dest_settings = db_helpers.get_user_settings(user_id, "destinations")
                                     enabled_destinations = []
                                     for dest_name in ["youtube", "tiktok", "instagram"]:
-                                        is_enabled = db_helpers.get_user_setting(user_id, "destinations", f"{dest_name}_enabled", False)
+                                        is_enabled = dest_settings.get(f"{dest_name}_enabled", False)
                                         has_token = db_helpers.get_oauth_token(user_id, dest_name) is not None
                                         if is_enabled and has_token:
                                             enabled_destinations.append(dest_name)
@@ -2989,9 +3073,9 @@ async def scheduler_task():
                                     # Build temporary session-like structure for uploader functions
                                     temp_session = {
                                         "user_id": user_id,
-                                        "youtube_settings": db_helpers.get_user_settings(user_id, "youtube_settings") or {},
-                                        "tiktok_settings": db_helpers.get_user_settings(user_id, "tiktok_settings") or {},
-                                        "instagram_settings": db_helpers.get_user_settings(user_id, "instagram_settings") or {},
+                                        "youtube_settings": db_helpers.get_user_settings(user_id, "youtube") or {},
+                                        "tiktok_settings": db_helpers.get_user_settings(user_id, "tiktok") or {},
+                                        "instagram_settings": db_helpers.get_user_settings(user_id, "instagram") or {},
                                     }
                                     
                                     # Load OAuth tokens
@@ -3006,6 +3090,15 @@ async def scheduler_task():
                                                 creds.update(token.extra_data)
                                             temp_session[f"{dest_name}_creds"] = creds
                                     
+                                    # Convert video object to dict for uploader functions
+                                    video_dict = {
+                                        "id": video.id,
+                                        "filename": video.filename,
+                                        "path": video.path,
+                                        "status": video.status,
+                                        "generated_title": video.generated_title,
+                                    }
+                                    
                                     # Upload to each enabled destination
                                     success_count = 0
                                     for dest_name in enabled_destinations:
@@ -3014,28 +3107,22 @@ async def scheduler_task():
                                             try:
                                                 print(f"  Uploading to {dest_name}...")
                                                 if dest_name == "instagram":
-                                                    await uploader_func(video, temp_session)
+                                                    await uploader_func(video_dict, temp_session)
                                                 else:
-                                                    uploader_func(video, temp_session)
+                                                    uploader_func(video_dict, temp_session)
                                                 success_count += 1
                                             except Exception as upload_err:
                                                 print(f"  Error uploading to {dest_name}: {upload_err}")
                                     
                                     # Update final status
                                     if success_count == len(enabled_destinations):
-                                        db_helpers.update_user_video(user_id, video_id, {"status": "uploaded"})
+                                        db_helpers.update_video(video_id, user_id, status="uploaded")
                                     else:
-                                        db_helpers.update_user_video(user_id, video_id, {
-                                            "status": "failed",
-                                            "error": f"Upload failed for some destinations"
-                                        })
+                                        db_helpers.update_video(video_id, user_id, status="failed", error=f"Upload failed for some destinations")
                                         
                             except Exception as e:
-                                print(f"Error processing scheduled video {video['filename']}: {e}")
-                                db_helpers.update_user_video(user_id, video_id, {
-                                    "status": "failed",
-                                    "error": str(e)
-                                })
+                                print(f"Error processing scheduled video {video.filename}: {e}")
+                                db_helpers.update_video(video_id, user_id, status="failed", error=str(e))
         except Exception as e:
             print(f"Error in scheduler task: {e}")
             await asyncio.sleep(30)
@@ -3055,9 +3142,12 @@ async def upload_videos(user_id: int = Depends(require_csrf_new)):
     
     upload_logger.debug(f"Checking destinations for user {user_id}...")
     
+    # Get destination settings
+    destination_settings = db_helpers.get_user_settings(user_id, "destinations")
+    
     for dest_name in ["youtube", "tiktok", "instagram"]:
         # Check if destination is enabled
-        is_enabled = db_helpers.get_user_setting(user_id, "destinations", f"{dest_name}_enabled", False)
+        is_enabled = destination_settings.get(f"{dest_name}_enabled", False)
         
         # Check if user has OAuth token for this destination
         has_token = db_helpers.get_oauth_token(user_id, dest_name) is not None
@@ -3076,18 +3166,19 @@ async def upload_videos(user_id: int = Depends(require_csrf_new)):
     
     # Get videos that can be uploaded: pending, failed (retry), or uploading (retry if stuck)
     user_videos = db_helpers.get_user_videos(user_id)
-    pending_videos = [v for v in user_videos if v.get('status') in ['pending', 'failed', 'uploading']]
+    pending_videos = [v for v in user_videos if v.status in ['pending', 'failed', 'uploading']]
     
     upload_logger.info(f"Videos ready to upload for user {user_id}: {len(pending_videos)}")
     
     # Get global settings for upload behavior
-    upload_immediately = db_helpers.get_user_setting(user_id, "global_settings", "upload_immediately", True)
+    global_settings = db_helpers.get_user_settings(user_id, "global")
+    upload_immediately = global_settings.get("upload_immediately", True)
     
     if not pending_videos:
         # Check what statuses videos actually have
         statuses = {}
         for v in user_videos:
-            status = v.get('status', 'unknown')
+            status = v.status or 'unknown'
             statuses[status] = statuses.get(status, 0) + 1
         error_msg = f"No videos ready to upload. Add videos first. Current video statuses: {statuses}"
         upload_logger.error(error_msg)
@@ -3096,10 +3187,10 @@ async def upload_videos(user_id: int = Depends(require_csrf_new)):
     # If upload immediately is enabled, upload all at once to all enabled destinations
     if upload_immediately:
         for video in pending_videos:
-            video_id = video.get('id')
+            video_id = video.id
             
             # Set status to uploading before starting
-            db_helpers.update_user_video(user_id, video_id, {"status": "uploading"})
+            db_helpers.update_video(video_id, user_id, status="uploading")
             
             # Track which destinations succeeded/failed
             succeeded_destinations = []
@@ -3112,9 +3203,9 @@ async def upload_videos(user_id: int = Depends(require_csrf_new)):
                 "youtube_creds": None,
                 "tiktok_creds": None,
                 "instagram_creds": None,
-                "youtube_settings": db_helpers.get_user_settings(user_id, "youtube_settings") or {},
-                "tiktok_settings": db_helpers.get_user_settings(user_id, "tiktok_settings") or {},
-                "instagram_settings": db_helpers.get_user_settings(user_id, "instagram_settings") or {},
+                "youtube_settings": db_helpers.get_user_settings(user_id, "youtube") or {},
+                "tiktok_settings": db_helpers.get_user_settings(user_id, "tiktok") or {},
+                "instagram_settings": db_helpers.get_user_settings(user_id, "instagram") or {},
             }
             
             # Load OAuth tokens for enabled destinations
@@ -3131,68 +3222,89 @@ async def upload_videos(user_id: int = Depends(require_csrf_new)):
                         creds.update(token.extra_data)
                     temp_session[f"{dest_name}_creds"] = creds
             
+            # Convert video object to dict for uploader functions (they expect dict format)
+            video_dict = {
+                "id": video.id,
+                "filename": video.filename,
+                "path": video.path,
+                "status": video.status,
+                "generated_title": video.generated_title,
+                "youtube_id": getattr(video, 'youtube_id', None),
+                "tiktok_id": getattr(video, 'tiktok_id', None),
+                "tiktok_publish_id": getattr(video, 'tiktok_publish_id', None),
+                "instagram_id": getattr(video, 'instagram_id', None),
+                "instagram_container_id": getattr(video, 'instagram_container_id', None),
+                "error": getattr(video, 'error', None),
+            }
+            
             # Upload to all enabled destinations
             for dest_name in enabled_destinations:
                 uploader_func = DESTINATION_UPLOADERS.get(dest_name)
                 if uploader_func:
-                    upload_logger.info(f"Uploading {video['filename']} to {dest_name} for user {user_id}")
+                    upload_logger.info(f"Uploading {video.filename} to {dest_name} for user {user_id}")
                     
                     try:
                         # Pass appropriate parameters based on destination
                         if dest_name == "instagram":
-                            await uploader_func(video, temp_session)
+                            await uploader_func(video_dict, temp_session)
                         else:
-                            uploader_func(video, temp_session)
+                            uploader_func(video_dict, temp_session)
                         
                         # Check if this destination succeeded by looking for success markers
-                        if dest_name == 'youtube' and 'youtube_id' in video:
+                        if dest_name == 'youtube' and video_dict.get('youtube_id'):
                             succeeded_destinations.append(dest_name)
-                            upload_logger.info(f"YouTube upload succeeded for {video['filename']}")
-                        elif dest_name == 'tiktok' and ('tiktok_id' in video or 'tiktok_publish_id' in video):
+                            upload_logger.info(f"YouTube upload succeeded for {video.filename}")
+                        elif dest_name == 'tiktok' and (video_dict.get('tiktok_id') or video_dict.get('tiktok_publish_id')):
                             succeeded_destinations.append(dest_name)
-                            upload_logger.info(f"TikTok upload succeeded for {video['filename']}")
-                        elif dest_name == 'instagram' and ('instagram_id' in video or 'instagram_container_id' in video):
+                            upload_logger.info(f"TikTok upload succeeded for {video.filename}")
+                        elif dest_name == 'instagram' and (video_dict.get('instagram_id') or video_dict.get('instagram_container_id')):
                             succeeded_destinations.append(dest_name)
-                            upload_logger.info(f"Instagram upload succeeded for {video['filename']}")
+                            upload_logger.info(f"Instagram upload succeeded for {video.filename}")
                         else:
                             failed_destinations.append(dest_name)
-                            upload_logger.error(f"{dest_name} upload failed for {video['filename']}")
+                            upload_logger.error(f"{dest_name} upload failed for {video.filename}")
                     except Exception as e:
                         failed_destinations.append(dest_name)
-                        upload_logger.error(f"{dest_name} upload exception for {video['filename']}: {str(e)}")
-                        video['error'] = str(e)
+                        upload_logger.error(f"{dest_name} upload exception for {video.filename}: {str(e)}")
+                        video_dict['error'] = str(e)
             
             # Determine final status based on results
+            update_data = {}
             if len(succeeded_destinations) == len(enabled_destinations):
-                video['status'] = 'uploaded'
-                if 'error' in video:
-                    del video['error']
+                update_data['status'] = 'uploaded'
+                if 'error' in video_dict:
+                    update_data['error'] = None
             elif len(succeeded_destinations) > 0:
-                video['status'] = 'failed'
-                video['error'] = f"Partial upload: succeeded ({', '.join(succeeded_destinations)}), failed ({', '.join(failed_destinations)})"
+                update_data['status'] = 'failed'
+                update_data['error'] = f"Partial upload: succeeded ({', '.join(succeeded_destinations)}), failed ({', '.join(failed_destinations)})"
             else:
-                video['status'] = 'failed'
-                if 'error' not in video:
-                    video['error'] = f"Upload failed for all destinations: {', '.join(failed_destinations)}"
+                update_data['status'] = 'failed'
+                if 'error' not in video_dict or not video_dict['error']:
+                    update_data['error'] = f"Upload failed for all destinations: {', '.join(failed_destinations)}"
+            
+            # Update any additional fields that might have been set by uploaders
+            for key in ['youtube_id', 'tiktok_id', 'tiktok_publish_id', 'instagram_id', 'instagram_container_id']:
+                if key in video_dict and video_dict[key]:
+                    update_data[key] = video_dict[key]
             
             # Update video in database
-            db_helpers.update_user_video(user_id, video_id, video)
+            db_helpers.update_video(video_id, user_id, **update_data)
         
         # Count videos that are fully uploaded
         user_videos_updated = db_helpers.get_user_videos(user_id)
-        uploaded_count = len([v for v in user_videos_updated if v.get('status') == 'uploaded'])
+        uploaded_count = len([v for v in user_videos_updated if v.status == 'uploaded'])
         return {
             "uploaded": uploaded_count,
             "message": f"Videos uploaded immediately to: {', '.join(enabled_destinations)}"
         }
     
     # Otherwise, mark for scheduled upload
-    schedule_mode = db_helpers.get_user_setting(user_id, "global_settings", "schedule_mode", "immediate")
+    schedule_mode = global_settings.get("schedule_mode", "immediate")
     
     if schedule_mode == 'spaced':
         # Calculate interval in minutes
-        value = db_helpers.get_user_setting(user_id, "global_settings", "schedule_interval_value", 60)
-        unit = db_helpers.get_user_setting(user_id, "global_settings", "schedule_interval_unit", "minutes")
+        value = global_settings.get("schedule_interval_value", 60)
+        unit = global_settings.get("schedule_interval_unit", "minutes")
         
         if unit == 'minutes':
             interval_minutes = value
@@ -3206,12 +3318,9 @@ async def upload_videos(user_id: int = Depends(require_csrf_new)):
         # Set scheduled time for each video (use timezone-aware datetime)
         current_time = datetime.now(timezone.utc)
         for i, video in enumerate(pending_videos):
-            video_id = video.get('id')
+            video_id = video.id
             scheduled_time = current_time + timedelta(minutes=interval_minutes * i)
-            db_helpers.update_user_video(user_id, video_id, {
-                "scheduled_time": scheduled_time.isoformat(),
-                "status": "scheduled"
-            })
+            db_helpers.update_video(video_id, user_id, scheduled_time=scheduled_time.isoformat(), status="scheduled")
         
         return {
             "scheduled": len(pending_videos),
@@ -3220,14 +3329,11 @@ async def upload_videos(user_id: int = Depends(require_csrf_new)):
     
     elif schedule_mode == 'specific_time':
         # Schedule all for a specific time
-        schedule_start_time = db_helpers.get_user_setting(user_id, "global_settings", "schedule_start_time")
+        schedule_start_time = global_settings.get("schedule_start_time")
         if schedule_start_time:
             for video in pending_videos:
-                video_id = video.get('id')
-                db_helpers.update_user_video(user_id, video_id, {
-                    "scheduled_time": schedule_start_time,
-                    "status": "scheduled"
-                })
+                video_id = video.id
+                db_helpers.update_video(video_id, user_id, scheduled_time=schedule_start_time, status="scheduled")
             
             return {
                 "scheduled": len(pending_videos),

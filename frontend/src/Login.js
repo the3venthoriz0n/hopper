@@ -1,7 +1,22 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 
-const API = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
+// Build API URL at runtime - always use HTTPS for production-like domains
+const getApiUrl = () => {
+  if (process.env.REACT_APP_BACKEND_URL) {
+    return `${process.env.REACT_APP_BACKEND_URL}/api`;
+  }
+  // Try to infer backend URL from frontend hostname
+  const hostname = window.location.hostname;
+  if (hostname.includes('hopper-')) {
+    const backendHostname = hostname.replace('hopper-', 'api-');
+    return `https://${backendHostname}/api`;
+  }
+  // Fallback to same hostname
+  return `https://${hostname}/api`;
+};
+
+const API = getApiUrl();
 
 function Login({ onLoginSuccess }) {
   const [isLogin, setIsLogin] = useState(true);
@@ -16,7 +31,7 @@ function Login({ onLoginSuccess }) {
     setLoading(true);
 
     try {
-      const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register';
+      const endpoint = isLogin ? '/auth/login' : '/auth/register';
       const response = await axios.post(`${API}${endpoint}`, {
         email,
         password
@@ -51,7 +66,7 @@ function Login({ onLoginSuccess }) {
         boxShadow: '0 4px 6px rgba(0,0,0,0.3)'
       }}>
         <h1 style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-          🎬 Hopper
+        🐸 hopper
         </h1>
         
         <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
