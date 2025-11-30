@@ -1,4 +1,4 @@
-.PHONY: help sync up down rebuild logs shell clean
+.PHONY: help sync up down rebuild logs shell clean test
 
 # Default environment (can be overridden: make up ENV=prod)
 ENV ?= dev
@@ -19,10 +19,11 @@ help:
 	@echo "Usage: make <target> [ENV=dev|prod] [SERVICE=frontend|backend]"
 	@echo ""
 	@echo "Targets:"
+	@echo "  test          Run unit tests"
 	@echo "  sync          Sync local code to remote server"
-	@echo "  up            Start services (with build)"
+	@echo "  up            Start services (with build, runs tests first)"
 	@echo "  down          Stop services"
-	@echo "  rebuild       Stop, rebuild from scratch, and start"
+	@echo "  rebuild       Stop, rebuild from scratch, and start (runs tests first)"
 	@echo "  logs          Follow logs (add LINES=N for tail)"
 	@echo "  shell         Open backend shell"
 	@echo "  clean         Remove stopped containers and unused images"
@@ -41,7 +42,14 @@ help:
 sync:
 	@bash sync-rsync.sh
 
-up: sync
+test: sync
+	@echo "🧪 Building backend image (to ensure pytest is installed)..."
+	@$(COMPOSE) build backend
+	@echo "🧪 Running tests..."
+	@$(COMPOSE) run --rm backend python -m pytest /app/test_main.py -v
+	@echo "✅ All tests passed!"
+
+up: test sync
 	@echo "🚀 Starting $(ENV) environment..."
 	@$(COMPOSE) up -d --build $(SERVICE)
 	@echo "✅ $(ENV) is running!"
@@ -50,7 +58,7 @@ down:
 	@echo "🛑 Stopping $(ENV) environment..."
 	@$(COMPOSE) down $(SERVICE)
 
-rebuild: down sync
+rebuild: test down sync
 	@echo "🔨 Rebuilding $(ENV) from scratch..."
 	@$(COMPOSE) build --no-cache $(SERVICE)
 	@$(COMPOSE) up -d $(SERVICE)
