@@ -1440,8 +1440,8 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
         access_token = decrypt(tiktok_token.access_token)
         if not access_token:
             tiktok_logger.warning(f"Failed to decrypt TikTok token for user {user_id}")
-            # Return what we have (at least open_id)
-            return {"account": account_info if account_info else None}
+            # Return None if we don't have complete account info (need display_name or username)
+            return {"account": None}
         
         # Call TikTok creator info API with timeout (must use POST, not GET)
         # Only call API if we don't have cached display_name/username
@@ -1466,7 +1466,7 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
                         refresh_display_name = refresh_extra_data.get("display_name")
                         refresh_username = refresh_extra_data.get("username")
                         if refresh_display_name or refresh_username:
-                            # We have cached data - return it instead of empty account_info
+                            # We have cached data - return it instead of incomplete data
                             account_info = {}
                             if open_id:
                                 account_info["open_id"] = open_id
@@ -1478,8 +1478,8 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
                                 account_info["avatar_url"] = refresh_extra_data.get("avatar_url")
                             tiktok_logger.debug(f"Found cached account info after API failure, returning it")
                             return {"account": account_info}
-                    # If no cached data found, return what we have (at least open_id)
-                    return {"account": account_info if account_info else None}
+                    # If no cached data with display_name/username, return None (don't return incomplete data)
+                    return {"account": None}
                 
                 creator_data = creator_info_response.json()
                 creator_info = creator_data.get("data", {})
@@ -1515,23 +1515,32 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
                         db=db
                     )
                 
-                return {"account": account_info}
+                # Only return if we have complete account info (display_name or username)
+                if account_info.get("display_name") or account_info.get("username"):
+                    return {"account": account_info}
+                else:
+                    # Incomplete data - return None
+                    return {"account": None}
+                    
         except Exception as api_error:
             tiktok_logger.warning(f"Error calling TikTok API for user {user_id}: {str(api_error)}")
-            # ALWAYS return cached account info if we have it (even if API fails)
-            # This is the root cause fix - never lose cached account info
-            return {"account": account_info if account_info else None}
+            # Return cached account info only if it's complete (has display_name or username)
+            if account_info.get("display_name") or account_info.get("username"):
+                return {"account": account_info}
+            # Don't return incomplete account data (only open_id)
+            return {"account": None}
         
     except Exception as e:
         tiktok_logger.error(f"Error getting TikTok account info for user {user_id}: {str(e)}", exc_info=True)
-        # Try to return cached account info even on exception
+        # Try to return cached account info even on exception - but only if complete
         try:
             extra_data = tiktok_token.extra_data or {}
             cached_display_name = extra_data.get("display_name")
             cached_username = extra_data.get("username")
-            open_id = extra_data.get("open_id")
-            if cached_display_name or cached_username or open_id:
+            # Only return if we have display_name or username (complete data)
+            if cached_display_name or cached_username:
                 account_info = {}
+                open_id = extra_data.get("open_id")
                 if open_id:
                     account_info["open_id"] = open_id
                 if cached_display_name:
@@ -1963,15 +1972,11 @@ async def get_instagram_account(user_id: int = Depends(require_auth), db: Sessio
         username = extra_data.get("username")
         business_account_id = extra_data.get("business_account_id")
         
-        # If we have cached info, return it immediately (similar to YouTube pattern)
-        if username and business_account_id:
-            return {"account": {"username": username, "user_id": business_account_id}}
-        
-        # If we have at least business_account_id, return minimal info (similar to YouTube pattern)
-        if business_account_id:
-            account_info = {"user_id": business_account_id}
-            if username:
-                account_info["username"] = username
+        # Return cached info only if we have username (complete data)
+        if username:
+            account_info = {"username": username}
+            if business_account_id:
+                account_info["user_id"] = business_account_id
             return {"account": account_info}
         
         # If not cached, fetch from Instagram API
@@ -1994,9 +1999,9 @@ async def get_instagram_account(user_id: int = Depends(require_auth), db: Sessio
             if username:
                 account_info["username"] = username
             
-            # If we got at least business_account_id, cache it and return
-            if business_account_id:
-                # Update extra_data with cached info
+            # Only return if we have username (complete data)
+            if username:
+                # Cache the info for future requests
                 extra_data["username"] = username
                 extra_data["business_account_id"] = business_account_id
                 db_helpers.save_oauth_token(
@@ -2010,24 +2015,31 @@ async def get_instagram_account(user_id: int = Depends(require_auth), db: Sessio
                 )
                 return {"account": account_info}
             else:
-                # If we couldn't get business_account_id, log warning but return what we have
-                instagram_logger.warning(f"Failed to fetch Instagram business_account_id for user {user_id}")
-                return {"account": account_info if account_info else None}
+                # Don't return incomplete data (only user_id without username)
+                instagram_logger.warning(f"Failed to fetch Instagram username for user {user_id}")
+                return {"account": None}
         except Exception as profile_error:
             instagram_logger.warning(f"Could not fetch Instagram profile for user {user_id}: {str(profile_error)}")
-            # Return minimal account info if we have business_account_id cached, similar to YouTube pattern
-            if business_account_id:
-                return {"account": {"user_id": business_account_id}}
+            # Return cached username if available, otherwise None
+            if username:
+                account_info = {"username": username}
+                if business_account_id:
+                    account_info["user_id"] = business_account_id
+                return {"account": account_info}
             return {"account": None}
         
     except Exception as e:
         instagram_logger.error(f"Error getting Instagram account info for user {user_id}: {str(e)}", exc_info=True)
-        # Try to return at least business_account_id if available
+        # Try to return cached username if available (complete data only)
         try:
             extra_data = instagram_token.extra_data or {}
-            business_account_id = extra_data.get("business_account_id")
-            if business_account_id:
-                return {"account": {"user_id": business_account_id}}
+            username = extra_data.get("username")
+            if username:
+                account_info = {"username": username}
+                business_account_id = extra_data.get("business_account_id")
+                if business_account_id:
+                    account_info["user_id"] = business_account_id
+                return {"account": account_info}
         except:
             pass
         return {"account": None, "error": str(e)}
