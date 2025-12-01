@@ -822,13 +822,14 @@ def auth_callback(code: str, state: str, request: Request, response: Response):
 @app.get("/api/destinations")
 def get_destinations(user_id: int = Depends(require_auth)):
     """Get destination status for current user"""
-    # Get OAuth tokens
-    youtube_token = db_helpers.get_oauth_token(user_id, "youtube")
-    tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok")
-    instagram_token = db_helpers.get_oauth_token(user_id, "instagram")
-    
-    # Get enabled status from settings
+    # Batch load OAuth tokens and settings to prevent N+1 queries
+    all_tokens = db_helpers.get_all_oauth_tokens(user_id)
     settings = db_helpers.get_user_settings(user_id, "destinations")
+    
+    # Extract OAuth tokens
+    youtube_token = all_tokens.get("youtube")
+    tiktok_token = all_tokens.get("tiktok")
+    instagram_token = all_tokens.get("instagram")
     
     # Get scheduled video count
     videos = db_helpers.get_user_videos(user_id)
@@ -2080,18 +2081,22 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
 @app.get("/api/videos")
 def get_videos(user_id: int = Depends(require_auth)):
     """Get video queue with progress and computed titles for user"""
-    # Get user's videos and settings
+    # Get user's videos and settings - batch load to prevent N+1 queries
     videos = db_helpers.get_user_videos(user_id)
-    global_settings = db_helpers.get_user_settings(user_id, "global")
-    youtube_settings = db_helpers.get_user_settings(user_id, "youtube")
-    tiktok_settings = db_helpers.get_user_settings(user_id, "tiktok")
-    instagram_settings = db_helpers.get_user_settings(user_id, "instagram")
-    dest_settings = db_helpers.get_user_settings(user_id, "destinations")
+    all_settings = db_helpers.get_all_user_settings(user_id)
+    all_tokens = db_helpers.get_all_oauth_tokens(user_id)
     
-    # Get OAuth tokens
-    youtube_token = db_helpers.get_oauth_token(user_id, "youtube")
-    tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok")
-    instagram_token = db_helpers.get_oauth_token(user_id, "instagram")
+    # Extract settings by category
+    global_settings = all_settings.get("global", {})
+    youtube_settings = all_settings.get("youtube", {})
+    tiktok_settings = all_settings.get("tiktok", {})
+    instagram_settings = all_settings.get("instagram", {})
+    dest_settings = all_settings.get("destinations", {})
+    
+    # Extract OAuth tokens
+    youtube_token = all_tokens.get("youtube")
+    tiktok_token = all_tokens.get("tiktok")
+    instagram_token = all_tokens.get("instagram")
     
     videos_with_info = []
     for video in videos:
@@ -2377,48 +2382,56 @@ async def cancel_scheduled_videos(user_id: int = Depends(require_csrf_new)):
     return {"ok": True, "cancelled": cancelled_count}
 
 
-def upload_video_to_youtube(video, session):
-    """Helper function to upload a single video to YouTube"""
-    youtube_creds = session["youtube_creds"]
-    youtube_settings = session["youtube_settings"]
-    user_id = session["user_id"]
+def upload_video_to_youtube(user_id: int, video_id: int):
+    """Upload a single video to YouTube - queries database directly"""
+    # Get video from database
+    videos = db_helpers.get_user_videos(user_id)
+    video = next((v for v in videos if v.id == video_id), None)
+    if not video:
+        youtube_logger.error(f"Video {video_id} not found for user {user_id}")
+        return
     
-    youtube_logger.info(f"Starting upload for {video['filename']}")
-    
-    if not youtube_creds:
-        video['status'] = 'failed'
-        video['error'] = 'No YouTube credentials'
+    # Get YouTube credentials from database
+    youtube_token = db_helpers.get_oauth_token(user_id, "youtube")
+    if not youtube_token:
+        db_helpers.update_video(video_id, user_id, status="failed", error="No YouTube credentials")
         youtube_logger.error("No YouTube credentials")
+        return
+    
+    # Convert OAuth token to Google Credentials
+    youtube_creds = db_helpers.oauth_token_to_credentials(youtube_token)
+    if not youtube_creds:
+        db_helpers.update_video(video_id, user_id, status="failed", error="Failed to convert YouTube token to credentials")
+        youtube_logger.error("Failed to convert YouTube token to credentials")
         return
     
     # Validate credentials are complete
     if not youtube_creds.client_id or not youtube_creds.client_secret or not youtube_creds.token_uri:
-        video['status'] = 'failed'
         error_msg = 'YouTube credentials are incomplete. Please disconnect and reconnect YouTube.'
-        video['error'] = error_msg
+        db_helpers.update_video(video_id, user_id, status="failed", error=error_msg)
         youtube_logger.error(error_msg)
         return
     
+    # Get settings from database
+    youtube_settings = db_helpers.get_user_settings(user_id, "youtube")
+    global_settings = db_helpers.get_user_settings(user_id, "global")
+    
+    youtube_logger.info(f"Starting upload for {video.filename}")
+    
     try:
-        video['status'] = 'uploading'
-        redis_client.set_upload_progress(user_id, video['id'], 0)
+        db_helpers.update_video(video_id, user_id, status="uploading")
+        redis_client.set_upload_progress(user_id, video_id, 0)
         
         youtube_logger.debug("Building YouTube API client...")
         youtube = build('youtube', 'v3', credentials=youtube_creds)
         
-        # Check for custom settings, otherwise use global settings and templates
-        custom_settings = video.get('custom_settings', {})
-        filename_no_ext = video['filename'].rsplit('.', 1)[0]
+        # Get video metadata
+        filename_no_ext = video.filename.rsplit('.', 1)[0] if '.' in video.filename else video.filename
         
-        # Priority for title: custom > generated_title > destination > global
-        if 'title' in custom_settings:
-            title = custom_settings['title']
-        elif 'generated_title' in video:
-            # Use the pre-generated title from when video was added
-            title = video['generated_title']
+        # Priority for title: generated_title > destination template > global template
+        if video.generated_title:
+            title = video.generated_title
         else:
-            # Fallback: destination template > global template
-            global_settings = session.get("global_settings", {})
             title_template = youtube_settings.get('title_template', '') or global_settings.get('title_template', '{filename}')
             title = replace_template_placeholders(
                 title_template, 
@@ -2430,33 +2443,24 @@ def upload_video_to_youtube(video, session):
         if len(title) > 100:
             title = title[:100]
         
-        # Priority for description: custom > destination > global
-        if 'description' in custom_settings:
-            description = custom_settings['description']
-        else:
-            # Fallback: destination template > global template
-            global_settings = session.get("global_settings", {})
-            desc_template = youtube_settings.get('description_template', '') or global_settings.get('description_template', 'Uploaded via Hopper')
-            description = replace_template_placeholders(
-                desc_template,
-                filename_no_ext,
-                global_settings.get('wordbank', [])
-            )
+        # Priority for description: destination template > global template
+        desc_template = youtube_settings.get('description_template', '') or global_settings.get('description_template', 'Uploaded via Hopper')
+        description = replace_template_placeholders(
+            desc_template,
+            filename_no_ext,
+            global_settings.get('wordbank', [])
+        )
         
-        # Use custom visibility if set, otherwise use global setting
-        visibility = custom_settings.get('visibility', youtube_settings['visibility'])
-        made_for_kids = custom_settings.get('made_for_kids', youtube_settings['made_for_kids'])
+        # Get visibility and made_for_kids from settings
+        visibility = youtube_settings.get('visibility', 'private')
+        made_for_kids = youtube_settings.get('made_for_kids', False)
         
-        # Use custom tags if set, otherwise use template (tags use global wordbank)
-        if 'tags' in custom_settings:
-            tags_str = custom_settings['tags']
-        else:
-            global_settings = session.get("global_settings", {})
-            tags_str = replace_template_placeholders(
-                youtube_settings.get('tags_template', ''),
-                filename_no_ext,
-                global_settings.get('wordbank', [])
-            )
+        # Get tags from template
+        tags_str = replace_template_placeholders(
+            youtube_settings.get('tags_template', ''),
+            filename_no_ext,
+            global_settings.get('wordbank', [])
+        )
         
         # Parse tags (comma-separated, strip whitespace, filter empty)
         tags = [tag.strip() for tag in tags_str.split(',') if tag.strip()] if tags_str else []
@@ -2472,7 +2476,7 @@ def upload_video_to_youtube(video, session):
             snippet_body['tags'] = tags
         
         youtube_logger.info(f"Preparing upload request - Title: {title[:50]}..., Visibility: {visibility}")
-        youtube_logger.debug(f"Video path: {video['path']}")
+        youtube_logger.debug(f"Video path: {video.path}")
         
         request = youtube.videos().insert(
             part='snippet,status',
@@ -2483,7 +2487,7 @@ def upload_video_to_youtube(video, session):
                     'selfDeclaredMadeForKids': made_for_kids
                 }
             },
-            media_body=MediaFileUpload(video['path'], resumable=True)
+            media_body=MediaFileUpload(video.path, resumable=True)
         )
         
         youtube_logger.info("Starting resumable upload...")
@@ -2493,30 +2497,31 @@ def upload_video_to_youtube(video, session):
             status, response = request.next_chunk()
             if status:
                 progress = int(status.progress() * 100)
-                redis_client.set_upload_progress(user_id, video['id'], progress)
+                redis_client.set_upload_progress(user_id, video_id, progress)
                 chunk_count += 1
                 if chunk_count % 10 == 0 or progress == 100:  # Log every 10 chunks or at completion
                     youtube_logger.info(f"Upload progress: {progress}%")
         
-        video['status'] = 'uploaded'
-        video['youtube_id'] = response['id']
-        redis_client.set_upload_progress(user_id, video['id'], 100)
-        youtube_logger.info(f"Successfully uploaded {video['filename']}, YouTube ID: {response['id']}")
+        # Update video in database with success
+        db_helpers.update_video(video_id, user_id, status="uploaded", youtube_id=response['id'])
+        redis_client.set_upload_progress(user_id, video_id, 100)
+        youtube_logger.info(f"Successfully uploaded {video.filename}, YouTube ID: {response['id']}")
     
     except Exception as e:
-        video['status'] = 'failed'
-        video['error'] = str(e)
-        youtube_logger.error(f"Error uploading {video['filename']}: {str(e)}", exc_info=True)
-        redis_client.delete_upload_progress(user_id, video['id'])
+        db_helpers.update_video(video_id, user_id, status="failed", error=str(e))
+        youtube_logger.error(f"Error uploading {video.filename}: {str(e)}", exc_info=True)
+        redis_client.delete_upload_progress(user_id, video_id)
 
 
-def check_tiktok_rate_limit(session_id):
+def check_tiktok_rate_limit(session_id: str = None, user_id: int = None):
     """Check if TikTok API rate limit is exceeded (6 requests per minute) using Redis"""
-    if not session_id:
-        raise Exception("No session_id provided for TikTok rate limiting")
-    
-    # Use session_id as identifier for rate limiting
-    identifier = f"tiktok:{session_id}"
+    # Use session_id if available, otherwise use user_id
+    if session_id:
+        identifier = f"tiktok:{session_id}"
+    elif user_id:
+        identifier = f"tiktok:user:{user_id}"
+    else:
+        raise Exception("Either session_id or user_id must be provided for TikTok rate limiting")
     
     # Increment counter in Redis (with TTL)
     current_count = redis_client.increment_rate_limit(identifier, TIKTOK_RATE_LIMIT_WINDOW)
@@ -2528,9 +2533,8 @@ def check_tiktok_rate_limit(session_id):
         raise Exception(f"TikTok rate limit exceeded. Wait {wait_time}s before trying again.")
 
 
-def get_tiktok_creator_info(session):
+def get_tiktok_creator_info(access_token: str):
     """Query TikTok creator info"""
-    access_token = session.get("tiktok_creds", {}).get("access_token")
     if not access_token:
         raise Exception("No TikTok access token")
     
@@ -2581,67 +2585,73 @@ def map_privacy_level_to_tiktok(privacy_level, creator_info):
     return tiktok_privacy
 
 
-def upload_video_to_tiktok(video, session, session_id=None):
-    """Upload video to TikTok using Content Posting API"""
-    tiktok_creds = session.get("tiktok_creds")
-    tiktok_settings = session.get("tiktok_settings", {})
-    user_id = session.get("user_id")
-    
-    if not user_id:
-        video['status'] = 'failed'
-        video['error'] = 'No user_id in session'
+def upload_video_to_tiktok(user_id: int, video_id: int, session_id: str = None):
+    """Upload video to TikTok using Content Posting API - queries database directly"""
+    # Get video from database
+    videos = db_helpers.get_user_videos(user_id)
+    video = next((v for v in videos if v.id == video_id), None)
+    if not video:
+        tiktok_logger.error(f"Video {video_id} not found for user {user_id}")
         return
     
-    if not tiktok_creds:
-        video['status'] = 'failed'
-        video['error'] = 'No TikTok credentials'
+    # Get TikTok credentials from database
+    tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok")
+    if not tiktok_token:
+        db_helpers.update_video(video_id, user_id, status="failed", error="No TikTok credentials")
+        tiktok_logger.error("No TikTok credentials")
         return
+    
+    # Decrypt access token
+    access_token = decrypt(tiktok_token.access_token)
+    if not access_token:
+        db_helpers.update_video(video_id, user_id, status="failed", error="Failed to decrypt TikTok token")
+        tiktok_logger.error("Failed to decrypt TikTok token")
+        return
+    
+    # Get settings from database
+    tiktok_settings = db_helpers.get_user_settings(user_id, "tiktok")
+    global_settings = db_helpers.get_user_settings(user_id, "global")
     
     try:
-        video['status'] = 'uploading'
-        redis_client.set_upload_progress(user_id, video['id'], 0)
+        db_helpers.update_video(video_id, user_id, status="uploading")
+        redis_client.set_upload_progress(user_id, video_id, 0)
         
-        access_token = tiktok_creds.get("access_token")
-        if not access_token:
-            raise Exception("No TikTok access token")
+        # Check rate limit (use user_id if session_id not provided)
+        check_tiktok_rate_limit(session_id=session_id, user_id=user_id)
         
-        check_tiktok_rate_limit(session_id)
-        creator_info = get_tiktok_creator_info(session)
+        # Get creator info
+        creator_info = get_tiktok_creator_info(access_token)
         
         # Get video file
-        video_path = Path(video['path'])
+        video_path = Path(video.path)
         if not video_path.exists():
-            raise Exception(f"Video file not found: {video['path']}")
+            raise Exception(f"Video file not found: {video.path}")
         
         video_size = video_path.stat().st_size
         if video_size == 0:
             raise Exception("Video file is empty")
         
         # Prepare metadata
-        custom_settings = video.get('custom_settings', {})
-        filename_no_ext = video['filename'].rsplit('.', 1)[0]
+        filename_no_ext = video.filename.rsplit('.', 1)[0] if '.' in video.filename else video.filename
         
-        # Get title (priority: custom > generated > template > filename)
-        if 'title' in custom_settings:
-            title = custom_settings['title']
-        elif 'generated_title' in video:
-            title = video['generated_title']
+        # Get title (priority: generated_title > template > filename)
+        if video.generated_title:
+            title = video.generated_title
         else:
-            global_settings = session.get("global_settings", {})
             title_template = tiktok_settings.get('title_template', '') or global_settings.get('title_template', '{filename}')
             title = replace_template_placeholders(title_template, filename_no_ext, global_settings.get('wordbank', []))
         
         title = (title or filename_no_ext)[:2200]  # TikTok limit
         
         # Get settings with defaults
-        privacy_level = custom_settings.get('privacy_level', tiktok_settings.get('privacy_level', 'public'))
+        privacy_level = tiktok_settings.get('privacy_level', 'public')
         tiktok_privacy = map_privacy_level_to_tiktok(privacy_level, creator_info)
-        allow_comments = custom_settings.get('allow_comments', tiktok_settings.get('allow_comments', True))
-        allow_duet = custom_settings.get('allow_duet', tiktok_settings.get('allow_duet', True))
-        allow_stitch = custom_settings.get('allow_stitch', tiktok_settings.get('allow_stitch', True))
+        allow_comments = tiktok_settings.get('allow_comments', True)
+        allow_duet = tiktok_settings.get('allow_duet', True)
+        allow_stitch = tiktok_settings.get('allow_stitch', True)
         
-        tiktok_logger.info(f"Uploading {video['filename']} ({video_size / (1024*1024):.2f} MB)")
-        redis_client.set_upload_progress(user_id, video['id'], 5)
+        tiktok_logger.info(f"Uploading {video.filename} ({video_size / (1024*1024):.2f} MB)")
+        redis_client.set_upload_progress(user_id, video_id, 5)
         
         # Step 1: Initialize upload
         init_response = httpx.post(
@@ -2670,26 +2680,6 @@ def upload_video_to_tiktok(video, session, session_id=None):
         
         if init_response.status_code != 200:
             import json as json_module
-            
-            # Log the request that was sent
-            request_body = {
-                "post_info": {
-                    "title": title,
-                    "privacy_level": tiktok_privacy,
-                    "disable_duet": not allow_duet,
-                    "disable_comment": not allow_comments,
-                    "disable_stitch": not allow_stitch
-                },
-                "source_info": {
-                    "source": "FILE_UPLOAD",
-                    "video_size": video_size,
-                    "chunk_size": video_size,
-                    "total_chunk_count": 1
-                }
-            }
-            tiktok_logger.debug(f"Request body: {json_module.dumps(request_body, indent=2)}")
-            
-            # Log the full response
             tiktok_logger.error(f"Init failed with status {init_response.status_code}")
             try:
                 response_data = init_response.json()
@@ -2705,12 +2695,12 @@ def upload_video_to_tiktok(video, session, session_id=None):
         upload_url = init_data["data"]["upload_url"]
         
         tiktok_logger.info(f"Initialized, publish_id: {publish_id}")
-        redis_client.set_upload_progress(user_id, video['id'], 10)
+        redis_client.set_upload_progress(user_id, video_id, 10)
         
         # Step 2: Upload video file
         tiktok_logger.info("Uploading video file...")
         
-        file_ext = video['filename'].rsplit('.', 1)[-1].lower()
+        file_ext = video.filename.rsplit('.', 1)[-1].lower() if '.' in video.filename else 'mp4'
         content_type = {'mp4': 'video/mp4', 'mov': 'video/quicktime', 'webm': 'video/webm'}.get(file_ext, 'video/mp4')
         
         with open(video_path, 'rb') as f:
@@ -2736,84 +2726,71 @@ def upload_video_to_tiktok(video, session, session_id=None):
                 error_msg = upload_response.text
             raise Exception(f"Upload failed: {upload_response.status_code} - {error_msg}")
         
-        # Success
-        redis_client.set_upload_progress(user_id, video['id'], 100)
-        video['tiktok_publish_id'] = publish_id
-        video['status'] = 'uploaded'
-        video['tiktok_id'] = publish_id
-        
+        # Success - update video in database
+        db_helpers.update_video(video_id, user_id, status="uploaded", tiktok_publish_id=publish_id, tiktok_id=publish_id)
+        redis_client.set_upload_progress(user_id, video_id, 100)
         tiktok_logger.info(f"Success! publish_id: {publish_id}")
         
     except Exception as e:
-        video['status'] = 'failed'
-        video['error'] = f'TikTok upload failed: {str(e)}'
+        db_helpers.update_video(video_id, user_id, status="failed", error=f'TikTok upload failed: {str(e)}')
         tiktok_logger.error(f"Upload error: {str(e)}", exc_info=True)
-        redis_client.delete_upload_progress(user_id, video['id'])
+        redis_client.delete_upload_progress(user_id, video_id)
             
-async def upload_video_to_instagram(video, session):
-    """Upload video to Instagram using Graph API"""
-    instagram_creds = session.get("instagram_creds")
-    instagram_settings = session.get("instagram_settings", {})
-    user_id = session.get("user_id")
-    
-    instagram_logger.info(f"Starting upload for {video['filename']}")
-    
-    if not user_id:
-        video['status'] = 'failed'
-        video['error'] = 'No user_id in session'
+async def upload_video_to_instagram(user_id: int, video_id: int):
+    """Upload video to Instagram using Graph API - queries database directly"""
+    # Get video from database
+    videos = db_helpers.get_user_videos(user_id)
+    video = next((v for v in videos if v.id == video_id), None)
+    if not video:
+        instagram_logger.error(f"Video {video_id} not found for user {user_id}")
         return
     
-    if not instagram_creds:
-        video['status'] = 'failed'
-        video['error'] = 'No Instagram credentials'
+    # Get Instagram credentials from database
+    instagram_token = db_helpers.get_oauth_token(user_id, "instagram")
+    if not instagram_token:
+        db_helpers.update_video(video_id, user_id, status="failed", error="No Instagram credentials")
         instagram_logger.error("No Instagram credentials")
         return
     
-    # Log what credentials we have (without exposing full token)
-    instagram_logger.debug(f"Instagram creds keys: {list(instagram_creds.keys())}")
-    instagram_logger.debug(f"Has access_token: {'access_token' in instagram_creds}")
-    instagram_logger.debug(f"Has business_account_id: {'business_account_id' in instagram_creds}")
-    if 'access_token' in instagram_creds:
-        token = instagram_creds.get("access_token")
-        instagram_logger.debug(f"Access token type: {type(token)}, length: {len(str(token)) if token else 0}")
+    # Decrypt access token
+    access_token = decrypt(instagram_token.access_token)
+    if not access_token:
+        db_helpers.update_video(video_id, user_id, status="failed", error="Failed to decrypt Instagram token")
+        instagram_logger.error("Failed to decrypt Instagram token")
+        return
+    
+    # Get business account ID from extra_data
+    extra_data = instagram_token.extra_data or {}
+    business_account_id = extra_data.get("business_account_id")
+    if not business_account_id:
+        db_helpers.update_video(video_id, user_id, status="failed", error="No Instagram Business Account ID. Please reconnect your Instagram account.")
+        instagram_logger.error("No Instagram Business Account ID")
+        return
+    
+    # Get settings from database
+    instagram_settings = db_helpers.get_user_settings(user_id, "instagram")
+    global_settings = db_helpers.get_user_settings(user_id, "global")
+    
+    instagram_logger.info(f"Starting upload for {video.filename}")
+    instagram_logger.debug(f"Using access token: {access_token[:20]}... (length: {len(access_token)})")
+    instagram_logger.debug(f"Using business account ID: {business_account_id}")
     
     try:
-        video['status'] = 'uploading'
-        redis_client.set_upload_progress(user_id, video['id'], 0)
-        
-        access_token = instagram_creds.get("access_token")
-        business_account_id = instagram_creds.get("business_account_id")
-        
-        if not access_token:
-            raise Exception("No Instagram access token")
-        
-        if not business_account_id:
-            raise Exception("No Instagram Business Account ID. Please reconnect your Instagram account.")
-        
-        # Validate token format (should be a non-empty string)
-        if not isinstance(access_token, str) or len(access_token.strip()) == 0:
-            instagram_logger.error(f"Invalid access token format. Type: {type(access_token)}, Value: {access_token[:50] if access_token else 'None'}...")
-            raise Exception("Invalid Instagram access token format. Please reconnect your Instagram account.")
-        
-        instagram_logger.debug(f"Using access token: {access_token[:20]}... (length: {len(access_token)})")
-        instagram_logger.debug(f"Using business account ID: {business_account_id}")
+        db_helpers.update_video(video_id, user_id, status="uploading")
+        redis_client.set_upload_progress(user_id, video_id, 0)
         
         # Get video file
-        video_path = Path(video['path'])
+        video_path = Path(video.path)
         if not video_path.exists():
-            raise Exception(f"Video file not found: {video['path']}")
+            raise Exception(f"Video file not found: {video.path}")
         
         # Prepare caption
-        custom_settings = video.get('custom_settings', {})
-        filename_no_ext = video['filename'].rsplit('.', 1)[0]
+        filename_no_ext = video.filename.rsplit('.', 1)[0] if '.' in video.filename else video.filename
         
-        # Get caption (priority: custom > generated > template > global)
-        if 'title' in custom_settings:
-            caption = custom_settings['title']
-        elif 'generated_title' in video:
-            caption = video['generated_title']
+        # Get caption (priority: generated_title > template > filename)
+        if video.generated_title:
+            caption = video.generated_title
         else:
-            global_settings = session.get("global_settings", {})
             caption_template = instagram_settings.get('caption_template', '') or global_settings.get('title_template', '{filename}')
             caption = replace_template_placeholders(
                 caption_template,
@@ -2826,11 +2803,9 @@ async def upload_video_to_instagram(video, session):
         
         # Get settings
         location_id = instagram_settings.get('location_id', '')
-        disable_comments = instagram_settings.get('disable_comments', False)
-        disable_likes = instagram_settings.get('disable_likes', False)
         
-        instagram_logger.info(f"Uploading {video['filename']} to Instagram")
-        redis_client.set_upload_progress(user_id, video['id'], 10)
+        instagram_logger.info(f"Uploading {video.filename} to Instagram")
+        redis_client.set_upload_progress(user_id, video_id, 10)
         
         # Instagram Graph API video upload process (per official docs):
         # 1. Create a container with media_type=REELS and upload_type=resumable
@@ -2843,7 +2818,7 @@ async def upload_video_to_instagram(video, session):
             video_data = f.read()
         
         video_size = len(video_data)
-        redis_client.set_upload_progress(user_id, video['id'], 20)
+        redis_client.set_upload_progress(user_id, video_id, 20)
         
         async with httpx.AsyncClient(timeout=300.0) as client:
             # Step 1: Create resumable upload container
@@ -2865,7 +2840,7 @@ async def upload_video_to_instagram(video, session):
                 "Content-Type": "application/json"
             }
             
-            instagram_logger.info(f"Creating resumable upload container for {video['filename']}")
+            instagram_logger.info(f"Creating resumable upload container for {video.filename}")
             instagram_logger.debug(f"Container URL: {container_url}")
             instagram_logger.debug(f"Container params: {dict((k, v) for k, v in container_params.items())}")
             instagram_logger.debug(f"Access token length: {len(access_token)}, starts with: {access_token[:10]}...")
@@ -2895,8 +2870,8 @@ async def upload_video_to_instagram(video, session):
                 raise Exception(f"No container ID in response: {container_result}")
             
             instagram_logger.info(f"Created container {container_id}")
-            video['instagram_container_id'] = container_id
-            redis_client.set_upload_progress(user_id, video['id'], 40)
+            db_helpers.update_video(video_id, user_id, instagram_container_id=container_id)
+            redis_client.set_upload_progress(user_id, video_id, 40)
             
             # Step 2: Upload video to rupload.facebook.com
             upload_url = f"https://rupload.facebook.com/ig-api-upload/v21.0/{container_id}"
@@ -2924,7 +2899,7 @@ async def upload_video_to_instagram(video, session):
                 raise Exception(f"Upload failed: {upload_result}")
             
             instagram_logger.info(f"Video uploaded successfully")
-            redis_client.set_upload_progress(user_id, video['id'], 70)
+            redis_client.set_upload_progress(user_id, video_id, 70)
             
             # Step 3: Wait for Instagram to process the video and check status
             instagram_logger.info(f"Waiting for Instagram to process video")
@@ -2958,7 +2933,7 @@ async def upload_video_to_instagram(video, session):
                 if attempt < 4:
                     await asyncio.sleep(60)  # Wait 60 seconds before checking again (per docs: once per minute)
             
-            redis_client.set_upload_progress(user_id, video['id'], 85)
+            redis_client.set_upload_progress(user_id, video_id, 85)
             
             # Step 4: Publish the container
             # Per docs: POST https://graph.facebook.com/<API_VERSION>/<IG_USER_ID>/media_publish?creation_id=<IG_MEDIA_CONTAINER_ID>
@@ -2988,19 +2963,18 @@ async def upload_video_to_instagram(video, session):
             
             instagram_logger.info(f"Published to Instagram: {media_id}")
             
-            video['instagram_id'] = media_id
-            video['status'] = 'completed'
-            redis_client.set_upload_progress(user_id, video['id'], 100)
+            # Update video in database with success
+            db_helpers.update_video(video_id, user_id, status="completed", instagram_id=media_id)
+            redis_client.set_upload_progress(user_id, video_id, 100)
             
             # Clean up progress after a delay
             await asyncio.sleep(2)
-            redis_client.delete_upload_progress(user_id, video['id'])
+            redis_client.delete_upload_progress(user_id, video_id)
         
     except Exception as e:
-        video['status'] = 'failed'
-        video['error'] = f'Instagram upload failed: {str(e)}'
-        instagram_logger.error(f"Error uploading {video['filename']}: {str(e)}", exc_info=True)
-        redis_client.delete_upload_progress(user_id, video['id'])
+        db_helpers.update_video(video_id, user_id, status="failed", error=f'Instagram upload failed: {str(e)}')
+        instagram_logger.error(f"Error uploading {video.filename}: {str(e)}", exc_info=True)
+        redis_client.delete_upload_progress(user_id, video_id)
 
 # Register upload functions
 DESTINATION_UPLOADERS["youtube"] = upload_video_to_youtube
@@ -3016,8 +2990,9 @@ async def scheduler_task():
             current_time = datetime.now(timezone.utc)
             
             # Get all users from database
-            with db_helpers.get_db() as db:
-                from models import User
+            from models import SessionLocal, User
+            db = SessionLocal()
+            try:
                 users = db.query(User).all()
                 
                 for user in users:
@@ -3039,12 +3014,13 @@ async def scheduler_task():
                                     # Mark as uploading
                                     db_helpers.update_video(video_id, user_id, status="uploading")
                                     
-                                    # Get enabled destinations
+                                    # Get enabled destinations - batch load to prevent N+1 queries
                                     dest_settings = db_helpers.get_user_settings(user_id, "destinations")
+                                    all_tokens = db_helpers.get_all_oauth_tokens(user_id)
                                     enabled_destinations = []
                                     for dest_name in ["youtube", "tiktok", "instagram"]:
                                         is_enabled = dest_settings.get(f"{dest_name}_enabled", False)
-                                        has_token = db_helpers.get_oauth_token(user_id, dest_name) is not None
+                                        has_token = all_tokens.get(dest_name) is not None
                                         if is_enabled and has_token:
                                             enabled_destinations.append(dest_name)
                                     
@@ -3052,58 +3028,29 @@ async def scheduler_task():
                                         print(f"  No enabled destinations for user {user_id}, skipping")
                                         continue
                                     
-                                    # Build temporary session-like structure for uploader functions
-                                    temp_session = {
-                                        "user_id": user_id,
-                                        "youtube_settings": db_helpers.get_user_settings(user_id, "youtube") or {},
-                                        "tiktok_settings": db_helpers.get_user_settings(user_id, "tiktok") or {},
-                                        "instagram_settings": db_helpers.get_user_settings(user_id, "instagram") or {},
-                                        "global_settings": db_helpers.get_user_settings(user_id, "global") or {},
-                                    }
-                                    
-                                    # Load OAuth tokens
-                                    for dest_name in enabled_destinations:
-                                        token = db_helpers.get_oauth_token(user_id, dest_name)
-                                        if token:
-                                            if dest_name == "youtube":
-                                                # Convert OAuth token to Google Credentials object
-                                                creds = db_helpers.oauth_token_to_credentials(token)
-                                                if not creds:
-                                                    print(f"  Failed to convert {dest_name} token to credentials")
-                                                    continue
-                                            else:
-                                                # For TikTok and Instagram, use dict format
-                                                creds = {
-                                                    "access_token": decrypt(token.access_token),
-                                                    "refresh_token": decrypt(token.refresh_token) if token.refresh_token else None,
-                                                    "expires_at": token.expires_at.isoformat() if token.expires_at else None,
-                                                }
-                                                # Add extra_data fields
-                                                if token.extra_data:
-                                                    creds.update(token.extra_data)
-                                            temp_session[f"{dest_name}_creds"] = creds
-                                    
-                                    # Convert video object to dict for uploader functions
-                                    video_dict = {
-                                        "id": video.id,
-                                        "filename": video.filename,
-                                        "path": video.path,
-                                        "status": video.status,
-                                        "generated_title": video.generated_title,
-                                    }
-                                    
-                                    # Upload to each enabled destination
+                                    # Upload to each enabled destination - uploader functions query DB directly
                                     success_count = 0
                                     for dest_name in enabled_destinations:
                                         uploader_func = DESTINATION_UPLOADERS.get(dest_name)
                                         if uploader_func:
                                             try:
                                                 print(f"  Uploading to {dest_name}...")
+                                                # Pass user_id and video_id - uploader functions query DB directly
                                                 if dest_name == "instagram":
-                                                    await uploader_func(video_dict, temp_session)
+                                                    await uploader_func(user_id, video_id)
                                                 else:
-                                                    uploader_func(video_dict, temp_session)
-                                                success_count += 1
+                                                    uploader_func(user_id, video_id)
+                                                
+                                                # Check if upload succeeded by querying updated video
+                                                videos_after = db_helpers.get_user_videos(user_id)
+                                                updated_video = next((v for v in videos_after if v.id == video_id), None)
+                                                if updated_video:
+                                                    if dest_name == 'youtube' and updated_video.youtube_id:
+                                                        success_count += 1
+                                                    elif dest_name == 'tiktok' and (updated_video.tiktok_id or updated_video.tiktok_publish_id):
+                                                        success_count += 1
+                                                    elif dest_name == 'instagram' and (updated_video.instagram_id or updated_video.instagram_container_id):
+                                                        success_count += 1
                                             except Exception as upload_err:
                                                 print(f"  Error uploading to {dest_name}: {upload_err}")
                                     
@@ -3116,6 +3063,8 @@ async def scheduler_task():
                             except Exception as e:
                                 print(f"Error processing scheduled video {video.filename}: {e}")
                                 db_helpers.update_video(video_id, user_id, status="failed", error=str(e))
+            finally:
+                db.close()
         except Exception as e:
             print(f"Error in scheduler task: {e}")
             await asyncio.sleep(30)
@@ -3135,15 +3084,16 @@ async def upload_videos(user_id: int = Depends(require_csrf_new)):
     
     upload_logger.debug(f"Checking destinations for user {user_id}...")
     
-    # Get destination settings
+    # Batch load destination settings and OAuth tokens to prevent N+1 queries
     destination_settings = db_helpers.get_user_settings(user_id, "destinations")
+    all_tokens = db_helpers.get_all_oauth_tokens(user_id)
     
     for dest_name in ["youtube", "tiktok", "instagram"]:
         # Check if destination is enabled
         is_enabled = destination_settings.get(f"{dest_name}_enabled", False)
         
-        # Check if user has OAuth token for this destination
-        has_token = db_helpers.get_oauth_token(user_id, dest_name) is not None
+        # Check if user has OAuth token for this destination (from batch loaded tokens)
+        has_token = all_tokens.get(dest_name) is not None
         
         upload_logger.debug(f"{dest_name}: enabled={is_enabled}, has_token={has_token}")
         
@@ -3189,109 +3139,72 @@ async def upload_videos(user_id: int = Depends(require_csrf_new)):
             succeeded_destinations = []
             failed_destinations = []
             
-            # Build a temporary session-like structure for uploader functions
-            # TODO: Refactor uploader functions to work directly with database
-            temp_session = {
-                "user_id": user_id,
-                "youtube_creds": None,
-                "tiktok_creds": None,
-                "instagram_creds": None,
-                "youtube_settings": db_helpers.get_user_settings(user_id, "youtube") or {},
-                "tiktok_settings": db_helpers.get_user_settings(user_id, "tiktok") or {},
-                "instagram_settings": db_helpers.get_user_settings(user_id, "instagram") or {},
-                "global_settings": global_settings,
-                "upload_progress": {},  # Dictionary to track upload progress per video
-            }
-            
-            # Load OAuth tokens for enabled destinations
-            for dest_name in enabled_destinations:
-                token = db_helpers.get_oauth_token(user_id, dest_name)
-                if token:
-                    if dest_name == "youtube":
-                        # Convert OAuth token to Google Credentials object
-                        creds = db_helpers.oauth_token_to_credentials(token)
-                        if not creds:
-                            upload_logger.error(f"Failed to convert {dest_name} token to credentials")
-                            continue
-                    else:
-                        # For TikTok and Instagram, use dict format
-                        creds = {
-                            "access_token": decrypt(token.access_token),
-                            "refresh_token": decrypt(token.refresh_token) if token.refresh_token else None,
-                            "expires_at": token.expires_at.isoformat() if token.expires_at else None,
-                        }
-                        # Add extra_data fields
-                        if token.extra_data:
-                            creds.update(token.extra_data)
-                    temp_session[f"{dest_name}_creds"] = creds
-            
-            # Convert video object to dict for uploader functions (they expect dict format)
-            video_dict = {
-                "id": video.id,
-                "filename": video.filename,
-                "path": video.path,
-                "status": video.status,
-                "generated_title": video.generated_title,
-                "youtube_id": getattr(video, 'youtube_id', None),
-                "tiktok_id": getattr(video, 'tiktok_id', None),
-                "tiktok_publish_id": getattr(video, 'tiktok_publish_id', None),
-                "instagram_id": getattr(video, 'instagram_id', None),
-                "instagram_container_id": getattr(video, 'instagram_container_id', None),
-                "error": getattr(video, 'error', None),
-            }
-            
-            # Upload to all enabled destinations
+            # Upload to all enabled destinations - uploader functions query DB directly
             for dest_name in enabled_destinations:
                 uploader_func = DESTINATION_UPLOADERS.get(dest_name)
                 if uploader_func:
                     upload_logger.info(f"Uploading {video.filename} to {dest_name} for user {user_id}")
                     
                     try:
-                        # Pass appropriate parameters based on destination
+                        # Pass user_id and video_id - uploader functions query DB directly
                         if dest_name == "instagram":
-                            await uploader_func(video_dict, temp_session)
+                            await uploader_func(user_id, video_id)
                         else:
-                            uploader_func(video_dict, temp_session)
+                            uploader_func(user_id, video_id)
                         
-                        # Check if this destination succeeded by looking for success markers
-                        if dest_name == 'youtube' and video_dict.get('youtube_id'):
-                            succeeded_destinations.append(dest_name)
-                            upload_logger.info(f"YouTube upload succeeded for {video.filename}")
-                        elif dest_name == 'tiktok' and (video_dict.get('tiktok_id') or video_dict.get('tiktok_publish_id')):
-                            succeeded_destinations.append(dest_name)
-                            upload_logger.info(f"TikTok upload succeeded for {video.filename}")
-                        elif dest_name == 'instagram' and (video_dict.get('instagram_id') or video_dict.get('instagram_container_id')):
-                            succeeded_destinations.append(dest_name)
-                            upload_logger.info(f"Instagram upload succeeded for {video.filename}")
-                        else:
-                            failed_destinations.append(dest_name)
-                            upload_logger.error(f"{dest_name} upload failed for {video.filename}")
+                        # Assume success for now, will verify after all uploads complete to avoid N+1 queries
+                        succeeded_destinations.append(dest_name)
                     except Exception as e:
                         failed_destinations.append(dest_name)
                         upload_logger.error(f"{dest_name} upload exception for {video.filename}: {str(e)}")
-                        video_dict['error'] = str(e)
+                        db_helpers.update_video(video_id, user_id, error=str(e))
             
             # Determine final status based on results
-            update_data = {}
-            if len(succeeded_destinations) == len(enabled_destinations):
-                update_data['status'] = 'uploaded'
-                if 'error' in video_dict:
+            # Query video once after all uploads complete to verify success (prevents N+1 queries)
+            videos_after = db_helpers.get_user_videos(user_id)
+            updated_video = next((v for v in videos_after if v.id == video_id), None)
+            
+            # Verify which destinations actually succeeded
+            verified_succeeded = []
+            verified_failed = []
+            for dest_name in succeeded_destinations:
+                if updated_video:
+                    if dest_name == 'youtube' and updated_video.youtube_id:
+                        verified_succeeded.append(dest_name)
+                        upload_logger.info(f"YouTube upload succeeded for {video.filename}")
+                    elif dest_name == 'tiktok' and (updated_video.tiktok_id or updated_video.tiktok_publish_id):
+                        verified_succeeded.append(dest_name)
+                        upload_logger.info(f"TikTok upload succeeded for {video.filename}")
+                    elif dest_name == 'instagram' and (updated_video.instagram_id or updated_video.instagram_container_id):
+                        verified_succeeded.append(dest_name)
+                        upload_logger.info(f"Instagram upload succeeded for {video.filename}")
+                    else:
+                        verified_failed.append(dest_name)
+                        upload_logger.error(f"{dest_name} upload failed for {video.filename}")
+                else:
+                    verified_failed.append(dest_name)
+                    upload_logger.error(f"{dest_name} upload failed - video not found")
+            
+            # Update succeeded/failed lists
+            succeeded_destinations = verified_succeeded
+            failed_destinations.extend(verified_failed)
+            
+            if updated_video:
+                update_data = {}
+                if len(succeeded_destinations) == len(enabled_destinations):
+                    update_data['status'] = 'uploaded'
                     update_data['error'] = None
-            elif len(succeeded_destinations) > 0:
-                update_data['status'] = 'failed'
-                update_data['error'] = f"Partial upload: succeeded ({', '.join(succeeded_destinations)}), failed ({', '.join(failed_destinations)})"
-            else:
-                update_data['status'] = 'failed'
-                if 'error' not in video_dict or not video_dict['error']:
-                    update_data['error'] = f"Upload failed for all destinations: {', '.join(failed_destinations)}"
-            
-            # Update any additional fields that might have been set by uploaders
-            for key in ['youtube_id', 'tiktok_id', 'tiktok_publish_id', 'instagram_id', 'instagram_container_id']:
-                if key in video_dict and video_dict[key]:
-                    update_data[key] = video_dict[key]
-            
-            # Update video in database
-            db_helpers.update_video(video_id, user_id, **update_data)
+                elif len(succeeded_destinations) > 0:
+                    update_data['status'] = 'failed'
+                    update_data['error'] = f"Partial upload: succeeded ({', '.join(succeeded_destinations)}), failed ({', '.join(failed_destinations)})"
+                else:
+                    update_data['status'] = 'failed'
+                    if not updated_video.error:
+                        update_data['error'] = f"Upload failed for all destinations: {', '.join(failed_destinations)}"
+                
+                # Update video in database with final status
+                if update_data:
+                    db_helpers.update_video(video_id, user_id, **update_data)
         
         # Count videos that are fully uploaded
         user_videos_updated = db_helpers.get_user_videos(user_id)

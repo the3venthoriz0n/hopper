@@ -74,6 +74,83 @@ def get_user_settings(user_id: int, category: str = "global") -> Dict[str, Any]:
         db.close()
 
 
+def get_all_user_settings(user_id: int) -> Dict[str, Dict[str, Any]]:
+    """Get all user settings for all categories in a single query - optimized to prevent N+1"""
+    db = SessionLocal()
+    try:
+        # Load all settings for this user in one query
+        all_settings = db.query(Setting).filter(
+            Setting.user_id == user_id
+        ).all()
+        
+        # Group by category
+        settings_by_category = {}
+        for setting in all_settings:
+            if setting.category not in settings_by_category:
+                settings_by_category[setting.category] = {}
+            
+            try:
+                # Try to parse as JSON first
+                settings_by_category[setting.category][setting.key] = json.loads(setting.value)
+            except (json.JSONDecodeError, TypeError):
+                # If not JSON, use as string
+                settings_by_category[setting.category][setting.key] = setting.value
+        
+        # Apply defaults for each category
+        result = {}
+        
+        # Global settings
+        global_defaults = {
+            "title_template": "{filename}",
+            "description_template": "Uploaded via Hopper",
+            "wordbank": [],
+            "upload_immediately": True,
+            "schedule_mode": "spaced",
+            "schedule_interval_value": 1,
+            "schedule_interval_unit": "hours",
+            "schedule_start_time": "",
+            "allow_duplicates": False
+        }
+        result["global"] = {**global_defaults, **settings_by_category.get("global", {})}
+        
+        # YouTube settings
+        youtube_defaults = {
+            "visibility": "private",
+            "made_for_kids": False,
+            "title_template": "",
+            "description_template": "",
+            "tags_template": ""
+        }
+        result["youtube"] = {**youtube_defaults, **settings_by_category.get("youtube", {})}
+        
+        # TikTok settings
+        tiktok_defaults = {
+            "privacy_level": "private",
+            "allow_comments": True,
+            "allow_duet": True,
+            "allow_stitch": True,
+            "title_template": "",
+            "description_template": ""
+        }
+        result["tiktok"] = {**tiktok_defaults, **settings_by_category.get("tiktok", {})}
+        
+        # Instagram settings
+        instagram_defaults = {
+            "caption_template": "",
+            "location_id": "",
+            "disable_comments": False,
+            "disable_likes": False
+        }
+        result["instagram"] = {**instagram_defaults, **settings_by_category.get("instagram", {})}
+        
+        # Destinations settings (no defaults, just return what's there)
+        result["destinations"] = settings_by_category.get("destinations", {})
+        
+        return result
+    finally:
+        db.close()
+
+
 def set_user_setting(user_id: int, category: str, key: str, value: Any) -> None:
     """Set a user setting"""
     db = SessionLocal()
@@ -185,6 +262,30 @@ def get_oauth_token(user_id: int, platform: str) -> Optional[OAuthToken]:
             OAuthToken.user_id == user_id,
             OAuthToken.platform == platform
         ).first()
+    finally:
+        db.close()
+
+
+def get_all_oauth_tokens(user_id: int) -> Dict[str, Optional[OAuthToken]]:
+    """Get all OAuth tokens for a user in a single query - optimized to prevent N+1"""
+    db = SessionLocal()
+    try:
+        # Load all OAuth tokens for this user in one query
+        all_tokens = db.query(OAuthToken).filter(
+            OAuthToken.user_id == user_id
+        ).all()
+        
+        # Create a dictionary keyed by platform
+        tokens_by_platform = {}
+        for token in all_tokens:
+            tokens_by_platform[token.platform] = token
+        
+        # Return dict with all platforms (None if not found)
+        return {
+            "youtube": tokens_by_platform.get("youtube"),
+            "tiktok": tokens_by_platform.get("tiktok"),
+            "instagram": tokens_by_platform.get("instagram")
+        }
     finally:
         db.close()
 
