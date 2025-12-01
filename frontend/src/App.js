@@ -349,7 +349,7 @@ function Home() {
   }, [API]);
 
   // Unified account loading logic for all platforms
-  // Only updates account if new data is more complete than existing data
+  // Only updates account if new data is complete (has required identifier fields)
   const loadPlatformAccount = useCallback(async (platform, setState, identifierKeys) => {
     try {
       const res = await axios.get(`${API}/auth/${platform}/account`);
@@ -365,12 +365,18 @@ function Home() {
         const hasExistingData = identifierKeys.some(key => prev.account?.[key]);
         const hasNewData = newAccount && identifierKeys.some(key => newAccount[key]);
         
-        // Only update if we have new complete data OR no existing data
-        if (hasNewData || !hasExistingData) {
-          return { ...prev, account: newAccount || null };
+        // Only update if new data has required identifier fields
+        // This prevents "Unknown account" from showing when backend returns incomplete data
+        if (hasNewData) {
+          return { ...prev, account: newAccount };
         }
         
-        // Keep existing account info if new data is incomplete
+        // If new data is incomplete, only update if we have no existing data AND backend explicitly returned null
+        if (!hasExistingData && newAccount === null) {
+          return { ...prev, account: null };
+        }
+        
+        // Otherwise keep existing state (shows "Loading account..." if no data yet)
         return prev;
       });
     } catch (error) {
