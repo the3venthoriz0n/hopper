@@ -350,6 +350,32 @@ def check_upload_success(video: Video, dest_name: str) -> bool:
     return False
 
 
+def cleanup_video_file(video: Video) -> bool:
+    """Delete video file from disk after successful upload
+    
+    This is called after all destinations succeed. The database record
+    is kept for history, but the physical file is removed to save space.
+    
+    Args:
+        video: Video object with path to file
+        
+    Returns:
+        True if cleanup succeeded or file already gone, False on error
+    """
+    try:
+        video_path = Path(video.path)
+        if video_path.exists():
+            video_path.unlink()
+            upload_logger.info(f"Cleaned up video file: {video.filename} ({video.path})")
+            return True
+        else:
+            upload_logger.debug(f"Video file already removed: {video.filename}")
+            return True
+    except Exception as e:
+        upload_logger.error(f"Failed to cleanup video file {video.filename}: {str(e)}")
+        return False
+
+
 def get_google_client_config():
     """Build Google OAuth client config from environment variables"""
     if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_PROJECT_ID]):
@@ -649,14 +675,15 @@ async def security_middleware(request: Request, call_next):
     error = None
     
     try:
-        # Skip security checks for OAuth callbacks and static pages
+        # Skip security checks for OAuth callbacks, webhooks, and static pages
         path = request.url.path
         is_callback = (
             "/api/auth/youtube/callback" in path or
             "/api/auth/tiktok/callback" in path or
             "/api/auth/instagram/callback" in path or
             "/api/auth/instagram/complete" in path or
-            path in ["/terms", "/privacy"]
+            "/api/webhooks/" in path or
+            path in ["/terms", "/privacy", "/delete-your-data"]
         )
         
         # Get session ID if available
@@ -891,6 +918,298 @@ def logout(request: Request, response: Response):
         response.delete_cookie("session_id")
         logger.info(f"User logged out (session: {session_id[:16]}...)")
     return {"message": "Logged out successfully"}
+
+
+@app.get("/delete-your-data", response_class=HTMLResponse)
+def data_deletion_instructions():
+    """Data deletion instructions page for GDPR compliance
+    
+    This page satisfies OAuth provider requirements (Facebook/Instagram, TikTok) 
+    by providing clear instructions on how users can delete their data.
+    
+    Register this URL in your OAuth provider settings:
+    - Facebook/Instagram: Settings > Basic > Data Deletion Instructions URL
+    - TikTok: Settings (if required)
+    
+    URL: https://YOUR_DOMAIN/delete-your-data
+    """
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Delete Your Data - Hopper</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            body {{
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+                max-width: 800px;
+                margin: 0 auto;
+                padding: 2rem;
+                line-height: 1.6;
+                color: #333;
+                background: #f5f5f5;
+            }}
+            .container {{
+                background: white;
+                padding: 2rem;
+                border-radius: 8px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }}
+            h1 {{
+                color: #222;
+                border-bottom: 3px solid #007bff;
+                padding-bottom: 0.5rem;
+                margin-bottom: 1.5rem;
+            }}
+            h2 {{
+                color: #444;
+                margin-top: 2rem;
+                margin-bottom: 1rem;
+            }}
+            .step {{
+                background: #f8f9fa;
+                padding: 1.25rem;
+                margin: 1rem 0;
+                border-left: 4px solid #007bff;
+                border-radius: 4px;
+                transition: transform 0.2s, box-shadow 0.2s;
+            }}
+            .step:hover {{
+                transform: translateX(4px);
+                box-shadow: 0 2px 8px rgba(0,123,255,0.15);
+            }}
+            .step-number {{
+                display: inline-block;
+                background: #007bff;
+                color: white;
+                width: 30px;
+                height: 30px;
+                line-height: 30px;
+                text-align: center;
+                border-radius: 50%;
+                font-weight: bold;
+                font-size: 1rem;
+                margin-right: 0.5rem;
+            }}
+            .warning {{
+                background: #fff3cd;
+                border: 1px solid #ffc107;
+                padding: 1rem;
+                border-radius: 4px;
+                margin: 1.5rem 0;
+            }}
+            .warning strong {{
+                color: #856404;
+            }}
+            a {{
+                color: #007bff;
+                text-decoration: none;
+            }}
+            a:hover {{
+                text-decoration: underline;
+            }}
+            .button {{
+                display: inline-block;
+                background: #007bff;
+                color: white;
+                padding: 0.75rem 1.5rem;
+                border-radius: 4px;
+                margin-top: 1rem;
+                font-weight: 500;
+            }}
+            .button:hover {{
+                background: #0056b3;
+                text-decoration: none;
+            }}
+            ul {{
+                margin: 1rem 0;
+            }}
+            li {{
+                margin: 0.5rem 0;
+            }}
+            code {{
+                background: #e9ecef;
+                padding: 0.2rem 0.5rem;
+                border-radius: 3px;
+                font-size: 0.9em;
+                font-family: 'Courier New', monospace;
+            }}
+            .info-box {{
+                background: #e3f2fd;
+                border-left: 4px solid #2196F3;
+                border-radius: 4px;
+                padding: 1rem;
+                margin: 1.5rem 0;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🗑️ Delete Your Data from Hopper</h1>
+            
+            <p style="font-size: 1.1rem; margin-bottom: 1.5rem;">
+                You have full control over your data. Follow the simple instructions below to permanently delete your account and all associated data.
+            </p>
+            
+            <div class="warning">
+                <strong>⚠️ Important:</strong> Deleting your account is <strong>permanent and cannot be undone</strong>. All your videos, settings, and connected accounts will be permanently removed.
+            </div>
+            
+            <h2>What Gets Deleted</h2>
+            <p>When you delete your account, we permanently remove:</p>
+            <ul>
+                <li>✓ Your account and login credentials</li>
+                <li>✓ All uploaded videos and associated files</li>
+                <li>✓ All settings and preferences</li>
+                <li>✓ All connected social media accounts (YouTube, TikTok, Instagram)</li>
+                <li>✓ All OAuth tokens and credentials</li>
+                <li>✓ All session data and caches</li>
+            </ul>
+            
+            <h2>How to Delete Your Data</h2>
+            
+            <p style="margin-bottom: 1.5rem; font-size: 1.05rem;"><strong>Simple 3-step process:</strong></p>
+            
+            <div class="step">
+                <span class="step-number">1.</span>
+                <strong>🔐 Log in to Hopper</strong><br>
+                Visit <a href="{FRONTEND_URL}" target="_blank">{FRONTEND_URL}</a> and sign in to your account using your email or social login.
+            </div>
+            
+            <div class="step">
+                <span class="step-number">2.</span>
+                <strong>⚙️ Open Account Settings</strong><br>
+                Click the <strong>⚙️ settings icon</strong> in the <strong>top-right corner</strong> next to your email address.<br>
+                <span style="font-size: 0.9rem; color: #666; margin-top: 0.5rem; display: inline-block;">
+                    💡 Look for: <code style="background: #e9ecef; padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.85rem;">your-email@example.com ⚙️</code>
+                </span>
+            </div>
+            
+            <div class="step">
+                <span class="step-number">3.</span>
+                <strong>🗑️ Delete your account</strong><br>
+                In the Account Settings modal, scroll to the <strong>"⚠️ Danger Zone"</strong> section at the bottom.<br>
+                Click the red <strong>"Delete My Account"</strong> button, then confirm in the pop-up dialog.<br>
+                <span style="font-size: 0.9rem; color: #dc3545; margin-top: 0.5rem; display: inline-block; font-weight: 500;">
+                    ⚡ Your data will be deleted immediately and permanently.
+                </span>
+            </div>
+            
+            <div class="info-box">
+                <strong>⏱️ Instant Deletion:</strong> Your data is deleted <strong>immediately</strong> after you confirm. There is no waiting period or recovery option.
+            </div>
+            
+            <div style="text-align: center; margin: 2.5rem 0;">
+                <a href="{FRONTEND_URL}" class="button" style="font-size: 1.1rem; padding: 1rem 2rem;">
+                    🚀 Go to Hopper Now
+                </a>
+                <p style="margin-top: 1rem; color: #666; font-size: 0.9rem;">
+                    Ready to delete your account? Click above to get started.
+                </p>
+            </div>
+            
+            <h2>📝 Quick Summary</h2>
+            <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px; border: 1px solid #dee2e6;">
+                <p style="margin: 0; font-size: 1rem;">
+                    <strong>Login → Click ⚙️ (top right) → Delete My Account → Confirm</strong>
+                </p>
+            </div>
+            
+            <h2>Need Help?</h2>
+            <p>If you're having trouble deleting your data or have questions:</p>
+            <ul>
+                <li>📧 Email: <a href="mailto:support@{DOMAIN.split(':')[0]}">support@{DOMAIN.split(':')[0]}</a></li>
+                <li>🌐 Visit: <a href="{FRONTEND_URL}" target="_blank">{FRONTEND_URL}</a></li>
+            </ul>
+            
+            <hr style="margin: 2rem 0; border: none; border-top: 1px solid #ddd;">
+            
+            <p style="font-size: 0.9em; color: #666;">
+                This page is provided for GDPR compliance and to satisfy OAuth provider requirements 
+                (Facebook, Instagram, TikTok). Last updated: December 2025
+            </p>
+        </div>
+    </body>
+    </html>
+    """
+
+
+@app.delete("/api/auth/account")
+def delete_account(request: Request, response: Response, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+    """Delete user account and all associated data (user-initiated)
+    
+    This endpoint performs a complete data deletion (GDPR compliant):
+    - Deletes all videos from database
+    - Deletes all video files from disk
+    - Deletes all settings
+    - Deletes all OAuth tokens
+    - Deletes user account
+    - Clears all sessions and caches
+    
+    This action is irreversible.
+    """
+    security_logger.info(f"User {user_id} requested account deletion")
+    
+    try:
+        # Delete user account and get cleanup info
+        result = db_helpers.delete_user_account(user_id, db=db)
+        
+        if not result["success"]:
+            security_logger.error(f"Failed to delete user {user_id}: {result.get('error')}")
+            raise HTTPException(500, f"Failed to delete account: {result.get('error')}")
+        
+        # Clean up video files from disk
+        video_paths = result.get("video_file_paths", [])
+        files_deleted = 0
+        files_failed = 0
+        
+        for video_path in video_paths:
+            try:
+                path = Path(video_path)
+                if path.exists():
+                    path.unlink()
+                    files_deleted += 1
+                    upload_logger.debug(f"Deleted video file: {video_path}")
+            except Exception as e:
+                files_failed += 1
+                upload_logger.warning(f"Failed to delete video file {video_path}: {e}")
+        
+        # Log current session to delete it
+        session_id = request.cookies.get("session_id")
+        if session_id:
+            redis_client.delete_session(session_id)
+            redis_client.delete(f"csrf:{session_id}")
+        
+        # Clear session cookie
+        response.delete_cookie("session_id")
+        
+        # Log deletion
+        stats = result.get("stats", {})
+        security_logger.info(
+            f"Account deleted: user_id={user_id}, "
+            f"email={stats.get('user_email')}, "
+            f"videos={stats.get('videos_deleted', 0)}, "
+            f"settings={stats.get('settings_deleted', 0)}, "
+            f"oauth_tokens={stats.get('oauth_tokens_deleted', 0)}, "
+            f"files_deleted={files_deleted}, "
+            f"files_failed={files_failed}"
+        )
+        
+        return {
+            "message": "Account deleted successfully",
+            "stats": {
+                **stats,
+                "files_deleted": files_deleted,
+                "files_failed": files_failed
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        security_logger.error(f"Error deleting account for user {user_id}: {e}", exc_info=True)
+        raise HTTPException(500, f"Failed to delete account: {str(e)}")
 
 
 @app.post("/api/auth/set-password")
@@ -3620,6 +3939,12 @@ async def scheduler_task():
                                 # Update final status - use shared session
                                 if success_count == len(enabled_destinations):
                                     db_helpers.update_video(video_id, user_id, db=db, status="uploaded")
+                                    
+                                    # Cleanup: Delete video file after successful upload to all destinations
+                                    # Keep database record for history
+                                    updated_video = db.query(Video).filter(Video.id == video_id).first()
+                                    if updated_video:
+                                        cleanup_video_file(updated_video)
                                 else:
                                     db_helpers.update_video(video_id, user_id, db=db, status="failed", error=f"Upload failed for some destinations")
                                     
@@ -3738,6 +4063,10 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
                 if len(succeeded_destinations) == len(enabled_destinations):
                     update_data['status'] = 'uploaded'
                     update_data['error'] = None
+                    
+                    # Cleanup: Delete video file after successful upload to all destinations
+                    # Keep database record for history
+                    cleanup_video_file(updated_video)
                 elif len(succeeded_destinations) > 0:
                     update_data['status'] = 'failed'
                     update_data['error'] = f"Partial upload: succeeded ({', '.join(succeeded_destinations)}), failed ({', '.join(failed_destinations)})"

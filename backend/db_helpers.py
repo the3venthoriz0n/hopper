@@ -655,3 +655,82 @@ def credentials_to_oauth_token_data(creds: Credentials, client_id: str = None,
             "scopes": creds.scopes if hasattr(creds, "scopes") else []
         }
     }
+
+
+def delete_user_account(user_id: int, db: Session = None) -> Dict[str, Any]:
+    """Delete user account and all associated data
+    
+    This function performs a complete data deletion:
+    - Deletes all OAuth tokens
+    - Deletes all settings
+    - Deletes all videos (database records only, files handled separately)
+    - Deletes user account
+    - Returns list of video file paths for caller to clean up
+    
+    Args:
+        user_id: User ID to delete
+        db: Database session (if None, creates its own)
+        
+    Returns:
+        Dictionary with deletion statistics and file paths to clean up
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
+    try:
+        # Get user first to verify it exists
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return {
+                "success": False,
+                "error": "User not found",
+                "stats": {}
+            }
+        
+        # Collect statistics
+        stats = {
+            "videos_deleted": 0,
+            "settings_deleted": 0,
+            "oauth_tokens_deleted": 0,
+            "user_email": user.email
+        }
+        
+        # Collect video file paths before deletion (for cleanup)
+        videos = db.query(Video).filter(Video.user_id == user_id).all()
+        video_file_paths = [v.path for v in videos]
+        stats["videos_deleted"] = len(videos)
+        
+        # Count settings and OAuth tokens
+        settings = db.query(Setting).filter(Setting.user_id == user_id).all()
+        stats["settings_deleted"] = len(settings)
+        
+        oauth_tokens = db.query(OAuthToken).filter(OAuthToken.user_id == user_id).all()
+        stats["oauth_tokens_deleted"] = len(oauth_tokens)
+        
+        # Delete user (cascade will handle related records due to foreign key constraints)
+        db.delete(user)
+        db.commit()
+        
+        # Invalidate all caches for this user
+        redis_client.invalidate_all_user_caches(user_id)
+        
+        logger.info(f"Deleted user account {user_id} ({user.email}): {stats}")
+        
+        return {
+            "success": True,
+            "stats": stats,
+            "video_file_paths": video_file_paths
+        }
+    except Exception as e:
+        logger.error(f"Error deleting user account {user_id}: {e}", exc_info=True)
+        db.rollback()
+        return {
+            "success": False,
+            "error": str(e),
+            "stats": {}
+        }
+    finally:
+        if should_close:
+            db.close()

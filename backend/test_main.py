@@ -13,7 +13,9 @@ if str(backend_dir) not in sys.path:
 # Import the functions we want to test
 from main import (
     replace_template_placeholders,
+    cleanup_video_file,
 )
+import db_helpers
 
 
 class TestTemplatePlaceholders:
@@ -184,6 +186,108 @@ class TestHelperFunctions:
         # Just test that function runs without error
         result = validate_origin_referer(mock_request)
         assert isinstance(result, bool)
+
+
+class TestVideoCleanup:
+    """Test video file cleanup after successful upload"""
+    
+    def test_cleanup_video_file_success(self):
+        """Test successful cleanup of video file"""
+        import tempfile
+        import os
+        from models import Video
+        
+        # Create a temporary video file
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.mp4') as tmp:
+            tmp.write("test video content")
+            temp_path = tmp.name
+        
+        try:
+            # Create mock video object
+            mock_video = Mock(spec=Video)
+            mock_video.path = temp_path
+            mock_video.filename = "test_video.mp4"
+            
+            # Verify file exists before cleanup
+            assert os.path.exists(temp_path)
+            
+            # Call cleanup
+            result = cleanup_video_file(mock_video)
+            
+            # Verify cleanup succeeded and file was deleted
+            assert result is True
+            assert not os.path.exists(temp_path)
+        finally:
+            # Cleanup in case test fails
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+    
+    def test_cleanup_video_file_already_deleted(self):
+        """Test cleanup when file is already deleted"""
+        from models import Video
+        
+        # Create mock video object with non-existent path
+        mock_video = Mock(spec=Video)
+        mock_video.path = "/tmp/nonexistent_video_file.mp4"
+        mock_video.filename = "nonexistent_video.mp4"
+        
+        # Call cleanup - should return True (file already gone is success)
+        result = cleanup_video_file(mock_video)
+        assert result is True
+    
+    def test_cleanup_video_file_permission_error(self):
+        """Test cleanup handles permission errors gracefully"""
+        from models import Video
+        
+        # Create mock video object
+        mock_video = Mock(spec=Video)
+        mock_video.path = "/root/protected_file.mp4"  # Likely no permission
+        mock_video.filename = "protected_file.mp4"
+        
+        # Mock Path to raise PermissionError
+        with patch('main.Path') as mock_path:
+            mock_path_instance = MagicMock()
+            mock_path.return_value = mock_path_instance
+            mock_path_instance.exists.return_value = True
+            mock_path_instance.unlink.side_effect = PermissionError("No permission")
+            
+            # Call cleanup - should return False but not raise exception
+            result = cleanup_video_file(mock_video)
+            assert result is False
+
+
+class TestDataDeletion:
+    """Test data deletion and account management"""
+    
+    @pytest.mark.skip(reason="Requires database setup")
+    def test_delete_user_account_complete(self):
+        """Test complete user account deletion with all data"""
+        # This would test:
+        # 1. Create test user with videos, settings, OAuth tokens
+        # 2. Call delete_user_account
+        # 3. Verify all data is deleted from database
+        # 4. Verify video files are cleaned up
+        # 5. Verify caches are invalidated
+        pass
+    
+    @pytest.mark.skip(reason="Requires database setup")
+    def test_delete_account_endpoint(self):
+        """Test DELETE /api/auth/account endpoint"""
+        # This would test:
+        # 1. Create authenticated session
+        # 2. Call DELETE /api/auth/account with CSRF token
+        # 3. Verify account is deleted
+        # 4. Verify session is invalidated
+        # 5. Verify response contains deletion statistics
+        pass
+    
+    @pytest.mark.skip(reason="Requires database setup")
+    def test_delete_account_unauthorized(self):
+        """Test delete account fails without authentication"""
+        # This would test:
+        # 1. Call DELETE /api/auth/account without session
+        # 2. Verify 401 Unauthorized response
+        pass
 
 
 # Integration test helpers (these would need actual DB setup)

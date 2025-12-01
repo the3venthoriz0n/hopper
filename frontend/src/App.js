@@ -113,6 +113,8 @@ function Home() {
   const [showTiktokSettings, setShowTiktokSettings] = useState(false);
   const [showInstagramSettings, setShowInstagramSettings] = useState(false);
   const [showGlobalSettings, setShowGlobalSettings] = useState(false);
+  const [showAccountSettings, setShowAccountSettings] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [editingVideo, setEditingVideo] = useState(null);
   const [draggedVideo, setDraggedVideo] = useState(null);
@@ -166,9 +168,29 @@ function Home() {
       await axios.post(`${API}/auth/logout`);
       setUser(null);
       setMessage('✅ Logged out successfully');
+      setShowAccountSettings(false);
     } catch (err) {
       console.error('Logout failed:', err);
       setMessage('❌ Logout failed');
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    try {
+      await axios.delete(`${API}/auth/account`, {
+        headers: { 'X-CSRF-Token': csrfToken }
+      });
+      setMessage('✅ Your account has been permanently deleted');
+      setShowDeleteConfirm(false);
+      setShowAccountSettings(false);
+      // Redirect to login after a short delay
+      setTimeout(() => {
+        window.location.href = '/login';
+      }, 1500);
+    } catch (err) {
+      console.error('Error deleting account:', err);
+      setMessage(err.response?.data?.detail || '❌ Failed to delete account');
+      setShowDeleteConfirm(false);
     }
   };
   
@@ -349,7 +371,7 @@ function Home() {
         wrapper.removeEventListener('mouseleave', handleTooltipLeave);
       });
     };
-  }, [videos, editingVideo, showSettings, showTiktokSettings, showGlobalSettings, user]);
+  }, [videos, editingVideo, showSettings, showTiktokSettings, showGlobalSettings, showAccountSettings, showDeleteConfirm, user]);
 
   // Define all load functions using useCallback BEFORE the useEffect that uses them
   // This ensures they're available when the useEffect runs
@@ -1029,24 +1051,38 @@ function Home() {
     <div className="app">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
         <h1>{appTitle}</h1>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <span style={{ color: '#999', fontSize: '0.9rem' }}>
             {user.email}
           </span>
           <button 
-            onClick={handleLogout}
+            onClick={() => setShowAccountSettings(true)}
             style={{
-              padding: '0.5rem 1rem',
-              background: 'rgba(239, 68, 68, 0.1)',
-              border: '1px solid rgba(239, 68, 68, 0.3)',
+              padding: '0.5rem',
+              background: 'transparent',
+              border: '1px solid #ddd',
               borderRadius: '4px',
-              color: '#ef4444',
+              color: '#666',
               cursor: 'pointer',
-              fontSize: '0.9rem',
-              fontWeight: '500'
+              fontSize: '1.1rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'all 0.2s'
             }}
+            onMouseEnter={(e) => {
+              e.target.style.background = '#f5f5f5';
+              e.target.style.borderColor = '#0066cc';
+              e.target.style.color = '#0066cc';
+            }}
+            onMouseLeave={(e) => {
+              e.target.style.background = 'transparent';
+              e.target.style.borderColor = '#ddd';
+              e.target.style.color = '#666';
+            }}
+            title="Account Settings"
           >
-            Logout
+            ⚙️
           </button>
         </div>
       </div>
@@ -1269,6 +1305,7 @@ function Home() {
                 </span>
               </label>
             </div>
+
           </div>
         )}
       </div>
@@ -2105,6 +2142,165 @@ function Home() {
         </div>
       )}
       
+      {/* Account Settings Modal */}
+      {showAccountSettings && (
+        <div className="modal-overlay" onClick={() => setShowAccountSettings(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px' }}>
+            <div className="modal-header">
+              <h2>⚙️ Account Settings</h2>
+              <button onClick={() => setShowAccountSettings(false)} className="btn-close">×</button>
+            </div>
+            
+            <div className="modal-body">
+              {/* Account Info */}
+              <div className="form-group" style={{ 
+                padding: '1rem', 
+                background: 'rgba(255, 255, 255, 0.05)', 
+                borderRadius: '8px',
+                border: '1px solid rgba(255, 255, 255, 0.1)'
+              }}>
+                <div style={{ fontSize: '0.85rem', color: '#999', marginBottom: '0.25rem' }}>Logged in as</div>
+                <div style={{ fontSize: '1rem', fontWeight: '500', color: 'white' }}>{user.email}</div>
+              </div>
+
+              {/* Logout Button */}
+              <div className="form-group">
+                <button 
+                  onClick={handleLogout}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem',
+                    background: 'transparent',
+                    border: '1px solid #666',
+                    borderRadius: '6px',
+                    color: '#999',
+                    cursor: 'pointer',
+                    fontSize: '1rem',
+                    fontWeight: '500',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.background = 'rgba(255, 255, 255, 0.05)';
+                    e.target.style.borderColor = '#999';
+                    e.target.style.color = 'white';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.background = 'transparent';
+                    e.target.style.borderColor = '#666';
+                    e.target.style.color = '#999';
+                  }}
+                >
+                  🚪 Logout
+                </button>
+              </div>
+
+              {/* Danger Zone */}
+              <div style={{ 
+                marginTop: '1rem', 
+                padding: '1.5rem', 
+                background: 'rgba(239, 68, 68, 0.1)', 
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                borderRadius: '8px' 
+              }}>
+                <h3 style={{ color: '#ef4444', marginBottom: '0.75rem', fontSize: '1.1rem', marginTop: 0 }}>
+                  ⚠️ Danger Zone
+                </h3>
+                <p style={{ color: '#999', marginBottom: '1rem', fontSize: '0.9rem', lineHeight: '1.5' }}>
+                  Once you delete your account, there is no going back. This will permanently delete:
+                </p>
+                <ul style={{ color: '#999', marginBottom: '1rem', fontSize: '0.85rem', paddingLeft: '1.25rem', lineHeight: '1.6' }}>
+                  <li>Your account and login credentials</li>
+                  <li>All uploaded videos and files</li>
+                  <li>All settings and preferences</li>
+                  <li>All connected accounts (YouTube, TikTok, Instagram)</li>
+                </ul>
+                <button 
+                  onClick={() => setShowDeleteConfirm(true)}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem',
+                    background: '#ef4444',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '0.95rem',
+                    fontWeight: '600',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.background = '#dc2626';
+                    e.target.style.transform = 'translateY(-2px)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.background = '#ef4444';
+                    e.target.style.transform = 'translateY(0)';
+                  }}
+                >
+                  Delete My Account
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      {showDeleteConfirm && (
+        <div className="modal-overlay" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '450px' }}>
+            <div className="modal-header">
+              <h2 style={{ color: '#ef4444' }}>⚠️ Delete Account</h2>
+              <button onClick={() => setShowDeleteConfirm(false)} className="btn-close">×</button>
+            </div>
+            
+            <div className="modal-body">
+              <p style={{ marginBottom: '1rem', fontSize: '1rem', lineHeight: '1.6', color: 'white' }}>
+                Are you absolutely sure you want to delete your account?
+              </p>
+              <p style={{ marginBottom: '1.5rem', fontSize: '0.9rem', color: '#999', lineHeight: '1.6' }}>
+                This action <strong style={{ color: '#ef4444' }}>cannot be undone</strong>. All your data will be permanently deleted.
+              </p>
+              
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button 
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="btn-cancel"
+                  style={{ flex: 1 }}
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleDeleteAccount}
+                  style={{
+                    flex: 1,
+                    padding: '0.75rem',
+                    background: '#ef4444',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    fontSize: '1rem',
+                    fontWeight: '600',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.background = '#dc2626';
+                    e.target.style.transform = 'translateY(-2px)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.background = '#ef4444';
+                    e.target.style.transform = 'translateY(0)';
+                  }}
+                >
+                  Yes, Delete Everything
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Footer */}
       <footer style={{
         marginTop: '3rem',
@@ -2133,7 +2329,7 @@ function Home() {
           style={{ 
             color: '#666', 
             textDecoration: 'none', 
-            marginLeft: '1rem',
+            margin: '0 1rem',
             transition: 'color 0.2s'
           }}
           onMouseEnter={(e) => e.target.style.color = '#0066cc'}
@@ -2141,6 +2337,22 @@ function Home() {
         >
           Privacy Policy
         </Link>
+        <span style={{ color: '#ccc' }}>|</span>
+        <a 
+          href={`${API}/delete-your-data`}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ 
+            color: '#666', 
+            textDecoration: 'none', 
+            marginLeft: '1rem',
+            transition: 'color 0.2s'
+          }}
+          onMouseEnter={(e) => e.target.style.color = '#0066cc'}
+          onMouseLeave={(e) => e.target.style.color = '#666'}
+        >
+          Delete Your Data
+        </a>
         <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#999' }}>
           <a 
             href="https://github.com/the3venthoriz0n/hopper" 
