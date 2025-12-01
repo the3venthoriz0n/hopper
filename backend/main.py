@@ -1198,11 +1198,11 @@ def toggle_tiktok(enabled: bool, user_id: int = Depends(require_csrf_new)):
     }
 
 @app.post("/api/destinations/instagram/toggle")
-def toggle_instagram(enabled: bool, user_id: int = Depends(require_csrf_new)):
+def toggle_instagram(enabled: bool, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Toggle Instagram destination on/off"""
-    db_helpers.set_user_setting(user_id, "destinations", "instagram_enabled", enabled)
+    db_helpers.set_user_setting(user_id, "destinations", "instagram_enabled", enabled, db=db)
     
-    instagram_token = db_helpers.get_oauth_token(user_id, "instagram")
+    instagram_token = db_helpers.get_oauth_token(user_id, "instagram", db=db)
     return {
         "instagram": {
             "connected": instagram_token is not None,
@@ -1375,68 +1375,104 @@ async def auth_tiktok_callback(
 
 
 @app.get("/api/auth/tiktok/account")
-def get_tiktok_account(user_id: int = Depends(require_auth)):
+def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
     """Get TikTok account information (display name/username)"""
-    tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok")
+    tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
     
     if not tiktok_token:
         return {"account": None}
     
     try:
-        # Get access token (decrypted)
-        access_token = decrypt(tiktok_token.access_token)
-        if not access_token:
-            return {"account": None}
+        # Check for cached account info in extra_data first (like Instagram)
+        extra_data = tiktok_token.extra_data or {}
+        cached_display_name = extra_data.get("display_name")
+        cached_username = extra_data.get("username")
+        cached_avatar_url = extra_data.get("avatar_url")
+        open_id = extra_data.get("open_id")
         
-        # Get creator info from TikTok API
-        open_id = tiktok_token.extra_data.get("open_id") if tiktok_token.extra_data else None
+        # If we have cached account info, return it immediately
+        if cached_display_name or cached_username:
+            account_info = {}
+            if cached_display_name:
+                account_info["display_name"] = cached_display_name
+            if cached_username:
+                account_info["username"] = cached_username
+            if cached_avatar_url:
+                account_info["avatar_url"] = cached_avatar_url
+            if open_id:
+                account_info["open_id"] = open_id
+            return {"account": account_info}
         
+        # If no cached info, try to fetch from API
         if not open_id:
             tiktok_logger.warning(f"No open_id found for user {user_id}")
             return {"account": None}
         
-        # Call TikTok creator info API
+        # Get access token (decrypted)
+        access_token = decrypt(tiktok_token.access_token)
+        if not access_token:
+            tiktok_logger.warning(f"Failed to decrypt TikTok token for user {user_id}")
+            return {"account": None}
+        
+        # Call TikTok creator info API with timeout (must use POST, not GET)
         try:
-            creator_info_response = httpx.get(
-                TIKTOK_CREATOR_INFO_URL,
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Content-Type": "application/json"
-                },
-                timeout=10.0
-            )
-            
-            if creator_info_response.status_code != 200:
-                tiktok_logger.warning(f"TikTok creator info request failed: {creator_info_response.status_code}")
-                return {"account": None}
-            
-            creator_data = creator_info_response.json()
-            creator_info = creator_data.get("data", {})
-            
-            # Extract account information
-            account_info = {}
-            
-            if "creator_nickname" in creator_info:
-                account_info["display_name"] = creator_info["creator_nickname"]
-            elif "display_name" in creator_info:
-                account_info["display_name"] = creator_info["display_name"]
-            
-            if "creator_username" in creator_info:
-                account_info["username"] = creator_info["creator_username"]
-            elif "username" in creator_info:
-                account_info["username"] = creator_info["username"]
-            
-            if "creator_avatar_url" in creator_info:
-                account_info["avatar_url"] = creator_info["creator_avatar_url"]
-            elif "avatar_url" in creator_info:
-                account_info["avatar_url"] = creator_info["avatar_url"]
-            
-            account_info["open_id"] = open_id
-            
-            return {"account": account_info if account_info else None}
-            
+            with httpx.Client(timeout=5.0) as client:
+                creator_info_response = client.post(
+                    TIKTOK_CREATOR_INFO_URL,
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type": "application/json; charset=UTF-8"
+                    },
+                    json={}
+                )
+                
+                if creator_info_response.status_code != 200:
+                    tiktok_logger.warning(f"TikTok creator info request failed: {creator_info_response.status_code}")
+                    # Return None if API fails and we don't have cached info
+                    return {"account": None}
+                
+                creator_data = creator_info_response.json()
+                creator_info = creator_data.get("data", {})
+                
+                # Extract account information
+                account_info = {}
+                
+                if "creator_nickname" in creator_info:
+                    account_info["display_name"] = creator_info["creator_nickname"]
+                elif "display_name" in creator_info:
+                    account_info["display_name"] = creator_info["display_name"]
+                
+                if "creator_username" in creator_info:
+                    account_info["username"] = creator_info["creator_username"]
+                elif "username" in creator_info:
+                    account_info["username"] = creator_info["username"]
+                
+                if "creator_avatar_url" in creator_info:
+                    account_info["avatar_url"] = creator_info["creator_avatar_url"]
+                elif "avatar_url" in creator_info:
+                    account_info["avatar_url"] = creator_info["avatar_url"]
+                
+                account_info["open_id"] = open_id
+                
+                # Cache the account info in extra_data for future requests
+                if account_info:
+                    extra_data["display_name"] = account_info.get("display_name")
+                    extra_data["username"] = account_info.get("username")
+                    extra_data["avatar_url"] = account_info.get("avatar_url")
+                    db_helpers.save_oauth_token(
+                        user_id=user_id,
+                        platform="tiktok",
+                        access_token=tiktok_token.access_token,  # Already encrypted
+                        refresh_token=tiktok_token.refresh_token,
+                        expires_at=tiktok_token.expires_at,
+                        extra_data=extra_data,
+                        db=db
+                    )
+                
+                return {"account": account_info if account_info else None}
         except Exception as api_error:
-            tiktok_logger.error(f"Error calling TikTok API for user {user_id}: {str(api_error)}")
+            tiktok_logger.warning(f"Error calling TikTok API for user {user_id}: {str(api_error)}")
+            # Return None if API fails and we don't have cached info
             return {"account": None}
         
     except Exception as e:
@@ -1571,7 +1607,7 @@ async def auth_instagram_callback(
     return HTMLResponse(content=html_content)
 
 @app.post("/api/auth/instagram/complete")
-async def complete_instagram_auth(request: Request, response: Response):
+async def complete_instagram_auth(request: Request, response: Response, db: Session = Depends(get_db)):
     """Complete Instagram authentication after receiving tokens from callback page"""
     try:
         body = await request.json()
@@ -1815,11 +1851,12 @@ async def complete_instagram_auth(request: Request, response: Response):
                     "page_id": page_id,
                     "business_account_id": business_account_id,
                     "username": username
-                }
+                },
+                db=db
             )
             
             # Enable Instagram destination
-            db_helpers.set_user_setting(user_id, "destinations", "instagram_enabled", True)
+            db_helpers.set_user_setting(user_id, "destinations", "instagram_enabled", True, db=db)
             
             instagram_logger.info(f"Instagram connected successfully for user {user_id}")
             
@@ -1830,15 +1867,15 @@ async def complete_instagram_auth(request: Request, response: Response):
         return {"success": False, "error": str(e)}
 
 @app.get("/api/auth/instagram/account")
-async def get_instagram_account(user_id: int = Depends(require_auth)):
+async def get_instagram_account(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
     """Get Instagram account information (username)"""
-    instagram_token = db_helpers.get_oauth_token(user_id, "instagram")
+    instagram_token = db_helpers.get_oauth_token(user_id, "instagram", db=db)
     
     if not instagram_token:
         return {"account": None}
     
     try:
-        # Get username from extra_data
+        # Get username from extra_data (cached)
         extra_data = instagram_token.extra_data or {}
         username = extra_data.get("username")
         business_account_id = extra_data.get("business_account_id")
@@ -1849,44 +1886,51 @@ async def get_instagram_account(user_id: int = Depends(require_auth)):
         # If not cached, fetch from Instagram API
         access_token = decrypt(instagram_token.access_token)
         if not access_token:
+            instagram_logger.warning(f"Failed to decrypt Instagram token for user {user_id}")
             return {"account": None}
         
-        # Fetch profile info
-        profile_info = await fetch_instagram_profile(access_token)
-        username = profile_info.get("username")
-        business_account_id = profile_info.get("business_account_id")
+        # Fetch profile info with timeout
+        try:
+            profile_info = await fetch_instagram_profile(access_token)
+            username = profile_info.get("username")
+            business_account_id = profile_info.get("business_account_id")
+            
+            if not username or not business_account_id:
+                instagram_logger.warning(f"Failed to fetch Instagram profile for user {user_id}")
+                return {"account": None}
+            
+            # Update extra_data with cached info
+            extra_data["username"] = username
+            extra_data["business_account_id"] = business_account_id
+            db_helpers.save_oauth_token(
+                user_id=user_id,
+                platform="instagram",
+                access_token=instagram_token.access_token,  # Already encrypted
+                refresh_token=None,
+                expires_at=instagram_token.expires_at,
+                extra_data=extra_data,
+                db=db
+            )
+            
+            account_info = {
+                "username": username,
+                "user_id": business_account_id  # This is the Business Account ID
+            }
+            
+            return {"account": account_info}
+        except Exception as profile_error:
+            instagram_logger.warning(f"Could not fetch Instagram profile for user {user_id}: {str(profile_error)}")
+            return {"account": None}
         
-        if not username or not business_account_id:
-            instagram_logger.error(f"Failed to fetch Instagram profile for user {user_id}")
-            return {"account": None, "error": "Failed to fetch account info"}
-        
-        # Update extra_data with cached info
-        extra_data["username"] = username
-        extra_data["business_account_id"] = business_account_id
-        db_helpers.save_oauth_token(
-            user_id=user_id,
-            platform="instagram",
-            access_token=instagram_token.access_token,  # Already encrypted
-            refresh_token=None,
-            expires_at=instagram_token.expires_at,
-            extra_data=extra_data
-        )
-        
-        account_info = {
-            "username": username,
-            "user_id": business_account_id  # This is the Business Account ID
-        }
-        
-        return {"account": account_info}
     except Exception as e:
         instagram_logger.error(f"Error getting Instagram account info for user {user_id}: {str(e)}", exc_info=True)
         return {"account": None, "error": str(e)}
 
 @app.post("/api/auth/instagram/disconnect")
-def disconnect_instagram(user_id: int = Depends(require_csrf_new)):
+def disconnect_instagram(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Disconnect Instagram account"""
-    db_helpers.delete_oauth_token(user_id, "instagram")
-    db_helpers.set_user_setting(user_id, "destinations", "instagram_enabled", False)
+    db_helpers.delete_oauth_token(user_id, "instagram", db=db)
+    db_helpers.set_user_setting(user_id, "destinations", "instagram_enabled", False, db=db)
     return {"message": "Disconnected"}
 
 
@@ -1898,14 +1942,13 @@ async def fetch_instagram_profile(access_token: str) -> dict:
     This is the root cause fix - centralizes profile fetching logic.
     """
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=5.0) as client:
             me_response = await client.get(
                 f"{INSTAGRAM_GRAPH_API_BASE}/me",
                 params={
                     "fields": "id,username,account_type",
                     "access_token": access_token
-                },
-                timeout=10.0
+                }
             )
             
             if me_response.status_code == 200:
