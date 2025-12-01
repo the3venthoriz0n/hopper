@@ -1692,14 +1692,15 @@ async def complete_instagram_auth(request: Request, response: Response, db: Sess
             return {"success": False, "error": "Missing access token"}
         
         # Validate state (CSRF protection) - state contains user_id
+        # ROOT CAUSE FIX: Store app user_id in a variable that won't be overwritten
         try:
-            user_id = int(state)
+            app_user_id = int(state)
         except (ValueError, TypeError):
             instagram_logger.error("Invalid state parameter")
             return {"success": False, "error": "Invalid state"}
         
         # Verify user exists
-        user = get_user_by_id(user_id)
+        user = get_user_by_id(app_user_id)
         if not user:
             return {"success": False, "error": "User not found"}
         
@@ -1774,19 +1775,20 @@ async def complete_instagram_auth(request: Request, response: Response, db: Sess
                     }
             
             # Debug: Check which Facebook user this token belongs to
-            user_id = None
+            # ROOT CAUSE FIX: Use different variable name to avoid overwriting app_user_id
+            facebook_user_id = None
             user_name = None
             me_url = f"{INSTAGRAM_GRAPH_API_BASE}/v21.0/me"
             me_params = {"fields": "id,name,email", "access_token": access_token_to_use}
             me_response = await client.get(me_url, params=me_params)
             if me_response.status_code == 200:
                 me_data = me_response.json()
-                user_id = me_data.get('id')
+                facebook_user_id = me_data.get('id')
                 user_name = me_data.get('name', 'Unknown')
-                instagram_logger.info(f"Token belongs to Facebook user: {user_name} (ID: {user_id})")
+                instagram_logger.info(f"Token belongs to Facebook user: {user_name} (ID: {facebook_user_id})")
                 
-                # Try alternative: Check if user has any pages by querying /{user_id}/accounts
-                alt_pages_url = f"{INSTAGRAM_GRAPH_API_BASE}/v21.0/{user_id}/accounts"
+                # Try alternative: Check if user has any pages by querying /{facebook_user_id}/accounts
+                alt_pages_url = f"{INSTAGRAM_GRAPH_API_BASE}/v21.0/{facebook_user_id}/accounts"
                 alt_pages_params = {
                     "fields": "id,name,access_token,instagram_business_account",
                     "access_token": access_token_to_use
@@ -1847,8 +1849,8 @@ async def complete_instagram_auth(request: Request, response: Response, db: Sess
                 instagram_logger.warning("3. The Pages exist but aren't accessible via this API")
                 
                 # Get user info for better error message
-                user_info = f"Logged in as: {user_name} (ID: {user_id})" if user_name and user_id else "Could not identify Facebook user"
-                user_id_str = str(user_id) if user_id else "unknown"
+                user_info = f"Logged in as: {user_name} (ID: {facebook_user_id})" if user_name and facebook_user_id else "Could not identify Facebook user"
+                user_id_str = str(facebook_user_id) if facebook_user_id else "unknown"
                 
                 return {
                     "success": False, 
@@ -1903,7 +1905,7 @@ async def complete_instagram_auth(request: Request, response: Response, db: Sess
                 username_data = username_response.json()
                 username = username_data.get("username", "Unknown")
             
-            instagram_logger.info(f"Instagram Username: @{username} for user {user_id}")
+            instagram_logger.info(f"Instagram Username: @{username} for user {app_user_id}")
             
             # Calculate expiry (Instagram tokens are long-lived)
             expires_at = None
@@ -1912,8 +1914,9 @@ async def complete_instagram_auth(request: Request, response: Response, db: Sess
                 expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
             
             # Store in database (encrypted)
+            # ROOT CAUSE FIX: Use app_user_id (from state), not facebook_user_id
             db_helpers.save_oauth_token(
-                user_id=user_id,
+                user_id=app_user_id,
                 platform="instagram",
                 access_token=page_access_token,
                 refresh_token=None,  # Instagram doesn't use refresh tokens
@@ -1928,9 +1931,9 @@ async def complete_instagram_auth(request: Request, response: Response, db: Sess
             )
             
             # Enable Instagram destination
-            db_helpers.set_user_setting(user_id, "destinations", "instagram_enabled", True, db=db)
+            db_helpers.set_user_setting(app_user_id, "destinations", "instagram_enabled", True, db=db)
             
-            instagram_logger.info(f"Instagram connected successfully for user {user_id}")
+            instagram_logger.info(f"Instagram connected successfully for user {app_user_id}")
             
             # ROOT CAUSE FIX: Return connection status directly from the authoritative source
             # This eliminates the need for a separate API call and prevents race conditions
