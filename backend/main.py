@@ -752,6 +752,47 @@ try:
 except Exception:
     pass  # Directory already exists or mounted
 
+# Helper function for setting authentication cookies
+def set_auth_cookie(response: Response, session_id: str, request: Request) -> None:
+    """Set session cookie with proper domain for cross-subdomain sharing
+    
+    Args:
+        response: FastAPI Response object
+        session_id: Session ID to store in cookie
+        request: FastAPI Request object (used to extract domain)
+    """
+    # Extract host from request
+    host = request.headers.get("host", DOMAIN)
+    if ":" in host:
+        host = host.split(":")[0]
+    
+    # Determine cookie domain for cross-subdomain sharing
+    # For multi-level domains (e.g., api-dev.dunkbox.net), use parent domain (.dunkbox.net)
+    # For localhost/single-part domains, use None (browser default)
+    domain_parts = host.split(".")
+    if len(domain_parts) >= 2:
+        # Use parent domain with leading dot (e.g., ".dunkbox.net")
+        # This allows cookie to be shared across all subdomains
+        cookie_domain = "." + ".".join(domain_parts[-2:])
+    else:
+        # localhost or single-part domain - no domain parameter needed
+        cookie_domain = None
+    
+    # Set session cookie
+    response.set_cookie(
+        key="session_id",
+        value=session_id,
+        domain=cookie_domain,
+        httponly=True,
+        max_age=30*24*60*60,  # 30 days
+        samesite="lax",
+        secure=ENVIRONMENT == "production"
+    )
+    
+    # Log cookie domain for debugging
+    logger.debug(f"Set session cookie with domain={cookie_domain}")
+
+
 # Helper functions for template replacement
 def replace_template_placeholders(template: str, filename: str, wordbank: list) -> str:
     """Replace template placeholders with actual values"""
@@ -776,7 +817,7 @@ def replace_template_placeholders(template: str, filename: str, wordbank: list) 
 # ============================================================================
 
 @app.post("/api/auth/register")
-def register(request_data: RegisterRequest, response: Response):
+def register(request_data: RegisterRequest, request: Request, response: Response):
     """Register a new user"""
     try:
         # Validate password strength (minimum 8 characters)
@@ -790,15 +831,8 @@ def register(request_data: RegisterRequest, response: Response):
         session_id = secrets.token_urlsafe(32)
         redis_client.set_session(session_id, user.id)
         
-        # Set session cookie
-        response.set_cookie(
-            key="session_id",
-            value=session_id,
-            httponly=True,
-            max_age=30*24*60*60,
-            samesite="lax",
-            secure=ENVIRONMENT == "production"
-        )
+        # Set session cookie with proper domain handling
+        set_auth_cookie(response, session_id, request)
         
         logger.info(f"User registered: {user.email} (ID: {user.id})")
         
@@ -817,7 +851,7 @@ def register(request_data: RegisterRequest, response: Response):
 
 
 @app.post("/api/auth/login")
-def login(request_data: LoginRequest, response: Response):
+def login(request_data: LoginRequest, request: Request, response: Response):
     """Login user"""
     try:
         # Authenticate user
@@ -829,15 +863,8 @@ def login(request_data: LoginRequest, response: Response):
         session_id = secrets.token_urlsafe(32)
         redis_client.set_session(session_id, user.id)
         
-        # Set session cookie
-        response.set_cookie(
-            key="session_id",
-            value=session_id,
-            httponly=True,
-            max_age=30*24*60*60,
-            samesite="lax",
-            secure=ENVIRONMENT == "production"
-        )
+        # Set session cookie with proper domain handling
+        set_auth_cookie(response, session_id, request)
         
         logger.info(f"User logged in: {user.email} (ID: {user.id})")
         
@@ -1054,38 +1081,17 @@ def auth_google_login_callback(code: str, state: str, request: Request, response
         session_id = secrets.token_urlsafe(32)
         redis_client.set_session(session_id, user.id)
         
-        # Extract parent domain for cookie (e.g., "dunkbox.net" from "api-dev.dunkbox.net")
-        # This allows cookie to be shared across subdomains
-        host = request.headers.get("host", DOMAIN)
-        if ":" in host:
-            host = host.split(":")[0]
+        # Create redirect response
+        frontend_redirect = f"{FRONTEND_URL}/?google_login=success"
+        redirect_response = RedirectResponse(url=frontend_redirect)
         
-        # Get parent domain (e.g., "dunkbox.net" from "api-dev.dunkbox.net")
-        domain_parts = host.split(".")
-        if len(domain_parts) >= 2:
-            # Use parent domain with leading dot (e.g., ".dunkbox.net")
-            cookie_domain = "." + ".".join(domain_parts[-2:])
-        else:
-            # localhost or single-part domain
-            cookie_domain = None
-        
-        # Set session cookie with domain parameter for cross-subdomain sharing
-        response.set_cookie(
-            key="session_id",
-            value=session_id,
-            domain=cookie_domain,  # Share across subdomains
-            httponly=True,
-            max_age=30*24*60*60,
-            samesite="lax",
-            secure=ENVIRONMENT == "production"
-        )
+        # Set session cookie on the redirect response
+        set_auth_cookie(redirect_response, session_id, request)
         
         action = "registered" if is_new else "logged in"
-        logger.info(f"User {action} via Google OAuth: {user.email} (ID: {user.id}), cookie_domain={cookie_domain}")
+        logger.info(f"User {action} via Google OAuth: {user.email} (ID: {user.id})")
         
-        # Redirect to frontend (session cookie is already set via response.set_cookie above)
-        frontend_redirect = f"{FRONTEND_URL}/?google_login=success"
-        return RedirectResponse(url=frontend_redirect)
+        return redirect_response
         
     except HTTPException:
         raise
