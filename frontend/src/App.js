@@ -624,10 +624,20 @@ function Home() {
     }
   };
 
-  const connectYoutube = async () => {
-    const res = await axios.get(`${API}/auth/youtube`);
-    window.location.href = res.data.url;
+  // Unified connect function for all platforms
+  const connectPlatform = async (platform, platformName) => {
+    try {
+      const res = await axios.get(`${API}/auth/${platform}`);
+      window.location.href = res.data.url;
+    } catch (err) {
+      setMessage(`❌ Error connecting to ${platformName}: ${err.response?.data?.detail || err.message}`);
+      console.error(`Error connecting ${platform}:`, err);
+    }
   };
+
+  const connectYoutube = () => connectPlatform('youtube', 'YouTube');
+  const connectTiktok = () => connectPlatform('tiktok', 'TikTok');
+  const connectInstagram = () => connectPlatform('instagram', 'Instagram');
 
   // Unified disconnect function for all platforms
   const disconnectPlatform = async (platform, setState, platformName) => {
@@ -644,20 +654,6 @@ function Home() {
   const disconnectYoutube = () => disconnectPlatform('youtube', setYoutube, 'YouTube');
   const disconnectTiktok = () => disconnectPlatform('tiktok', setTiktok, 'TikTok');
   const disconnectInstagram = () => disconnectPlatform('instagram', setInstagram, 'Instagram');
-
-  // Unified connect function for all platforms
-  const connectPlatform = async (platform, platformName) => {
-    try {
-      const res = await axios.get(`${API}/auth/${platform}`);
-      window.location.href = res.data.url;
-    } catch (err) {
-      setMessage(`❌ Error connecting to ${platformName}: ${err.response?.data?.detail || err.message}`);
-      console.error(`Error connecting ${platform}:`, err);
-    }
-  };
-
-  const connectTiktok = () => connectPlatform('tiktok', 'TikTok');
-  const connectInstagram = () => connectPlatform('instagram', 'Instagram');
 
   // Unified toggle function for all platforms
   const togglePlatform = async (platform, currentState, setState) => {
