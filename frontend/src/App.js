@@ -122,6 +122,18 @@ function Home() {
 
   // Check if user is authenticated
   useEffect(() => {
+    // Check for Google login callback
+    const urlParams = new URLSearchParams(window.location.search);
+    const googleLogin = urlParams.get('google_login');
+    
+    if (googleLogin === 'success') {
+      setMessage('✅ Successfully logged in with Google!');
+      window.history.replaceState({}, '', '/');
+    } else if (googleLogin === 'error') {
+      setMessage('❌ Google login failed. Please try again.');
+      window.history.replaceState({}, '', '/');
+    }
+    
     checkAuth();
   }, []);
   

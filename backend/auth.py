@@ -16,8 +16,8 @@ def verify_password(password: str, password_hash: str) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
 
 
-def create_user(email: str, password: str) -> User:
-    """Create a new user"""
+def create_user(email: str, password: str = None) -> User:
+    """Create a new user (password optional for OAuth users)"""
     db = SessionLocal()
     try:
         # Check if user already exists
@@ -26,7 +26,7 @@ def create_user(email: str, password: str) -> User:
             raise ValueError("Email already registered")
         
         # Create user
-        password_hash = hash_password(password)
+        password_hash = hash_password(password) if password else None
         user = User(email=email, password_hash=password_hash)
         db.add(user)
         db.commit()
@@ -64,6 +64,48 @@ def get_user_by_email(email: str) -> Optional[User]:
     db = SessionLocal()
     try:
         return db.query(User).filter(User.email == email).first()
+    finally:
+        db.close()
+
+
+def get_or_create_oauth_user(email: str) -> tuple[User, bool]:
+    """Get existing user by email or create new OAuth user
+    
+    Returns:
+        tuple: (User object, is_new_user boolean)
+    """
+    db = SessionLocal()
+    try:
+        # Check if user already exists
+        existing_user = db.query(User).filter(User.email == email).first()
+        if existing_user:
+            return existing_user, False
+        
+        # Create new OAuth user (no password)
+        user = User(email=email, password_hash=None)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return user, True
+    finally:
+        db.close()
+
+
+def set_user_password(user_id: int, password: str) -> bool:
+    """Set password for OAuth user
+    
+    Returns:
+        bool: True if successful, False if user not found
+    """
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return False
+        
+        user.password_hash = hash_password(password)
+        db.commit()
+        return True
     finally:
         db.close()
 

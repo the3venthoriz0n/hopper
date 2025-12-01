@@ -26,7 +26,7 @@ from googleapiclient.http import MediaFileUpload
 # Database and auth imports
 from models import init_db, get_db, User, Video, Setting, OAuthToken
 from sqlalchemy.orm import Session
-from auth import hash_password, verify_password, create_user, authenticate_user, get_user_by_id
+from auth import hash_password, verify_password, create_user, authenticate_user, get_user_by_id, get_or_create_oauth_user, set_user_password
 import redis_client
 from pydantic import BaseModel, EmailStr
 import db_helpers
@@ -78,6 +78,9 @@ class RegisterRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     email: EmailStr
+    password: str
+
+class SetPasswordRequest(BaseModel):
     password: str
 
 class UserResponse(BaseModel):
@@ -863,6 +866,28 @@ def logout(request: Request, response: Response):
     return {"message": "Logged out successfully"}
 
 
+@app.post("/api/auth/set-password")
+def set_password(request_data: SetPasswordRequest, user_id: int = Depends(require_auth)):
+    """Set password for OAuth user (allows them to use email/password login)"""
+    try:
+        # Validate password strength (minimum 8 characters)
+        if len(request_data.password) < 8:
+            raise HTTPException(400, "Password must be at least 8 characters long")
+        
+        # Set password for user
+        success = set_user_password(user_id, request_data.password)
+        if not success:
+            raise HTTPException(404, "User not found")
+        
+        logger.info(f"Password set for OAuth user (ID: {user_id})")
+        return {"message": "Password set successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Set password error: {e}", exc_info=True)
+        raise HTTPException(500, "Failed to set password")
+
+
 @app.get("/api/auth/me")
 def get_current_user(request: Request):
     """Get current logged-in user"""
@@ -916,6 +941,143 @@ def get_csrf(request: Request, response: Response):
     # Return token in both response body and header
     response.headers["X-CSRF-Token"] = csrf_token
     return {"csrf_token": csrf_token}
+
+
+# ============================================================================
+# GOOGLE OAUTH LOGIN ENDPOINTS (for user authentication)
+# ============================================================================
+
+@app.get("/api/auth/google/login")
+def auth_google_login(request: Request):
+    """Start Google OAuth login flow (for user authentication, not YouTube)"""
+    google_config = get_google_client_config()
+    if not google_config:
+        raise HTTPException(400, "Google OAuth credentials not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_PROJECT_ID environment variables.")
+    
+    # Build redirect URI dynamically based on request
+    protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" or ENVIRONMENT == "production" else "http"
+    host = request.headers.get("host", DOMAIN)
+    if ":" in host:
+        host = host.split(":")[0]
+    redirect_uri = f"{protocol}://{host}/api/auth/google/login/callback"
+    
+    # Create Flow from config dict with OpenID scopes for user authentication
+    flow = Flow.from_client_config(
+        google_config,
+        scopes=[
+            'openid',
+            'https://www.googleapis.com/auth/userinfo.email',
+            'https://www.googleapis.com/auth/userinfo.profile'
+        ],
+        redirect_uri=redirect_uri
+    )
+    
+    # Generate random state for security
+    state = secrets.token_urlsafe(32)
+    url, _ = flow.authorization_url(access_type='offline', state=state, prompt='select_account')
+    
+    # Store state in Redis for verification (5 minutes expiry)
+    redis_client.redis_client.setex(f"google_login_state:{state}", 300, "pending")
+    
+    return {"url": url}
+
+
+@app.get("/api/auth/google/login/callback")
+def auth_google_login_callback(code: str, state: str, request: Request, response: Response):
+    """Google OAuth login callback - creates or logs in user"""
+    # Verify state to prevent CSRF
+    state_key = f"google_login_state:{state}"
+    state_value = redis_client.redis_client.get(state_key)
+    if not state_value:
+        return HTMLResponse(content="""
+        <html>
+        <head><title>Google Login Failed</title></head>
+        <body>
+            <h1>Google Login Failed</h1>
+            <p>Invalid or expired state parameter. Please try again.</p>
+            <script>
+                setTimeout(() => { window.close(); }, 3000);
+            </script>
+        </body>
+        </html>
+        """, status_code=400)
+    
+    # Delete state after verification
+    redis_client.redis_client.delete(state_key)
+    
+    # Build redirect URI dynamically
+    protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" or ENVIRONMENT == "production" else "http"
+    host = request.headers.get("host", DOMAIN)
+    if ":" in host:
+        host = host.split(":")[0]
+    redirect_uri = f"{protocol}://{host}/api/auth/google/login/callback"
+    
+    google_config = get_google_client_config()
+    if not google_config:
+        raise HTTPException(400, "Google OAuth credentials not configured")
+    
+    # Create flow and fetch token
+    flow = Flow.from_client_config(
+        google_config,
+        scopes=[
+            'openid',
+            'https://www.googleapis.com/auth/userinfo.email',
+            'https://www.googleapis.com/auth/userinfo.profile'
+        ],
+        redirect_uri=redirect_uri
+    )
+    
+    try:
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+        
+        # Get user info from Google
+        userinfo_response = httpx.get(
+            'https://www.googleapis.com/oauth2/v2/userinfo',
+            headers={'Authorization': f'Bearer {creds.token}'},
+            timeout=10.0
+        )
+        
+        if userinfo_response.status_code != 200:
+            raise HTTPException(400, "Failed to fetch user info from Google")
+        
+        user_info = userinfo_response.json()
+        email = user_info.get('email')
+        
+        if not email:
+            raise HTTPException(400, "Email not provided by Google")
+        
+        # Get or create user by email (links accounts automatically)
+        user, is_new = get_or_create_oauth_user(email)
+        
+        # Create session
+        session_id = secrets.token_urlsafe(32)
+        redis_client.set_session(session_id, user.id)
+        
+        # Set session cookie
+        response.set_cookie(
+            key="session_id",
+            value=session_id,
+            httponly=True,
+            max_age=30*24*60*60,
+            samesite="lax",
+            secure=ENVIRONMENT == "production"
+        )
+        
+        action = "registered" if is_new else "logged in"
+        logger.info(f"User {action} via Google OAuth: {user.email} (ID: {user.id})")
+        
+        # Redirect to frontend with success status
+        frontend_redirect = f"{FRONTEND_URL}/?google_login=success"
+        return RedirectResponse(url=frontend_redirect)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Google login error: {e}", exc_info=True)
+        # Redirect to frontend with error
+        frontend_redirect = f"{FRONTEND_URL}/?google_login=error"
+        return RedirectResponse(url=frontend_redirect)
 
 
 # ============================================================================
