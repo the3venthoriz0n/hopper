@@ -143,6 +143,57 @@ DESTINATION_UPLOADERS = {
 }
 
 
+def build_upload_context(user_id: int, db: Session) -> Dict[str, Any]:
+    """Build upload context for a user (enabled destinations, settings, tokens)
+    
+    Args:
+        user_id: User ID
+        db: Database session
+        
+    Returns:
+        Dictionary with:
+            - enabled_destinations: List of enabled destination names
+            - dest_settings: Destination settings dict
+            - all_tokens: All OAuth tokens dict
+    """
+    # Batch load destination settings and OAuth tokens to prevent N+1 queries
+    dest_settings = db_helpers.get_user_settings(user_id, "destinations", db=db)
+    all_tokens = db_helpers.get_all_oauth_tokens(user_id, db=db)
+    
+    # Determine enabled destinations
+    enabled_destinations = []
+    for dest_name in ["youtube", "tiktok", "instagram"]:
+        is_enabled = dest_settings.get(f"{dest_name}_enabled", False)
+        has_token = all_tokens.get(dest_name) is not None
+        if is_enabled and has_token:
+            enabled_destinations.append(dest_name)
+    
+    return {
+        "enabled_destinations": enabled_destinations,
+        "dest_settings": dest_settings,
+        "all_tokens": all_tokens
+    }
+
+
+def check_upload_success(video: Video, dest_name: str) -> bool:
+    """Check if upload to a destination succeeded based on video state
+    
+    Args:
+        video: Video object to check
+        dest_name: Destination name (youtube, tiktok, instagram)
+        
+    Returns:
+        True if upload succeeded, False otherwise
+    """
+    if dest_name == 'youtube':
+        return bool(video.youtube_id)
+    elif dest_name == 'tiktok':
+        return bool(video.tiktok_id or video.tiktok_publish_id)
+    elif dest_name == 'instagram':
+        return bool(video.instagram_id or video.instagram_container_id)
+    return False
+
+
 def get_google_client_config():
     """Build Google OAuth client config from environment variables"""
     if not all([GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_PROJECT_ID]):
@@ -3005,17 +3056,9 @@ async def scheduler_task():
                 
                 # Process videos grouped by user (allows batch loading of user settings/tokens)
                 for user_id, videos in videos_by_user.items():
-                    # Batch load user settings and tokens once per user (not per video)
-                    dest_settings = db_helpers.get_user_settings(user_id, "destinations", db=db)
-                    all_tokens = db_helpers.get_all_oauth_tokens(user_id, db=db)
-                    
-                    # Determine enabled destinations for this user
-                    enabled_destinations = []
-                    for dest_name in ["youtube", "tiktok", "instagram"]:
-                        is_enabled = dest_settings.get(f"{dest_name}_enabled", False)
-                        has_token = all_tokens.get(dest_name) is not None
-                        if is_enabled and has_token:
-                            enabled_destinations.append(dest_name)
+                    # Build upload context (enabled destinations, settings, tokens)
+                    upload_context = build_upload_context(user_id, db)
+                    enabled_destinations = upload_context["enabled_destinations"]
                     
                     if not enabled_destinations:
                         # Skip this user if no destinations are enabled
@@ -3052,13 +3095,8 @@ async def scheduler_task():
                                             # Note: We could optimize this further by caching the video object, but for now
                                             # we'll query to ensure we have the latest state
                                             updated_video = db.query(Video).filter(Video.id == video_id).first()
-                                            if updated_video:
-                                                if dest_name == 'youtube' and updated_video.youtube_id:
-                                                    success_count += 1
-                                                elif dest_name == 'tiktok' and (updated_video.tiktok_id or updated_video.tiktok_publish_id):
-                                                    success_count += 1
-                                                elif dest_name == 'instagram' and (updated_video.instagram_id or updated_video.instagram_container_id):
-                                                    success_count += 1
+                                            if updated_video and check_upload_success(updated_video, dest_name):
+                                                success_count += 1
                                         except Exception as upload_err:
                                             print(f"  Error uploading to {dest_name}: {upload_err}")
                                 
@@ -3093,21 +3131,11 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
     
     upload_logger.debug(f"Checking destinations for user {user_id}...")
     
-    # Batch load destination settings and OAuth tokens to prevent N+1 queries
-    destination_settings = db_helpers.get_user_settings(user_id, "destinations", db=db)
-    all_tokens = db_helpers.get_all_oauth_tokens(user_id, db=db)
-    
-    for dest_name in ["youtube", "tiktok", "instagram"]:
-        # Check if destination is enabled
-        is_enabled = destination_settings.get(f"{dest_name}_enabled", False)
-        
-        # Check if user has OAuth token for this destination (from batch loaded tokens)
-        has_token = all_tokens.get(dest_name) is not None
-        
-        upload_logger.debug(f"{dest_name}: enabled={is_enabled}, has_token={has_token}")
-        
-        if is_enabled and has_token:
-            enabled_destinations.append(dest_name)
+    # Build upload context (enabled destinations, settings, tokens)
+    upload_context = build_upload_context(user_id, db)
+    enabled_destinations = upload_context["enabled_destinations"]
+    destination_settings = upload_context["dest_settings"]
+    all_tokens = upload_context["all_tokens"]
     
     upload_logger.info(f"Enabled destinations for user {user_id}: {enabled_destinations}")
     
@@ -3178,15 +3206,9 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
             verified_failed = []
             for dest_name in succeeded_destinations:
                 if updated_video:
-                    if dest_name == 'youtube' and updated_video.youtube_id:
+                    if check_upload_success(updated_video, dest_name):
                         verified_succeeded.append(dest_name)
-                        upload_logger.info(f"YouTube upload succeeded for {video.filename}")
-                    elif dest_name == 'tiktok' and (updated_video.tiktok_id or updated_video.tiktok_publish_id):
-                        verified_succeeded.append(dest_name)
-                        upload_logger.info(f"TikTok upload succeeded for {video.filename}")
-                    elif dest_name == 'instagram' and (updated_video.instagram_id or updated_video.instagram_container_id):
-                        verified_succeeded.append(dest_name)
-                        upload_logger.info(f"Instagram upload succeeded for {video.filename}")
+                        upload_logger.info(f"{dest_name.capitalize()} upload succeeded for {video.filename}")
                     else:
                         verified_failed.append(dest_name)
                         upload_logger.error(f"{dest_name} upload failed for {video.filename}")
