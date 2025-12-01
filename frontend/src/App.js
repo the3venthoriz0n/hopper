@@ -396,22 +396,25 @@ function Home() {
   const loadDestinations = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/destinations`);
-      setYoutube({ 
+      // Preserve existing account info when updating destinations status
+      // Only clear account if actually disconnected
+      setYoutube(prev => ({ 
         connected: res.data.youtube.connected, 
         enabled: res.data.youtube.enabled,
-        account: null
-      });
-      setTiktok({ 
+        account: res.data.youtube.connected ? prev.account : null
+      }));
+      setTiktok(prev => ({ 
         connected: res.data.tiktok.connected, 
         enabled: res.data.tiktok.enabled,
-        account: null
-      });
-      setInstagram({ 
+        account: res.data.tiktok.connected ? prev.account : null
+      }));
+      setInstagram(prev => ({ 
         connected: res.data.instagram.connected, 
         enabled: res.data.instagram.enabled,
-        account: null
-      });
+        account: res.data.instagram.connected ? prev.account : null
+      }));
       
+      // Only load account if connected and we don't already have account info
       if (res.data.youtube.connected) {
         loadYoutubeAccount();
       }
@@ -477,6 +480,9 @@ function Home() {
     // Check OAuth callback
     if (window.location.search.includes('connected=youtube')) {
       setMessage('✅ YouTube connected!');
+      // Optimistically set YouTube as connected before loading destinations
+      // This prevents race condition where loadDestinations might return stale data
+      setYoutube(prev => ({ ...prev, connected: true, enabled: true }));
       loadDestinations();
       setTimeout(() => {
         loadYoutubeAccount();
@@ -484,6 +490,9 @@ function Home() {
       window.history.replaceState({}, '', '/');
     } else if (window.location.search.includes('connected=tiktok')) {
       setMessage('✅ TikTok connected!');
+      // Optimistically set TikTok as connected before loading destinations
+      // This prevents race condition where loadDestinations might return stale data
+      setTiktok(prev => ({ ...prev, connected: true, enabled: true }));
       loadDestinations();
       setTimeout(() => {
         loadTiktokAccount();
@@ -491,6 +500,9 @@ function Home() {
       window.history.replaceState({}, '', '/');
     } else if (window.location.search.includes('connected=instagram')) {
       setMessage('✅ Instagram connected!');
+      // Optimistically set Instagram as connected before loading destinations
+      // This prevents race condition where loadDestinations might return stale data
+      setInstagram(prev => ({ ...prev, connected: true, enabled: true }));
       loadDestinations();
       setTimeout(() => {
         loadInstagramAccount();

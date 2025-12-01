@@ -1418,7 +1418,15 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
             return {"account": account_info}
         
         # Call TikTok creator info API with timeout (must use POST, not GET)
-        account_info = {"open_id": open_id}  # Start with open_id as fallback
+        # Start with any cached data we might have (even if not complete)
+        account_info = {"open_id": open_id}
+        if cached_display_name:
+            account_info["display_name"] = cached_display_name
+        if cached_username:
+            account_info["username"] = cached_username
+        if cached_avatar_url:
+            account_info["avatar_url"] = cached_avatar_url
+        
         try:
             with httpx.Client(timeout=5.0) as client:
                 creator_info_response = client.post(
@@ -1432,7 +1440,11 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
                 
                 if creator_info_response.status_code != 200:
                     tiktok_logger.warning(f"TikTok creator info request failed: {creator_info_response.status_code}")
-                    # Return minimal account info with open_id, similar to YouTube pattern
+                    # Return cached account info if we have it, otherwise just open_id
+                    # This ensures we don't lose the account name when API fails
+                    if account_info.get("display_name") or account_info.get("username"):
+                        return {"account": account_info}
+                    # If no cached data, return minimal info with open_id
                     return {"account": account_info}
                 
                 creator_data = creator_info_response.json()
@@ -1472,7 +1484,11 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
                 return {"account": account_info}
         except Exception as api_error:
             tiktok_logger.warning(f"Error calling TikTok API for user {user_id}: {str(api_error)}")
-            # Return minimal account info with open_id, similar to YouTube pattern
+            # Return cached account info if we have it, otherwise just open_id
+            # This ensures we don't lose the account name when API fails
+            if account_info.get("display_name") or account_info.get("username"):
+                return {"account": account_info}
+            # If no cached data, return minimal info with open_id
             return {"account": account_info}
         
     except Exception as e:
