@@ -8,9 +8,19 @@ from google.oauth2.credentials import Credentials
 from encryption import encrypt, decrypt
 
 
-def get_user_settings(user_id: int, category: str = "global") -> Dict[str, Any]:
-    """Get user settings by category (global, youtube, tiktok, instagram)"""
-    db = SessionLocal()
+def get_user_settings(user_id: int, category: str = "global", db: Session = None) -> Dict[str, Any]:
+    """Get user settings by category (global, youtube, tiktok, instagram)
+    
+    Args:
+        user_id: User ID
+        category: Settings category
+        db: Database session (if None, creates its own - for backward compatibility)
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
     try:
         settings = db.query(Setting).filter(
             Setting.user_id == user_id,
@@ -71,12 +81,22 @@ def get_user_settings(user_id: int, category: str = "global") -> Dict[str, Any]:
         
         return settings_dict
     finally:
-        db.close()
+        if should_close:
+            db.close()
 
 
-def get_all_user_settings(user_id: int) -> Dict[str, Dict[str, Any]]:
-    """Get all user settings for all categories in a single query - optimized to prevent N+1"""
-    db = SessionLocal()
+def get_all_user_settings(user_id: int, db: Session = None) -> Dict[str, Dict[str, Any]]:
+    """Get all user settings for all categories in a single query - optimized to prevent N+1
+    
+    Args:
+        user_id: User ID
+        db: Database session (if None, creates its own - for backward compatibility)
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
     try:
         # Load all settings for this user in one query
         all_settings = db.query(Setting).filter(
@@ -148,12 +168,25 @@ def get_all_user_settings(user_id: int) -> Dict[str, Dict[str, Any]]:
         
         return result
     finally:
-        db.close()
+        if should_close:
+            db.close()
 
 
-def set_user_setting(user_id: int, category: str, key: str, value: Any) -> None:
-    """Set a user setting"""
-    db = SessionLocal()
+def set_user_setting(user_id: int, category: str, key: str, value: Any, db: Session = None) -> None:
+    """Set a user setting
+    
+    Args:
+        user_id: User ID
+        category: Settings category
+        key: Setting key
+        value: Setting value
+        db: Database session (if None, creates its own - for backward compatibility)
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
     try:
         # Convert value to JSON string if it's not a string
         if not isinstance(value, str):
@@ -181,21 +214,44 @@ def set_user_setting(user_id: int, category: str, key: str, value: Any) -> None:
         
         db.commit()
     finally:
-        db.close()
+        if should_close:
+            db.close()
 
 
-def get_user_videos(user_id: int) -> List[Video]:
-    """Get all videos for a user"""
-    db = SessionLocal()
+def get_user_videos(user_id: int, db: Session = None) -> List[Video]:
+    """Get all videos for a user
+    
+    Args:
+        user_id: User ID
+        db: Database session (if None, creates its own - for backward compatibility)
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
     try:
         return db.query(Video).filter(Video.user_id == user_id).order_by(Video.id).all()
     finally:
-        db.close()
+        if should_close:
+            db.close()
 
 
-def add_user_video(user_id: int, filename: str, path: str, generated_title: str = None) -> Video:
-    """Add a video to user's queue"""
-    db = SessionLocal()
+def add_user_video(user_id: int, filename: str, path: str, generated_title: str = None, db: Session = None) -> Video:
+    """Add a video to user's queue
+    
+    Args:
+        user_id: User ID
+        filename: Video filename
+        path: Video file path
+        generated_title: Generated title (optional)
+        db: Database session (if None, creates its own - for backward compatibility)
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
     try:
         video = Video(
             user_id=user_id,
@@ -212,9 +268,20 @@ def add_user_video(user_id: int, filename: str, path: str, generated_title: str 
         db.close()
 
 
-def update_video(video_id: int, user_id: int, **kwargs) -> Optional[Video]:
-    """Update a video"""
-    db = SessionLocal()
+def update_video(video_id: int, user_id: int, db: Session = None, **kwargs) -> Optional[Video]:
+    """Update a video
+    
+    Args:
+        video_id: Video ID
+        user_id: User ID
+        db: Database session (if None, creates its own - for backward compatibility)
+        **kwargs: Fields to update
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
     try:
         video = db.query(Video).filter(
             Video.id == video_id,
@@ -235,9 +302,19 @@ def update_video(video_id: int, user_id: int, **kwargs) -> Optional[Video]:
         db.close()
 
 
-def delete_video(video_id: int, user_id: int) -> bool:
-    """Delete a video"""
-    db = SessionLocal()
+def delete_video(video_id: int, user_id: int, db: Session = None) -> bool:
+    """Delete a video
+    
+    Args:
+        video_id: Video ID
+        user_id: User ID
+        db: Database session (if None, creates its own - for backward compatibility)
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
     try:
         video = db.query(Video).filter(
             Video.id == video_id,
@@ -254,21 +331,41 @@ def delete_video(video_id: int, user_id: int) -> bool:
         db.close()
 
 
-def get_oauth_token(user_id: int, platform: str) -> Optional[OAuthToken]:
-    """Get OAuth token for a platform"""
-    db = SessionLocal()
+def get_oauth_token(user_id: int, platform: str, db: Session = None) -> Optional[OAuthToken]:
+    """Get OAuth token for a platform
+    
+    Args:
+        user_id: User ID
+        platform: Platform name (youtube, tiktok, instagram)
+        db: Database session (if None, creates its own - for backward compatibility)
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
     try:
         return db.query(OAuthToken).filter(
             OAuthToken.user_id == user_id,
             OAuthToken.platform == platform
         ).first()
     finally:
-        db.close()
+        if should_close:
+            db.close()
 
 
-def get_all_oauth_tokens(user_id: int) -> Dict[str, Optional[OAuthToken]]:
-    """Get all OAuth tokens for a user in a single query - optimized to prevent N+1"""
-    db = SessionLocal()
+def get_all_oauth_tokens(user_id: int, db: Session = None) -> Dict[str, Optional[OAuthToken]]:
+    """Get all OAuth tokens for a user in a single query - optimized to prevent N+1
+    
+    Args:
+        user_id: User ID
+        db: Database session (if None, creates its own - for backward compatibility)
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
     try:
         # Load all OAuth tokens for this user in one query
         all_tokens = db.query(OAuthToken).filter(
@@ -292,9 +389,23 @@ def get_all_oauth_tokens(user_id: int) -> Dict[str, Optional[OAuthToken]]:
 
 def save_oauth_token(user_id: int, platform: str, access_token: str, 
                       refresh_token: str = None, expires_at: datetime = None,
-                      extra_data: Dict = None) -> OAuthToken:
-    """Save or update OAuth token (tokens are encrypted)"""
-    db = SessionLocal()
+                      extra_data: Dict = None, db: Session = None) -> OAuthToken:
+    """Save or update OAuth token (tokens are encrypted)
+    
+    Args:
+        user_id: User ID
+        platform: Platform name
+        access_token: Access token (will be encrypted)
+        refresh_token: Refresh token (will be encrypted, optional)
+        expires_at: Token expiration time (optional)
+        extra_data: Additional token data (optional)
+        db: Database session (if None, creates its own - for backward compatibility)
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
     try:
         token = db.query(OAuthToken).filter(
             OAuthToken.user_id == user_id,
@@ -329,9 +440,19 @@ def save_oauth_token(user_id: int, platform: str, access_token: str,
         db.close()
 
 
-def delete_oauth_token(user_id: int, platform: str) -> bool:
-    """Delete OAuth token"""
-    db = SessionLocal()
+def delete_oauth_token(user_id: int, platform: str, db: Session = None) -> bool:
+    """Delete OAuth token
+    
+    Args:
+        user_id: User ID
+        platform: Platform name
+        db: Database session (if None, creates its own - for backward compatibility)
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
     try:
         token = db.query(OAuthToken).filter(
             OAuthToken.user_id == user_id,

@@ -1,5 +1,5 @@
 """Database models for Hopper"""
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, ForeignKey, JSON
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, ForeignKey, JSON, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime, timezone
@@ -43,9 +43,16 @@ class Video(Base):
     custom_settings = Column(JSON, default=dict)  # JSON for per-video settings
     error = Column(Text)  # Error message if failed
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    scheduled_time = Column(DateTime(timezone=True))  # For scheduled uploads
     
     # Relationship
     user = relationship("User", back_populates="videos")
+    
+    # Composite indexes for common query patterns
+    __table_args__ = (
+        Index('ix_videos_user_status', 'user_id', 'status'),  # For filtering videos by user and status
+        Index('ix_videos_status_scheduled_time', 'status', 'scheduled_time'),  # For scheduler queries
+    )
 
 
 class Setting(Base):
@@ -61,9 +68,9 @@ class Setting(Base):
     # Relationship
     user = relationship("User", back_populates="settings")
     
-    # Composite unique constraint
+    # Composite index for common query pattern (user_id, category)
     __table_args__ = (
-        {'schema': None},
+        Index('ix_settings_user_category', 'user_id', 'category'),  # For get_user_settings queries
     )
 
 
@@ -82,6 +89,11 @@ class OAuthToken(Base):
     
     # Relationship
     user = relationship("User", back_populates="oauth_tokens")
+    
+    # Composite index for common query pattern (user_id, platform)
+    __table_args__ = (
+        Index('ix_oauth_tokens_user_platform', 'user_id', 'platform'),  # For get_oauth_token queries
+    )
 
 
 def init_db():

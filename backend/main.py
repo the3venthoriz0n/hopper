@@ -24,6 +24,7 @@ from googleapiclient.http import MediaFileUpload
 
 # Database and auth imports
 from models import init_db, get_db, User, Video, Setting, OAuthToken
+from sqlalchemy.orm import Session
 from auth import hash_password, verify_password, create_user, authenticate_user, get_user_by_id
 import redis_client
 from pydantic import BaseModel, EmailStr
@@ -820,11 +821,11 @@ def auth_callback(code: str, state: str, request: Request, response: Response):
     return RedirectResponse(frontend_url)
 
 @app.get("/api/destinations")
-def get_destinations(user_id: int = Depends(require_auth)):
+def get_destinations(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
     """Get destination status for current user"""
     # Batch load OAuth tokens and settings to prevent N+1 queries
-    all_tokens = db_helpers.get_all_oauth_tokens(user_id)
-    settings = db_helpers.get_user_settings(user_id, "destinations")
+    all_tokens = db_helpers.get_all_oauth_tokens(user_id, db=db)
+    settings = db_helpers.get_user_settings(user_id, "destinations", db=db)
     
     # Extract OAuth tokens
     youtube_token = all_tokens.get("youtube")
@@ -832,7 +833,7 @@ def get_destinations(user_id: int = Depends(require_auth)):
     instagram_token = all_tokens.get("instagram")
     
     # Get scheduled video count
-    videos = db_helpers.get_user_videos(user_id)
+    videos = db_helpers.get_user_videos(user_id, db=db)
     scheduled_count = len([v for v in videos if v.status == 'scheduled'])
     
     return {
@@ -929,7 +930,7 @@ def get_youtube_account(user_id: int = Depends(require_auth)):
         return {"account": None, "error": str(e)}
 
 @app.post("/api/global/wordbank")
-def add_wordbank_word(word: str, user_id: int = Depends(require_csrf_new)):
+def add_wordbank_word(word: str, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Add a word to the global wordbank"""
     # Strip whitespace and capitalize
     word = word.strip().capitalize()
@@ -937,36 +938,36 @@ def add_wordbank_word(word: str, user_id: int = Depends(require_csrf_new)):
         raise HTTPException(400, "Word cannot be empty")
     
     # Get current wordbank
-    settings = db_helpers.get_user_settings(user_id, "global")
+    settings = db_helpers.get_user_settings(user_id, "global", db=db)
     wordbank = settings.get("wordbank", [])
     
     if word not in wordbank:
         wordbank.append(word)
-        db_helpers.set_user_setting(user_id, "global", "wordbank", wordbank)
+        db_helpers.set_user_setting(user_id, "global", "wordbank", wordbank, db=db)
     
     # Return updated settings
-    return db_helpers.get_user_settings(user_id, "global")
+    return db_helpers.get_user_settings(user_id, "global", db=db)
 
 @app.delete("/api/global/wordbank/{word}")
-def remove_wordbank_word(word: str, user_id: int = Depends(require_csrf_new)):
+def remove_wordbank_word(word: str, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Remove a word from the global wordbank"""
     # Decode URL-encoded word
     word = unquote(word)
     
     # Get current wordbank
-    settings = db_helpers.get_user_settings(user_id, "global")
+    settings = db_helpers.get_user_settings(user_id, "global", db=db)
     wordbank = settings.get("wordbank", [])
     
     if word in wordbank:
         wordbank.remove(word)
-        db_helpers.set_user_setting(user_id, "global", "wordbank", wordbank)
+        db_helpers.set_user_setting(user_id, "global", "wordbank", wordbank, db=db)
     
     return {"wordbank": wordbank}
 
 @app.delete("/api/global/wordbank")
-def clear_wordbank(user_id: int = Depends(require_csrf_new)):
+def clear_wordbank(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Clear all words from the global wordbank"""
-    db_helpers.set_user_setting(user_id, "global", "wordbank", [])
+    db_helpers.set_user_setting(user_id, "global", "wordbank", [], db=db)
     return {"wordbank": []}
 
 @app.post("/api/destinations/youtube/toggle")
@@ -1728,13 +1729,14 @@ async def fetch_instagram_profile(access_token: str) -> dict:
 
 
 @app.get("/api/global/settings")
-def get_global_settings(user_id: int = Depends(require_auth)):
+def get_global_settings(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
     """Get global settings"""
-    return db_helpers.get_user_settings(user_id, "global")
+    return db_helpers.get_user_settings(user_id, "global", db=db)
 
 @app.post("/api/global/settings")
 def update_global_settings(
     user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db),
     title_template: str = None,
     description_template: str = None,
     upload_immediately: bool = None,
@@ -1748,45 +1750,46 @@ def update_global_settings(
     if title_template is not None:
         if len(title_template) > 100:
             raise HTTPException(400, "Title template must be 100 characters or less")
-        db_helpers.set_user_setting(user_id, "global", "title_template", title_template)
+        db_helpers.set_user_setting(user_id, "global", "title_template", title_template, db=db)
     
     if description_template is not None:
-        db_helpers.set_user_setting(user_id, "global", "description_template", description_template)
+        db_helpers.set_user_setting(user_id, "global", "description_template", description_template, db=db)
     
     if upload_immediately is not None:
-        db_helpers.set_user_setting(user_id, "global", "upload_immediately", upload_immediately)
+        db_helpers.set_user_setting(user_id, "global", "upload_immediately", upload_immediately, db=db)
     
     if schedule_mode is not None:
         if schedule_mode not in ["spaced", "specific_time"]:
             raise HTTPException(400, "Invalid schedule mode")
-        db_helpers.set_user_setting(user_id, "global", "schedule_mode", schedule_mode)
+        db_helpers.set_user_setting(user_id, "global", "schedule_mode", schedule_mode, db=db)
     
     if schedule_interval_value is not None:
         if schedule_interval_value < 1:
             raise HTTPException(400, "Interval value must be at least 1")
-        db_helpers.set_user_setting(user_id, "global", "schedule_interval_value", schedule_interval_value)
+        db_helpers.set_user_setting(user_id, "global", "schedule_interval_value", schedule_interval_value, db=db)
     
     if schedule_interval_unit is not None:
         if schedule_interval_unit not in ["minutes", "hours", "days"]:
             raise HTTPException(400, "Invalid interval unit")
-        db_helpers.set_user_setting(user_id, "global", "schedule_interval_unit", schedule_interval_unit)
+        db_helpers.set_user_setting(user_id, "global", "schedule_interval_unit", schedule_interval_unit, db=db)
     
     if schedule_start_time is not None:
-        db_helpers.set_user_setting(user_id, "global", "schedule_start_time", schedule_start_time)
+        db_helpers.set_user_setting(user_id, "global", "schedule_start_time", schedule_start_time, db=db)
     
     if allow_duplicates is not None:
-        db_helpers.set_user_setting(user_id, "global", "allow_duplicates", allow_duplicates)
+        db_helpers.set_user_setting(user_id, "global", "allow_duplicates", allow_duplicates, db=db)
     
-    return db_helpers.get_user_settings(user_id, "global")
+    return db_helpers.get_user_settings(user_id, "global", db=db)
 
 @app.get("/api/youtube/settings")
-def get_youtube_settings(user_id: int = Depends(require_auth)):
+def get_youtube_settings(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
     """Get YouTube upload settings"""
-    return db_helpers.get_user_settings(user_id, "youtube")
+    return db_helpers.get_user_settings(user_id, "youtube", db=db)
 
 @app.post("/api/youtube/settings")
 def update_youtube_settings(
     user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db),
     visibility: str = None, 
     made_for_kids: bool = None,
     title_template: str = None,
@@ -1797,23 +1800,23 @@ def update_youtube_settings(
     if visibility is not None:
         if visibility not in ["public", "private", "unlisted"]:
             raise HTTPException(400, "Invalid visibility option")
-        db_helpers.set_user_setting(user_id, "youtube", "visibility", visibility)
+        db_helpers.set_user_setting(user_id, "youtube", "visibility", visibility, db=db)
     
     if made_for_kids is not None:
-        db_helpers.set_user_setting(user_id, "youtube", "made_for_kids", made_for_kids)
+        db_helpers.set_user_setting(user_id, "youtube", "made_for_kids", made_for_kids, db=db)
     
     if title_template is not None:
         if len(title_template) > 100:
             raise HTTPException(400, "Title template must be 100 characters or less")
-        db_helpers.set_user_setting(user_id, "youtube", "title_template", title_template)
+        db_helpers.set_user_setting(user_id, "youtube", "title_template", title_template, db=db)
     
     if description_template is not None:
-        db_helpers.set_user_setting(user_id, "youtube", "description_template", description_template)
+        db_helpers.set_user_setting(user_id, "youtube", "description_template", description_template, db=db)
     
     if tags_template is not None:
-        db_helpers.set_user_setting(user_id, "youtube", "tags_template", tags_template)
+        db_helpers.set_user_setting(user_id, "youtube", "tags_template", tags_template, db=db)
     
-    return db_helpers.get_user_settings(user_id, "youtube")
+    return db_helpers.get_user_settings(user_id, "youtube", db=db)
 
 @app.get("/api/youtube/videos")
 def get_youtube_videos(
@@ -1963,13 +1966,14 @@ def get_youtube_videos(
 
 # TikTok settings endpoints
 @app.get("/api/tiktok/settings")
-def get_tiktok_settings(user_id: int = Depends(require_auth)):
+def get_tiktok_settings(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
     """Get TikTok upload settings"""
-    return db_helpers.get_user_settings(user_id, "tiktok")
+    return db_helpers.get_user_settings(user_id, "tiktok", db=db)
 
 @app.post("/api/tiktok/settings")
 def update_tiktok_settings(
     user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db),
     privacy_level: str = None,
     allow_comments: bool = None,
     allow_duet: bool = None,
@@ -1981,36 +1985,37 @@ def update_tiktok_settings(
     if privacy_level is not None:
         if privacy_level not in ["public", "private", "friends"]:
             raise HTTPException(400, "Invalid privacy level")
-        db_helpers.set_user_setting(user_id, "tiktok", "privacy_level", privacy_level)
+        db_helpers.set_user_setting(user_id, "tiktok", "privacy_level", privacy_level, db=db)
     
     if allow_comments is not None:
-        db_helpers.set_user_setting(user_id, "tiktok", "allow_comments", allow_comments)
+        db_helpers.set_user_setting(user_id, "tiktok", "allow_comments", allow_comments, db=db)
     
     if allow_duet is not None:
-        db_helpers.set_user_setting(user_id, "tiktok", "allow_duet", allow_duet)
+        db_helpers.set_user_setting(user_id, "tiktok", "allow_duet", allow_duet, db=db)
     
     if allow_stitch is not None:
-        db_helpers.set_user_setting(user_id, "tiktok", "allow_stitch", allow_stitch)
+        db_helpers.set_user_setting(user_id, "tiktok", "allow_stitch", allow_stitch, db=db)
     
     if title_template is not None:
         if len(title_template) > 100:
             raise HTTPException(400, "Title template must be 100 characters or less")
-        db_helpers.set_user_setting(user_id, "tiktok", "title_template", title_template)
+        db_helpers.set_user_setting(user_id, "tiktok", "title_template", title_template, db=db)
     
     if description_template is not None:
-        db_helpers.set_user_setting(user_id, "tiktok", "description_template", description_template)
+        db_helpers.set_user_setting(user_id, "tiktok", "description_template", description_template, db=db)
     
-    return db_helpers.get_user_settings(user_id, "tiktok")
+    return db_helpers.get_user_settings(user_id, "tiktok", db=db)
 
 # Instagram settings endpoints
 @app.get("/api/instagram/settings")
-def get_instagram_settings(user_id: int = Depends(require_auth)):
+def get_instagram_settings(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
     """Get Instagram upload settings"""
-    return db_helpers.get_user_settings(user_id, "instagram")
+    return db_helpers.get_user_settings(user_id, "instagram", db=db)
 
 @app.post("/api/instagram/settings")
 def update_instagram_settings(
     user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db),
     caption_template: str = None,
     location_id: str = None,
     disable_comments: bool = None,
@@ -2020,29 +2025,29 @@ def update_instagram_settings(
     if caption_template is not None:
         if len(caption_template) > 2200:
             raise HTTPException(400, "Caption template must be 2200 characters or less")
-        db_helpers.set_user_setting(user_id, "instagram", "caption_template", caption_template)
+        db_helpers.set_user_setting(user_id, "instagram", "caption_template", caption_template, db=db)
     
     if location_id is not None:
-        db_helpers.set_user_setting(user_id, "instagram", "location_id", location_id)
+        db_helpers.set_user_setting(user_id, "instagram", "location_id", location_id, db=db)
     
     if disable_comments is not None:
-        db_helpers.set_user_setting(user_id, "instagram", "disable_comments", disable_comments)
+        db_helpers.set_user_setting(user_id, "instagram", "disable_comments", disable_comments, db=db)
     
     if disable_likes is not None:
-        db_helpers.set_user_setting(user_id, "instagram", "disable_likes", disable_likes)
+        db_helpers.set_user_setting(user_id, "instagram", "disable_likes", disable_likes, db=db)
     
-    return db_helpers.get_user_settings(user_id, "instagram")
+    return db_helpers.get_user_settings(user_id, "instagram", db=db)
 
 @app.post("/api/videos")
-async def add_video(file: UploadFile = File(...), user_id: int = Depends(require_csrf_new)):
+async def add_video(file: UploadFile = File(...), user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Add video to user's queue"""
     # Get user settings
-    global_settings = db_helpers.get_user_settings(user_id, "global")
-    youtube_settings = db_helpers.get_user_settings(user_id, "youtube")
+    global_settings = db_helpers.get_user_settings(user_id, "global", db=db)
+    youtube_settings = db_helpers.get_user_settings(user_id, "youtube", db=db)
     
     # Check for duplicates if not allowed
     if not global_settings.get("allow_duplicates", False):
-        existing_videos = db_helpers.get_user_videos(user_id)
+        existing_videos = db_helpers.get_user_videos(user_id, db=db)
         if any(v.filename == file.filename for v in existing_videos):
             raise HTTPException(400, f"Duplicate video: {file.filename} is already in the queue")
     
@@ -2079,12 +2084,12 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
     }
 
 @app.get("/api/videos")
-def get_videos(user_id: int = Depends(require_auth)):
+def get_videos(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
     """Get video queue with progress and computed titles for user"""
     # Get user's videos and settings - batch load to prevent N+1 queries
-    videos = db_helpers.get_user_videos(user_id)
-    all_settings = db_helpers.get_all_user_settings(user_id)
-    all_tokens = db_helpers.get_all_oauth_tokens(user_id)
+    videos = db_helpers.get_user_videos(user_id, db=db)
+    all_settings = db_helpers.get_all_user_settings(user_id, db=db)
+    all_tokens = db_helpers.get_all_oauth_tokens(user_id, db=db)
     
     # Extract settings by category
     global_settings = all_settings.get("global", {})
@@ -2216,14 +2221,14 @@ def get_videos(user_id: int = Depends(require_auth)):
     return videos_with_info
 
 @app.delete("/api/videos/{video_id}")
-def delete_video(video_id: int, user_id: int = Depends(require_csrf_new)):
+def delete_video(video_id: int, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Remove video from user's queue"""
-    success = db_helpers.delete_video(video_id, user_id)
+    success = db_helpers.delete_video(video_id, user_id, db=db)
     if not success:
         raise HTTPException(404, "Video not found")
     
     # Clean up file if it exists
-    videos = db_helpers.get_user_videos(user_id)
+    videos = db_helpers.get_user_videos(user_id, db=db)
     video = next((v for v in videos if v.id == video_id), None)
     if video and Path(video.path).exists():
         try:
@@ -2234,24 +2239,24 @@ def delete_video(video_id: int, user_id: int = Depends(require_csrf_new)):
     return {"ok": True}
 
 @app.post("/api/videos/{video_id}/recompute-title")
-def recompute_video_title(video_id: int, user_id: int = Depends(require_csrf_new)):
+def recompute_video_title(video_id: int, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Recompute video title from current template"""
     # Get video
-    videos = db_helpers.get_user_videos(user_id)
+    videos = db_helpers.get_user_videos(user_id, db=db)
     video = next((v for v in videos if v.id == video_id), None)
     
     if not video:
         raise HTTPException(404, "Video not found")
     
     # Get settings
-    global_settings = db_helpers.get_user_settings(user_id, "global")
-    youtube_settings = db_helpers.get_user_settings(user_id, "youtube")
+    global_settings = db_helpers.get_user_settings(user_id, "global", db=db)
+    youtube_settings = db_helpers.get_user_settings(user_id, "youtube", db=db)
     
     # Remove custom title if exists in custom_settings
     custom_settings = video.custom_settings or {}
     if "title" in custom_settings:
         del custom_settings["title"]
-        db_helpers.update_video(video_id, user_id, custom_settings=custom_settings)
+        db_helpers.update_video(video_id, user_id, db=db, custom_settings=custom_settings)
     
     # Regenerate title
     filename_no_ext = video.filename.rsplit('.', 1)[0]
@@ -2264,7 +2269,7 @@ def recompute_video_title(video_id: int, user_id: int = Depends(require_csrf_new
     )
     
     # Update generated_title in database
-    db_helpers.update_video(video_id, user_id, generated_title=new_title)
+    db_helpers.update_video(video_id, user_id, db=db, generated_title=new_title)
     
     return {"ok": True, "title": new_title[:100]}
 
@@ -2272,6 +2277,7 @@ def recompute_video_title(video_id: int, user_id: int = Depends(require_csrf_new
 def update_video(
     video_id: int,
     user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db),
     title: str = None,
     description: str = None,
     tags: str = None,
@@ -2281,7 +2287,7 @@ def update_video(
 ):
     """Update video settings"""
     # Get video
-    videos = db_helpers.get_user_videos(user_id)
+    videos = db_helpers.get_user_videos(user_id, db=db)
     video = next((v for v in videos if v.id == video_id), None)
     
     if not video:
@@ -2329,10 +2335,10 @@ def update_video(
                 update_data["status"] = "pending"
     
     # Update in database
-    db_helpers.update_video(video_id, user_id, **update_data)
+    db_helpers.update_video(video_id, user_id, db=db, **update_data)
     
     # Return updated video
-    updated_videos = db_helpers.get_user_videos(user_id)
+    updated_videos = db_helpers.get_user_videos(user_id, db=db)
     updated_video = next((v for v in updated_videos if v.id == video_id), None)
     
     return {
@@ -2368,15 +2374,15 @@ async def reorder_videos(request: Request, user_id: int = Depends(require_csrf_n
         raise HTTPException(400, f"Invalid request: {str(e)}")
 
 @app.post("/api/videos/cancel-scheduled")
-async def cancel_scheduled_videos(user_id: int = Depends(require_csrf_new)):
+async def cancel_scheduled_videos(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Cancel all scheduled videos for user"""
-    videos = db_helpers.get_user_videos(user_id)
+    videos = db_helpers.get_user_videos(user_id, db=db)
     cancelled_count = 0
     
     for video in videos:
         if video.status == "scheduled":
             video_id = video.id
-            db_helpers.update_video(video_id, user_id, status="pending", scheduled_time=None)
+            db_helpers.update_video(video_id, user_id, db=db, status="pending", scheduled_time=None)
             cancelled_count += 1
     
     return {"ok": True, "cancelled": cancelled_count}
@@ -2989,7 +2995,7 @@ async def scheduler_task():
             
             current_time = datetime.now(timezone.utc)
             
-            # Get all users from database
+            # Get all users from database - use shared session for all operations
             from models import SessionLocal, User
             db = SessionLocal()
             try:
@@ -2998,8 +3004,8 @@ async def scheduler_task():
                 for user in users:
                     user_id = user.id
                     
-                    # Get user's scheduled videos
-                    videos = db_helpers.get_user_videos(user_id)
+                    # Get user's scheduled videos - use shared session
+                    videos = db_helpers.get_user_videos(user_id, db=db)
                     
                     for video in videos:
                         if video.status == 'scheduled' and video.scheduled_time:
@@ -3011,12 +3017,12 @@ async def scheduler_task():
                                     video_id = video.id
                                     print(f"Uploading scheduled video for user {user_id}: {video.filename}")
                                     
-                                    # Mark as uploading
-                                    db_helpers.update_video(video_id, user_id, status="uploading")
+                                    # Mark as uploading - use shared session
+                                    db_helpers.update_video(video_id, user_id, db=db, status="uploading")
                                     
-                                    # Get enabled destinations - batch load to prevent N+1 queries
-                                    dest_settings = db_helpers.get_user_settings(user_id, "destinations")
-                                    all_tokens = db_helpers.get_all_oauth_tokens(user_id)
+                                    # Get enabled destinations - batch load to prevent N+1 queries, use shared session
+                                    dest_settings = db_helpers.get_user_settings(user_id, "destinations", db=db)
+                                    all_tokens = db_helpers.get_all_oauth_tokens(user_id, db=db)
                                     enabled_destinations = []
                                     for dest_name in ["youtube", "tiktok", "instagram"]:
                                         is_enabled = dest_settings.get(f"{dest_name}_enabled", False)
@@ -3029,6 +3035,7 @@ async def scheduler_task():
                                         continue
                                     
                                     # Upload to each enabled destination - uploader functions query DB directly
+                                    # Note: Upload functions create their own sessions (backward compatible)
                                     success_count = 0
                                     for dest_name in enabled_destinations:
                                         uploader_func = DESTINATION_UPLOADERS.get(dest_name)
@@ -3041,8 +3048,8 @@ async def scheduler_task():
                                                 else:
                                                     uploader_func(user_id, video_id)
                                                 
-                                                # Check if upload succeeded by querying updated video
-                                                videos_after = db_helpers.get_user_videos(user_id)
+                                                # Check if upload succeeded by querying updated video - use shared session
+                                                videos_after = db_helpers.get_user_videos(user_id, db=db)
                                                 updated_video = next((v for v in videos_after if v.id == video_id), None)
                                                 if updated_video:
                                                     if dest_name == 'youtube' and updated_video.youtube_id:
@@ -3054,15 +3061,15 @@ async def scheduler_task():
                                             except Exception as upload_err:
                                                 print(f"  Error uploading to {dest_name}: {upload_err}")
                                     
-                                    # Update final status
+                                    # Update final status - use shared session
                                     if success_count == len(enabled_destinations):
-                                        db_helpers.update_video(video_id, user_id, status="uploaded")
+                                        db_helpers.update_video(video_id, user_id, db=db, status="uploaded")
                                     else:
-                                        db_helpers.update_video(video_id, user_id, status="failed", error=f"Upload failed for some destinations")
+                                        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=f"Upload failed for some destinations")
                                         
                             except Exception as e:
                                 print(f"Error processing scheduled video {video.filename}: {e}")
-                                db_helpers.update_video(video_id, user_id, status="failed", error=str(e))
+                                db_helpers.update_video(video_id, user_id, db=db, status="failed", error=str(e))
             finally:
                 db.close()
         except Exception as e:
@@ -3076,7 +3083,7 @@ async def startup_event():
     print("Scheduler task started")
 
 @app.post("/api/upload")
-async def upload_videos(user_id: int = Depends(require_csrf_new)):
+async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Upload all pending videos to all enabled destinations (immediate or scheduled)"""
     
     # Check if at least one destination is enabled and connected
@@ -3085,8 +3092,8 @@ async def upload_videos(user_id: int = Depends(require_csrf_new)):
     upload_logger.debug(f"Checking destinations for user {user_id}...")
     
     # Batch load destination settings and OAuth tokens to prevent N+1 queries
-    destination_settings = db_helpers.get_user_settings(user_id, "destinations")
-    all_tokens = db_helpers.get_all_oauth_tokens(user_id)
+    destination_settings = db_helpers.get_user_settings(user_id, "destinations", db=db)
+    all_tokens = db_helpers.get_all_oauth_tokens(user_id, db=db)
     
     for dest_name in ["youtube", "tiktok", "instagram"]:
         # Check if destination is enabled
@@ -3108,13 +3115,13 @@ async def upload_videos(user_id: int = Depends(require_csrf_new)):
         raise HTTPException(400, error_msg)
     
     # Get videos that can be uploaded: pending, failed (retry), or uploading (retry if stuck)
-    user_videos = db_helpers.get_user_videos(user_id)
+    user_videos = db_helpers.get_user_videos(user_id, db=db)
     pending_videos = [v for v in user_videos if v.status in ['pending', 'failed', 'uploading']]
     
     upload_logger.info(f"Videos ready to upload for user {user_id}: {len(pending_videos)}")
     
     # Get global settings for upload behavior
-    global_settings = db_helpers.get_user_settings(user_id, "global")
+    global_settings = db_helpers.get_user_settings(user_id, "global", db=db)
     upload_immediately = global_settings.get("upload_immediately", True)
     
     if not pending_videos:
@@ -3133,7 +3140,7 @@ async def upload_videos(user_id: int = Depends(require_csrf_new)):
             video_id = video.id
             
             # Set status to uploading before starting
-            db_helpers.update_video(video_id, user_id, status="uploading")
+            db_helpers.update_video(video_id, user_id, db=db, status="uploading")
             
             # Track which destinations succeeded/failed
             succeeded_destinations = []
@@ -3204,10 +3211,10 @@ async def upload_videos(user_id: int = Depends(require_csrf_new)):
                 
                 # Update video in database with final status
                 if update_data:
-                    db_helpers.update_video(video_id, user_id, **update_data)
+                    db_helpers.update_video(video_id, user_id, db=db, **update_data)
         
         # Count videos that are fully uploaded
-        user_videos_updated = db_helpers.get_user_videos(user_id)
+        user_videos_updated = db_helpers.get_user_videos(user_id, db=db)
         uploaded_count = len([v for v in user_videos_updated if v.status == 'uploaded'])
         return {
             "uploaded": uploaded_count,
