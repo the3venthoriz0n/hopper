@@ -998,15 +998,47 @@ def auth_callback(code: str, state: str, request: Request, response: Response):
         scopes=flow_creds.scopes
     )
     
-    # Save OAuth token to database (encrypted)
+    # ROOT CAUSE FIX: Fetch and cache account info immediately during OAuth
+    # This prevents "Loading account..." from showing on refresh when there are API issues
     token_data = db_helpers.credentials_to_oauth_token_data(creds, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET)
+    extra_data = token_data["extra_data"]
+    
+    try:
+        # Get channel info to cache channel_name
+        youtube = build('youtube', 'v3', credentials=creds)
+        channels_response = youtube.channels().list(part='snippet', mine=True).execute()
+        
+        if channels_response.get('items') and len(channels_response['items']) > 0:
+            channel = channels_response['items'][0]
+            extra_data["channel_name"] = channel['snippet']['title']
+            extra_data["channel_id"] = channel['id']
+            youtube_logger.info(f"Cached YouTube channel info during OAuth: {extra_data['channel_name']}")
+        
+        # Get email from userinfo
+        try:
+            import httpx
+            with httpx.Client(timeout=5.0) as client:
+                userinfo_response = client.get(
+                    'https://www.googleapis.com/oauth2/v2/userinfo',
+                    headers={'Authorization': f'Bearer {creds.token}'}
+                )
+                if userinfo_response.status_code == 200:
+                    userinfo = userinfo_response.json()
+                    extra_data["email"] = userinfo.get('email')
+                    youtube_logger.info(f"Cached YouTube email during OAuth: {extra_data.get('email')}")
+        except Exception as email_error:
+            youtube_logger.warning(f"Could not fetch email during OAuth: {email_error}, will try later")
+    except Exception as fetch_error:
+        youtube_logger.warning(f"Could not fetch channel info during OAuth: {fetch_error}, will try later")
+    
+    # Save OAuth token to database (encrypted) with cached account info
     db_helpers.save_oauth_token(
         user_id=user_id,
         platform="youtube",
         access_token=token_data["access_token"],
         refresh_token=token_data["refresh_token"],
         expires_at=token_data["expires_at"],
-        extra_data=token_data["extra_data"]
+        extra_data=extra_data
     )
     
     # Enable YouTube destination by default
@@ -1070,6 +1102,24 @@ def get_youtube_account(user_id: int = Depends(require_auth), db: Session = Depe
         return {"account": None}
     
     try:
+        # Check for cached account info in extra_data first (prevents "Loading account..." on refresh)
+        extra_data = youtube_token.extra_data or {}
+        cached_channel_name = extra_data.get("channel_name")
+        cached_email = extra_data.get("email")
+        cached_channel_id = extra_data.get("channel_id")
+        
+        # If we have cached account info with channel_name or email, return it immediately
+        if cached_channel_name or cached_email:
+            account_info = {}
+            if cached_channel_name:
+                account_info["channel_name"] = cached_channel_name
+            if cached_channel_id:
+                account_info["channel_id"] = cached_channel_id
+            if cached_email:
+                account_info["email"] = cached_email
+            youtube_logger.debug(f"Returning cached YouTube account info for user {user_id}")
+            return {"account": account_info}
+        
         # Convert to Credentials object (automatically decrypts)
         youtube_creds = db_helpers.oauth_token_to_credentials(youtube_token)
         if not youtube_creds:
@@ -1142,9 +1192,45 @@ def get_youtube_account(user_id: int = Depends(require_auth), db: Session = Depe
             youtube_logger.debug(f"Could not fetch email for user {user_id}: {str(e)}")
             # Email is optional, continue without it
         
+        # Cache the account info for future requests (if we have channel_name or email)
+        if account_info and (account_info.get("channel_name") or account_info.get("email")):
+            extra_data["channel_name"] = account_info.get("channel_name")
+            extra_data["channel_id"] = account_info.get("channel_id")
+            extra_data["email"] = account_info.get("email")
+            
+            # Save updated extra_data back to database
+            token_data = db_helpers.credentials_to_oauth_token_data(
+                youtube_creds, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+            )
+            db_helpers.save_oauth_token(
+                user_id=user_id,
+                platform="youtube",
+                access_token=token_data["access_token"],
+                refresh_token=token_data["refresh_token"],
+                expires_at=token_data["expires_at"],
+                extra_data=extra_data,
+                db=db
+            )
+        
         return {"account": account_info}
     except Exception as e:
         youtube_logger.error(f"Error getting YouTube account info for user {user_id}: {str(e)}", exc_info=True)
+        # Try to return cached account info even on exception
+        try:
+            extra_data = youtube_token.extra_data or {}
+            cached_channel_name = extra_data.get("channel_name")
+            cached_email = extra_data.get("email")
+            if cached_channel_name or cached_email:
+                account_info = {}
+                if cached_channel_name:
+                    account_info["channel_name"] = cached_channel_name
+                if extra_data.get("channel_id"):
+                    account_info["channel_id"] = extra_data["channel_id"]
+                if cached_email:
+                    account_info["email"] = cached_email
+                return {"account": account_info}
+        except:
+            pass
         return {"account": None, "error": str(e)}
 
 @app.post("/api/global/wordbank")
@@ -1363,19 +1449,63 @@ async def auth_tiktok_callback(
                 from datetime import datetime, timedelta, timezone
                 expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
             
-            # Store in database (encrypted)
+            # ROOT CAUSE FIX: Fetch account info immediately and cache it
+            # This prevents "Loading account..." from showing on refresh when token expires
+            access_token = token_json["access_token"]
+            open_id = token_json.get("open_id")
+            extra_data = {
+                "open_id": open_id,
+                "scope": token_json.get("scope"),
+                "token_type": token_json.get("token_type"),
+                "refresh_expires_in": token_json.get("refresh_expires_in")
+            }
+            
+            # Try to fetch creator info to cache display_name and username
+            try:
+                creator_info_response = await client.post(
+                    TIKTOK_CREATOR_INFO_URL,
+                    headers={
+                        "Authorization": f"Bearer {access_token}",
+                        "Content-Type": "application/json; charset=UTF-8"
+                    },
+                    json={},
+                    timeout=5.0
+                )
+                
+                if creator_info_response.status_code == 200:
+                    creator_data = creator_info_response.json()
+                    creator_info = creator_data.get("data", {})
+                    
+                    # Cache display_name and username
+                    if "creator_nickname" in creator_info:
+                        extra_data["display_name"] = creator_info["creator_nickname"]
+                    elif "display_name" in creator_info:
+                        extra_data["display_name"] = creator_info["display_name"]
+                    
+                    if "creator_username" in creator_info:
+                        extra_data["username"] = creator_info["creator_username"]
+                    elif "username" in creator_info:
+                        extra_data["username"] = creator_info["username"]
+                    
+                    if "creator_avatar_url" in creator_info:
+                        extra_data["avatar_url"] = creator_info["creator_avatar_url"]
+                    elif "avatar_url" in creator_info:
+                        extra_data["avatar_url"] = creator_info["avatar_url"]
+                    
+                    tiktok_logger.info(f"Cached TikTok account info during OAuth: {extra_data.get('display_name')} (@{extra_data.get('username')})")
+                else:
+                    tiktok_logger.warning(f"Could not fetch creator info during OAuth (status {creator_info_response.status_code}), will try later")
+            except Exception as fetch_error:
+                tiktok_logger.warning(f"Could not fetch creator info during OAuth: {fetch_error}, will try later")
+            
+            # Store in database (encrypted) with cached account info
             db_helpers.save_oauth_token(
                 user_id=user_id,
                 platform="tiktok",
-                access_token=token_json["access_token"],
+                access_token=access_token,
                 refresh_token=token_json.get("refresh_token"),
                 expires_at=expires_at,
-                extra_data={
-                    "open_id": token_json.get("open_id"),
-                    "scope": token_json.get("scope"),
-                    "token_type": token_json.get("token_type"),
-                    "refresh_expires_in": token_json.get("refresh_expires_in")
-                }
+                extra_data=extra_data
             )
             
             # Enable TikTok destination
