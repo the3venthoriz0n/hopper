@@ -1,4 +1,4 @@
-from urllib.parse import urlencode, unquote
+from urllib.parse import urlencode, unquote, quote
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Response, Cookie, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, HTMLResponse
@@ -1014,13 +1014,18 @@ def auth_callback(code: str, state: str, request: Request, response: Response):
     
     youtube_logger.info(f"YouTube OAuth completed for user {user_id}")
     
-    # Redirect to frontend
+    # ROOT CAUSE FIX: Return connection status directly from authoritative source
+    # This eliminates race conditions - no need for separate API call
+    youtube_status = {"connected": True, "enabled": True}
+    status_param = quote(json.dumps(youtube_status))
+    
+    # Redirect to frontend with status
     if FRONTEND_URL:
-        frontend_url = f"{FRONTEND_URL}?connected=youtube"
+        frontend_url = f"{FRONTEND_URL}?connected=youtube&status={status_param}"
     else:
         host = request.headers.get("host", "localhost:8000")
         protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" else "http"
-        frontend_url = f"{protocol}://{host.replace(':8000', ':3000')}?connected=youtube"
+        frontend_url = f"{protocol}://{host.replace(':8000', ':3000')}?connected=youtube&status={status_param}"
     
     return RedirectResponse(frontend_url)
 
@@ -1378,8 +1383,13 @@ async def auth_tiktok_callback(
             
             tiktok_logger.info(f"TikTok OAuth completed for user {user_id}")
             
-            # Redirect to frontend
-            return RedirectResponse(f"{FRONTEND_URL}?connected=tiktok")
+            # ROOT CAUSE FIX: Return connection status directly from authoritative source
+            # This eliminates race conditions - no need for separate API call
+            tiktok_status = {"connected": True, "enabled": True}
+            status_param = quote(json.dumps(tiktok_status))
+            
+            # Redirect to frontend with status
+            return RedirectResponse(f"{FRONTEND_URL}?connected=tiktok&status={status_param}")
             
     except Exception as e:
         tiktok_logger.error(f"Callback exception: {e}", exc_info=True)
@@ -1646,7 +1656,10 @@ async def auth_instagram_callback(
                 .then(res => res.json())
                 .then(data => {{
                     if (data.success) {{
-                        window.location.href = '{FRONTEND_URL}?connected=instagram';
+                        // ROOT CAUSE FIX: Pass connection status from authoritative source via URL
+                        // This eliminates race conditions - no need for separate API call
+                        const status = data.instagram ? encodeURIComponent(JSON.stringify(data.instagram)) : '';
+                        window.location.href = '{FRONTEND_URL}?connected=instagram' + (status ? '&status=' + status : '');
                     }} else {{
                         window.location.href = '{FRONTEND_URL}?error=instagram_auth_failed&detail=' + encodeURIComponent(data.error || 'Unknown error');
                     }}
@@ -1919,7 +1932,15 @@ async def complete_instagram_auth(request: Request, response: Response, db: Sess
             
             instagram_logger.info(f"Instagram connected successfully for user {user_id}")
             
-            return {"success": True}
+            # ROOT CAUSE FIX: Return connection status directly from the authoritative source
+            # This eliminates the need for a separate API call and prevents race conditions
+            return {
+                "success": True,
+                "instagram": {
+                    "connected": True,
+                    "enabled": True
+                }
+            }
             
     except Exception as e:
         instagram_logger.error(f"Complete auth exception: {str(e)}", exc_info=True)

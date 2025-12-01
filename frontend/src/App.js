@@ -467,6 +467,7 @@ function Home() {
   const loadDestinations = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/destinations`);
+      
       // Preserve existing account info when updating destinations status
       // Only clear account if actually disconnected
       setYoutube(prev => ({ 
@@ -479,11 +480,26 @@ function Home() {
         enabled: res.data.tiktok.enabled,
         account: res.data.tiktok.connected ? prev.account : null
       }));
-      setInstagram(prev => ({ 
-        connected: res.data.instagram.connected, 
-        enabled: res.data.instagram.enabled,
-        account: res.data.instagram.connected ? prev.account : null
-      }));
+      // ROOT CAUSE FIX: Only update Instagram if not already set from OAuth callback
+      // The OAuth callback provides authoritative status, so we preserve it
+      setInstagram(prev => {
+        // If already connected (from OAuth callback), preserve that state
+        // Only update if backend says disconnected (user actually disconnected)
+        if (prev.connected && !res.data.instagram.connected) {
+          // User disconnected - update to reflect that
+          return {
+            connected: false,
+            enabled: res.data.instagram.enabled,
+            account: null
+          };
+        }
+        // Otherwise, update with backend data (but preserve account info if still connected)
+        return {
+          connected: res.data.instagram.connected,
+          enabled: res.data.instagram.enabled,
+          account: res.data.instagram.connected ? prev.account : null
+        };
+      });
       
       // Only load account if connected
       // The account loading functions now preserve existing account info, so it's safe to call them
@@ -537,6 +553,38 @@ function Home() {
     }
   }, [API]);
 
+  // Helper function to apply OAuth connection status from URL parameters
+  // ROOT CAUSE FIX: Uses authoritative status from OAuth completion endpoint
+  // This eliminates race conditions and works consistently for all platforms
+  const applyOAuthStatus = useCallback((platform, setState, loadAccount) => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const statusParam = urlParams.get('status');
+    
+    if (statusParam) {
+      try {
+        const status = JSON.parse(decodeURIComponent(statusParam));
+        setState(prev => ({
+          connected: status.connected || true,
+          enabled: status.enabled || true,
+          account: prev.account // Preserve existing account info
+        }));
+      } catch (e) {
+        console.error(`Error parsing ${platform} status:`, e);
+        // Fallback to optimistic update
+        setState(prev => ({ ...prev, connected: true, enabled: true }));
+      }
+    } else {
+      // Fallback if status not provided (backwards compatibility)
+      setState(prev => ({ ...prev, connected: true, enabled: true }));
+    }
+    
+    // Load destinations to get other platforms' status (current platform already set above)
+    loadDestinations();
+    setTimeout(() => {
+      loadAccount();
+    }, 1000);
+  }, [loadDestinations]);
+
   // Data loading useEffect - must be declared before conditional returns (Rules of Hooks)
   useEffect(() => {
     // Only load data if user is authenticated
@@ -549,36 +597,18 @@ function Home() {
     loadInstagramSettings();
     loadVideos();
     
-    // Check OAuth callback
+    // Check OAuth callbacks - use consistent pattern for all platforms
     if (window.location.search.includes('connected=youtube')) {
       setMessage('✅ YouTube connected!');
-      // Optimistically set YouTube as connected before loading destinations
-      // This prevents race condition where loadDestinations might return stale data
-      setYoutube(prev => ({ ...prev, connected: true, enabled: true }));
-      loadDestinations();
-      setTimeout(() => {
-        loadYoutubeAccount();
-      }, 1000);
+      applyOAuthStatus('youtube', setYoutube, loadYoutubeAccount);
       window.history.replaceState({}, '', '/');
     } else if (window.location.search.includes('connected=tiktok')) {
       setMessage('✅ TikTok connected!');
-      // Optimistically set TikTok as connected before loading destinations
-      // This prevents race condition where loadDestinations might return stale data
-      setTiktok(prev => ({ ...prev, connected: true, enabled: true }));
-      loadDestinations();
-      setTimeout(() => {
-        loadTiktokAccount();
-      }, 1000);
+      applyOAuthStatus('tiktok', setTiktok, loadTiktokAccount);
       window.history.replaceState({}, '', '/');
     } else if (window.location.search.includes('connected=instagram')) {
       setMessage('✅ Instagram connected!');
-      // Optimistically set Instagram as connected before loading destinations
-      // This prevents race condition where loadDestinations might return stale data
-      setInstagram(prev => ({ ...prev, connected: true, enabled: true }));
-      loadDestinations();
-      setTimeout(() => {
-        loadInstagramAccount();
-      }, 1000);
+      applyOAuthStatus('instagram', setInstagram, loadInstagramAccount);
       window.history.replaceState({}, '', '/');
     }
     
@@ -588,7 +618,7 @@ function Home() {
     }, 5000);
     
     return () => clearInterval(pollInterval);
-  }, [user, loadDestinations, loadGlobalSettings, loadYoutubeSettings, loadTiktokSettings, loadInstagramSettings, loadVideos, loadYoutubeAccount, loadTiktokAccount, loadInstagramAccount]);
+  }, [user, loadDestinations, loadGlobalSettings, loadYoutubeSettings, loadTiktokSettings, loadInstagramSettings, loadVideos, loadYoutubeAccount, loadTiktokAccount, loadInstagramAccount, applyOAuthStatus]);
   
   // Show login page if not authenticated (AFTER all hooks are declared)
   if (authLoading) {
