@@ -185,12 +185,14 @@ def check_upload_success(video: Video, dest_name: str) -> bool:
     Returns:
         True if upload succeeded, False otherwise
     """
+    custom_settings = video.custom_settings or {}
+    
     if dest_name == 'youtube':
-        return bool(video.youtube_id)
+        return bool(custom_settings.get('youtube_id'))
     elif dest_name == 'tiktok':
-        return bool(video.tiktok_id or video.tiktok_publish_id)
+        return bool(custom_settings.get('tiktok_id') or custom_settings.get('tiktok_publish_id'))
     elif dest_name == 'instagram':
-        return bool(video.instagram_id or video.instagram_container_id)
+        return bool(custom_settings.get('instagram_id') or custom_settings.get('instagram_container_id'))
     return False
 
 
@@ -3194,11 +3196,11 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
                     except Exception as e:
                         failed_destinations.append(dest_name)
                         upload_logger.error(f"{dest_name} upload exception for {video.filename}: {str(e)}")
-                        db_helpers.update_video(video_id, user_id, error=str(e))
+                        db_helpers.update_video(video_id, user_id, db=db, error=str(e))
             
             # Determine final status based on results
             # Query video once after all uploads complete to verify success (prevents N+1 queries)
-            videos_after = db_helpers.get_user_videos(user_id)
+            videos_after = db_helpers.get_user_videos(user_id, db=db)
             updated_video = next((v for v in videos_after if v.id == video_id), None)
             
             # Verify which destinations actually succeeded

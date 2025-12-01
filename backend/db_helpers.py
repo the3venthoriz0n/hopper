@@ -333,7 +333,7 @@ def update_video(video_id: int, user_id: int, db: Session = None, **kwargs) -> O
         video_id: Video ID
         user_id: User ID
         db: Database session (if None, creates its own - for backward compatibility)
-        **kwargs: Fields to update
+        **kwargs: Fields to update (IDs like youtube_id, tiktok_id, instagram_id are stored in custom_settings)
     """
     should_close = False
     if db is None:
@@ -349,15 +349,25 @@ def update_video(video_id: int, user_id: int, db: Session = None, **kwargs) -> O
         if not video:
             return None
         
+        # IDs that should be stored in custom_settings
+        id_fields = ['youtube_id', 'tiktok_id', 'tiktok_publish_id', 'instagram_id', 'instagram_container_id']
+        
         for key, value in kwargs.items():
             if hasattr(video, key):
+                # Direct attribute exists, set it
                 setattr(video, key, value)
+            elif key in id_fields:
+                # Store in custom_settings
+                if video.custom_settings is None:
+                    video.custom_settings = {}
+                video.custom_settings[key] = value
         
         db.commit()
         db.refresh(video)
         return video
     finally:
-        db.close()
+        if should_close:
+            db.close()
 
 
 def delete_video(video_id: int, user_id: int, db: Session = None) -> bool:

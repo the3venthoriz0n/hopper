@@ -4,6 +4,9 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime, timezone
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Database URL from environment
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://hopper:hopper_dev_password@localhost:5432/hopper")
