@@ -2,7 +2,7 @@
 import redis
 import os
 import json
-from typing import Optional
+from typing import Optional, Dict
 
 # Redis connection
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -86,4 +86,88 @@ def get_rate_limit_count(identifier: str) -> int:
     key = f"ratelimit:{identifier}"
     count = redis_client.get(key)
     return int(count) if count else 0
+
+
+# Cache TTLs
+SETTINGS_CACHE_TTL = 5 * 60  # 5 minutes
+OAUTH_TOKEN_CACHE_TTL = 60  # 1 minute
+
+
+def get_cached_settings(user_id: int, category: str) -> Optional[Dict]:
+    """Get cached user settings from Redis"""
+    key = f"cache:settings:{user_id}:{category}"
+    cached = redis_client.get(key)
+    if cached:
+        return json.loads(cached)
+    return None
+
+
+def set_cached_settings(user_id: int, category: str, settings: Dict) -> None:
+    """Cache user settings in Redis"""
+    key = f"cache:settings:{user_id}:{category}"
+    redis_client.setex(key, SETTINGS_CACHE_TTL, json.dumps(settings))
+
+
+def invalidate_settings_cache(user_id: int, category: Optional[str] = None) -> None:
+    """Invalidate cached settings for a user (all categories or specific category)"""
+    if category:
+        # Invalidate specific category
+        key = f"cache:settings:{user_id}:{category}"
+        redis_client.delete(key)
+        # Also invalidate all_settings cache
+        all_key = f"cache:settings:{user_id}:all"
+        redis_client.delete(all_key)
+    else:
+        # Invalidate all categories for this user
+        pattern = f"cache:settings:{user_id}:*"
+        keys = redis_client.keys(pattern)
+        if keys:
+            redis_client.delete(*keys)
+
+
+def get_cached_oauth_token(user_id: int, platform: str) -> Optional[Dict]:
+    """Get cached OAuth token from Redis"""
+    key = f"cache:oauth:{user_id}:{platform}"
+    cached = redis_client.get(key)
+    if cached:
+        return json.loads(cached)
+    return None
+
+
+def set_cached_oauth_token(user_id: int, platform: str, token_data: Dict) -> None:
+    """Cache OAuth token in Redis (stores serialized token data)"""
+    key = f"cache:oauth:{user_id}:{platform}"
+    redis_client.setex(key, OAUTH_TOKEN_CACHE_TTL, json.dumps(token_data))
+
+
+def get_cached_all_oauth_tokens(user_id: int) -> Optional[Dict]:
+    """Get cached all OAuth tokens from Redis"""
+    key = f"cache:oauth:{user_id}:all"
+    cached = redis_client.get(key)
+    if cached:
+        return json.loads(cached)
+    return None
+
+
+def set_cached_all_oauth_tokens(user_id: int, tokens: Dict) -> None:
+    """Cache all OAuth tokens in Redis"""
+    key = f"cache:oauth:{user_id}:all"
+    redis_client.setex(key, OAUTH_TOKEN_CACHE_TTL, json.dumps(tokens))
+
+
+def invalidate_oauth_token_cache(user_id: int, platform: Optional[str] = None) -> None:
+    """Invalidate cached OAuth tokens for a user (all platforms or specific platform)"""
+    if platform:
+        # Invalidate specific platform
+        key = f"cache:oauth:{user_id}:{platform}"
+        redis_client.delete(key)
+        # Also invalidate all_tokens cache
+        all_key = f"cache:oauth:{user_id}:all"
+        redis_client.delete(all_key)
+    else:
+        # Invalidate all platforms for this user
+        pattern = f"cache:oauth:{user_id}:*"
+        keys = redis_client.keys(pattern)
+        if keys:
+            redis_client.delete(*keys)
 
