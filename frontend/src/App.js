@@ -4,6 +4,7 @@ import axios from 'axios';
 import './App.css';
 import Terms from './Terms';
 import Privacy from './Privacy';
+import DeleteYourData from './DeleteYourData';
 import Login from './Login';
 
 // Configure axios to send cookies with every request
@@ -2338,10 +2339,8 @@ function Home() {
           Privacy Policy
         </Link>
         <span style={{ color: '#ccc' }}>|</span>
-        <a 
-          href={`${API}/delete-your-data`}
-          target="_blank"
-          rel="noopener noreferrer"
+        <Link 
+          to="/delete-your-data"
           style={{ 
             color: '#666', 
             textDecoration: 'none', 
@@ -2352,7 +2351,7 @@ function Home() {
           onMouseLeave={(e) => e.target.style.color = '#666'}
         >
           Delete Your Data
-        </a>
+        </Link>
         <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#999' }}>
           <a 
             href="https://github.com/the3venthoriz0n/hopper" 
@@ -2380,6 +2379,7 @@ function App() {
       <Route path="/" element={<Home />} />
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />
+      <Route path="/delete-your-data" element={<DeleteYourData />} />
     </Routes>
   );
 }

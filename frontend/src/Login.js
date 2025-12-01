@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
 // Build API URL at runtime - always use HTTPS for production-like domains
@@ -28,6 +28,23 @@ function Login({ onLoginSuccess }) {
   // Determine title based on environment
   const isProduction = process.env.REACT_APP_ENVIRONMENT === 'production';
   const appTitle = isProduction ? '🐸 hopper' : '🐸 DEV hopper';
+
+  // Check for Google OAuth errors in URL parameters
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const googleLogin = urlParams.get('google_login');
+    const reason = urlParams.get('reason');
+    
+    if (googleLogin === 'error') {
+      let errorMessage = '❌ Google login failed';
+      if (reason === 'invalid_state') {
+        errorMessage = '❌ Google login failed: Invalid or expired session. Please try again.';
+      }
+      setMessage(errorMessage);
+      // Clean up URL without triggering page reload
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
