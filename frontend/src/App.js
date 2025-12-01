@@ -777,7 +777,8 @@ function Home() {
     }
     
     // Add temp entry with uploading status
-    const tempId = Date.now();
+    // Generate unique ID: timestamp + random to prevent collisions when adding multiple videos simultaneously
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const tempVideo = {
       id: tempId,
       filename: file.name,
