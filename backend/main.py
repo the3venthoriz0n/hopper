@@ -175,6 +175,145 @@ def build_upload_context(user_id: int, db: Session) -> Dict[str, Any]:
     }
 
 
+def build_video_response(video: Video, all_settings: Dict[str, Dict], all_tokens: Dict[str, Optional[OAuthToken]], user_id: int) -> Dict[str, Any]:
+    """Build video response dictionary with computed titles and upload properties
+    
+    Args:
+        video: Video object
+        all_settings: Dictionary of all user settings by category
+        all_tokens: Dictionary of all OAuth tokens by platform
+        user_id: User ID for Redis progress lookup
+        
+    Returns:
+        Dictionary with video data in the same format as GET /api/videos
+    """
+    global_settings = all_settings.get("global", {})
+    youtube_settings = all_settings.get("youtube", {})
+    tiktok_settings = all_settings.get("tiktok", {})
+    instagram_settings = all_settings.get("instagram", {})
+    dest_settings = all_settings.get("destinations", {})
+    
+    youtube_token = all_tokens.get("youtube")
+    tiktok_token = all_tokens.get("tiktok")
+    instagram_token = all_tokens.get("instagram")
+    
+    video_dict = {
+        "id": video.id,
+        "filename": video.filename,
+        "path": video.path,
+        "status": video.status,
+        "generated_title": video.generated_title,
+        "custom_settings": video.custom_settings or {},
+        "error": video.error,
+        "scheduled_time": video.scheduled_time.isoformat() if video.scheduled_time else None
+    }
+    
+    # Add upload progress from Redis if available
+    upload_progress = redis_client.get_upload_progress(user_id, video.id)
+    if upload_progress is not None:
+        video_dict['upload_progress'] = upload_progress
+    
+    filename_no_ext = video.filename.rsplit('.', 1)[0] if '.' in video.filename else video.filename
+    
+    # Compute YouTube title - Priority: custom > generated_title > template
+    custom_settings = video.custom_settings or {}
+    if 'title' in custom_settings:
+        youtube_title = custom_settings['title']
+    elif video.generated_title:
+        youtube_title = video.generated_title
+    else:
+        title_template = youtube_settings.get('title_template', '') or global_settings.get('title_template', '{filename}')
+        youtube_title = replace_template_placeholders(
+            title_template,
+            filename_no_ext,
+            global_settings.get('wordbank', [])
+        )
+    
+    # Enforce YouTube's 100 character limit
+    video_dict['youtube_title'] = youtube_title[:100] if len(youtube_title) > 100 else youtube_title
+    video_dict['title_too_long'] = len(youtube_title) > 100
+    video_dict['title_original_length'] = len(youtube_title)
+    
+    # Compute upload properties
+    upload_props = {}
+    
+    # YouTube properties
+    if dest_settings.get("youtube_enabled") and youtube_token:
+        upload_props['youtube'] = {
+            'title': video_dict['youtube_title'],
+            'visibility': custom_settings.get('visibility', youtube_settings.get('visibility', 'private')),
+            'made_for_kids': custom_settings.get('made_for_kids', youtube_settings.get('made_for_kids', False)),
+        }
+        
+        # Description
+        if 'description' in custom_settings:
+            upload_props['youtube']['description'] = custom_settings['description']
+        else:
+            desc_template = youtube_settings.get('description_template', '') or global_settings.get('description_template', '')
+            upload_props['youtube']['description'] = replace_template_placeholders(
+                desc_template, filename_no_ext, global_settings.get('wordbank', [])
+            ) if desc_template else ''
+        
+        # Tags
+        if 'tags' in custom_settings:
+            upload_props['youtube']['tags'] = custom_settings['tags']
+        else:
+            tags_template = youtube_settings.get('tags_template', '')
+            upload_props['youtube']['tags'] = replace_template_placeholders(
+                tags_template, filename_no_ext, global_settings.get('wordbank', [])
+            ) if tags_template else ''
+    
+    # TikTok properties
+    if dest_settings.get("tiktok_enabled") and tiktok_token:
+        if 'title' in custom_settings:
+            tiktok_title = custom_settings['title']
+        elif video.generated_title:
+            tiktok_title = video.generated_title
+        else:
+            title_template = tiktok_settings.get('title_template', '') or global_settings.get('title_template', '{filename}')
+            tiktok_title = replace_template_placeholders(
+                title_template, filename_no_ext, global_settings.get('wordbank', [])
+            )
+        
+        upload_props['tiktok'] = {
+            'title': tiktok_title[:2200] if len(tiktok_title) > 2200 else tiktok_title,
+            'privacy_level': custom_settings.get('privacy_level', tiktok_settings.get('privacy_level', 'public')),
+            'allow_comments': custom_settings.get('allow_comments', tiktok_settings.get('allow_comments', True)),
+            'allow_duet': custom_settings.get('allow_duet', tiktok_settings.get('allow_duet', True)),
+            'allow_stitch': custom_settings.get('allow_stitch', tiktok_settings.get('allow_stitch', True))
+        }
+        video_dict['tiktok_title'] = tiktok_title[:2200] if len(tiktok_title) > 2200 else tiktok_title
+    else:
+        video_dict['tiktok_title'] = None
+    
+    # Instagram properties
+    if dest_settings.get("instagram_enabled") and instagram_token:
+        # Caption
+        if 'title' in custom_settings:
+            caption = custom_settings['title']
+        elif video.generated_title:
+            caption = video.generated_title
+        else:
+            caption_template = instagram_settings.get('caption_template', '') or global_settings.get('title_template', '{filename}')
+            caption = replace_template_placeholders(
+                caption_template, filename_no_ext, global_settings.get('wordbank', [])
+            )
+        
+        upload_props['instagram'] = {
+            'caption': caption[:2200] if len(caption) > 2200 else caption,
+            'location_id': custom_settings.get('location_id', instagram_settings.get('location_id', '')),
+            'disable_comments': instagram_settings.get('disable_comments', False),
+            'disable_likes': instagram_settings.get('disable_likes', False)
+        }
+        video_dict['instagram_caption'] = caption[:2200] if len(caption) > 2200 else caption
+    else:
+        video_dict['instagram_caption'] = None
+    
+    video_dict['upload_properties'] = upload_props
+    
+    return video_dict
+
+
 def check_upload_success(video: Video, dest_name: str) -> bool:
     """Check if upload to a destination succeeded based on video state
     
@@ -2132,18 +2271,19 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
         user_id=user_id,
         filename=file.filename,
         path=str(path),
-        generated_title=youtube_title
+        generated_title=youtube_title,
+        db=db
     )
     
     upload_logger.info(f"Video added for user {user_id}: {file.filename}")
     
-    return {
-        "id": video.id,
-        "filename": video.filename,
-        "path": video.path,
-        "status": video.status,
-        "generated_title": video.generated_title
-    }
+    # Return the same format as GET /api/videos for consistency
+    # Get settings and tokens to compute titles (batch load to prevent N+1)
+    all_settings = db_helpers.get_all_user_settings(user_id, db=db)
+    all_tokens = db_helpers.get_all_oauth_tokens(user_id, db=db)
+    
+    # Build video response using the same helper function as GET endpoint
+    return build_video_response(video, all_settings, all_tokens, user_id)
 
 @app.get("/api/videos")
 def get_videos(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
@@ -2167,117 +2307,8 @@ def get_videos(user_id: int = Depends(require_auth), db: Session = Depends(get_d
     
     videos_with_info = []
     for video in videos:
-        video_dict = {
-            "id": video.id,
-            "filename": video.filename,
-            "path": video.path,
-            "status": video.status,
-            "generated_title": video.generated_title,
-            "custom_settings": video.custom_settings or {},
-            "error": video.error,
-            "scheduled_time": video.scheduled_time.isoformat() if hasattr(video, 'scheduled_time') and video.scheduled_time else None
-        }
-        
-        # Add upload progress from Redis if available
-        upload_progress = redis_client.get_upload_progress(user_id, video.id)
-        if upload_progress is not None:
-            video_dict['upload_progress'] = upload_progress
-        
-        # Compute YouTube title - Priority: custom > generated_title > template
-        custom_settings = video.custom_settings or {}
-        if 'title' in custom_settings:
-            youtube_title = custom_settings['title']
-        elif video.generated_title:
-            youtube_title = video.generated_title
-        else:
-            filename_no_ext = video.filename.rsplit('.', 1)[0]
-            title_template = youtube_settings.get('title_template', '') or global_settings.get('title_template', '{filename}')
-            youtube_title = replace_template_placeholders(
-                title_template,
-                filename_no_ext,
-                global_settings.get('wordbank', [])
-            )
-        
-        # Enforce YouTube's 100 character limit
-        video_dict['youtube_title'] = youtube_title[:100] if len(youtube_title) > 100 else youtube_title
-        video_dict['title_too_long'] = len(youtube_title) > 100
-        video_dict['title_original_length'] = len(youtube_title)
-        
-        # Compute upload properties
-        upload_props = {}
-        
-        # YouTube properties
-        if dest_settings.get("youtube_enabled") and youtube_token:
-            filename_no_ext = video.filename.rsplit('.', 1)[0]
-            upload_props['youtube'] = {
-                'title': video_dict['youtube_title'],
-                'visibility': custom_settings.get('visibility', youtube_settings.get('visibility', 'private')),
-                'made_for_kids': custom_settings.get('made_for_kids', youtube_settings.get('made_for_kids', False)),
-            }
-            
-            # Description
-            if 'description' in custom_settings:
-                upload_props['youtube']['description'] = custom_settings['description']
-            else:
-                desc_template = youtube_settings.get('description_template', '') or global_settings.get('description_template', '')
-                upload_props['youtube']['description'] = replace_template_placeholders(
-                    desc_template, filename_no_ext, global_settings.get('wordbank', [])
-                ) if desc_template else ''
-            
-            # Tags
-            if 'tags' in custom_settings:
-                upload_props['youtube']['tags'] = custom_settings['tags']
-            else:
-                tags_template = youtube_settings.get('tags_template', '')
-                upload_props['youtube']['tags'] = replace_template_placeholders(
-                    tags_template, filename_no_ext, global_settings.get('wordbank', [])
-                ) if tags_template else ''
-        
-        # TikTok properties
-        if dest_settings.get("tiktok_enabled") and tiktok_token:
-            filename_no_ext = video.filename.rsplit('.', 1)[0]
-            
-            if 'title' in custom_settings:
-                tiktok_title = custom_settings['title']
-            elif video.generated_title:
-                tiktok_title = video.generated_title
-            else:
-                title_template = tiktok_settings.get('title_template', '') or global_settings.get('title_template', '{filename}')
-                tiktok_title = replace_template_placeholders(
-                    title_template, filename_no_ext, global_settings.get('wordbank', [])
-                )
-            
-            upload_props['tiktok'] = {
-                'title': tiktok_title[:2200] if len(tiktok_title) > 2200 else tiktok_title,
-                'privacy_level': custom_settings.get('privacy_level', tiktok_settings.get('privacy_level', 'public')),
-                'allow_comments': custom_settings.get('allow_comments', tiktok_settings.get('allow_comments', True)),
-                'allow_duet': custom_settings.get('allow_duet', tiktok_settings.get('allow_duet', True)),
-                'allow_stitch': custom_settings.get('allow_stitch', tiktok_settings.get('allow_stitch', True))
-            }
-        
-        # Instagram properties
-        if dest_settings.get("instagram_enabled") and instagram_token:
-            filename_no_ext = video.filename.rsplit('.', 1)[0]
-            
-            # Caption
-            if 'title' in custom_settings:
-                caption = custom_settings['title']
-            elif video.generated_title:
-                caption = video.generated_title
-            else:
-                caption_template = instagram_settings.get('caption_template', '') or global_settings.get('title_template', '{filename}')
-                caption = replace_template_placeholders(
-                    caption_template, filename_no_ext, global_settings.get('wordbank', [])
-                )
-            
-            upload_props['instagram'] = {
-                'caption': caption[:2200] if len(caption) > 2200 else caption,
-                'location_id': instagram_settings.get('location_id', ''),
-                'disable_comments': instagram_settings.get('disable_comments', False),
-                'disable_likes': instagram_settings.get('disable_likes', False)
-            }
-        
-        video_dict['upload_properties'] = upload_props
+        # Use the shared helper function to build video response
+        video_dict = build_video_response(video, all_settings, all_tokens, user_id)
         videos_with_info.append(video_dict)
     
     return videos_with_info

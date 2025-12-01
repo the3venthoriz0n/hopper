@@ -784,10 +784,12 @@ function Home() {
           }
         });
         
-        // Replace temp with real video data
-        setVideos(prev => prev.map(v => 
-          v.id === tempId ? { ...res.data, progress: 100 } : v
-        ));
+        // Replace temp with real video data - backend now returns full video object
+        setVideos(prev => {
+          // Remove temp entry and add the real video at the end (maintains order)
+          const withoutTemp = prev.filter(v => v.id !== tempId);
+          return [...withoutTemp, res.data];
+        });
         setMessage(`✅ Added ${file.name}`);
       } catch (err) {
         setVideos(prev => prev.filter(v => v.id !== tempId));
