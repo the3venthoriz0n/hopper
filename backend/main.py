@@ -906,9 +906,9 @@ def get_destinations(user_id: int = Depends(require_auth), db: Session = Depends
     }
 
 @app.get("/api/auth/youtube/account")
-def get_youtube_account(user_id: int = Depends(require_auth)):
+def get_youtube_account(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
     """Get YouTube account information (channel name/email)"""
-    youtube_token = db_helpers.get_oauth_token(user_id, "youtube")
+    youtube_token = db_helpers.get_oauth_token(user_id, "youtube", db=db)
     
     if not youtube_token:
         return {"account": None}
@@ -917,6 +917,10 @@ def get_youtube_account(user_id: int = Depends(require_auth)):
         # Convert to Credentials object (automatically decrypts)
         youtube_creds = db_helpers.oauth_token_to_credentials(youtube_token)
         if not youtube_creds:
+            # If credentials can't be converted (e.g., decryption failed), 
+            # the token is likely corrupted or encrypted with a different key
+            # Return None so user can reconnect
+            youtube_logger.warning(f"Could not convert YouTube token to credentials for user {user_id}. Token may need to be refreshed or reconnected.")
             return {"account": None}
         
         # Refresh token if needed
@@ -933,46 +937,51 @@ def get_youtube_account(user_id: int = Depends(require_auth)):
                     access_token=token_data["access_token"],
                     refresh_token=token_data["refresh_token"],
                     expires_at=token_data["expires_at"],
-                    extra_data=token_data["extra_data"]
+                    extra_data=token_data["extra_data"],
+                    db=db
                 )
             except Exception as refresh_error:
                 youtube_logger.warning(f"Token refresh failed for user {user_id}: {str(refresh_error)}")
         
         youtube = build('youtube', 'v3', credentials=youtube_creds)
         
-        # Get channel info
-        channels_response = youtube.channels().list(
-            part='snippet',
-            mine=True
-        ).execute()
-        
+        # Get channel info with timeout
         account_info = None
-        if channels_response.get('items') and len(channels_response['items']) > 0:
-            channel = channels_response['items'][0]
-            account_info = {
-                "channel_name": channel['snippet']['title'],
-                "channel_id": channel['id'],
-                "thumbnail": channel['snippet'].get('thumbnails', {}).get('default', {}).get('url')
-            }
+        try:
+            channels_response = youtube.channels().list(
+                part='snippet',
+                mine=True
+            ).execute()
+            
+            if channels_response.get('items') and len(channels_response['items']) > 0:
+                channel = channels_response['items'][0]
+                account_info = {
+                    "channel_name": channel['snippet']['title'],
+                    "channel_id": channel['id'],
+                    "thumbnail": channel['snippet'].get('thumbnails', {}).get('default', {}).get('url')
+                }
+        except Exception as channel_error:
+            youtube_logger.warning(f"Could not fetch channel info for user {user_id}: {str(channel_error)}")
+            # Continue without channel info, try to get email
         
-        # Get email from Google OAuth2 userinfo
+        # Get email from Google OAuth2 userinfo with timeout
         try:
             if youtube_creds.expired and youtube_creds.refresh_token:
                 youtube_creds.refresh(GoogleRequest())
             
-            userinfo_response = httpx.get(
-                'https://www.googleapis.com/oauth2/v2/userinfo',
-                headers={'Authorization': f'Bearer {youtube_creds.token}'},
-                timeout=10.0
-            )
-            if userinfo_response.status_code == 200:
-                userinfo = userinfo_response.json()
-                if account_info:
-                    account_info['email'] = userinfo.get('email')
-                else:
-                    account_info = {'email': userinfo.get('email')}
-            elif userinfo_response.status_code == 401:
-                youtube_logger.warning(f"Userinfo request unauthorized for user {user_id}, token may need refresh")
+            with httpx.Client(timeout=5.0) as client:
+                userinfo_response = client.get(
+                    'https://www.googleapis.com/oauth2/v2/userinfo',
+                    headers={'Authorization': f'Bearer {youtube_creds.token}'}
+                )
+                if userinfo_response.status_code == 200:
+                    userinfo = userinfo_response.json()
+                    if account_info:
+                        account_info['email'] = userinfo.get('email')
+                    else:
+                        account_info = {'email': userinfo.get('email')}
+                elif userinfo_response.status_code == 401:
+                    youtube_logger.warning(f"Userinfo request unauthorized for user {user_id}, token may need refresh")
         except Exception as e:
             youtube_logger.debug(f"Could not fetch email for user {user_id}: {str(e)}")
             # Email is optional, continue without it
@@ -2441,44 +2450,44 @@ async def cancel_scheduled_videos(user_id: int = Depends(require_csrf_new), db: 
     return {"ok": True, "cancelled": cancelled_count}
 
 
-def upload_video_to_youtube(user_id: int, video_id: int):
+def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
     """Upload a single video to YouTube - queries database directly"""
     # Get video from database
-    videos = db_helpers.get_user_videos(user_id)
+    videos = db_helpers.get_user_videos(user_id, db=db)
     video = next((v for v in videos if v.id == video_id), None)
     if not video:
         youtube_logger.error(f"Video {video_id} not found for user {user_id}")
         return
     
     # Get YouTube credentials from database
-    youtube_token = db_helpers.get_oauth_token(user_id, "youtube")
+    youtube_token = db_helpers.get_oauth_token(user_id, "youtube", db=db)
     if not youtube_token:
-        db_helpers.update_video(video_id, user_id, status="failed", error="No YouTube credentials")
+        db_helpers.update_video(video_id, user_id, db=db, status="failed", error="No YouTube credentials")
         youtube_logger.error("No YouTube credentials")
         return
     
     # Convert OAuth token to Google Credentials
     youtube_creds = db_helpers.oauth_token_to_credentials(youtube_token)
     if not youtube_creds:
-        db_helpers.update_video(video_id, user_id, status="failed", error="Failed to convert YouTube token to credentials")
+        db_helpers.update_video(video_id, user_id, db=db, status="failed", error="Failed to convert YouTube token to credentials")
         youtube_logger.error("Failed to convert YouTube token to credentials")
         return
     
     # Validate credentials are complete
     if not youtube_creds.client_id or not youtube_creds.client_secret or not youtube_creds.token_uri:
         error_msg = 'YouTube credentials are incomplete. Please disconnect and reconnect YouTube.'
-        db_helpers.update_video(video_id, user_id, status="failed", error=error_msg)
+        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
         youtube_logger.error(error_msg)
         return
     
     # Get settings from database
-    youtube_settings = db_helpers.get_user_settings(user_id, "youtube")
-    global_settings = db_helpers.get_user_settings(user_id, "global")
+    youtube_settings = db_helpers.get_user_settings(user_id, "youtube", db=db)
+    global_settings = db_helpers.get_user_settings(user_id, "global", db=db)
     
     youtube_logger.info(f"Starting upload for {video.filename}")
     
     try:
-        db_helpers.update_video(video_id, user_id, status="uploading")
+        db_helpers.update_video(video_id, user_id, db=db, status="uploading")
         redis_client.set_upload_progress(user_id, video_id, 0)
         
         youtube_logger.debug("Building YouTube API client...")
@@ -2562,12 +2571,12 @@ def upload_video_to_youtube(user_id: int, video_id: int):
                     youtube_logger.info(f"Upload progress: {progress}%")
         
         # Update video in database with success
-        db_helpers.update_video(video_id, user_id, status="uploaded", youtube_id=response['id'])
+        db_helpers.update_video(video_id, user_id, db=db, status="uploaded", youtube_id=response['id'])
         redis_client.set_upload_progress(user_id, video_id, 100)
         youtube_logger.info(f"Successfully uploaded {video.filename}, YouTube ID: {response['id']}")
     
     except Exception as e:
-        db_helpers.update_video(video_id, user_id, status="failed", error=str(e))
+        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=str(e))
         youtube_logger.error(f"Error uploading {video.filename}: {str(e)}", exc_info=True)
         redis_client.delete_upload_progress(user_id, video_id)
 
@@ -2644,35 +2653,35 @@ def map_privacy_level_to_tiktok(privacy_level, creator_info):
     return tiktok_privacy
 
 
-def upload_video_to_tiktok(user_id: int, video_id: int, session_id: str = None):
+def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, session_id: str = None):
     """Upload video to TikTok using Content Posting API - queries database directly"""
     # Get video from database
-    videos = db_helpers.get_user_videos(user_id)
+    videos = db_helpers.get_user_videos(user_id, db=db)
     video = next((v for v in videos if v.id == video_id), None)
     if not video:
         tiktok_logger.error(f"Video {video_id} not found for user {user_id}")
         return
     
     # Get TikTok credentials from database
-    tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok")
+    tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
     if not tiktok_token:
-        db_helpers.update_video(video_id, user_id, status="failed", error="No TikTok credentials")
+        db_helpers.update_video(video_id, user_id, db=db, status="failed", error="No TikTok credentials")
         tiktok_logger.error("No TikTok credentials")
         return
     
     # Decrypt access token
     access_token = decrypt(tiktok_token.access_token)
     if not access_token:
-        db_helpers.update_video(video_id, user_id, status="failed", error="Failed to decrypt TikTok token")
+        db_helpers.update_video(video_id, user_id, db=db, status="failed", error="Failed to decrypt TikTok token")
         tiktok_logger.error("Failed to decrypt TikTok token")
         return
     
     # Get settings from database
-    tiktok_settings = db_helpers.get_user_settings(user_id, "tiktok")
-    global_settings = db_helpers.get_user_settings(user_id, "global")
+    tiktok_settings = db_helpers.get_user_settings(user_id, "tiktok", db=db)
+    global_settings = db_helpers.get_user_settings(user_id, "global", db=db)
     
     try:
-        db_helpers.update_video(video_id, user_id, status="uploading")
+        db_helpers.update_video(video_id, user_id, db=db, status="uploading")
         redis_client.set_upload_progress(user_id, video_id, 0)
         
         # Check rate limit (use user_id if session_id not provided)
@@ -2786,35 +2795,35 @@ def upload_video_to_tiktok(user_id: int, video_id: int, session_id: str = None):
             raise Exception(f"Upload failed: {upload_response.status_code} - {error_msg}")
         
         # Success - update video in database
-        db_helpers.update_video(video_id, user_id, status="uploaded", tiktok_publish_id=publish_id, tiktok_id=publish_id)
+        db_helpers.update_video(video_id, user_id, db=db, status="uploaded", tiktok_publish_id=publish_id, tiktok_id=publish_id)
         redis_client.set_upload_progress(user_id, video_id, 100)
         tiktok_logger.info(f"Success! publish_id: {publish_id}")
         
     except Exception as e:
-        db_helpers.update_video(video_id, user_id, status="failed", error=f'TikTok upload failed: {str(e)}')
+        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=f'TikTok upload failed: {str(e)}')
         tiktok_logger.error(f"Upload error: {str(e)}", exc_info=True)
         redis_client.delete_upload_progress(user_id, video_id)
             
-async def upload_video_to_instagram(user_id: int, video_id: int):
+async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = None):
     """Upload video to Instagram using Graph API - queries database directly"""
     # Get video from database
-    videos = db_helpers.get_user_videos(user_id)
+    videos = db_helpers.get_user_videos(user_id, db=db)
     video = next((v for v in videos if v.id == video_id), None)
     if not video:
         instagram_logger.error(f"Video {video_id} not found for user {user_id}")
         return
     
     # Get Instagram credentials from database
-    instagram_token = db_helpers.get_oauth_token(user_id, "instagram")
+    instagram_token = db_helpers.get_oauth_token(user_id, "instagram", db=db)
     if not instagram_token:
-        db_helpers.update_video(video_id, user_id, status="failed", error="No Instagram credentials")
+        db_helpers.update_video(video_id, user_id, db=db, status="failed", error="No Instagram credentials")
         instagram_logger.error("No Instagram credentials")
         return
     
     # Decrypt access token
     access_token = decrypt(instagram_token.access_token)
     if not access_token:
-        db_helpers.update_video(video_id, user_id, status="failed", error="Failed to decrypt Instagram token")
+        db_helpers.update_video(video_id, user_id, db=db, status="failed", error="Failed to decrypt Instagram token")
         instagram_logger.error("Failed to decrypt Instagram token")
         return
     
@@ -2822,20 +2831,20 @@ async def upload_video_to_instagram(user_id: int, video_id: int):
     extra_data = instagram_token.extra_data or {}
     business_account_id = extra_data.get("business_account_id")
     if not business_account_id:
-        db_helpers.update_video(video_id, user_id, status="failed", error="No Instagram Business Account ID. Please reconnect your Instagram account.")
+        db_helpers.update_video(video_id, user_id, db=db, status="failed", error="No Instagram Business Account ID. Please reconnect your Instagram account.")
         instagram_logger.error("No Instagram Business Account ID")
         return
     
     # Get settings from database
-    instagram_settings = db_helpers.get_user_settings(user_id, "instagram")
-    global_settings = db_helpers.get_user_settings(user_id, "global")
+    instagram_settings = db_helpers.get_user_settings(user_id, "instagram", db=db)
+    global_settings = db_helpers.get_user_settings(user_id, "global", db=db)
     
     instagram_logger.info(f"Starting upload for {video.filename}")
     instagram_logger.debug(f"Using access token: {access_token[:20]}... (length: {len(access_token)})")
     instagram_logger.debug(f"Using business account ID: {business_account_id}")
     
     try:
-        db_helpers.update_video(video_id, user_id, status="uploading")
+        db_helpers.update_video(video_id, user_id, db=db, status="uploading")
         redis_client.set_upload_progress(user_id, video_id, 0)
         
         # Get video file
@@ -2929,7 +2938,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int):
                 raise Exception(f"No container ID in response: {container_result}")
             
             instagram_logger.info(f"Created container {container_id}")
-            db_helpers.update_video(video_id, user_id, instagram_container_id=container_id)
+            db_helpers.update_video(video_id, user_id, db=db, instagram_container_id=container_id)
             redis_client.set_upload_progress(user_id, video_id, 40)
             
             # Step 2: Upload video to rupload.facebook.com
@@ -3023,7 +3032,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int):
             instagram_logger.info(f"Published to Instagram: {media_id}")
             
             # Update video in database with success
-            db_helpers.update_video(video_id, user_id, status="completed", instagram_id=media_id)
+            db_helpers.update_video(video_id, user_id, db=db, status="completed", instagram_id=media_id)
             redis_client.set_upload_progress(user_id, video_id, 100)
             
             # Clean up progress after a delay
@@ -3031,7 +3040,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int):
             redis_client.delete_upload_progress(user_id, video_id)
         
     except Exception as e:
-        db_helpers.update_video(video_id, user_id, status="failed", error=f'Instagram upload failed: {str(e)}')
+        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=f'Instagram upload failed: {str(e)}')
         instagram_logger.error(f"Error uploading {video.filename}: {str(e)}", exc_info=True)
         redis_client.delete_upload_progress(user_id, video_id)
 
@@ -3185,11 +3194,11 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
                     upload_logger.info(f"Uploading {video.filename} to {dest_name} for user {user_id}")
                     
                     try:
-                        # Pass user_id and video_id - uploader functions query DB directly
+                        # Pass user_id, video_id, and db session - uploader functions query DB directly
                         if dest_name == "instagram":
-                            await uploader_func(user_id, video_id)
+                            await uploader_func(user_id, video_id, db=db)
                         else:
-                            uploader_func(user_id, video_id)
+                            uploader_func(user_id, video_id, db=db)
                         
                         # Assume success for now, will verify after all uploads complete to avoid N+1 queries
                         succeeded_destinations.append(dest_name)
@@ -3199,9 +3208,9 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
                         db_helpers.update_video(video_id, user_id, db=db, error=str(e))
             
             # Determine final status based on results
-            # Query video once after all uploads complete to verify success (prevents N+1 queries)
-            videos_after = db_helpers.get_user_videos(user_id, db=db)
-            updated_video = next((v for v in videos_after if v.id == video_id), None)
+            # Refresh video in current session to get latest changes (prevents stale data)
+            db.refresh(video)
+            updated_video = video
             
             # Verify which destinations actually succeeded
             verified_succeeded = []

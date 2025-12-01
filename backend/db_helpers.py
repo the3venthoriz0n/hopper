@@ -3,10 +3,14 @@ from sqlalchemy.orm import Session
 from models import SessionLocal, User, Video, Setting, OAuthToken
 from typing import Optional, List, Dict, Any
 import json
+import os
+import logging
 from datetime import datetime, timezone
 from google.oauth2.credentials import Credentials
 from encryption import encrypt, decrypt
 import redis_client
+
+logger = logging.getLogger(__name__)
 
 
 def get_user_settings(user_id: int, category: str = "global", db: Session = None) -> Dict[str, Any]:
@@ -352,6 +356,9 @@ def update_video(video_id: int, user_id: int, db: Session = None, **kwargs) -> O
         # IDs that should be stored in custom_settings
         id_fields = ['youtube_id', 'tiktok_id', 'tiktok_publish_id', 'instagram_id', 'instagram_container_id']
         
+        # Track if we need to flag custom_settings as modified
+        custom_settings_modified = False
+        
         for key, value in kwargs.items():
             if hasattr(video, key):
                 # Direct attribute exists, set it
@@ -360,7 +367,15 @@ def update_video(video_id: int, user_id: int, db: Session = None, **kwargs) -> O
                 # Store in custom_settings
                 if video.custom_settings is None:
                     video.custom_settings = {}
+                    custom_settings_modified = True
+                elif key not in video.custom_settings or video.custom_settings[key] != value:
+                    custom_settings_modified = True
                 video.custom_settings[key] = value
+        
+        # SQLAlchemy doesn't detect in-place changes to JSON fields, so we need to flag it
+        if custom_settings_modified:
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(video, "custom_settings")
         
         db.commit()
         db.refresh(video)
@@ -595,17 +610,26 @@ def oauth_token_to_credentials(token: OAuthToken) -> Optional[Credentials]:
         refresh_token = decrypt(token.refresh_token) if token.refresh_token else None
         
         if not access_token:
+            logger.warning(f"Failed to decrypt access token for user {token.user_id if hasattr(token, 'user_id') else 'unknown'}, platform {token.platform if hasattr(token, 'platform') else 'unknown'}. Token may be corrupted or encrypted with different key.")
             return None
         
         # Parse extra_data to get client info
         extra_data = token.extra_data or {}
         
+        # Get client_id and client_secret from extra_data or environment
+        client_id = extra_data.get("client_id") or os.getenv("GOOGLE_CLIENT_ID")
+        client_secret = extra_data.get("client_secret") or os.getenv("GOOGLE_CLIENT_SECRET")
+        
+        if not client_id or not client_secret:
+            logger.error(f"Missing client_id or client_secret. extra_data: {extra_data}")
+            return None
+        
         creds = Credentials(
             token=access_token,
             refresh_token=refresh_token,
             token_uri="https://oauth2.googleapis.com/token",
-            client_id=extra_data.get("client_id"),
-            client_secret=extra_data.get("client_secret"),
+            client_id=client_id,
+            client_secret=client_secret,
             scopes=extra_data.get("scopes", [])
         )
         
@@ -613,7 +637,8 @@ def oauth_token_to_credentials(token: OAuthToken) -> Optional[Credentials]:
             creds.expiry = token.expires_at
         
         return creds
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error converting OAuth token to credentials: {e}", exc_info=True)
         return None
 
 
