@@ -353,13 +353,35 @@ function Home() {
       const res = await axios.get(`${API}/auth/youtube/account`);
       if (res.data.error) {
         console.error('Error loading YouTube account:', res.data.error);
-        setYoutube(prev => ({ ...prev, account: null }));
+        // ROOT CAUSE FIX: Don't overwrite existing account info on error
+        setYoutube(prev => {
+          if (prev.account?.channel_name || prev.account?.email) {
+            return prev; // Keep existing account info
+          }
+          return { ...prev, account: null };
+        });
       } else {
-        setYoutube(prev => ({ ...prev, account: res.data.account || null }));
+        // ROOT CAUSE FIX: Don't overwrite valid account info with empty/incomplete data
+        setYoutube(prev => {
+          const newAccount = res.data.account;
+          // If new account data is empty or incomplete, preserve existing account info
+          if (!newAccount || (!newAccount.channel_name && !newAccount.email)) {
+            if (prev.account?.channel_name || prev.account?.email) {
+              return prev; // Keep existing account info
+            }
+          }
+          return { ...prev, account: newAccount || null };
+        });
       }
     } catch (error) {
       console.error('Error loading YouTube account:', error.response?.data || error.message);
-      setYoutube(prev => ({ ...prev, account: null }));
+      // ROOT CAUSE FIX: Don't overwrite existing account info on error
+      setYoutube(prev => {
+        if (prev.account?.channel_name || prev.account?.email) {
+          return prev; // Keep existing account info
+        }
+        return { ...prev, account: null };
+      });
     }
   }, [API]);
 
@@ -368,13 +390,40 @@ function Home() {
       const res = await axios.get(`${API}/auth/tiktok/account`);
       if (res.data.error) {
         console.error('Error loading TikTok account:', res.data.error);
-        setTiktok(prev => ({ ...prev, account: null }));
+        // ROOT CAUSE FIX: Don't overwrite existing account info on error
+        // Only set to null if we don't already have valid account info
+        setTiktok(prev => {
+          if (prev.account?.display_name || prev.account?.username) {
+            // Keep existing account info if we have it
+            return prev;
+          }
+          return { ...prev, account: null };
+        });
       } else {
-        setTiktok(prev => ({ ...prev, account: res.data.account || null }));
+        // ROOT CAUSE FIX: Don't overwrite valid account info with empty/incomplete data
+        setTiktok(prev => {
+          const newAccount = res.data.account;
+          // If new account data is empty or incomplete, preserve existing account info
+          if (!newAccount || (!newAccount.display_name && !newAccount.username)) {
+            // Only update if we don't already have valid account info
+            if (prev.account?.display_name || prev.account?.username) {
+              return prev; // Keep existing account info
+            }
+          }
+          // Update with new account info (either it's complete, or we don't have existing info)
+          return { ...prev, account: newAccount || null };
+        });
       }
     } catch (error) {
       console.error('Error loading TikTok account:', error.response?.data || error.message);
-      setTiktok(prev => ({ ...prev, account: null }));
+      // ROOT CAUSE FIX: Don't overwrite existing account info on error
+      setTiktok(prev => {
+        if (prev.account?.display_name || prev.account?.username) {
+          // Keep existing account info if we have it
+          return prev;
+        }
+        return { ...prev, account: null };
+      });
     }
   }, [API]);
 
@@ -383,13 +432,35 @@ function Home() {
       const res = await axios.get(`${API}/auth/instagram/account`);
       if (res.data.error) {
         console.error('Error loading Instagram account:', res.data.error);
-        setInstagram(prev => ({ ...prev, account: null }));
+        // ROOT CAUSE FIX: Don't overwrite existing account info on error
+        setInstagram(prev => {
+          if (prev.account?.username) {
+            return prev; // Keep existing account info
+          }
+          return { ...prev, account: null };
+        });
       } else {
-        setInstagram(prev => ({ ...prev, account: res.data.account || null }));
+        // ROOT CAUSE FIX: Don't overwrite valid account info with empty/incomplete data
+        setInstagram(prev => {
+          const newAccount = res.data.account;
+          // If new account data is empty or incomplete, preserve existing account info
+          if (!newAccount || !newAccount.username) {
+            if (prev.account?.username) {
+              return prev; // Keep existing account info
+            }
+          }
+          return { ...prev, account: newAccount || null };
+        });
       }
     } catch (error) {
       console.error('Error loading Instagram account:', error.response?.data || error.message);
-      setInstagram(prev => ({ ...prev, account: null }));
+      // ROOT CAUSE FIX: Don't overwrite existing account info on error
+      setInstagram(prev => {
+        if (prev.account?.username) {
+          return prev; // Keep existing account info
+        }
+        return { ...prev, account: null };
+      });
     }
   }, [API]);
 
@@ -414,7 +485,8 @@ function Home() {
         account: res.data.instagram.connected ? prev.account : null
       }));
       
-      // Only load account if connected and we don't already have account info
+      // Only load account if connected
+      // The account loading functions now preserve existing account info, so it's safe to call them
       if (res.data.youtube.connected) {
         loadYoutubeAccount();
       }

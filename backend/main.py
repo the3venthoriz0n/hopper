@@ -1402,20 +1402,25 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
         cached_avatar_url = extra_data.get("avatar_url")
         open_id = extra_data.get("open_id")
         
-        # If we have cached account info, return it immediately
+        # Build account info from cached data (always preserve what we have)
+        account_info = {}
+        if open_id:
+            account_info["open_id"] = open_id
+        if cached_display_name:
+            account_info["display_name"] = cached_display_name
+        if cached_username:
+            account_info["username"] = cached_username
+        if cached_avatar_url:
+            account_info["avatar_url"] = cached_avatar_url
+        
+        # ROOT CAUSE FIX: If we have cached account info with display_name or username,
+        # ALWAYS return it immediately and NEVER call the API.
+        # This prevents the account name from being lost when API fails.
         if cached_display_name or cached_username:
-            account_info = {}
-            if cached_display_name:
-                account_info["display_name"] = cached_display_name
-            if cached_username:
-                account_info["username"] = cached_username
-            if cached_avatar_url:
-                account_info["avatar_url"] = cached_avatar_url
-            if open_id:
-                account_info["open_id"] = open_id
+            tiktok_logger.debug(f"Returning cached TikTok account info for user {user_id}")
             return {"account": account_info}
         
-        # If no cached info, try to fetch from API
+        # If no cached display_name/username but we have open_id, try to fetch from API
         if not open_id:
             tiktok_logger.warning(f"No open_id found for user {user_id}")
             # Return None if we don't have open_id (can't identify account)
@@ -1425,20 +1430,11 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
         access_token = decrypt(tiktok_token.access_token)
         if not access_token:
             tiktok_logger.warning(f"Failed to decrypt TikTok token for user {user_id}")
-            # Return minimal account info with open_id, similar to YouTube pattern
-            account_info = {"open_id": open_id}
-            return {"account": account_info}
+            # Return what we have (at least open_id)
+            return {"account": account_info if account_info else None}
         
         # Call TikTok creator info API with timeout (must use POST, not GET)
-        # Start with any cached data we might have (even if not complete)
-        account_info = {"open_id": open_id}
-        if cached_display_name:
-            account_info["display_name"] = cached_display_name
-        if cached_username:
-            account_info["username"] = cached_username
-        if cached_avatar_url:
-            account_info["avatar_url"] = cached_avatar_url
-        
+        # Only call API if we don't have cached display_name/username
         try:
             with httpx.Client(timeout=5.0) as client:
                 creator_info_response = client.post(
@@ -1452,12 +1448,28 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
                 
                 if creator_info_response.status_code != 200:
                     tiktok_logger.warning(f"TikTok creator info request failed: {creator_info_response.status_code}")
-                    # Return cached account info if we have it, otherwise just open_id
-                    # This ensures we don't lose the account name when API fails
-                    if account_info.get("display_name") or account_info.get("username"):
-                        return {"account": account_info}
-                    # If no cached data, return minimal info with open_id
-                    return {"account": account_info}
+                    # ROOT CAUSE FIX: Re-check database for cached data before returning
+                    # This handles race conditions where cache might have been updated
+                    tiktok_token_refresh = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
+                    if tiktok_token_refresh and tiktok_token_refresh.extra_data:
+                        refresh_extra_data = tiktok_token_refresh.extra_data
+                        refresh_display_name = refresh_extra_data.get("display_name")
+                        refresh_username = refresh_extra_data.get("username")
+                        if refresh_display_name or refresh_username:
+                            # We have cached data - return it instead of empty account_info
+                            account_info = {}
+                            if open_id:
+                                account_info["open_id"] = open_id
+                            if refresh_display_name:
+                                account_info["display_name"] = refresh_display_name
+                            if refresh_username:
+                                account_info["username"] = refresh_username
+                            if refresh_extra_data.get("avatar_url"):
+                                account_info["avatar_url"] = refresh_extra_data.get("avatar_url")
+                            tiktok_logger.debug(f"Found cached account info after API failure, returning it")
+                            return {"account": account_info}
+                    # If no cached data found, return what we have (at least open_id)
+                    return {"account": account_info if account_info else None}
                 
                 creator_data = creator_info_response.json()
                 creator_info = creator_data.get("data", {})
@@ -1496,21 +1508,27 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
                 return {"account": account_info}
         except Exception as api_error:
             tiktok_logger.warning(f"Error calling TikTok API for user {user_id}: {str(api_error)}")
-            # Return cached account info if we have it, otherwise just open_id
-            # This ensures we don't lose the account name when API fails
-            if account_info.get("display_name") or account_info.get("username"):
-                return {"account": account_info}
-            # If no cached data, return minimal info with open_id
-            return {"account": account_info}
+            # ALWAYS return cached account info if we have it (even if API fails)
+            # This is the root cause fix - never lose cached account info
+            return {"account": account_info if account_info else None}
         
     except Exception as e:
         tiktok_logger.error(f"Error getting TikTok account info for user {user_id}: {str(e)}", exc_info=True)
-        # Try to return at least open_id if available
+        # Try to return cached account info even on exception
         try:
             extra_data = tiktok_token.extra_data or {}
+            cached_display_name = extra_data.get("display_name")
+            cached_username = extra_data.get("username")
             open_id = extra_data.get("open_id")
-            if open_id:
-                return {"account": {"open_id": open_id}}
+            if cached_display_name or cached_username or open_id:
+                account_info = {}
+                if open_id:
+                    account_info["open_id"] = open_id
+                if cached_display_name:
+                    account_info["display_name"] = cached_display_name
+                if cached_username:
+                    account_info["username"] = cached_username
+                return {"account": account_info}
         except:
             pass
         return {"account": None, "error": str(e)}
