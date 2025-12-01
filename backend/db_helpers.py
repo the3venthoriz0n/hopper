@@ -260,6 +260,41 @@ def get_user_videos(user_id: int, db: Session = None) -> List[Video]:
             db.close()
 
 
+def get_all_scheduled_videos(db: Session = None) -> Dict[int, List[Video]]:
+    """Get all scheduled videos across all users, grouped by user_id
+    Optimized for scheduler task - single query instead of N queries.
+    
+    Args:
+        db: Database session (if None, creates its own - for backward compatibility)
+    
+    Returns:
+        Dictionary mapping user_id to list of scheduled videos
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
+    try:
+        # Single query to get all scheduled videos
+        scheduled_videos = db.query(Video).filter(
+            Video.status == 'scheduled',
+            Video.scheduled_time.isnot(None)
+        ).order_by(Video.scheduled_time).all()
+        
+        # Group by user_id
+        videos_by_user = {}
+        for video in scheduled_videos:
+            if video.user_id not in videos_by_user:
+                videos_by_user[video.user_id] = []
+            videos_by_user[video.user_id].append(video)
+        
+        return videos_by_user
+    finally:
+        if should_close:
+            db.close()
+
+
 def add_user_video(user_id: int, filename: str, path: str, generated_title: str = None, db: Session = None) -> Video:
     """Add a video to user's queue
     

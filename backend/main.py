@@ -2988,87 +2988,89 @@ DESTINATION_UPLOADERS["tiktok"] = upload_video_to_tiktok
 DESTINATION_UPLOADERS["instagram"] = upload_video_to_instagram
 
 async def scheduler_task():
-    """Background task that checks for scheduled videos and uploads them to all enabled destinations"""
+    """Background task that checks for scheduled videos and uploads them to all enabled destinations
+    Optimized to use batch queries instead of querying per user/video"""
     while True:
         try:
             await asyncio.sleep(30)  # Check every 30 seconds
             
             current_time = datetime.now(timezone.utc)
             
-            # Get all users from database - use shared session for all operations
-            from models import SessionLocal, User
+            # Batch query: Get all scheduled videos across all users in a single query
+            from models import SessionLocal, Video
             db = SessionLocal()
             try:
-                users = db.query(User).all()
+                # Single query to get all scheduled videos, grouped by user_id
+                videos_by_user = db_helpers.get_all_scheduled_videos(db=db)
                 
-                for user in users:
-                    user_id = user.id
+                # Process videos grouped by user (allows batch loading of user settings/tokens)
+                for user_id, videos in videos_by_user.items():
+                    # Batch load user settings and tokens once per user (not per video)
+                    dest_settings = db_helpers.get_user_settings(user_id, "destinations", db=db)
+                    all_tokens = db_helpers.get_all_oauth_tokens(user_id, db=db)
                     
-                    # Get user's scheduled videos - use shared session
-                    videos = db_helpers.get_user_videos(user_id, db=db)
+                    # Determine enabled destinations for this user
+                    enabled_destinations = []
+                    for dest_name in ["youtube", "tiktok", "instagram"]:
+                        is_enabled = dest_settings.get(f"{dest_name}_enabled", False)
+                        has_token = all_tokens.get(dest_name) is not None
+                        if is_enabled and has_token:
+                            enabled_destinations.append(dest_name)
                     
+                    if not enabled_destinations:
+                        # Skip this user if no destinations are enabled
+                        continue
+                    
+                    # Process each scheduled video for this user
                     for video in videos:
-                        if video.status == 'scheduled' and video.scheduled_time:
-                            try:
-                                scheduled_time = datetime.fromisoformat(video.scheduled_time) if isinstance(video.scheduled_time, str) else video.scheduled_time
+                        try:
+                            scheduled_time = datetime.fromisoformat(video.scheduled_time) if isinstance(video.scheduled_time, str) else video.scheduled_time
+                            
+                            # If scheduled time has passed, upload the video
+                            if current_time >= scheduled_time:
+                                video_id = video.id
+                                print(f"Uploading scheduled video for user {user_id}: {video.filename}")
                                 
-                                # If scheduled time has passed, upload the video
-                                if current_time >= scheduled_time:
-                                    video_id = video.id
-                                    print(f"Uploading scheduled video for user {user_id}: {video.filename}")
+                                # Mark as uploading - use shared session
+                                db_helpers.update_video(video_id, user_id, db=db, status="uploading")
+                                
+                                # Upload to each enabled destination - uploader functions query DB directly
+                                # Note: Upload functions create their own sessions (backward compatible)
+                                success_count = 0
+                                for dest_name in enabled_destinations:
+                                    uploader_func = DESTINATION_UPLOADERS.get(dest_name)
+                                    if uploader_func:
+                                        try:
+                                            print(f"  Uploading to {dest_name}...")
+                                            # Pass user_id and video_id - uploader functions query DB directly
+                                            if dest_name == "instagram":
+                                                await uploader_func(user_id, video_id)
+                                            else:
+                                                uploader_func(user_id, video_id)
+                                            
+                                            # Check if upload succeeded by querying updated video - use shared session
+                                            # Note: We could optimize this further by caching the video object, but for now
+                                            # we'll query to ensure we have the latest state
+                                            updated_video = db.query(Video).filter(Video.id == video_id).first()
+                                            if updated_video:
+                                                if dest_name == 'youtube' and updated_video.youtube_id:
+                                                    success_count += 1
+                                                elif dest_name == 'tiktok' and (updated_video.tiktok_id or updated_video.tiktok_publish_id):
+                                                    success_count += 1
+                                                elif dest_name == 'instagram' and (updated_video.instagram_id or updated_video.instagram_container_id):
+                                                    success_count += 1
+                                        except Exception as upload_err:
+                                            print(f"  Error uploading to {dest_name}: {upload_err}")
+                                
+                                # Update final status - use shared session
+                                if success_count == len(enabled_destinations):
+                                    db_helpers.update_video(video_id, user_id, db=db, status="uploaded")
+                                else:
+                                    db_helpers.update_video(video_id, user_id, db=db, status="failed", error=f"Upload failed for some destinations")
                                     
-                                    # Mark as uploading - use shared session
-                                    db_helpers.update_video(video_id, user_id, db=db, status="uploading")
-                                    
-                                    # Get enabled destinations - batch load to prevent N+1 queries, use shared session
-                                    dest_settings = db_helpers.get_user_settings(user_id, "destinations", db=db)
-                                    all_tokens = db_helpers.get_all_oauth_tokens(user_id, db=db)
-                                    enabled_destinations = []
-                                    for dest_name in ["youtube", "tiktok", "instagram"]:
-                                        is_enabled = dest_settings.get(f"{dest_name}_enabled", False)
-                                        has_token = all_tokens.get(dest_name) is not None
-                                        if is_enabled and has_token:
-                                            enabled_destinations.append(dest_name)
-                                    
-                                    if not enabled_destinations:
-                                        print(f"  No enabled destinations for user {user_id}, skipping")
-                                        continue
-                                    
-                                    # Upload to each enabled destination - uploader functions query DB directly
-                                    # Note: Upload functions create their own sessions (backward compatible)
-                                    success_count = 0
-                                    for dest_name in enabled_destinations:
-                                        uploader_func = DESTINATION_UPLOADERS.get(dest_name)
-                                        if uploader_func:
-                                            try:
-                                                print(f"  Uploading to {dest_name}...")
-                                                # Pass user_id and video_id - uploader functions query DB directly
-                                                if dest_name == "instagram":
-                                                    await uploader_func(user_id, video_id)
-                                                else:
-                                                    uploader_func(user_id, video_id)
-                                                
-                                                # Check if upload succeeded by querying updated video - use shared session
-                                                videos_after = db_helpers.get_user_videos(user_id, db=db)
-                                                updated_video = next((v for v in videos_after if v.id == video_id), None)
-                                                if updated_video:
-                                                    if dest_name == 'youtube' and updated_video.youtube_id:
-                                                        success_count += 1
-                                                    elif dest_name == 'tiktok' and (updated_video.tiktok_id or updated_video.tiktok_publish_id):
-                                                        success_count += 1
-                                                    elif dest_name == 'instagram' and (updated_video.instagram_id or updated_video.instagram_container_id):
-                                                        success_count += 1
-                                            except Exception as upload_err:
-                                                print(f"  Error uploading to {dest_name}: {upload_err}")
-                                    
-                                    # Update final status - use shared session
-                                    if success_count == len(enabled_destinations):
-                                        db_helpers.update_video(video_id, user_id, db=db, status="uploaded")
-                                    else:
-                                        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=f"Upload failed for some destinations")
-                                        
-                            except Exception as e:
-                                print(f"Error processing scheduled video {video.filename}: {e}")
+                        except Exception as e:
+                            print(f"Error processing scheduled video {video.filename}: {e}")
+                            if 'video_id' in locals():
                                 db_helpers.update_video(video_id, user_id, db=db, status="failed", error=str(e))
             finally:
                 db.close()
