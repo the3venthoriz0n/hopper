@@ -1634,7 +1634,9 @@ function Home() {
               <span className="account-info" style={{ fontSize: '0.9em', color: '#999', marginLeft: '4px' }}>
                 {instagram.account ? (
                   instagram.account.username ? 
-                    `@${instagram.account.username}` : 'Unknown account'
+                    `@${instagram.account.username}` : 
+                    instagram.account.user_id ? 
+                      `Account (${instagram.account.user_id})` : 'Unknown account'
                 ) : (
                   'Loading account...'
                 )}
