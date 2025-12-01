@@ -15,6 +15,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from functools import wraps
+from contextlib import asynccontextmanager
 
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
@@ -31,15 +32,14 @@ from pydantic import BaseModel, EmailStr
 import db_helpers
 from encryption import encrypt, decrypt
 
-app = FastAPI()
-
 # ============================================================================
-# DATABASE AND REDIS INITIALIZATION
+# DATABASE AND REDIS INITIALIZATION (Lifespan Events)
 # ============================================================================
 
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database and connections on startup"""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan event handler for startup and shutdown"""
+    # Startup
     logger.info("Initializing database...")
     try:
         init_db()
@@ -55,6 +55,18 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Redis connection failed: {e}")
         raise
+    
+    # Start the scheduler task
+    logger.info("Starting scheduler task...")
+    asyncio.create_task(scheduler_task())
+    logger.info("Scheduler task started")
+    
+    yield
+    
+    # Shutdown (if needed in the future)
+    logger.info("Shutting down...")
+
+app = FastAPI(lifespan=lifespan)
 
 # ============================================================================
 # REQUEST/RESPONSE MODELS
@@ -3253,11 +3265,7 @@ async def scheduler_task():
             print(f"Error in scheduler task: {e}")
             await asyncio.sleep(30)
 
-@app.on_event("startup")
-async def startup_event():
-    """Start the scheduler when the app starts"""
-    asyncio.create_task(scheduler_task())
-    print("Scheduler task started")
+# Scheduler startup is now handled in the lifespan event handler above
 
 @app.post("/api/upload")
 async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
