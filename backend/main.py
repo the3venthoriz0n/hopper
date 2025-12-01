@@ -1054,10 +1054,26 @@ def auth_google_login_callback(code: str, state: str, request: Request, response
         session_id = secrets.token_urlsafe(32)
         redis_client.set_session(session_id, user.id)
         
-        # Set session cookie
+        # Extract parent domain for cookie (e.g., "dunkbox.net" from "api-dev.dunkbox.net")
+        # This allows cookie to be shared across subdomains
+        host = request.headers.get("host", DOMAIN)
+        if ":" in host:
+            host = host.split(":")[0]
+        
+        # Get parent domain (e.g., "dunkbox.net" from "api-dev.dunkbox.net")
+        domain_parts = host.split(".")
+        if len(domain_parts) >= 2:
+            # Use parent domain with leading dot (e.g., ".dunkbox.net")
+            cookie_domain = "." + ".".join(domain_parts[-2:])
+        else:
+            # localhost or single-part domain
+            cookie_domain = None
+        
+        # Set session cookie with domain parameter for cross-subdomain sharing
         response.set_cookie(
             key="session_id",
             value=session_id,
+            domain=cookie_domain,  # Share across subdomains
             httponly=True,
             max_age=30*24*60*60,
             samesite="lax",
@@ -1065,9 +1081,9 @@ def auth_google_login_callback(code: str, state: str, request: Request, response
         )
         
         action = "registered" if is_new else "logged in"
-        logger.info(f"User {action} via Google OAuth: {user.email} (ID: {user.id})")
+        logger.info(f"User {action} via Google OAuth: {user.email} (ID: {user.id}), cookie_domain={cookie_domain}")
         
-        # Redirect to frontend with success status
+        # Redirect to frontend (session cookie is already set via response.set_cookie above)
         frontend_redirect = f"{FRONTEND_URL}/?google_login=success"
         return RedirectResponse(url=frontend_redirect)
         

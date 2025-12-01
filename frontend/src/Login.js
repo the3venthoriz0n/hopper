@@ -24,6 +24,10 @@ function Login({ onLoginSuccess }) {
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
+  
+  // Determine title based on environment
+  const isProduction = process.env.REACT_APP_ENVIRONMENT === 'production';
+  const appTitle = isProduction ? '🐸 hopper' : '🐸 DEV hopper';
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -64,13 +68,23 @@ function Login({ onLoginSuccess }) {
       const left = window.screen.width / 2 - width / 2;
       const top = window.screen.height / 2 - height / 2;
       
-      window.open(
+      const popup = window.open(
         authUrl,
         'Google Login',
         `width=${width},height=${height},left=${left},top=${top}`
       );
       
-      setLoading(false);
+      // Poll to detect when popup closes
+      const checkPopup = setInterval(() => {
+        if (!popup || popup.closed) {
+          clearInterval(checkPopup);
+          // Popup closed, check auth status
+          setLoading(false);
+          // Trigger auth check which will log user in if session exists
+          window.location.reload();
+        }
+      }, 500);
+      
     } catch (err) {
       const errorMsg = err.response?.data?.detail || err.message || 'Failed to start Google login';
       setMessage(`❌ ${errorMsg}`);
@@ -95,7 +109,7 @@ function Login({ onLoginSuccess }) {
         boxShadow: '0 4px 6px rgba(0,0,0,0.3)'
       }}>
         <h1 style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-        🐸 hopper
+          {appTitle}
         </h1>
         
         <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>

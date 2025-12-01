@@ -129,9 +129,17 @@ function Home() {
     if (googleLogin === 'success') {
       setMessage('✅ Successfully logged in with Google!');
       window.history.replaceState({}, '', '/');
+      // Close popup if this is a popup window
+      if (window.opener) {
+        window.close();
+      }
     } else if (googleLogin === 'error') {
       setMessage('❌ Google login failed. Please try again.');
       window.history.replaceState({}, '', '/');
+      // Close popup if this is a popup window
+      if (window.opener) {
+        window.close();
+      }
     }
     
     checkAuth();
