@@ -348,170 +348,71 @@ function Home() {
     }
   }, [API]);
 
-  const loadYoutubeAccount = useCallback(async () => {
+  // Unified account loading logic for all platforms
+  // Only updates account if new data is more complete than existing data
+  const loadPlatformAccount = useCallback(async (platform, setState, identifierKeys) => {
     try {
-      const res = await axios.get(`${API}/auth/youtube/account`);
+      const res = await axios.get(`${API}/auth/${platform}/account`);
+      
       if (res.data.error) {
-        console.error('Error loading YouTube account:', res.data.error);
-        // ROOT CAUSE FIX: Don't overwrite existing account info on error
-        setYoutube(prev => {
-          if (prev.account?.channel_name || prev.account?.email) {
-            return prev; // Keep existing account info
-          }
-          return { ...prev, account: null };
-        });
-      } else {
-        // ROOT CAUSE FIX: Don't overwrite valid account info with empty/incomplete data
-        setYoutube(prev => {
-          const newAccount = res.data.account;
-          // If new account data is empty or incomplete, preserve existing account info
-          if (!newAccount || (!newAccount.channel_name && !newAccount.email)) {
-            if (prev.account?.channel_name || prev.account?.email) {
-              return prev; // Keep existing account info
-            }
-          }
-          return { ...prev, account: newAccount || null };
-        });
+        console.error(`Error loading ${platform} account:`, res.data.error);
+        // Keep existing account info on error
+        return;
       }
-    } catch (error) {
-      console.error('Error loading YouTube account:', error.response?.data || error.message);
-      // ROOT CAUSE FIX: Don't overwrite existing account info on error
-      setYoutube(prev => {
-        if (prev.account?.channel_name || prev.account?.email) {
-          return prev; // Keep existing account info
+      
+      setState(prev => {
+        const newAccount = res.data.account;
+        const hasExistingData = identifierKeys.some(key => prev.account?.[key]);
+        const hasNewData = newAccount && identifierKeys.some(key => newAccount[key]);
+        
+        // Only update if we have new complete data OR no existing data
+        if (hasNewData || !hasExistingData) {
+          return { ...prev, account: newAccount || null };
         }
-        return { ...prev, account: null };
+        
+        // Keep existing account info if new data is incomplete
+        return prev;
       });
+    } catch (error) {
+      console.error(`Error loading ${platform} account:`, error.response?.data || error.message);
+      // Keep existing account info on error - do nothing
     }
   }, [API]);
 
-  const loadTiktokAccount = useCallback(async () => {
-    try {
-      const res = await axios.get(`${API}/auth/tiktok/account`);
-      if (res.data.error) {
-        console.error('Error loading TikTok account:', res.data.error);
-        // ROOT CAUSE FIX: Don't overwrite existing account info on error
-        // Only set to null if we don't already have valid account info
-        setTiktok(prev => {
-          if (prev.account?.display_name || prev.account?.username) {
-            // Keep existing account info if we have it
-            return prev;
-          }
-          return { ...prev, account: null };
-        });
-      } else {
-        // ROOT CAUSE FIX: Don't overwrite valid account info with empty/incomplete data
-        setTiktok(prev => {
-          const newAccount = res.data.account;
-          // If new account data is empty or incomplete, preserve existing account info
-          if (!newAccount || (!newAccount.display_name && !newAccount.username)) {
-            // Only update if we don't already have valid account info
-            if (prev.account?.display_name || prev.account?.username) {
-              return prev; // Keep existing account info
-            }
-          }
-          // Update with new account info (either it's complete, or we don't have existing info)
-          return { ...prev, account: newAccount || null };
-        });
-      }
-    } catch (error) {
-      console.error('Error loading TikTok account:', error.response?.data || error.message);
-      // ROOT CAUSE FIX: Don't overwrite existing account info on error
-      setTiktok(prev => {
-        if (prev.account?.display_name || prev.account?.username) {
-          // Keep existing account info if we have it
-          return prev;
-        }
-        return { ...prev, account: null };
-      });
-    }
-  }, [API]);
+  const loadYoutubeAccount = useCallback(() => {
+    return loadPlatformAccount('youtube', setYoutube, ['channel_name', 'email']);
+  }, [loadPlatformAccount]);
 
-  const loadInstagramAccount = useCallback(async () => {
-    try {
-      const res = await axios.get(`${API}/auth/instagram/account`);
-      if (res.data.error) {
-        console.error('Error loading Instagram account:', res.data.error);
-        // ROOT CAUSE FIX: Don't overwrite existing account info on error
-        setInstagram(prev => {
-          if (prev.account?.username) {
-            return prev; // Keep existing account info
-          }
-          return { ...prev, account: null };
-        });
-      } else {
-        // ROOT CAUSE FIX: Don't overwrite valid account info with empty/incomplete data
-        setInstagram(prev => {
-          const newAccount = res.data.account;
-          // If new account data is empty or incomplete, preserve existing account info
-          if (!newAccount || !newAccount.username) {
-            if (prev.account?.username) {
-              return prev; // Keep existing account info
-            }
-          }
-          return { ...prev, account: newAccount || null };
-        });
-      }
-    } catch (error) {
-      console.error('Error loading Instagram account:', error.response?.data || error.message);
-      // ROOT CAUSE FIX: Don't overwrite existing account info on error
-      setInstagram(prev => {
-        if (prev.account?.username) {
-          return prev; // Keep existing account info
-        }
-        return { ...prev, account: null };
-      });
-    }
-  }, [API]);
+  const loadTiktokAccount = useCallback(() => {
+    return loadPlatformAccount('tiktok', setTiktok, ['display_name', 'username']);
+  }, [loadPlatformAccount]);
+
+  const loadInstagramAccount = useCallback(() => {
+    return loadPlatformAccount('instagram', setInstagram, ['username']);
+  }, [loadPlatformAccount]);
 
   const loadDestinations = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/destinations`);
       
-      // Preserve existing account info when updating destinations status
-      // Only clear account if actually disconnected
-      setYoutube(prev => ({ 
-        connected: res.data.youtube.connected, 
-        enabled: res.data.youtube.enabled,
-        account: res.data.youtube.connected ? prev.account : null
-      }));
-      setTiktok(prev => ({ 
-        connected: res.data.tiktok.connected, 
-        enabled: res.data.tiktok.enabled,
-        account: res.data.tiktok.connected ? prev.account : null
-      }));
-      // ROOT CAUSE FIX: Only update Instagram if not already set from OAuth callback
-      // The OAuth callback provides authoritative status, so we preserve it
-      setInstagram(prev => {
-        // If already connected (from OAuth callback), preserve that state
-        // Only update if backend says disconnected (user actually disconnected)
-        if (prev.connected && !res.data.instagram.connected) {
-          // User disconnected - update to reflect that
-          return {
-            connected: false,
-            enabled: res.data.instagram.enabled,
-            account: null
-          };
-        }
-        // Otherwise, update with backend data (but preserve account info if still connected)
-        return {
-          connected: res.data.instagram.connected,
-          enabled: res.data.instagram.enabled,
-          account: res.data.instagram.connected ? prev.account : null
-        };
-      });
+      // Unified pattern for all platforms: Update connection/enabled status, preserve account info
+      // Only clear account if explicitly disconnected
+      const updatePlatformState = (setState, platformData) => {
+        setState(prev => ({
+          connected: platformData.connected,
+          enabled: platformData.enabled,
+          account: platformData.connected ? prev.account : null
+        }));
+      };
       
-      // Only load account if connected
-      // The account loading functions now preserve existing account info, so it's safe to call them
-      if (res.data.youtube.connected) {
-        loadYoutubeAccount();
-      }
-      if (res.data.tiktok.connected) {
-        loadTiktokAccount();
-      }
-      if (res.data.instagram.connected) {
-        loadInstagramAccount();
-      }
+      updatePlatformState(setYoutube, res.data.youtube);
+      updatePlatformState(setTiktok, res.data.tiktok);
+      updatePlatformState(setInstagram, res.data.instagram);
+      
+      // Load account info for connected platforms
+      if (res.data.youtube.connected) loadYoutubeAccount();
+      if (res.data.tiktok.connected) loadTiktokAccount();
+      if (res.data.instagram.connected) loadInstagramAccount();
     } catch (error) {
       console.error('Error loading destinations:', error);
     }
@@ -553,36 +454,36 @@ function Home() {
     }
   }, [API]);
 
-  // Helper function to apply OAuth connection status from URL parameters
-  // ROOT CAUSE FIX: Uses authoritative status from OAuth completion endpoint
-  // This eliminates race conditions and works consistently for all platforms
+  // Unified OAuth callback handler for all platforms
+  // Sets connection status and loads account info immediately
   const applyOAuthStatus = useCallback((platform, setState, loadAccount) => {
     const urlParams = new URLSearchParams(window.location.search);
     const statusParam = urlParams.get('status');
     
+    // Parse status from OAuth callback
+    let connected = true;
+    let enabled = true;
+    
     if (statusParam) {
       try {
         const status = JSON.parse(decodeURIComponent(statusParam));
-        setState(prev => ({
-          connected: status.connected || true,
-          enabled: status.enabled || true,
-          account: prev.account // Preserve existing account info
-        }));
+        connected = status.connected !== false;
+        enabled = status.enabled !== false;
       } catch (e) {
         console.error(`Error parsing ${platform} status:`, e);
-        // Fallback to optimistic update
-        setState(prev => ({ ...prev, connected: true, enabled: true }));
       }
-    } else {
-      // Fallback if status not provided (backwards compatibility)
-      setState(prev => ({ ...prev, connected: true, enabled: true }));
     }
     
-    // Load destinations to get other platforms' status (current platform already set above)
+    // Set connection status optimistically
+    setState(prev => ({
+      ...prev,
+      connected,
+      enabled
+    }));
+    
+    // Load full destinations and account info
     loadDestinations();
-    setTimeout(() => {
-      loadAccount();
-    }, 1000);
+    loadAccount();
   }, [loadDestinations]);
 
   // Data loading useEffect - must be declared before conditional returns (Rules of Hooks)
@@ -728,73 +629,55 @@ function Home() {
     window.location.href = res.data.url;
   };
 
-  const disconnectYoutube = async () => {
+  // Unified disconnect function for all platforms
+  const disconnectPlatform = async (platform, setState, platformName) => {
     try {
-      await axios.post(`${API}/auth/youtube/disconnect`);
-      setYoutube({ connected: false, enabled: false, account: null });
-      setMessage('✅ Disconnected from YouTube');
+      await axios.post(`${API}/auth/${platform}/disconnect`);
+      setState({ connected: false, enabled: false, account: null });
+      setMessage(`✅ Disconnected from ${platformName}`);
     } catch (err) {
-      setMessage('❌ Error disconnecting');
-      console.error('Error disconnecting:', err);
+      setMessage(`❌ Error disconnecting from ${platformName}`);
+      console.error(`Error disconnecting ${platform}:`, err);
     }
   };
 
-  const connectTiktok = async () => {
+  const disconnectYoutube = () => disconnectPlatform('youtube', setYoutube, 'YouTube');
+  const disconnectTiktok = () => disconnectPlatform('tiktok', setTiktok, 'TikTok');
+  const disconnectInstagram = () => disconnectPlatform('instagram', setInstagram, 'Instagram');
+
+  // Unified connect function for all platforms
+  const connectPlatform = async (platform, platformName) => {
     try {
-      const res = await axios.get(`${API}/auth/tiktok`);
+      const res = await axios.get(`${API}/auth/${platform}`);
       window.location.href = res.data.url;
     } catch (err) {
-      setMessage(`❌ Error connecting to TikTok: ${err.response?.data?.detail || err.message}`);
-      console.error('Error connecting TikTok:', err);
+      setMessage(`❌ Error connecting to ${platformName}: ${err.response?.data?.detail || err.message}`);
+      console.error(`Error connecting ${platform}:`, err);
     }
   };
 
-  const disconnectTiktok = async () => {
-    try {
-      await axios.post(`${API}/auth/tiktok/disconnect`);
-      setTiktok({ connected: false, enabled: false, account: null });
-      setMessage('✅ Disconnected from TikTok');
-    } catch (err) {
-      setMessage('❌ Error disconnecting from TikTok');
-      console.error('Error disconnecting TikTok:', err);
-    }
-  };
+  const connectTiktok = () => connectPlatform('tiktok', 'TikTok');
+  const connectInstagram = () => connectPlatform('instagram', 'Instagram');
 
-  const connectInstagram = async () => {
-    try {
-      const res = await axios.get(`${API}/auth/instagram`);
-      window.location.href = res.data.url;
-    } catch (err) {
-      setMessage(`❌ Error connecting to Instagram: ${err.response?.data?.detail || err.message}`);
-      console.error('Error connecting Instagram:', err);
-    }
-  };
-
-  const disconnectInstagram = async () => {
-    try {
-      await axios.post(`${API}/auth/instagram/disconnect`);
-      setInstagram({ connected: false, enabled: false, account: null });
-      setMessage('✅ Disconnected from Instagram');
-    } catch (err) {
-      setMessage('❌ Error disconnecting from Instagram');
-      console.error('Error disconnecting Instagram:', err);
-    }
-  };
-
-  const toggleInstagram = async () => {
-    const newEnabled = !instagram.enabled;
-    setInstagram({ ...instagram, enabled: newEnabled });
+  // Unified toggle function for all platforms
+  const togglePlatform = async (platform, currentState, setState) => {
+    const newEnabled = !currentState.enabled;
+    setState({ ...currentState, enabled: newEnabled });
     
     try {
       const params = new URLSearchParams();
       params.append('enabled', newEnabled);
-      await axios.post(`${API}/destinations/instagram/toggle?${params.toString()}`);
+      await axios.post(`${API}/destinations/${platform}/toggle?${params.toString()}`);
     } catch (err) {
-      console.error('Error toggling Instagram:', err);
+      console.error(`Error toggling ${platform}:`, err);
       // Revert on error
-      setInstagram({ ...instagram, enabled: !newEnabled });
+      setState({ ...currentState, enabled: !newEnabled });
     }
   };
+
+  const toggleYoutube = () => togglePlatform('youtube', youtube, setYoutube);
+  const toggleTiktok = () => togglePlatform('tiktok', tiktok, setTiktok);
+  const toggleInstagram = () => togglePlatform('instagram', instagram, setInstagram);
 
   const addWordToWordbank = async (input) => {
     try {
@@ -1065,36 +948,6 @@ function Home() {
       setMessage('❌ Error reordering videos');
       // Revert to original order on error
       setVideos(originalVideos);
-    }
-  };
-
-  const toggleYoutube = async () => {
-    const newEnabled = !youtube.enabled;
-    setYoutube({ ...youtube, enabled: newEnabled });
-    
-    try {
-      const params = new URLSearchParams();
-      params.append('enabled', newEnabled);
-      await axios.post(`${API}/destinations/youtube/toggle?${params.toString()}`);
-    } catch (err) {
-      console.error('Error toggling YouTube:', err);
-      // Revert on error
-      setYoutube({ ...youtube, enabled: !newEnabled });
-    }
-  };
-
-  const toggleTiktok = async () => {
-    const newEnabled = !tiktok.enabled;
-    setTiktok({ ...tiktok, enabled: newEnabled });
-    
-    try {
-      const params = new URLSearchParams();
-      params.append('enabled', newEnabled);
-      await axios.post(`${API}/destinations/tiktok/toggle?${params.toString()}`);
-    } catch (err) {
-      console.error('Error toggling TikTok:', err);
-      // Revert on error
-      setTiktok({ ...tiktok, enabled: !newEnabled });
     }
   };
 
