@@ -61,6 +61,11 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(scheduler_task())
     logger.info("Scheduler task started")
     
+    # Start the cleanup task
+    logger.info("Starting cleanup task...")
+    asyncio.create_task(cleanup_task())
+    logger.info("Cleanup task started")
+    
     yield
     
     # Shutdown (if needed in the future)
@@ -105,6 +110,7 @@ logger = logging.getLogger(__name__)
 
 # Create specific loggers for different components
 upload_logger = logging.getLogger("upload")
+cleanup_logger = logging.getLogger("cleanup")
 tiktok_logger = logging.getLogger("tiktok")
 youtube_logger = logging.getLogger("youtube")
 instagram_logger = logging.getLogger("instagram")
@@ -3059,6 +3065,42 @@ async def cancel_scheduled_videos(user_id: int = Depends(require_csrf_new), db: 
     return {"ok": True, "cancelled": cancelled_count}
 
 
+@app.post("/api/admin/cleanup")
+async def manual_cleanup(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+    """Manually trigger cleanup of old and orphaned files
+    
+    This endpoint allows users to clean up their own old uploaded videos.
+    Removes video files for videos uploaded more than 24 hours ago.
+    """
+    try:
+        cleanup_logger.info(f"Manual cleanup triggered by user {user_id}")
+        
+        # Clean up user's old uploaded videos (older than 24 hours)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+        old_uploaded_videos = db.query(Video).filter(
+            Video.user_id == user_id,
+            Video.status == "uploaded",
+            Video.created_at < cutoff_time
+        ).all()
+        
+        cleaned_count = 0
+        for video in old_uploaded_videos:
+            if cleanup_video_file(video):
+                cleaned_count += 1
+        
+        cleanup_logger.info(f"Manual cleanup by user {user_id}: cleaned {cleaned_count} files")
+        
+        return {
+            "success": True,
+            "cleaned_files": cleaned_count,
+            "message": f"Cleaned up {cleaned_count} old uploaded video files"
+        }
+        
+    except Exception as e:
+        cleanup_logger.error(f"Error in manual cleanup for user {user_id}: {e}", exc_info=True)
+        raise HTTPException(500, f"Cleanup failed: {str(e)}")
+
+
 def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
     """Upload a single video to YouTube - queries database directly"""
     # Get video from database
@@ -3657,6 +3699,66 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
 DESTINATION_UPLOADERS["youtube"] = upload_video_to_youtube
 DESTINATION_UPLOADERS["tiktok"] = upload_video_to_tiktok
 DESTINATION_UPLOADERS["instagram"] = upload_video_to_instagram
+
+async def cleanup_task():
+    """Background task that cleans up old uploaded videos and orphaned files
+    
+    Runs every hour to:
+    1. Delete video files for videos uploaded more than 24 hours ago
+    2. Remove orphaned files (files on disk without database records)
+    """
+    while True:
+        try:
+            await asyncio.sleep(3600)  # Run every hour
+            
+            from models import SessionLocal, Video
+            db = SessionLocal()
+            try:
+                cleanup_logger.info("Starting cleanup task...")
+                
+                # 1. Clean up old uploaded videos (older than 24 hours)
+                cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+                old_uploaded_videos = db.query(Video).filter(
+                    Video.status == "uploaded",
+                    Video.created_at < cutoff_time
+                ).all()
+                
+                cleaned_count = 0
+                for video in old_uploaded_videos:
+                    if cleanup_video_file(video):
+                        cleaned_count += 1
+                
+                if cleaned_count > 0:
+                    cleanup_logger.info(f"Cleaned up {cleaned_count} old uploaded video files")
+                
+                # 2. Find and remove orphaned files (files without database records)
+                if UPLOAD_DIR.exists():
+                    all_files = set(UPLOAD_DIR.glob("*"))
+                    # Get all video paths from database
+                    all_video_paths = set(Path(v.path) for v in db.query(Video).all())
+                    
+                    orphaned_files = all_files - all_video_paths
+                    orphaned_count = 0
+                    for orphaned_file in orphaned_files:
+                        if orphaned_file.is_file():
+                            try:
+                                orphaned_file.unlink()
+                                orphaned_count += 1
+                                cleanup_logger.info(f"Removed orphaned file: {orphaned_file.name}")
+                            except Exception as e:
+                                cleanup_logger.error(f"Failed to remove orphaned file {orphaned_file.name}: {e}")
+                    
+                    if orphaned_count > 0:
+                        cleanup_logger.info(f"Removed {orphaned_count} orphaned files")
+                
+                cleanup_logger.info("Cleanup task completed")
+                
+            finally:
+                db.close()
+                
+        except Exception as e:
+            cleanup_logger.error(f"Error in cleanup task: {e}", exc_info=True)
+            await asyncio.sleep(3600)
 
 async def scheduler_task():
     """Background task that checks for scheduled videos and uploads them to all enabled destinations
