@@ -675,13 +675,23 @@ async def security_middleware(request: Request, call_next):
     error = None
     
     try:
-        # Skip security checks for OAuth callbacks
+        # Skip security checks for OAuth callbacks and public endpoints
         path = request.url.path
         is_callback = (
             "/api/auth/youtube/callback" in path or
             "/api/auth/tiktok/callback" in path or
             "/api/auth/instagram/callback" in path or
             "/api/auth/instagram/complete" in path
+        )
+        
+        # Public endpoints that should not require origin validation
+        is_public_endpoint = (
+            path == "/api/auth/csrf" or
+            path == "/api/auth/register" or
+            path == "/api/auth/login" or
+            path == "/api/auth/logout" or
+            path == "/api/auth/me" or
+            path == "/api/auth/google/login"
         )
         
         # Get session ID if available
@@ -711,8 +721,8 @@ async def security_middleware(request: Request, call_next):
                 log_api_access(request, session_id, 429, error)
                 return response
             
-            # Origin/Referer validation (skip for GET requests in dev)
-            if request.method != "GET" or ENVIRONMENT == "production":
+            # Origin/Referer validation (skip for GET requests in dev, skip for public endpoints)
+            if not is_public_endpoint and (request.method != "GET" or ENVIRONMENT == "production"):
                 if not validate_origin_referer(request):
                     client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
                     if not client_ip:
