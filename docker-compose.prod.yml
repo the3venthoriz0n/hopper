@@ -7,7 +7,7 @@ services:
       - POSTGRES_USER=hopper
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - hopper_prod_postgres_data:/var/lib/postgresql/data
     networks:
       - hopper_default
     logging:
@@ -22,7 +22,7 @@ services:
     container_name: hopper-prod-redis
     command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
     volumes:
-      - redis_data:/data
+      - hopper_prod_redis_data:/data
     networks:
       - hopper_default
     logging:
@@ -38,8 +38,8 @@ services:
     ports:
       - "8001:8000"
     volumes:
-      - backend_uploads:/app/uploads
-      - backend_sessions:/app/sessions
+      - hopper_prod_backend_uploads:/app/uploads
+      - hopper_prod_backend_sessions:/app/sessions
     depends_on:
       - postgres
       - redis
@@ -62,6 +62,9 @@ services:
       - DATABASE_URL=postgresql://hopper:${POSTGRES_PASSWORD}@hopper-prod-postgres:5432/hopper
       - REDIS_URL=redis://hopper-prod-redis:6379/0
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://hopper-prod-otel-collector:4317
+      - OTEL_SERVICE_NAME=hopper-backend
+      - OTEL_RESOURCE_ATTRIBUTES=service.name=hopper-backend,service.version=1.0.0,deployment.environment=${ENVIRONMENT:-production}
     logging:
       driver: "json-file"
       options:
@@ -83,7 +86,7 @@ services:
         ENVIRONMENT: prod
     container_name: hopper-prod-frontend
     ports:
-      - "3001:3000"
+      - "3010:3000"
     depends_on:
       - backend
     environment:
@@ -101,13 +104,68 @@ services:
     networks:
       - hopper_default
 
+  otel-collector:
+    build:
+      context: ./monitoring
+      dockerfile: Dockerfile.otel
+    container_name: hopper-prod-otel-collector
+    ports:
+      - "4319:4317"   # OTLP gRPC receiver
+      - "4320:4318"   # OTLP HTTP receiver
+      - "8890:8889"   # Prometheus exporter
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    depends_on:
+      - backend
+    networks:
+      - hopper_default
+
+  prometheus:
+    build:
+      context: ./monitoring
+      dockerfile: Dockerfile.prometheus.prod
+    container_name: hopper-prod-prometheus
+    volumes:
+      - hopper_prod_prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    ports:
+      - "9091:9090"
+    depends_on:
+      - otel-collector
+    networks:
+      - hopper_default
+
+  grafana:
+    build:
+      context: ./monitoring
+      dockerfile: Dockerfile.grafana.prod
+    container_name: hopper-prod-grafana
+    volumes:
+      - hopper_prod_grafana_data:/var/lib/grafana
+    ports:
+      - "3012:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+    networks:
+      - hopper_default
+
 networks:
   hopper_default:
     external: true
 
 volumes:
-  postgres_data:
-  redis_data:
-  backend_uploads:
-  backend_sessions:
+  hopper_prod_postgres_data:
+  hopper_prod_redis_data:
+  hopper_prod_backend_uploads:
+  hopper_prod_backend_sessions:
+  hopper_prod_prometheus_data:
+  hopper_prod_grafana_data:
 

@@ -32,6 +32,84 @@ from pydantic import BaseModel, EmailStr
 import db_helpers
 from encryption import encrypt, decrypt
 
+# OpenTelemetry imports
+from opentelemetry import trace, metrics
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.sdk.resources import Resource
+from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
+from fastapi.responses import Response as FastAPIResponse
+
+# ============================================================================
+# OPENTELEMETRY INITIALIZATION
+# ============================================================================
+
+# Get environment for OTEL (before ENVIRONMENT is set)
+OTEL_ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+
+# Initialize OpenTelemetry
+resource = Resource.create({
+    "service.name": os.getenv("OTEL_SERVICE_NAME", "hopper-backend"),
+    "service.version": "1.0.0",
+    "deployment.environment": OTEL_ENVIRONMENT
+})
+
+# Trace provider
+trace_provider = TracerProvider(resource=resource)
+otlp_trace_exporter = OTLPSpanExporter(
+    endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"),
+    insecure=True
+)
+trace_provider.add_span_processor(BatchSpanProcessor(otlp_trace_exporter))
+trace.set_tracer_provider(trace_provider)
+
+# Metrics provider
+otlp_metric_exporter = OTLPMetricExporter(
+    endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"),
+    insecure=True
+)
+metric_reader = PeriodicExportingMetricReader(otlp_metric_exporter, export_interval_millis=5000)
+metrics_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+metrics.set_meter_provider(metrics_provider)
+
+# Get tracer and meter
+tracer = trace.get_tracer(__name__)
+meter = metrics.get_meter(__name__)
+
+# Custom Prometheus metrics
+login_attempts_counter = Counter(
+    'hopper_login_attempts_total',
+    'Total number of login attempts',
+    ['status']  # status: success or failure
+)
+
+active_users_gauge = Gauge(
+    'hopper_active_users',
+    'Number of active users (logged in within last hour)'
+)
+
+current_uploads_gauge = Gauge(
+    'hopper_current_uploads',
+    'Number of videos currently being uploaded'
+)
+
+queued_uploads_gauge = Gauge(
+    'hopper_queued_uploads',
+    'Number of videos queued for upload (pending or scheduled)'
+)
+
+failed_uploads_gauge = Gauge(
+    'hopper_failed_uploads',
+    'Number of failed uploads'
+)
+
 # ============================================================================
 # DATABASE AND REDIS INITIALIZATION (Lifespan Events)
 # ============================================================================
@@ -56,6 +134,14 @@ async def lifespan(app: FastAPI):
         logger.error(f"Redis connection failed: {e}")
         raise
     
+    # Instrument SQLAlchemy after database initialization
+    try:
+        from models import engine
+        SQLAlchemyInstrumentor().instrument(engine=engine)
+        logger.info("SQLAlchemy instrumentation enabled")
+    except Exception as e:
+        logger.warning(f"Failed to instrument SQLAlchemy: {e}")
+    
     # Start the scheduler task
     logger.info("Starting scheduler task...")
     asyncio.create_task(scheduler_task())
@@ -66,12 +152,24 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(cleanup_task())
     logger.info("Cleanup task started")
     
+    # Start the metrics update task
+    logger.info("Starting metrics update task...")
+    asyncio.create_task(update_metrics_task())
+    logger.info("Metrics update task started")
+    
     yield
     
     # Shutdown (if needed in the future)
     logger.info("Shutting down...")
 
 app = FastAPI(lifespan=lifespan)
+
+# Instrument FastAPI with OpenTelemetry
+FastAPIInstrumentor.instrument_app(app)
+
+# Instrument SQLAlchemy (will be done after db initialization)
+# Instrument HTTPX
+HTTPXClientInstrumentor().instrument()
 
 # ============================================================================
 # REQUEST/RESPONSE MODELS
@@ -900,6 +998,8 @@ def login(request_data: LoginRequest, request: Request, response: Response):
         # Authenticate user
         user = authenticate_user(request_data.email, request_data.password)
         if not user:
+            # Track failed login attempt
+            login_attempts_counter.labels(status="failure").inc()
             raise HTTPException(401, "Invalid email or password")
         
         # Create session
@@ -908,6 +1008,9 @@ def login(request_data: LoginRequest, request: Request, response: Response):
         
         # Set session cookie with proper domain handling
         set_auth_cookie(response, session_id, request)
+        
+        # Track successful login attempt
+        login_attempts_counter.labels(status="success").inc()
         
         logger.info(f"User logged in: {user.email} (ID: {user.id})")
         
@@ -918,9 +1021,14 @@ def login(request_data: LoginRequest, request: Request, response: Response):
                 "created_at": user.created_at.isoformat()
             }
         }
-    except HTTPException:
+    except HTTPException as e:
+        # Track failed login attempt if not already tracked
+        if e.status_code == 401:
+            login_attempts_counter.labels(status="failure").inc()
         raise
     except Exception as e:
+        # Track failed login attempt
+        login_attempts_counter.labels(status="failure").inc()
         logger.error(f"Login error: {e}", exc_info=True)
         raise HTTPException(500, "Login failed")
 
@@ -1062,6 +1170,12 @@ def get_current_user(request: Request):
         logger.error(f"Error in /api/auth/me: {e}", exc_info=True)
         # Return None user instead of raising error to prevent 500
         return {"user": None}
+
+
+@app.get("/metrics")
+def metrics_endpoint():
+    """Prometheus metrics endpoint"""
+    return FastAPIResponse(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get("/api/auth/csrf")
@@ -3787,6 +3901,46 @@ async def cleanup_task():
         except Exception as e:
             cleanup_logger.error(f"Error in cleanup task: {e}", exc_info=True)
             await asyncio.sleep(3600)
+
+async def update_metrics_task():
+    """Background task that updates Prometheus metrics periodically"""
+    while True:
+        try:
+            await asyncio.sleep(30)  # Update every 30 seconds
+            
+            from models import SessionLocal, User, Video
+            db = SessionLocal()
+            try:
+                # Active users: users with activity in the last hour (sessions in Redis)
+                # For simplicity, we'll count users with videos in the last hour
+                # In production, you might want to track actual session activity
+                one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+                active_users = db.query(User).join(Video).filter(
+                    Video.created_at >= one_hour_ago
+                ).distinct().count()
+                active_users_gauge.set(active_users)
+                
+                # Current uploads: videos with status "uploading"
+                current_uploads = db.query(Video).filter(Video.status == "uploading").count()
+                current_uploads_gauge.set(current_uploads)
+                
+                # Queued uploads: videos with status "pending" or "scheduled"
+                queued_uploads = db.query(Video).filter(
+                    Video.status.in_(["pending", "scheduled"])
+                ).count()
+                queued_uploads_gauge.set(queued_uploads)
+                
+                # Failed uploads: videos with status "failed"
+                failed_uploads = db.query(Video).filter(Video.status == "failed").count()
+                failed_uploads_gauge.set(failed_uploads)
+                
+            except Exception as e:
+                logger.error(f"Error updating metrics: {e}", exc_info=True)
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"Error in metrics update task: {e}", exc_info=True)
+            await asyncio.sleep(60)  # Wait longer on error
 
 async def scheduler_task():
     """Background task that checks for scheduled videos and uploads them to all enabled destinations
