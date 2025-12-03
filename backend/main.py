@@ -3721,10 +3721,16 @@ async def cleanup_task():
                 cleanup_logger.info("Starting cleanup task...")
                 
                 # 1. Clean up old uploaded videos (older than 24 hours)
+                # ROOT CAUSE FIX: Only clean up videos that:
+                # - Have status "uploaded" (never touch pending, scheduled, uploading, or failed)
+                # - Were never scheduled (scheduled_time is None) - protects scheduled videos even after upload
+                # - Are older than 24 hours (based on created_at)
+                # This ensures scheduled videos are NEVER cleaned before or after upload
                 cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
                 old_uploaded_videos = db.query(Video).filter(
-                    Video.status == "uploaded",
-                    Video.created_at < cutoff_time
+                    Video.status == "uploaded",  # Only uploaded videos
+                    Video.scheduled_time.is_(None),  # Never delete files from videos that were scheduled
+                    Video.created_at < cutoff_time  # Only old videos
                 ).all()
                 
                 cleaned_count = 0
@@ -3736,14 +3742,28 @@ async def cleanup_task():
                     cleanup_logger.info(f"Cleaned up {cleaned_count} old uploaded video files")
                 
                 # 2. Find and remove orphaned files (files without database records)
+                # IMPORTANT: Exclude files that belong to scheduled videos to prevent deletion before upload
                 if UPLOAD_DIR.exists():
                     all_files = set(UPLOAD_DIR.glob("*"))
-                    # Get all video paths from database
+                    # Get all video paths from database - include ALL videos (scheduled, pending, etc.)
+                    # This ensures files belonging to scheduled videos are never considered orphaned
                     all_video_paths = set(Path(v.path) for v in db.query(Video).all())
+                    
+                    # Also explicitly get paths of scheduled videos as extra protection
+                    scheduled_video_paths = set(
+                        Path(v.path) for v in db.query(Video).filter(
+                            Video.status == "scheduled"
+                        ).all()
+                    )
                     
                     orphaned_files = all_files - all_video_paths
                     orphaned_count = 0
                     for orphaned_file in orphaned_files:
+                        # Extra safety: double-check this file doesn't belong to a scheduled video
+                        if orphaned_file in scheduled_video_paths:
+                            cleanup_logger.warning(f"Skipping file that belongs to scheduled video: {orphaned_file.name}")
+                            continue
+                            
                         if orphaned_file.is_file():
                             try:
                                 orphaned_file.unlink()
