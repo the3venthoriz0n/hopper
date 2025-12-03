@@ -3986,8 +3986,15 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
     
     if schedule_mode == 'spaced':
         # Calculate interval in minutes
-        value = global_settings.get("schedule_interval_value", 60)
-        unit = global_settings.get("schedule_interval_unit", "minutes")
+        # Ensure value is an integer (may come from DB as string or None)
+        value_raw = global_settings.get("schedule_interval_value")
+        if value_raw is None or value_raw == "":
+            value = 1  # Default to 1 hour (matching db_helpers default)
+        else:
+            value = int(value_raw)
+        unit = global_settings.get("schedule_interval_unit", "hours")
+        
+        upload_logger.info(f"Scheduling with interval: {value} {unit} (user {user_id})")
         
         if unit == 'minutes':
             interval_minutes = value
@@ -3997,6 +4004,8 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
             interval_minutes = value * 1440
         else:
             interval_minutes = 60  # default to 1 hour
+        
+        upload_logger.info(f"Calculated interval: {interval_minutes} minutes ({interval_minutes / 60:.1f} hours)")
         
         # Set scheduled time for each video (use timezone-aware datetime)
         current_time = datetime.now(timezone.utc)
