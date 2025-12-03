@@ -59,8 +59,8 @@ services:
       - TIKTOK_CLIENT_SECRET=${TIKTOK_CLIENT_SECRET}
       - FACEBOOK_APP_ID=${FACEBOOK_APP_ID}
       - FACEBOOK_APP_SECRET=${FACEBOOK_APP_SECRET}
-      - DATABASE_URL=postgresql://hopper:${POSTGRES_PASSWORD}@postgres:5432/hopper
-      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://hopper:${POSTGRES_PASSWORD}@hopper-prod-postgres:5432/hopper
+      - REDIS_URL=redis://hopper-prod-redis:6379/0
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
     logging:
       driver: "json-file"

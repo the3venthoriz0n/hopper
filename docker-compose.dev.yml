@@ -7,7 +7,7 @@ services:
       - POSTGRES_USER=hopper
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-hopper_dev_password}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - hopper_dev_postgres_data:/var/lib/postgresql/data
     ports:
       - "5433:5432"  # Map host 5433 to container 5432 to avoid conflict
     networks:
@@ -62,8 +62,8 @@ services:
       - TIKTOK_CLIENT_SECRET=${TIKTOK_CLIENT_SECRET}
       - FACEBOOK_APP_ID=${FACEBOOK_APP_ID}
       - FACEBOOK_APP_SECRET=${FACEBOOK_APP_SECRET}
-      - DATABASE_URL=postgresql://hopper:${POSTGRES_PASSWORD:-hopper_dev_password}@postgres:5432/hopper
-      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://hopper:${POSTGRES_PASSWORD:-hopper_dev_password}@hopper-dev-postgres:5432/hopper
+      - REDIS_URL=redis://hopper-dev-redis:6379/0
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
     logging:
       driver: "json-file"
@@ -113,7 +113,7 @@ networks:
     external: true
 
 volumes:
-  postgres_data:
+  hopper_dev_postgres_data:
   redis_data:
   backend_uploads:
   backend_sessions:

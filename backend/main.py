@@ -1122,7 +1122,8 @@ def auth_google_login(request: Request):
     url, _ = flow.authorization_url(access_type='offline', state=state, prompt='select_account')
     
     # Store state in Redis for verification (5 minutes expiry)
-    redis_client.redis_client.setex(f"google_login_state:{state}", 300, "pending")
+    # Prefix with environment to prevent collisions between dev/prod
+    redis_client.redis_client.setex(f"{ENVIRONMENT}:google_login_state:{state}", 300, "pending")
     
     return {"url": url}
 
@@ -1131,7 +1132,8 @@ def auth_google_login(request: Request):
 def auth_google_login_callback(code: str, state: str, request: Request, response: Response):
     """Google OAuth login callback - creates or logs in user"""
     # Verify state to prevent CSRF
-    state_key = f"google_login_state:{state}"
+    # Prefix with environment to prevent collisions between dev/prod
+    state_key = f"{ENVIRONMENT}:google_login_state:{state}"
     state_value = redis_client.redis_client.get(state_key)
     if not state_value:
         # Redirect to frontend with error instead of showing HTML
