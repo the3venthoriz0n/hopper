@@ -44,7 +44,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.sdk.resources import Resource
-from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST, REGISTRY
 from fastapi.responses import Response as FastAPIResponse
 
 # ============================================================================
@@ -83,32 +83,47 @@ metrics.set_meter_provider(metrics_provider)
 tracer = trace.get_tracer(__name__)
 meter = metrics.get_meter(__name__)
 
-# Custom Prometheus metrics
-login_attempts_counter = Counter(
-    'hopper_login_attempts_total',
-    'Total number of login attempts',
-    ['status']  # status: success or failure
-)
+# Custom Prometheus metrics - use try/except to handle duplicate registration on module reload
+try:
+    login_attempts_counter = Counter(
+        'hopper_login_attempts_total',
+        'Total number of login attempts',
+        ['status']  # status: success or failure
+    )
+except ValueError:
+    login_attempts_counter = REGISTRY._names_to_collectors.get('hopper_login_attempts_total')
 
-active_users_gauge = Gauge(
-    'hopper_active_users',
-    'Number of active users (logged in within last hour)'
-)
+try:
+    active_users_gauge = Gauge(
+        'hopper_active_users',
+        'Number of active users (logged in within last hour)'
+    )
+except ValueError:
+    active_users_gauge = REGISTRY._names_to_collectors.get('hopper_active_users')
 
-current_uploads_gauge = Gauge(
-    'hopper_current_uploads',
-    'Number of videos currently being uploaded'
-)
+try:
+    current_uploads_gauge = Gauge(
+        'hopper_current_uploads',
+        'Number of videos currently being uploaded'
+    )
+except ValueError:
+    current_uploads_gauge = REGISTRY._names_to_collectors.get('hopper_current_uploads')
 
-queued_uploads_gauge = Gauge(
-    'hopper_queued_uploads',
-    'Number of videos queued for upload (pending or scheduled)'
-)
+try:
+    queued_uploads_gauge = Gauge(
+        'hopper_queued_uploads',
+        'Number of videos queued for upload (pending or scheduled)'
+    )
+except ValueError:
+    queued_uploads_gauge = REGISTRY._names_to_collectors.get('hopper_queued_uploads')
 
-failed_uploads_gauge = Gauge(
-    'hopper_failed_uploads',
-    'Number of failed uploads'
-)
+try:
+    failed_uploads_gauge = Gauge(
+        'hopper_failed_uploads',
+        'Number of failed uploads'
+    )
+except ValueError:
+    failed_uploads_gauge = REGISTRY._names_to_collectors.get('hopper_failed_uploads')
 
 # ============================================================================
 # DATABASE AND REDIS INITIALIZATION (Lifespan Events)
