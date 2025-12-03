@@ -43,7 +43,7 @@ help:
 sync:
 	@bash sync-rsync.sh
 
-test: sync
+test:
 	@echo "🧪 Building backend image (to ensure pytest is installed)..."
 	@$(COMPOSE) build backend
 	@echo "🧪 Running unit tests..."
