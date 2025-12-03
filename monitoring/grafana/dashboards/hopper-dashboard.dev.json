@@ -1,8 +1,8 @@
 {
   "id": null,
-  "uid": "hopper-monitoring",
-  "title": "Hopper Monitoring Dashboard",
-  "tags": ["hopper", "monitoring"],
+  "uid": "hopper-monitoring-dev",
+  "title": "Hopper Monitoring Dashboard (Dev)",
+  "tags": ["hopper", "monitoring", "dev"],
   "timezone": "browser",
   "schemaVersion": 16,
   "version": 0,
@@ -84,10 +84,35 @@
       }
     },
     {
+      "id": 17,
+      "title": "Scheduled Uploads",
+      "type": "stat",
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0},
+      "targets": [
+        {
+          "expr": "hopper_scheduled_uploads",
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": null, "color": "purple"}
+            ]
+          },
+          "unit": "short"
+        }
+      }
+    },
+    {
       "id": 4,
       "title": "Failed Uploads",
       "type": "stat",
-      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0},
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 8},
       "targets": [
         {
           "expr": "hopper_failed_uploads",
@@ -112,7 +137,7 @@
       "id": 5,
       "title": "Login Attempts Rate",
       "type": "stat",
-      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 8},
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 8},
       "targets": [
         {
           "expr": "sum(rate(hopper_login_attempts_total[5m]))",
@@ -137,7 +162,7 @@
       "id": 6,
       "title": "Login Success vs Failure",
       "type": "piechart",
-      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 8},
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 8},
       "targets": [
         {
           "expr": "sum by (status) (rate(hopper_login_attempts_total[5m]))",
@@ -178,8 +203,14 @@
           "datasource": {"type": "prometheus", "uid": "Prometheus"}
         },
         {
-          "expr": "hopper_failed_uploads",
+          "expr": "hopper_scheduled_uploads",
           "refId": "C",
+          "legendFormat": "Scheduled Uploads",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        },
+        {
+          "expr": "hopper_failed_uploads",
+          "refId": "D",
           "legendFormat": "Failed Uploads",
           "datasource": {"type": "prometheus", "uid": "Prometheus"}
         }
@@ -319,29 +350,6 @@
       }
     },
     {
-      "id": 16,
-      "title": "All Container Logs (Docker)",
-      "type": "logs",
-      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 58},
-      "targets": [
-        {
-          "expr": '{job="docker", environment="development"}',
-          "refId": "A",
-          "datasource": {"type": "loki", "uid": "loki"}
-        }
-      ],
-      "options": {
-        "dedupStrategy": "none",
-        "enableLogDetails": true,
-        "prettifyLogMessage": false,
-        "showCommonLabels": false,
-        "showLabels": true,
-        "showTime": true,
-        "sortOrder": "Descending",
-        "wrapLogMessage": false
-      }
-    },
-    {
       "id": 13,
       "title": "Login Attempts by Method and Status",
       "type": "table",
@@ -459,6 +467,29 @@
           },
           "unit": "short"
         }
+      }
+    },
+    {
+      "id": 16,
+      "title": "All Container Logs (Docker)",
+      "type": "logs",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 58},
+      "targets": [
+        {
+          "expr": '{job="docker", environment="development"}',
+          "refId": "A",
+          "datasource": {"type": "loki", "uid": "loki"}
+        }
+      ],
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
       }
     }
   ],

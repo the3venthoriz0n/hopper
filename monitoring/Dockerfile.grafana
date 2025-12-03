@@ -1,4 +1,7 @@
 FROM grafana/grafana:latest
 
-COPY grafana/provisioning /etc/grafana/provisioning
-COPY grafana/dashboards /etc/grafana/provisioning/dashboards
+ARG ENV=dev
+COPY grafana/provisioning/datasources/prometheus.${ENV}.yml /etc/grafana/provisioning/datasources/prometheus.yml
+COPY grafana/provisioning/datasources/loki.${ENV}.yml /etc/grafana/provisioning/datasources/loki.yml
+COPY grafana/provisioning/dashboards /etc/grafana/provisioning/dashboards
+COPY grafana/dashboards/hopper-dashboard.${ENV}.json /etc/grafana/provisioning/dashboards/hopper-dashboard.json

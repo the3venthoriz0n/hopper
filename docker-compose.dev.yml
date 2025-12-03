@@ -131,7 +131,9 @@ services:
   prometheus:
     build:
       context: ./monitoring
-      dockerfile: Dockerfile.prometheus.dev
+      dockerfile: Dockerfile.prometheus
+      args:
+        ENV: dev
     container_name: hopper-dev-prometheus
     volumes:
       - hopper_dev_prometheus_data:/prometheus
@@ -150,7 +152,7 @@ services:
   loki:
     build:
       context: ./monitoring
-      dockerfile: Dockerfile.loki.dev
+      dockerfile: Dockerfile.loki
     container_name: hopper-dev-loki
     ports:
       - "3100:3100"
@@ -163,7 +165,9 @@ services:
   promtail:
     build:
       context: ./monitoring
-      dockerfile: Dockerfile.promtail.dev
+      dockerfile: Dockerfile.promtail
+      args:
+        ENV: dev
     container_name: hopper-dev-promtail
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -177,7 +181,9 @@ services:
   grafana:
     build:
       context: ./monitoring
-      dockerfile: Dockerfile.grafana.dev
+      dockerfile: Dockerfile.grafana
+      args:
+        ENV: dev
     container_name: hopper-dev-grafana
     volumes:
       - hopper_dev_grafana_data:/var/lib/grafana

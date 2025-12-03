@@ -1,0 +1,501 @@
+{
+  "id": null,
+  "uid": "hopper-monitoring-prod",
+  "title": "Hopper Monitoring Dashboard (Prod)",
+  "tags": ["hopper", "monitoring", "prod"],
+  "timezone": "browser",
+  "schemaVersion": 16,
+  "version": 0,
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Active Users",
+      "type": "stat",
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0},
+      "targets": [
+        {
+          "expr": "hopper_active_users",
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": null, "color": "green"}
+            ]
+          },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Current Uploads",
+      "type": "stat",
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0},
+      "targets": [
+        {
+          "expr": "hopper_current_uploads",
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": null, "color": "blue"}
+            ]
+          },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Queued Uploads",
+      "type": "stat",
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0},
+      "targets": [
+        {
+          "expr": "hopper_queued_uploads",
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": null, "color": "yellow"}
+            ]
+          },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 17,
+      "title": "Scheduled Uploads",
+      "type": "stat",
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0},
+      "targets": [
+        {
+          "expr": "hopper_scheduled_uploads",
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": null, "color": "purple"}
+            ]
+          },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Failed Uploads",
+      "type": "stat",
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 8},
+      "targets": [
+        {
+          "expr": "hopper_failed_uploads",
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": null, "color": "red"}
+            ]
+          },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Login Attempts Rate",
+      "type": "stat",
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 8},
+      "targets": [
+        {
+          "expr": "sum(rate(hopper_login_attempts_total[5m]))",
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": null, "color": "green"}
+            ]
+          },
+          "unit": "reqps"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Login Success vs Failure",
+      "type": "piechart",
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 8},
+      "targets": [
+        {
+          "expr": "sum by (status) (rate(hopper_login_attempts_total[5m]))",
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Login Methods",
+      "type": "piechart",
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 8},
+      "targets": [
+        {
+          "expr": "sum by (method) (rate(hopper_login_attempts_total[5m]))",
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Upload Status Over Time",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "targets": [
+        {
+          "expr": "hopper_current_uploads",
+          "refId": "A",
+          "legendFormat": "Current Uploads",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        },
+        {
+          "expr": "hopper_queued_uploads",
+          "refId": "B",
+          "legendFormat": "Queued Uploads",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        },
+        {
+          "expr": "hopper_scheduled_uploads",
+          "refId": "C",
+          "legendFormat": "Scheduled Uploads",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        },
+        {
+          "expr": "hopper_failed_uploads",
+          "refId": "D",
+          "legendFormat": "Failed Uploads",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Login Attempts Over Time",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "targets": [
+        {
+          "expr": "sum(rate(hopper_login_attempts_total{status=\"success\"}[5m]))",
+          "refId": "A",
+          "legendFormat": "Successful Logins",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        },
+        {
+          "expr": "sum(rate(hopper_login_attempts_total{status=\"failure\"}[5m]))",
+          "refId": "B",
+          "legendFormat": "Failed Logins",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "title": "Login Methods Over Time",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "targets": [
+        {
+          "expr": "sum(rate(hopper_login_attempts_total{method=\"email\"}[5m]))",
+          "refId": "A",
+          "legendFormat": "Email/Password",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        },
+        {
+          "expr": "sum(rate(hopper_login_attempts_total{method=\"google\"}[5m]))",
+          "refId": "B",
+          "legendFormat": "Google OAuth",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Users with Active Uploads",
+      "type": "table",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 24},
+      "targets": [
+        {
+          "expr": "hopper_user_uploads",
+          "refId": "A",
+          "format": "table",
+          "instant": true,
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "user_email"},
+            "properties": [
+              {"id": "custom.width", "value": 200}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "status"},
+            "properties": [
+              {"id": "custom.width", "value": 120},
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {"value": null, "color": "green"},
+                    {"value": 0, "color": "yellow"},
+                    {"value": 0, "color": "red"}
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Value"},
+            "properties": [
+              {"id": "custom.width", "value": 80},
+              {"id": "custom.align", "value": "center"}
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Value"
+          }
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "title": "Backend Logs (Docker - same as make logs)",
+      "type": "logs",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 34},
+      "targets": [
+        {
+          "expr": '{job="docker", container=~".*hopper-prod-backend.*"}',
+          "refId": "A",
+          "datasource": {"type": "loki", "uid": "loki"}
+        }
+      ],
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      }
+    },
+    {
+      "id": 13,
+      "title": "Login Attempts by Method and Status",
+      "type": "table",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 46},
+      "targets": [
+        {
+          "expr": "sum by (method, status) (rate(hopper_login_attempts_total[5m]))",
+          "refId": "A",
+          "format": "table",
+          "instant": true,
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          },
+          "unit": "reqps"
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "method"},
+            "properties": [
+              {"id": "custom.width", "value": 120}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "status"},
+            "properties": [
+              {"id": "custom.width", "value": 100},
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {"value": null, "color": "green"},
+                    {"value": 0, "color": "red"}
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "Value"},
+            "properties": [
+              {"id": "custom.width", "value": 100},
+              {"id": "custom.align", "value": "center"}
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Value"
+          }
+        ]
+      }
+    },
+    {
+      "id": 14,
+      "title": "Total Login Attempts (Last Hour)",
+      "type": "stat",
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 46},
+      "targets": [
+        {
+          "expr": "sum(increase(hopper_login_attempts_total[1h]))",
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": null, "color": "blue"}
+            ]
+          },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "title": "Failed Login Attempts (Last Hour)",
+      "type": "stat",
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 46},
+      "targets": [
+        {
+          "expr": "sum(increase(hopper_login_attempts_total{status=\"failure\"}[1h]))",
+          "refId": "A",
+          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": null, "color": "red"}
+            ]
+          },
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "id": 16,
+      "title": "All Container Logs (Docker)",
+      "type": "logs",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 58},
+      "targets": [
+        {
+          "expr": '{job="docker", environment="production"}',
+          "refId": "A",
+          "datasource": {"type": "loki", "uid": "loki"}
+        }
+      ],
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": true,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      }
+    }
+  ],
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "editable": true
+}

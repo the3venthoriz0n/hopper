@@ -113,10 +113,18 @@ except ValueError:
 try:
     queued_uploads_gauge = Gauge(
         'hopper_queued_uploads',
-        'Number of videos queued for upload (pending or scheduled)'
+        'Number of videos queued for upload (pending)'
     )
 except ValueError:
     queued_uploads_gauge = REGISTRY._names_to_collectors.get('hopper_queued_uploads')
+
+try:
+    scheduled_uploads_gauge = Gauge(
+        'hopper_scheduled_uploads',
+        'Number of videos scheduled for upload'
+    )
+except ValueError:
+    scheduled_uploads_gauge = REGISTRY._names_to_collectors.get('hopper_scheduled_uploads')
 
 try:
     failed_uploads_gauge = Gauge(
@@ -4022,11 +4030,13 @@ async def update_metrics_task():
                 current_uploads = db.query(Video).filter(Video.status == "uploading").count()
                 current_uploads_gauge.set(current_uploads)
                 
-                # Queued uploads: videos with status "pending" or "scheduled"
-                queued_uploads = db.query(Video).filter(
-                    Video.status.in_(["pending", "scheduled"])
-                ).count()
+                # Queued uploads: videos with status "pending"
+                queued_uploads = db.query(Video).filter(Video.status == "pending").count()
                 queued_uploads_gauge.set(queued_uploads)
+                
+                # Scheduled uploads: videos with status "scheduled"
+                scheduled_uploads = db.query(Video).filter(Video.status == "scheduled").count()
+                scheduled_uploads_gauge.set(scheduled_uploads)
                 
                 # Failed uploads: videos with status "failed"
                 failed_uploads = db.query(Video).filter(Video.status == "failed").count()

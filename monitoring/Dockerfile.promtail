@@ -1,0 +1,4 @@
+FROM grafana/promtail:latest
+
+ARG ENV=dev
+COPY promtail/config.${ENV}.yml /etc/promtail/config.yml
