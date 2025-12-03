@@ -3817,6 +3817,10 @@ async def scheduler_task():
                                             else:
                                                 uploader_func(user_id, video_id)
                                             
+                                            # Expire the video object from this session to force fresh query
+                                            # The upload function uses its own session, so we need to refresh
+                                            db.expire_all()
+                                            
                                             # Check if upload succeeded by querying updated video - use shared session
                                             # Note: We could optimize this further by caching the video object, but for now
                                             # we'll query to ensure we have the latest state
