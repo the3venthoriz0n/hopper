@@ -684,6 +684,7 @@ async def security_middleware(request: Request, call_next):
         # Skip security checks for OAuth callbacks and public endpoints
         path = request.url.path
         is_callback = (
+            "/api/auth/google/login/callback" in path or
             "/api/auth/youtube/callback" in path or
             "/api/auth/tiktok/callback" in path or
             "/api/auth/instagram/callback" in path or
@@ -728,6 +729,7 @@ async def security_middleware(request: Request, call_next):
                 return response
             
             # Origin/Referer validation (skip for GET requests in dev, skip for public endpoints)
+            # Note: OAuth callbacks are already excluded by the outer if not is_callback block
             if not is_public_endpoint and (request.method != "GET" or ENVIRONMENT == "production"):
                 if not validate_origin_referer(request):
                     client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
