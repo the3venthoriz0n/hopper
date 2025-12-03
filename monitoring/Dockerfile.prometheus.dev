@@ -1,0 +1,3 @@
+FROM prom/prometheus:latest
+
+COPY prometheus.dev.yml /etc/prometheus/prometheus.yml
