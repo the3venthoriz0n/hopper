@@ -82,6 +82,7 @@ function Home() {
     schedule_interval_value: 1,
     schedule_interval_unit: 'hours',
     schedule_start_time: '',
+    upload_first_immediately: true,
     allow_duplicates: false
   });
   const [youtubeSettings, setYoutubeSettings] = useState({ 
@@ -1280,8 +1281,29 @@ function Home() {
                       type="datetime-local"
                       value={globalSettings.schedule_start_time}
                       onChange={(e) => updateGlobalSettings('schedule_start_time', e.target.value)}
-                      className="input-text"
+                      className="input"
                     />
+                  </div>
+                )}
+
+                {globalSettings.schedule_mode === 'spaced' && (
+                  <div className="setting-group">
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={globalSettings.upload_first_immediately !== false}
+                        onChange={(e) => updateGlobalSettings('upload_first_immediately', e.target.checked)}
+                        style={{ marginRight: '8px' }}
+                      />
+                      Upload first video immediately
+                      <span className="tooltip-wrapper">
+                        <span className="tooltip-icon">i</span>
+                        <span className="tooltip-text">
+                          When checked, the first video uploads immediately and subsequent videos are spaced by the interval.
+                          When unchecked, all videos (including the first) are spaced evenly by the interval.
+                        </span>
+                      </span>
+                    </label>
                   </div>
                 )}
               </>

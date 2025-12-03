@@ -2533,7 +2533,8 @@ def update_global_settings(
     schedule_interval_value: int = None,
     schedule_interval_unit: str = None,
     schedule_start_time: str = None,
-    allow_duplicates: bool = None
+    allow_duplicates: bool = None,
+    upload_first_immediately: bool = None
 ):
     """Update global settings"""
     if title_template is not None:
@@ -2567,6 +2568,9 @@ def update_global_settings(
     
     if allow_duplicates is not None:
         db_helpers.set_user_setting(user_id, "global", "allow_duplicates", allow_duplicates, db=db)
+    
+    if upload_first_immediately is not None:
+        db_helpers.set_user_setting(user_id, "global", "upload_first_immediately", upload_first_immediately, db=db)
     
     return db_helpers.get_user_settings(user_id, "global", db=db)
 
@@ -4027,11 +4031,21 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
         
         upload_logger.info(f"Calculated interval: {interval_minutes} minutes ({interval_minutes / 60:.1f} hours)")
         
+        # Check if first video should upload immediately or be offset
+        upload_first_immediately = global_settings.get("upload_first_immediately", True)
+        
         # Set scheduled time for each video (use timezone-aware datetime)
         current_time = datetime.now(timezone.utc)
         for i, video in enumerate(pending_videos):
             video_id = video.id
-            scheduled_time = current_time + timedelta(minutes=interval_minutes * i)
+            # If upload_first_immediately is True, first video (i=0) uploads immediately
+            # If False, first video is also offset by the interval
+            if upload_first_immediately:
+                offset_multiplier = i  # First video: 0, second: 1, third: 2, etc.
+            else:
+                offset_multiplier = i + 1  # First video: 1, second: 2, third: 3, etc.
+            
+            scheduled_time = current_time + timedelta(minutes=interval_minutes * offset_multiplier)
             db_helpers.update_video(video_id, user_id, scheduled_time=scheduled_time.isoformat(), status="scheduled")
         
         return {

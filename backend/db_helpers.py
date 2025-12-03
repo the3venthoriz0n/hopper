@@ -59,7 +59,8 @@ def get_user_settings(user_id: int, category: str = "global", db: Session = None
                 "schedule_interval_value": 1,
                 "schedule_interval_unit": "hours",
                 "schedule_start_time": "",
-                "allow_duplicates": False
+                "allow_duplicates": False,
+                "upload_first_immediately": True
             }
             result = {**defaults, **settings_dict}
         elif category == "youtube":
