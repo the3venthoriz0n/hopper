@@ -1,5 +1,6 @@
 FROM grafana/grafana:latest
 
 COPY grafana/provisioning/datasources/prometheus.prod.yml /etc/grafana/provisioning/datasources/prometheus.yml
+COPY grafana/provisioning/datasources/loki.prod.yml /etc/grafana/provisioning/datasources/loki.yml
 COPY grafana/provisioning/dashboards /etc/grafana/provisioning/dashboards
 COPY grafana/dashboards /etc/grafana/provisioning/dashboards

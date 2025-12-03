@@ -1,0 +1,3 @@
+FROM grafana/promtail:latest
+
+COPY promtail/config.prod.yml /etc/promtail/config.yml

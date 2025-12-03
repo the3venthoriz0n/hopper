@@ -26,6 +26,7 @@ from googleapiclient.http import MediaFileUpload
 # Database and auth imports
 from models import init_db, get_db, User, Video, Setting, OAuthToken
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from auth import hash_password, verify_password, create_user, authenticate_user, get_user_by_id, get_or_create_oauth_user, set_user_password
 import redis_client
 from pydantic import BaseModel, EmailStr
@@ -88,7 +89,7 @@ try:
     login_attempts_counter = Counter(
         'hopper_login_attempts_total',
         'Total number of login attempts',
-        ['status']  # status: success or failure
+        ['status', 'method']  # status: success or failure, method: email or google
     )
 except ValueError:
     login_attempts_counter = REGISTRY._names_to_collectors.get('hopper_login_attempts_total')
@@ -124,6 +125,15 @@ try:
     )
 except ValueError:
     failed_uploads_gauge = REGISTRY._names_to_collectors.get('hopper_failed_uploads')
+
+try:
+    user_uploads_gauge = Gauge(
+        'hopper_user_uploads',
+        'Number of uploads per user by status',
+        ['user_id', 'user_email', 'status']
+    )
+except ValueError:
+    user_uploads_gauge = REGISTRY._names_to_collectors.get('hopper_user_uploads')
 
 # ============================================================================
 # DATABASE AND REDIS INITIALIZATION (Lifespan Events)
@@ -214,12 +224,71 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 
 # Configure logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger(__name__)
+
+# Set up OpenTelemetry logging handler if OTEL endpoint is configured
+otel_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+if otel_endpoint:
+    try:
+        from opentelemetry._logs import set_logger_provider
+        from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+        from opentelemetry.sdk.resources import Resource as LogResource
+        
+        # Initialize the logger provider with resource attributes
+        log_resource = LogResource.create({
+            "service.name": os.getenv("OTEL_SERVICE_NAME", "hopper-backend"),
+            "deployment.environment": OTEL_ENVIRONMENT
+        })
+        logger_provider = LoggerProvider(resource=log_resource)
+        set_logger_provider(logger_provider)
+        
+        # Set up the OTLP log exporter (use same endpoint as traces/metrics)
+        log_exporter = OTLPLogExporter(
+            endpoint=otel_endpoint,
+            insecure=True
+        )
+        logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+        
+        # Create a logging handler and attach it to the root logger
+        handler = LoggingHandler(level=logging.NOTSET, logger_provider=logger_provider)
+        logging.getLogger().addHandler(handler)
+        
+        # Also configure basic logging format for console output
+        logging.basicConfig(
+            level=getattr(logging, LOG_LEVEL, logging.INFO),
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S',
+            handlers=[logging.StreamHandler(), handler]  # Both console and OTEL
+        )
+        logger = logging.getLogger(__name__)
+        logger.info(f"OpenTelemetry logging enabled, sending logs to {otel_endpoint}")
+    except ImportError as e:
+        # Fallback to standard logging if OTEL logging not available
+        logging.basicConfig(
+            level=getattr(logging, LOG_LEVEL, logging.INFO),
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        logger = logging.getLogger(__name__)
+        logger.warning(f"OpenTelemetry logging not available ({e}), using standard logging")
+    except Exception as e:
+        # Fallback on any error
+        logging.basicConfig(
+            level=getattr(logging, LOG_LEVEL, logging.INFO),
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to setup OpenTelemetry logging ({e}), using standard logging")
+else:
+    # Standard logging configuration
+    logging.basicConfig(
+        level=getattr(logging, LOG_LEVEL, logging.INFO),
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    logger = logging.getLogger(__name__)
 
 # Create specific loggers for different components
 upload_logger = logging.getLogger("upload")
@@ -1014,7 +1083,7 @@ def login(request_data: LoginRequest, request: Request, response: Response):
         user = authenticate_user(request_data.email, request_data.password)
         if not user:
             # Track failed login attempt
-            login_attempts_counter.labels(status="failure").inc()
+            login_attempts_counter.labels(status="failure", method="email").inc()
             raise HTTPException(401, "Invalid email or password")
         
         # Create session
@@ -1025,7 +1094,7 @@ def login(request_data: LoginRequest, request: Request, response: Response):
         set_auth_cookie(response, session_id, request)
         
         # Track successful login attempt
-        login_attempts_counter.labels(status="success").inc()
+        login_attempts_counter.labels(status="success", method="email").inc()
         
         logger.info(f"User logged in: {user.email} (ID: {user.id})")
         
@@ -1039,11 +1108,11 @@ def login(request_data: LoginRequest, request: Request, response: Response):
     except HTTPException as e:
         # Track failed login attempt if not already tracked
         if e.status_code == 401:
-            login_attempts_counter.labels(status="failure").inc()
+            login_attempts_counter.labels(status="failure", method="email").inc()
         raise
     except Exception as e:
         # Track failed login attempt
-        login_attempts_counter.labels(status="failure").inc()
+        login_attempts_counter.labels(status="failure", method="email").inc()
         logger.error(f"Login error: {e}", exc_info=True)
         raise HTTPException(500, "Login failed")
 
@@ -1267,6 +1336,8 @@ def auth_google_login_callback(code: str, state: str, request: Request, response
     state_key = f"{ENVIRONMENT}:google_login_state:{state}"
     state_value = redis_client.redis_client.get(state_key)
     if not state_value:
+        # Track failed login attempt (invalid state)
+        login_attempts_counter.labels(status="failure", method="google").inc()
         # Redirect to frontend with error instead of showing HTML
         frontend_redirect = f"{FRONTEND_URL}/?google_login=error&reason=invalid_state"
         return RedirectResponse(url=frontend_redirect)
@@ -1308,12 +1379,16 @@ def auth_google_login_callback(code: str, state: str, request: Request, response
         )
         
         if userinfo_response.status_code != 200:
+            # Track failed login attempt
+            login_attempts_counter.labels(status="failure", method="google").inc()
             raise HTTPException(400, "Failed to fetch user info from Google")
         
         user_info = userinfo_response.json()
         email = user_info.get('email')
         
         if not email:
+            # Track failed login attempt
+            login_attempts_counter.labels(status="failure", method="google").inc()
             raise HTTPException(400, "Email not provided by Google")
         
         # Get or create user by email (links accounts automatically)
@@ -1330,6 +1405,9 @@ def auth_google_login_callback(code: str, state: str, request: Request, response
         # Set session cookie on the redirect response
         set_auth_cookie(redirect_response, session_id, request)
         
+        # Track successful login attempt
+        login_attempts_counter.labels(status="success", method="google").inc()
+        
         action = "registered" if is_new else "logged in"
         logger.info(f"User {action} via Google OAuth: {user.email} (ID: {user.id})")
         
@@ -1338,6 +1416,8 @@ def auth_google_login_callback(code: str, state: str, request: Request, response
     except HTTPException:
         raise
     except Exception as e:
+        # Track failed login attempt
+        login_attempts_counter.labels(status="failure", method="google").inc()
         logger.error(f"Google login error: {e}", exc_info=True)
         # Redirect to frontend with error
         frontend_redirect = f"{FRONTEND_URL}/?google_login=error"
@@ -3924,15 +4004,18 @@ async def update_metrics_task():
             await asyncio.sleep(30)  # Update every 30 seconds
             
             from models import SessionLocal, User, Video
+            import redis_client as redis_module
             db = SessionLocal()
             try:
-                # Active users: users with activity in the last hour (sessions in Redis)
-                # For simplicity, we'll count users with videos in the last hour
-                # In production, you might want to track actual session activity
-                one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
-                active_users = db.query(User).join(Video).filter(
-                    Video.created_at >= one_hour_ago
-                ).distinct().count()
+                # Active users: count unique users with active sessions in Redis
+                # Sessions are stored as "session:{session_id}" with user_id as value
+                session_keys = redis_module.redis_client.keys("session:*")
+                active_user_ids = set()
+                for key in session_keys:
+                    user_id = redis_module.redis_client.get(key)
+                    if user_id:
+                        active_user_ids.add(int(user_id))
+                active_users = len(active_user_ids)
                 active_users_gauge.set(active_users)
                 
                 # Current uploads: videos with status "uploading"
@@ -3948,6 +4031,32 @@ async def update_metrics_task():
                 # Failed uploads: videos with status "failed"
                 failed_uploads = db.query(Video).filter(Video.status == "failed").count()
                 failed_uploads_gauge.set(failed_uploads)
+                
+                # Per-user upload metrics: reset all to 0 first, then set current values
+                # This prevents stale metrics from users who no longer have uploads
+                try:
+                    user_uploads_gauge.clear()
+                except AttributeError:
+                    # clear() only works for labeled metrics, but if it doesn't exist yet, that's fine
+                    pass
+                
+                # Get all users with active uploads (uploading, pending, scheduled, failed)
+                user_uploads = db.query(
+                    User.id,
+                    User.email,
+                    Video.status,
+                    func.count(Video.id).label('count')
+                ).join(Video).filter(
+                    Video.status.in_(["uploading", "pending", "scheduled", "failed"])
+                ).group_by(User.id, User.email, Video.status).all()
+                
+                # Set metrics for each user/status combination
+                for user_id, user_email, status, count in user_uploads:
+                    user_uploads_gauge.labels(
+                        user_id=str(user_id),
+                        user_email=user_email or f"user_{user_id}",
+                        status=status
+                    ).set(count)
                 
             except Exception as e:
                 logger.error(f"Error updating metrics: {e}", exc_info=True)

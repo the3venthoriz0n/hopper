@@ -117,6 +117,7 @@ services:
       - ENVIRONMENT=${ENVIRONMENT:-production}
     depends_on:
       - backend
+      - loki
     networks:
       - hopper_default
 
@@ -139,6 +140,33 @@ services:
     networks:
       - hopper_default
 
+  loki:
+    build:
+      context: ./monitoring
+      dockerfile: Dockerfile.loki.prod
+    container_name: hopper-prod-loki
+    ports:
+      - "3101:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - hopper_prod_loki_data:/loki
+    networks:
+      - hopper_default
+
+  promtail:
+    build:
+      context: ./monitoring
+      dockerfile: Dockerfile.promtail.prod
+    container_name: hopper-prod-promtail
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    command: -config.file=/etc/promtail/config.yml
+    depends_on:
+      - loki
+    networks:
+      - hopper_default
+
   grafana:
     build:
       context: ./monitoring
@@ -154,6 +182,7 @@ services:
       - GF_USERS_ALLOW_SIGN_UP=false
     depends_on:
       - prometheus
+      - loki
     networks:
       - hopper_default
 
@@ -168,4 +197,5 @@ volumes:
   hopper_prod_backend_sessions:
   hopper_prod_prometheus_data:
   hopper_prod_grafana_data:
+  hopper_prod_loki_data:
 

@@ -1,0 +1,67 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://hopper-prod-loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Backend logs - read from Docker JSON log files
+  - job_name: docker-backend
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: docker
+          service: backend
+          environment: production
+          __path__: /var/lib/docker/containers/*/*-json.log
+    pipeline_stages:
+      - json:
+          expressions:
+            output: log
+            stream: stream
+            attrs: attrs
+      - json:
+          expressions:
+            tag: attrs.tag
+          source: attrs
+      - regex:
+          expression: 'hopper-prod-backend'
+          source: tag
+      - labels:
+          stream:
+          container: tag
+      - output:
+          source: output
+
+  # All container logs
+  - job_name: docker-all
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: docker
+          environment: production
+          __path__: /var/lib/docker/containers/*/*-json.log
+    pipeline_stages:
+      - json:
+          expressions:
+            output: log
+            stream: stream
+            attrs: attrs
+      - json:
+          expressions:
+            tag: attrs.tag
+          source: attrs
+      - regex:
+          expression: 'hopper-prod-(?P<container>.*)'
+          source: tag
+      - labels:
+          stream:
+          container: tag
+      - output:
+          source: output
