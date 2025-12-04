@@ -188,7 +188,7 @@
       "id": 7,
       "title": "Upload Status Over Time",
       "type": "timeseries",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
       "targets": [
         {
           "expr": "hopper_current_uploads",
@@ -220,7 +220,7 @@
       "id": 8,
       "title": "Login Attempts Over Time",
       "type": "timeseries",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
       "targets": [
         {
           "expr": "sum(rate(hopper_login_attempts_total{status=\"success\"}[5m]))",
@@ -240,7 +240,7 @@
       "id": 12,
       "title": "Login Methods Over Time",
       "type": "timeseries",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
       "targets": [
         {
           "expr": "sum(rate(hopper_login_attempts_total{method=\"email\"}[5m]))",
@@ -260,7 +260,7 @@
       "id": 9,
       "title": "Users with Active Uploads",
       "type": "table",
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 24},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 32},
       "targets": [
         {
           "expr": "hopper_user_uploads",
@@ -330,10 +330,10 @@
       "id": 10,
       "title": "Backend Logs (Docker - same as make logs)",
       "type": "logs",
-      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 34},
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 42},
       "targets": [
         {
-          "expr": '{job="docker", container=~".*hopper-prod-backend.*"}',
+          "expr": "{job=\"docker\", container=~\".*hopper-prod-backend.*\"}",
           "refId": "A",
           "datasource": {"type": "loki", "uid": "loki"}
         }
@@ -353,7 +353,7 @@
       "id": 13,
       "title": "Login Attempts by Method and Status",
       "type": "table",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 46},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 54},
       "targets": [
         {
           "expr": "sum by (method, status) (rate(hopper_login_attempts_total[5m]))",
@@ -423,7 +423,7 @@
       "id": 14,
       "title": "Total Login Attempts (Last Hour)",
       "type": "stat",
-      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 46},
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 54},
       "targets": [
         {
           "expr": "sum(increase(hopper_login_attempts_total[1h]))",
@@ -448,7 +448,7 @@
       "id": 15,
       "title": "Failed Login Attempts (Last Hour)",
       "type": "stat",
-      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 46},
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 54},
       "targets": [
         {
           "expr": "sum(increase(hopper_login_attempts_total{status=\"failure\"}[1h]))",
@@ -473,10 +473,10 @@
       "id": 16,
       "title": "All Container Logs (Docker)",
       "type": "logs",
-      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 58},
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 62},
       "targets": [
         {
-          "expr": '{job="docker", environment="production"}',
+          "expr": "{job=\"docker\", environment=\"production\"}",
           "refId": "A",
           "datasource": {"type": "loki", "uid": "loki"}
         }

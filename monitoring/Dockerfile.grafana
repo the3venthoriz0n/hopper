@@ -1,7 +1,10 @@
 FROM grafana/grafana:latest
 
 ARG ENV=dev
+# Copy provisioning configuration
+COPY grafana/provisioning/dashboards/dashboard.yml /etc/grafana/provisioning/dashboards/
 COPY grafana/provisioning/datasources/prometheus.${ENV}.yml /etc/grafana/provisioning/datasources/prometheus.yml
 COPY grafana/provisioning/datasources/loki.${ENV}.yml /etc/grafana/provisioning/datasources/loki.yml
-COPY grafana/provisioning/dashboards /etc/grafana/provisioning/dashboards
-COPY grafana/dashboards/hopper-dashboard.${ENV}.json /etc/grafana/provisioning/dashboards/hopper-dashboard.json
+
+# Copy dashboard JSON files to the location specified in dashboard.yml
+COPY grafana/dashboards/hopper-dashboard.${ENV}.json /etc/grafana/dashboards/hopper-dashboard.json

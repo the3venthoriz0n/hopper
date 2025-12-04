@@ -1,4 +1,4 @@
-.PHONY: help sync up down rebuild logs shell clean test test-security
+.PHONY: help sync up down rebuild logs shell clean test test-security rebuild-grafana clear-grafana-cache
 
 # Default environment (can be overridden: make up ENV=prod)
 ENV ?= dev
@@ -25,6 +25,8 @@ help:
 	@echo "  up            Start services (with build, runs tests first)"
 	@echo "  down          Stop services"
 	@echo "  rebuild       Stop, rebuild from scratch, and start (runs tests first)"
+	@echo "  rebuild-grafana Rebuild Grafana service (clears cache and restarts)"
+	@echo "  clear-grafana-cache Clear Grafana database volume (forces dashboard reload)"
 	@echo "  logs          Follow logs (add LINES=N for tail)"
 	@echo "  shell         Open backend shell"
 	@echo "  clean         Remove stopped containers and unused images"
@@ -71,6 +73,22 @@ rebuild: down sync test
 	@$(COMPOSE) up -d $(SERVICE)
 	@docker image prune -f
 	@echo "✅ $(ENV) rebuild complete!"
+
+rebuild-grafana:
+	@echo "🔄 Rebuilding Grafana for $(ENV) environment..."
+	@$(COMPOSE) stop grafana
+	@$(COMPOSE) build --no-cache grafana
+	@$(COMPOSE) up -d grafana
+	@echo "✅ Grafana rebuild complete!"
+	@echo "💡 If dashboard doesn't appear, run: make clear-grafana-cache"
+
+clear-grafana-cache:
+	@echo "🗑️  Clearing Grafana cache for $(ENV) environment..."
+	@$(COMPOSE) stop grafana || true
+	@$(COMPOSE) rm -f grafana || true
+	@docker volume rm hopper_$(ENV)_grafana_data 2>/dev/null || echo "⚠️  Volume hopper_$(ENV)_grafana_data doesn't exist (already cleared)"
+	@$(COMPOSE) up -d grafana
+	@echo "✅ Grafana cache cleared! Dashboard will reload from provisioned files."
 
 logs:
 ifdef LINES
