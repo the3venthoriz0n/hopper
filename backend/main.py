@@ -888,7 +888,8 @@ async def security_middleware(request: Request, call_next):
             path == "/api/auth/login" or
             path == "/api/auth/logout" or
             path == "/api/auth/me" or
-            path == "/api/auth/google/login"
+            path == "/api/auth/google/login" or
+            path == "/metrics"  # Prometheus metrics endpoint
         )
         
         # Get session ID if available
