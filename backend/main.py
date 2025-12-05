@@ -1696,7 +1696,7 @@ def get_youtube_account(user_id: int = Depends(require_auth), db: Session = Depe
             return {"account": account_info}
         
         # Convert to Credentials object (automatically decrypts)
-        youtube_creds = db_helpers.oauth_token_to_credentials(youtube_token)
+        youtube_creds = db_helpers.oauth_token_to_credentials(youtube_token, db=db)
         if not youtube_creds:
             # If credentials can't be converted (e.g., decryption failed), 
             # the token is likely corrupted or encrypted with a different key
@@ -3404,18 +3404,43 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
         return
     
     # Convert OAuth token to Google Credentials
-    youtube_creds = db_helpers.oauth_token_to_credentials(youtube_token)
+    youtube_creds = db_helpers.oauth_token_to_credentials(youtube_token, db=db)
     if not youtube_creds:
         db_helpers.update_video(video_id, user_id, db=db, status="failed", error="Failed to convert YouTube token to credentials")
         youtube_logger.error("Failed to convert YouTube token to credentials")
         return
     
-    # Validate credentials are complete
-    if not youtube_creds.client_id or not youtube_creds.client_secret or not youtube_creds.token_uri:
-        error_msg = 'YouTube credentials are incomplete. Please disconnect and reconnect YouTube.'
+    # Check if refresh_token is present (required for token refresh)
+    if not youtube_creds.refresh_token:
+        error_msg = 'YouTube refresh token is missing. Please disconnect and reconnect YouTube.'
         db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
         youtube_logger.error(error_msg)
         return
+    
+    # Refresh token if expired (must be done before building YouTube client)
+    if youtube_creds.expired:
+        try:
+            youtube_logger.debug("Refreshing expired YouTube token...")
+            youtube_creds.refresh(GoogleRequest())
+            # Save refreshed token back to database
+            token_data = db_helpers.credentials_to_oauth_token_data(
+                youtube_creds, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+            )
+            db_helpers.save_oauth_token(
+                user_id=user_id,
+                platform="youtube",
+                access_token=token_data["access_token"],
+                refresh_token=token_data["refresh_token"],
+                expires_at=token_data["expires_at"],
+                extra_data=token_data["extra_data"],
+                db=db
+            )
+            youtube_logger.debug("YouTube token refreshed successfully")
+        except Exception as refresh_error:
+            error_msg = f'Failed to refresh YouTube token: {str(refresh_error)}. Please disconnect and reconnect YouTube.'
+            db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+            youtube_logger.error(error_msg, exc_info=True)
+            return
     
     # Get settings from database
     youtube_settings = db_helpers.get_user_settings(user_id, "youtube", db=db)

@@ -600,8 +600,11 @@ def delete_oauth_token(user_id: int, platform: str, db: Session = None) -> bool:
             db.close()
 
 
-def oauth_token_to_credentials(token: OAuthToken) -> Optional[Credentials]:
-    """Convert OAuthToken to Google Credentials object (decrypts tokens)"""
+def oauth_token_to_credentials(token: OAuthToken, db: Session = None) -> Optional[Credentials]:
+    """Convert OAuthToken to Google Credentials object (decrypts tokens)
+    
+    Ensures client_id and client_secret are always present in extra_data for token refresh.
+    """
     if not token:
         return None
     
@@ -624,6 +627,32 @@ def oauth_token_to_credentials(token: OAuthToken) -> Optional[Credentials]:
         if not client_id or not client_secret:
             logger.error(f"Missing client_id or client_secret. extra_data: {extra_data}")
             return None
+        
+        # Ensure client_id and client_secret are saved in extra_data for future refreshes
+        # This fixes tokens that were saved before these fields were stored
+        needs_update = False
+        if extra_data.get("client_id") != client_id:
+            extra_data["client_id"] = client_id
+            needs_update = True
+        if extra_data.get("client_secret") != client_secret:
+            extra_data["client_secret"] = client_secret
+            needs_update = True
+        
+        # Update token in database if extra_data changed
+        if needs_update:
+            should_close = False
+            if db is None:
+                db = SessionLocal()
+                should_close = True
+            try:
+                token.extra_data = extra_data
+                db.commit()
+                logger.debug(f"Updated OAuth token extra_data with client_id/client_secret for user {token.user_id}, platform {token.platform}")
+            except Exception as update_error:
+                logger.warning(f"Failed to update token extra_data: {update_error}")
+            finally:
+                if should_close:
+                    db.close()
         
         creds = Credentials(
             token=access_token,

@@ -10,8 +10,3 @@ scrape_configs:
     static_configs:
       - targets: ['prod-hopper-otel-collector:8889']
     metrics_path: '/metrics'
-
-  - job_name: 'backend'
-    static_configs:
-      - targets: ['prod-hopper-backend:8000']
-    metrics_path: '/metrics'
