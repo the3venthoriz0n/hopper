@@ -107,7 +107,7 @@ services:
   otel-collector:
     build:
       context: ./monitoring
-      dockerfile: Dockerfile.otel
+      dockerfile: Dockerfile.otel.prod
     container_name: prod-hopper-otel-collector
     ports:
       - "4319:4317"   # OTLP gRPC receiver
