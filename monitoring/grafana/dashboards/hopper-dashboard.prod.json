@@ -18,7 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": null,
+  "id": 1,
   "links": [],
   "panels": [
     {
@@ -160,68 +160,6 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "yellow",
-                "value": 0
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 12,
-        "y": 0
-      },
-      "id": 3,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.3.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "Prometheus"
-          },
-          "expr": "hopper_queued_uploads",
-          "refId": "A"
-        }
-      ],
-      "title": "Queued Uploads",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "Prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
                 "color": "purple",
                 "value": 0
               }
@@ -234,7 +172,7 @@
       "gridPos": {
         "h": 8,
         "w": 6,
-        "x": 18,
+        "x": 12,
         "y": 0
       },
       "id": 17,
@@ -296,8 +234,8 @@
       "gridPos": {
         "h": 8,
         "w": 6,
-        "x": 0,
-        "y": 8
+        "x": 18,
+        "y": 0
       },
       "id": 4,
       "options": {
@@ -393,7 +331,7 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 9,
         "w": 12,
         "x": 0,
         "y": 8
@@ -452,6 +390,129 @@
         }
       ],
       "title": "Upload Status Over Time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.3.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "sum(rate(hopper_login_attempts_total{status=\"success\", method=\"email\"}[5m]))",
+          "legendFormat": "Email - Success",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "sum(rate(hopper_login_attempts_total{status=\"failure\", method=\"email\"}[5m]))",
+          "legendFormat": "Email - Failure",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "sum(rate(hopper_login_attempts_total{status=\"success\", method=\"google\"}[5m]))",
+          "legendFormat": "Google OAuth - Success",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "sum(rate(hopper_login_attempts_total{status=\"failure\", method=\"google\"}[5m]))",
+          "legendFormat": "Google OAuth - Failure",
+          "refId": "D"
+        }
+      ],
+      "title": "Login Attempts by Status and Method",
       "type": "timeseries"
     },
     {
@@ -542,10 +603,10 @@
         ]
       },
       "gridPos": {
-        "h": 9,
-        "w": 12,
+        "h": 8,
+        "w": 24,
         "x": 0,
-        "y": 16
+        "y": 17
       },
       "id": 9,
       "options": {
@@ -565,16 +626,16 @@
           "options": {
             "excludeByName": {},
             "indexByName": {
-              "user_email": 0,
+              "Value": 3,
               "created_at": 1,
               "scheduled_time": 2,
-              "Value": 3
+              "user_email": 0
             },
             "renameByName": {
-              "user_email": "User",
+              "Value": "Count",
               "created_at": "Added to Queue",
               "scheduled_time": "Scheduled Upload Time",
-              "Value": "Count"
+              "user_email": "User"
             }
           }
         }
@@ -593,129 +654,6 @@
       ],
       "title": "Scheduled Uploads",
       "type": "table"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "Prometheus"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 12,
-        "y": 16
-      },
-      "id": 8,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "12.3.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "Prometheus"
-          },
-          "expr": "sum(rate(hopper_login_attempts_total{status=\"success\", method=\"email\"}[5m]))",
-          "legendFormat": "Email - Success",
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "Prometheus"
-          },
-          "expr": "sum(rate(hopper_login_attempts_total{status=\"failure\", method=\"email\"}[5m]))",
-          "legendFormat": "Email - Failure",
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "Prometheus"
-          },
-          "expr": "sum(rate(hopper_login_attempts_total{status=\"success\", method=\"google\"}[5m]))",
-          "legendFormat": "Google OAuth - Success",
-          "refId": "C"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "Prometheus"
-          },
-          "expr": "sum(rate(hopper_login_attempts_total{status=\"failure\", method=\"google\"}[5m]))",
-          "legendFormat": "Google OAuth - Failure",
-          "refId": "D"
-        }
-      ],
-      "title": "Login Attempts by Status and Method",
-      "type": "timeseries"
     },
     {
       "datasource": {
@@ -752,7 +690,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "{job=\"docker\", environment=\"production\"}${log_level:query}",
+          "expr": "{job=\"docker\", environment=\"production\", level=~\"${log_level}\"}",
           "refId": "A"
         }
       ],
@@ -774,7 +712,7 @@
         "current": {
           "selected": true,
           "text": "Error",
-          "value": " |= \"error\""
+          "value": "error"
         },
         "hide": 0,
         "label": "Log Level",
@@ -783,7 +721,7 @@
           {
             "selected": false,
             "text": "All",
-            "value": ""
+            "value": ".*"
           },
           {
             "selected": true,
@@ -806,8 +744,8 @@
             "value": "debug"
           }
         ],
-        "query": "error : warning : info : debug",
-        "queryValue": "",
+        "query": ".* : error : warning : info : debug",
+        "queryValue": "error",
         "skipUrlSync": false,
         "type": "custom"
       }
