@@ -152,6 +152,57 @@ try:
 except ValueError:
     scheduled_uploads_detail_gauge = REGISTRY._names_to_collectors.get('hopper_scheduled_uploads_detail')
 
+try:
+    orphaned_videos_gauge = Gauge(
+        'hopper_orphaned_videos',
+        'Number of orphaned video files (files without database records)'
+    )
+except ValueError:
+    orphaned_videos_gauge = REGISTRY._names_to_collectors.get('hopper_orphaned_videos')
+
+try:
+    cleanup_runs_counter = Counter(
+        'hopper_cleanup_runs_total',
+        'Total number of cleanup job runs',
+        ['status']  # status: success or failure
+    )
+except ValueError:
+    cleanup_runs_counter = REGISTRY._names_to_collectors.get('hopper_cleanup_runs_total')
+
+try:
+    cleanup_files_removed_counter = Counter(
+        'hopper_cleanup_files_removed_total',
+        'Total number of files removed by cleanup job'
+    )
+except ValueError:
+    cleanup_files_removed_counter = REGISTRY._names_to_collectors.get('hopper_cleanup_files_removed_total')
+
+try:
+    scheduler_runs_counter = Counter(
+        'hopper_scheduler_runs_total',
+        'Total number of scheduler job runs',
+        ['status']  # status: success or failure
+    )
+except ValueError:
+    scheduler_runs_counter = REGISTRY._names_to_collectors.get('hopper_scheduler_runs_total')
+
+try:
+    scheduler_videos_processed_counter = Counter(
+        'hopper_scheduler_videos_processed_total',
+        'Total number of videos processed by scheduler'
+    )
+except ValueError:
+    scheduler_videos_processed_counter = REGISTRY._names_to_collectors.get('hopper_scheduler_videos_processed_total')
+
+try:
+    storage_size_gauge = Gauge(
+        'hopper_storage_size_bytes',
+        'Storage size in bytes',
+        ['type']  # type: upload_dir, database, etc.
+    )
+except ValueError:
+    storage_size_gauge = REGISTRY._names_to_collectors.get('hopper_storage_size_bytes')
+
 # ============================================================================
 # DATABASE AND REDIS INITIALIZATION (Lifespan Events)
 # ============================================================================
@@ -3999,13 +4050,27 @@ async def cleanup_task():
                             try:
                                 orphaned_file.unlink()
                                 orphaned_count += 1
+                                cleanup_files_removed_counter.inc()
                                 cleanup_logger.info(f"Removed orphaned file: {orphaned_file.name}")
                             except Exception as e:
                                 cleanup_logger.error(f"Failed to remove orphaned file {orphaned_file.name}: {e}")
                     
+                    # Update orphaned videos metric (count remaining orphaned files)
+                    remaining_orphaned = len([f for f in (all_files - all_video_paths) if f.is_file() and f not in scheduled_video_paths])
+                    orphaned_videos_gauge.set(remaining_orphaned)
+                    
                     if orphaned_count > 0:
                         cleanup_logger.info(f"Removed {orphaned_count} orphaned files")
                 
+                # Update storage metrics
+                try:
+                    if UPLOAD_DIR.exists():
+                        total_size = sum(f.stat().st_size for f in UPLOAD_DIR.glob("*") if f.is_file())
+                        storage_size_gauge.labels(type="upload_dir").set(total_size)
+                except Exception as e:
+                    cleanup_logger.warning(f"Failed to calculate storage size: {e}")
+                
+                cleanup_runs_counter.labels(status="success").inc()
                 cleanup_logger.info("Cleanup task completed")
                 
             finally:
@@ -4013,6 +4078,7 @@ async def cleanup_task():
                 
         except Exception as e:
             cleanup_logger.error(f"Error in cleanup task: {e}", exc_info=True)
+            cleanup_runs_counter.labels(status="failure").inc()
             await asyncio.sleep(3600)
 
 async def update_metrics_task():
@@ -4131,6 +4197,7 @@ async def scheduler_task():
                 # Single query to get all scheduled videos, grouped by user_id
                 videos_by_user = db_helpers.get_all_scheduled_videos(db=db)
                 
+                videos_processed = 0
                 # Process videos grouped by user (allows batch loading of user settings/tokens)
                 for user_id, videos in videos_by_user.items():
                     # Build upload context (enabled destinations, settings, tokens)
@@ -4149,6 +4216,8 @@ async def scheduler_task():
                             # If scheduled time has passed, upload the video
                             if current_time >= scheduled_time:
                                 video_id = video.id
+                                videos_processed += 1
+                                scheduler_videos_processed_counter.inc()
                                 print(f"Uploading scheduled video for user {user_id}: {video.filename}")
                                 
                                 # Mark as uploading - use shared session
@@ -4197,10 +4266,13 @@ async def scheduler_task():
                             print(f"Error processing scheduled video {video.filename}: {e}")
                             if 'video_id' in locals():
                                 db_helpers.update_video(video_id, user_id, db=db, status="failed", error=str(e))
+                
+                scheduler_runs_counter.labels(status="success").inc()
             finally:
                 db.close()
         except Exception as e:
             print(f"Error in scheduler task: {e}")
+            scheduler_runs_counter.labels(status="failure").inc()
             await asyncio.sleep(30)
 
 # Scheduler startup is now handled in the lifespan event handler above
