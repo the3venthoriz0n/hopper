@@ -9,49 +9,13 @@ clients:
   - url: http://dev-hopper-loki:3100/loki/api/v1/push
 
 scrape_configs:
-  # Backend logs - read from Docker JSON log files
-  - job_name: docker-backend
-    static_configs:
-      - targets:
-          - localhost
-        labels:
-          job: docker
-          service: backend
-          environment: development
-          __path__: /var/lib/docker/containers/*/*-json.log
-    pipeline_stages:
-      - json:
-          expressions:
-            output: log
-            stream: stream
-            attrs: attrs
-      - json:
-          expressions:
-            tag: attrs.tag
-          source: attrs
-      - regex:
-          expression: 'dev-hopper-backend'
-          source: tag
-      - regex:
-          expression: '(?i)\blevel=(?P<level>debug|info|warn|warning|error|fatal|panic)\b|"(?P<level>DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC)":| - (?P<level>DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL) - |\b(?P<level>DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL)\b'
-          source: output
-      - template:
-          source: level
-          template: '{{ if .level }}{{ .level | ToLower }}{{ else }}info{{ end }}'
-      - labels:
-          stream:
-          container: tag
-          level:
-      - output:
-          source: output
-
-  # All container logs
+  # Consolidated: All container logs with consistent labeling
   - job_name: docker-all
     static_configs:
       - targets:
           - localhost
         labels:
-          job: docker
+          job: hopper
           environment: development
           __path__: /var/lib/docker/containers/*/*-json.log
     pipeline_stages:
