@@ -563,16 +563,28 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Count"
+              "options": "Filename"
             },
             "properties": [
               {
                 "id": "custom.width",
-                "value": 80
+                "value": 250
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Current Time"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 200
               },
               {
-                "id": "custom.align",
-                "value": "center"
+                "id": "unit",
+                "value": "time: YYYY-MM-DD h:mm:ss a"
               }
             ]
           },
@@ -588,11 +600,7 @@
               },
               {
                 "id": "unit",
-                "value": "dateTime"
-              },
-              {
-                "id": "dateFormat",
-                "value": "YYYY-MM-DD h:mm A"
+                "value": "time: YYYY-MM-DD h:mm:ss a"
               }
             ]
           },
@@ -608,11 +616,7 @@
               },
               {
                 "id": "unit",
-                "value": "dateTime"
-              },
-              {
-                "id": "dateFormat",
-                "value": "YYYY-MM-DD h:mm A"
+                "value": "time: YYYY-MM-DD h:mm:ss a"
               }
             ]
           }
@@ -631,7 +635,7 @@
         "sortBy": [
           {
             "desc": true,
-            "displayName": "Count"
+            "displayName": "Scheduled Upload Time"
           }
         ]
       },
@@ -656,13 +660,15 @@
             "excludeByName": {},
             "indexByName": {
               "user_email": 0,
-              "Value": 1,
+              "filename": 1,
               "created_at": 2,
-              "scheduled_time": 3
+              "scheduled_time": 3,
+              "Time": 4
             },
             "renameByName": {
               "user_email": "User",
-              "Value": "Count",
+              "filename": "Filename",
+              "Time": "Current Time",
               "created_at": "Added to Queue",
               "scheduled_time": "Scheduled Upload Time"
             }

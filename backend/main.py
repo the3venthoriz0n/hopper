@@ -147,7 +147,7 @@ try:
     scheduled_uploads_detail_gauge = Gauge(
         'hopper_scheduled_uploads_detail',
         'Scheduled uploads with scheduled time and created date',
-        ['user_id', 'user_email', 'scheduled_time', 'created_at']
+        ['user_id', 'user_email', 'filename', 'scheduled_time', 'created_at']
     )
 except ValueError:
     scheduled_uploads_detail_gauge = REGISTRY._names_to_collectors.get('hopper_scheduled_uploads_detail')
@@ -4087,6 +4087,7 @@ async def update_metrics_task():
                 scheduled_videos = db.query(
                     User.id,
                     User.email,
+                    Video.filename,
                     Video.scheduled_time,
                     Video.created_at
                 ).join(Video).filter(
@@ -4095,12 +4096,13 @@ async def update_metrics_task():
                 ).all()
                 
                 # Set metrics for each scheduled video
-                for user_id, user_email, scheduled_time, created_at in scheduled_videos:
+                for user_id, user_email, filename, scheduled_time, created_at in scheduled_videos:
                     scheduled_time_str = scheduled_time.isoformat() if scheduled_time else ""
                     created_at_str = created_at.isoformat() if created_at else ""
                     scheduled_uploads_detail_gauge.labels(
                         user_id=str(user_id),
                         user_email=user_email or f"user_{user_id}",
+                        filename=filename or "",
                         scheduled_time=scheduled_time_str,
                         created_at=created_at_str
                     ).set(1)
