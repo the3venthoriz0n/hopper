@@ -146,7 +146,7 @@ services:
   loki:
     build:
       context: ./monitoring
-      dockerfile: Dockerfile.loki
+      dockerfile: Dockerfile.loki.prod
     container_name: prod-hopper-loki
     ports:
       - "3101:3100"
