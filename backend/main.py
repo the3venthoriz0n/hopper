@@ -3124,6 +3124,20 @@ def update_instagram_settings(
 @app.post("/api/videos")
 async def add_video(file: UploadFile = File(...), user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Add video to user's queue"""
+    # ROOT CAUSE FIX: Validate file size before processing
+    # YouTube allows up to 256GB, but we'll set a reasonable limit of 10GB
+    MAX_FILE_SIZE = 10 * 1024 * 1024 * 1024  # 10GB in bytes
+    
+    # Check file size if Content-Length header is available
+    content_length = file.size if hasattr(file, 'size') and file.size else None
+    if content_length and content_length > MAX_FILE_SIZE:
+        size_mb = content_length / (1024 * 1024)
+        max_mb = MAX_FILE_SIZE / (1024 * 1024)
+        raise HTTPException(
+            413, 
+            f"File too large: {file.filename} is {size_mb:.2f} MB. Maximum file size is {max_mb:.0f} MB (10 GB)."
+        )
+    
     # Get user settings
     global_settings = db_helpers.get_user_settings(user_id, "global", db=db)
     youtube_settings = db_helpers.get_user_settings(user_id, "youtube", db=db)
@@ -3134,10 +3148,49 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
         if any(v.filename == file.filename for v in existing_videos):
             raise HTTPException(400, f"Duplicate video: {file.filename} is already in the queue")
     
-    # Save file to disk
+    # Save file to disk with streaming and size validation
+    # ROOT CAUSE FIX: Use streaming to handle large files without loading entire file into memory
     path = UPLOAD_DIR / file.filename
-    with open(path, "wb") as f:
-        f.write(await file.read())
+    try:
+        file_size = 0
+        chunk_size = 1024 * 1024  # 1MB chunks
+        
+        with open(path, "wb") as f:
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                
+                file_size += len(chunk)
+                
+                # Validate file size during streaming (before writing entire file)
+                if file_size > MAX_FILE_SIZE:
+                    # Clean up partial file
+                    try:
+                        path.unlink()
+                    except:
+                        pass
+                    size_mb = file_size / (1024 * 1024)
+                    max_mb = MAX_FILE_SIZE / (1024 * 1024)
+                    raise HTTPException(
+                        413,
+                        f"File too large: {file.filename} is {size_mb:.2f} MB. Maximum file size is {max_mb:.0f} MB (10 GB)."
+                    )
+                
+                f.write(chunk)
+        
+        upload_logger.info(f"Video added for user {user_id}: {file.filename} ({file_size / (1024*1024):.2f} MB)")
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Clean up partial file on error
+        try:
+            if path.exists():
+                path.unlink()
+        except:
+            pass
+        upload_logger.error(f"Failed to save video file {file.filename}: {str(e)}", exc_info=True)
+        raise HTTPException(500, f"Failed to save video file: {str(e)}")
     
     # Generate YouTube title
     filename_no_ext = file.filename.rsplit('.', 1)[0]

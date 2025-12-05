@@ -33,7 +33,7 @@ scrape_configs:
           expression: 'prod-hopper-backend'
           source: tag
       - regex:
-          expression: '(?i)\blevel=(?P<level>debug|info|warn|warning|error|fatal|panic)\b|"(?P<level>DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC)":'
+          expression: '(?i)\blevel=(?P<level>debug|info|warn|warning|error|fatal|panic)\b|"(?P<level>DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC)":| - (?P<level>DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL) - |\b(?P<level>DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL)\b'
           source: output
       - template:
           source: level
@@ -68,7 +68,7 @@ scrape_configs:
           expression: 'prod-hopper-(?P<container>.*)'
           source: tag
       - regex:
-          expression: '(?i)\blevel=(?P<level>debug|info|warn|warning|error|fatal|panic)\b|"(?P<level>DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC)":'
+          expression: '(?i)\blevel=(?P<level>debug|info|warn|warning|error|fatal|panic)\b|"(?P<level>DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC)":| - (?P<level>DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL) - |\b(?P<level>DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL)\b'
           source: output
       - template:
           source: level
