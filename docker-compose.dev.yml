@@ -163,21 +163,7 @@ services:
     networks:
       - hopper_default
 
-  promtail:
-    build:
-      context: ./monitoring
-      dockerfile: Dockerfile.promtail
-      args:
-        ENV: dev
-    container_name: dev-hopper-promtail
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - /var/lib/docker/containers:/var/lib/docker/containers:ro
-    command: -config.file=/etc/promtail/config.yml
-    depends_on:
-      - loki
-    networks:
-      - hopper_default
+  # Promtail removed - logs now collected via OTEL collector (single source of truth)
 
   grafana:
     build:
