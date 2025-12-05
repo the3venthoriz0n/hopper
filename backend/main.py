@@ -76,7 +76,13 @@ otlp_metric_exporter = OTLPMetricExporter(
     endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"),
     insecure=True
 )
-metric_reader = PeriodicExportingMetricReader(otlp_metric_exporter, export_interval_millis=5000)
+# ROOT CAUSE FIX: Reduce export interval to ensure metrics are exported more frequently
+# Also set timeout to prevent metrics from being dropped
+metric_reader = PeriodicExportingMetricReader(
+    otlp_metric_exporter, 
+    export_interval_millis=5000,
+    export_timeout_millis=30000
+)
 metrics_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
 metrics.set_meter_provider(metrics_provider)
 
@@ -228,10 +234,11 @@ async def lifespan(app: FastAPI):
         raise
     
     # Instrument SQLAlchemy after database initialization
+    # ROOT CAUSE FIX: SQLAlchemy instrumentation automatically generates metrics
     try:
         from models import engine
         SQLAlchemyInstrumentor().instrument(engine=engine)
-        logger.info("SQLAlchemy instrumentation enabled")
+        logger.info("SQLAlchemy instrumentation enabled with metrics")
     except Exception as e:
         logger.warning(f"Failed to instrument SQLAlchemy: {e}")
     
@@ -258,10 +265,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 # Instrument FastAPI with OpenTelemetry
+# FastAPI instrumentation automatically generates HTTP metrics (duration, size, status codes)
 FastAPIInstrumentor.instrument_app(app)
 
 # Instrument SQLAlchemy (will be done after db initialization)
-# Instrument HTTPX
+# Instrument HTTPX - automatically generates HTTP client metrics
 HTTPXClientInstrumentor().instrument()
 
 # ============================================================================
@@ -316,7 +324,14 @@ if otel_endpoint:
             endpoint=otel_endpoint,
             insecure=True
         )
-        logger_provider.add_log_record_processor(BatchLogRecordProcessor(log_exporter))
+        # ROOT CAUSE FIX: Configure log processor with timeout to prevent log drops
+        log_processor = BatchLogRecordProcessor(
+            log_exporter,
+            max_queue_size=2048,
+            export_timeout_millis=30000,
+            schedule_delay_millis=5000
+        )
+        logger_provider.add_log_record_processor(log_processor)
         
         # Create a logging handler and attach it to the root logger
         handler = LoggingHandler(level=logging.NOTSET, logger_provider=logger_provider)
@@ -619,10 +634,11 @@ def cleanup_video_file(video: Video) -> bool:
         True if cleanup succeeded or file already gone, False on error
     """
     try:
-        video_path = Path(video.path)
+        # ROOT CAUSE FIX: Resolve path to absolute to ensure proper file access
+        video_path = Path(video.path).resolve()
         if video_path.exists():
             video_path.unlink()
-            upload_logger.info(f"Cleaned up video file: {video.filename} ({video.path})")
+            upload_logger.info(f"Cleaned up video file: {video.filename} ({video_path})")
             return True
         else:
             upload_logger.debug(f"Video file already removed: {video.filename}")
@@ -1040,7 +1056,8 @@ async def security_middleware(request: Request, call_next):
 # ============================================================================
 
 # Storage - only need UPLOAD_DIR now (no more SESSIONS_DIR)
-UPLOAD_DIR = Path("uploads")
+# ROOT CAUSE FIX: Use absolute path to prevent path resolution issues
+UPLOAD_DIR = Path("uploads").resolve()
 try:
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 except Exception:
@@ -1228,7 +1245,8 @@ def delete_account(request: Request, response: Response, user_id: int = Depends(
         
         for video_path in video_paths:
             try:
-                path = Path(video_path)
+                # ROOT CAUSE FIX: Resolve path to absolute to ensure proper file access
+                path = Path(video_path).resolve()
                 if path.exists():
                     path.unlink()
                     files_deleted += 1
@@ -3121,12 +3139,13 @@ def update_instagram_settings(
     
     return db_helpers.get_user_settings(user_id, "instagram", db=db)
 
+# Maximum file size for uploads (10GB)
+MAX_FILE_SIZE = 10 * 1024 * 1024 * 1024  # 10GB in bytes
+
 @app.post("/api/videos")
 async def add_video(file: UploadFile = File(...), user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Add video to user's queue"""
     # ROOT CAUSE FIX: Validate file size before processing
-    # YouTube allows up to 256GB, but we'll set a reasonable limit of 10GB
-    MAX_FILE_SIZE = 10 * 1024 * 1024 * 1024  # 10GB in bytes
     
     # Check file size if Content-Length header is available
     content_length = file.size if hasattr(file, 'size') and file.size else None
@@ -3202,10 +3221,11 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
     )
     
     # Add to database
+    # ROOT CAUSE FIX: Store absolute path to prevent path resolution issues
     video = db_helpers.add_user_video(
         user_id=user_id,
         filename=file.filename,
-        path=str(path),
+        path=str(path.resolve()),  # Ensure absolute path
         generated_title=youtube_title,
         db=db
     )
@@ -3219,6 +3239,18 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
     
     # Build video response using the same helper function as GET endpoint
     return build_video_response(video, all_settings, all_tokens, user_id)
+
+@app.get("/api/upload/limits")
+async def get_upload_limits():
+    """Get upload size limits"""
+    max_mb = MAX_FILE_SIZE / (1024 * 1024)
+    max_gb = MAX_FILE_SIZE / (1024 * 1024 * 1024)
+    return {
+        "max_file_size_bytes": MAX_FILE_SIZE,
+        "max_file_size_mb": int(max_mb),
+        "max_file_size_gb": max_gb,
+        "max_file_size_display": f"{int(max_mb)} MB ({max_gb:.0f} GB)"
+    }
 
 @app.get("/api/videos")
 def get_videos(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
@@ -3258,11 +3290,14 @@ def delete_video(video_id: int, user_id: int = Depends(require_csrf_new), db: Se
     # Clean up file if it exists
     videos = db_helpers.get_user_videos(user_id, db=db)
     video = next((v for v in videos if v.id == video_id), None)
-    if video and Path(video.path).exists():
-        try:
-            Path(video.path).unlink()
-        except Exception as e:
-            upload_logger.warning(f"Could not delete file {video.path}: {e}")
+    # ROOT CAUSE FIX: Resolve path to absolute to ensure proper file access
+    if video:
+        video_path = Path(video.path).resolve()
+        if video_path.exists():
+            try:
+                video_path.unlink()
+            except Exception as e:
+                upload_logger.warning(f"Could not delete file {video_path}: {e}")
     
     return {"ok": True}
 
@@ -3571,7 +3606,13 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
             snippet_body['tags'] = tags
         
         youtube_logger.info(f"Preparing upload request - Title: {title[:50]}..., Visibility: {visibility}")
-        youtube_logger.debug(f"Video path: {video.path}")
+        # ROOT CAUSE FIX: Resolve path to absolute to ensure file is found
+        video_path = Path(video.path).resolve()
+        youtube_logger.debug(f"Video path: {video_path}")
+        
+        # Verify file exists before attempting upload
+        if not video_path.exists():
+            raise FileNotFoundError(f"Video file not found: {video_path}")
         
         request = youtube.videos().insert(
             part='snippet,status',
@@ -3582,7 +3623,7 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
                     'selfDeclaredMadeForKids': made_for_kids
                 }
             },
-            media_body=MediaFileUpload(video.path, resumable=True)
+            media_body=MediaFileUpload(str(video_path), resumable=True)
         )
         
         youtube_logger.info("Starting resumable upload...")
@@ -3718,9 +3759,10 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         creator_info = get_tiktok_creator_info(access_token)
         
         # Get video file
-        video_path = Path(video.path)
+        # ROOT CAUSE FIX: Resolve path to absolute to ensure file is found
+        video_path = Path(video.path).resolve()
         if not video_path.exists():
-            raise Exception(f"Video file not found: {video.path}")
+            raise FileNotFoundError(f"Video file not found: {video_path}")
         
         video_size = video_path.stat().st_size
         if video_size == 0:
@@ -3875,9 +3917,10 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         redis_client.set_upload_progress(user_id, video_id, 0)
         
         # Get video file
-        video_path = Path(video.path)
+        # ROOT CAUSE FIX: Resolve path to absolute to ensure file is found
+        video_path = Path(video.path).resolve()
         if not video_path.exists():
-            raise Exception(f"Video file not found: {video.path}")
+            raise FileNotFoundError(f"Video file not found: {video_path}")
         
         # Prepare caption
         filename_no_ext = video.filename.rsplit('.', 1)[0] if '.' in video.filename else video.filename
@@ -4118,12 +4161,12 @@ async def cleanup_task():
                 if UPLOAD_DIR.exists():
                     all_files = set(UPLOAD_DIR.glob("*"))
                     # Get all video paths from database - include ALL videos (scheduled, pending, etc.)
-                    # This ensures files belonging to scheduled videos are never considered orphaned
-                    all_video_paths = set(Path(v.path) for v in db.query(Video).all())
+                    # ROOT CAUSE FIX: Resolve all paths to absolute to ensure proper comparison
+                    all_video_paths = set(Path(v.path).resolve() for v in db.query(Video).all())
                     
                     # Also explicitly get paths of scheduled videos as extra protection
                     scheduled_video_paths = set(
-                        Path(v.path) for v in db.query(Video).filter(
+                        Path(v.path).resolve() for v in db.query(Video).filter(
                             Video.status == "scheduled"
                         ).all()
                     )

@@ -10,3 +10,7 @@ datasources:
     editable: true
     jsonData:
       maxLines: 1000
+      volumeEnabled: true
+      discoverServiceName: true
+      httpHeaderName1: "X-Scope-OrgID"
+      httpHeaderValue1: "fake"

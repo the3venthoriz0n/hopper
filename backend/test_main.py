@@ -133,6 +133,8 @@ class TestVideoCleanup:
         
         with patch('main.Path') as mock_path:
             mock_path_instance = MagicMock()
+            # ROOT CAUSE FIX: Ensure resolve() returns the same mock instance
+            mock_path_instance.resolve.return_value = mock_path_instance
             mock_path.return_value = mock_path_instance
             mock_path_instance.exists.return_value = True
             mock_path_instance.unlink.side_effect = PermissionError()

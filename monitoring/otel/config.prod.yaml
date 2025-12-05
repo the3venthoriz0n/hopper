@@ -14,9 +14,11 @@ receivers:
       scrape_configs:
         - job_name: 'backend-prometheus-metrics'
           scrape_interval: 15s
+          scrape_timeout: 10s
           static_configs:
             - targets: ['prod-hopper-backend:8000']
           metrics_path: '/metrics'
+          scheme: 'http'
 
 processors:
   batch:
@@ -25,12 +27,25 @@ processors:
   memory_limiter:
     limit_mib: 512
     check_interval: 1s
+  # ROOT CAUSE FIX: Add resource processor to ensure proper labeling for metrics and logs
+  resource:
+    attributes:
+      - key: environment
+        value: production
+        action: upsert
 
 exporters:
   prometheus:
     endpoint: "0.0.0.0:8889"
+    const_labels:
+      environment: production
+    metric_expiration: 180m
+    enable_open_metrics: true
+    add_metric_suffixes: false
 
-  otlphttp:
+  # ROOT CAUSE FIX: Use otlphttp exporter for Loki (loki exporter not available in contrib image)
+  # This sends logs to Loki in OTLP format
+  otlphttp/loki:
     endpoint: http://prod-hopper-loki:3100/otlp
     tls:
       insecure: true
@@ -46,10 +61,10 @@ service:
       exporters: [debug]
     metrics:
       receivers: [otlp, prometheus]
-      processors: [memory_limiter, batch]
+      processors: [memory_limiter, resource, batch]
       exporters: [prometheus, debug]
     logs:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
-      exporters: [otlphttp, debug]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlphttp/loki, debug]
 

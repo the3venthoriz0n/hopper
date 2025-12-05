@@ -123,6 +123,7 @@ function Home() {
   const [editTitleLength, setEditTitleLength] = useState(0);
   const [newWord, setNewWord] = useState('');
   const [wordbankExpanded, setWordbankExpanded] = useState(false);
+  const [maxFileSize, setMaxFileSize] = useState(null);
 
   // Check if user is authenticated
   useEffect(() => {
@@ -377,6 +378,15 @@ function Home() {
 
   // Define all load functions using useCallback BEFORE the useEffect that uses them
   // This ensures they're available when the useEffect runs
+  const loadUploadLimits = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API}/upload/limits`);
+      setMaxFileSize(res.data);
+    } catch (err) {
+      console.error('Error loading upload limits:', err);
+    }
+  }, [API]);
+
   const loadVideos = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/videos`);
@@ -547,6 +557,7 @@ function Home() {
     loadTiktokSettings();
     loadInstagramSettings();
     loadVideos();
+    loadUploadLimits();
     
     // Check OAuth callbacks - use consistent pattern for all platforms
     if (window.location.search.includes('connected=youtube')) {
@@ -569,7 +580,7 @@ function Home() {
     }, 5000);
     
     return () => clearInterval(pollInterval);
-  }, [user, loadDestinations, loadGlobalSettings, loadYoutubeSettings, loadTiktokSettings, loadInstagramSettings, loadVideos, loadYoutubeAccount, loadTiktokAccount, loadInstagramAccount, applyOAuthStatus]);
+  }, [user, loadDestinations, loadGlobalSettings, loadYoutubeSettings, loadTiktokSettings, loadInstagramSettings, loadVideos, loadYoutubeAccount, loadTiktokAccount, loadInstagramAccount, applyOAuthStatus, loadUploadLimits]);
   
   // Show login page if not authenticated (AFTER all hooks are declared)
   if (authLoading) {
@@ -840,7 +851,12 @@ function Home() {
         let errorMsg = err.response?.data?.detail || err.message || 'Error adding video';
         
         // Provide more helpful error messages
-        if (err.response?.status === 403 && errorMsg.includes('CSRF')) {
+        if (err.response?.status === 413) {
+          // File too large - ensure error message includes size limit
+          const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+          const maxSizeDisplay = maxFileSize?.max_file_size_display || '10 GB';
+          errorMsg = `File too large: ${file.name} is ${fileSizeMB} MB. Maximum file size is ${maxSizeDisplay}.`;
+        } else if (err.response?.status === 403 && errorMsg.includes('CSRF')) {
           errorMsg = 'CSRF token error. Please refresh the page and try again.';
         } else if (err.response?.status === 401) {
           errorMsg = 'Session expired. Please refresh the page.';
@@ -1833,6 +1849,11 @@ function Home() {
         onClick={() => document.getElementById('file').click()}
       >
         <p>Drop videos here</p>
+        {maxFileSize && (
+          <p style={{ fontSize: '0.85rem', color: '#999', marginTop: '0.5rem' }}>
+            Maximum file size: {maxFileSize.max_file_size_display}
+          </p>
+        )}
         <input 
           id="file"
           type="file"
