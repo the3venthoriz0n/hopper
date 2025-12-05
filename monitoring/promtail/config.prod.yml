@@ -6,7 +6,7 @@ positions:
   filename: /tmp/positions.yaml
 
 clients:
-  - url: http://hopper-prod-loki:3100/loki/api/v1/push
+  - url: http://prod-hopper-loki:3100/loki/api/v1/push
 
 scrape_configs:
   # Backend logs - read from Docker JSON log files
@@ -30,7 +30,7 @@ scrape_configs:
             tag: attrs.tag
           source: attrs
       - regex:
-          expression: 'hopper-prod-backend'
+          expression: 'prod-hopper-backend'
           source: tag
       - labels:
           stream:
@@ -58,7 +58,7 @@ scrape_configs:
             tag: attrs.tag
           source: attrs
       - regex:
-          expression: 'hopper-prod-(?P<container>.*)'
+          expression: 'prod-hopper-(?P<container>.*)'
           source: tag
       - labels:
           stream:

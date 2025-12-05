@@ -1,322 +1,555 @@
 {
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
   "id": null,
-  "uid": "hopper-monitoring-dev",
-  "title": "Hopper Monitoring Dashboard (Dev)",
-  "tags": ["hopper", "monitoring", "dev"],
-  "timezone": "browser",
-  "schemaVersion": 16,
-  "version": 0,
-  "refresh": "10s",
+  "links": [],
   "panels": [
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
       "id": 1,
-      "title": "Active Users",
-      "type": "stat",
-      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0},
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.3.0",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
           "expr": "hopper_active_users",
-          "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+          "refId": "A"
         }
       ],
+      "title": "Active Users",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"value": null, "color": "green"}
+              {
+                "color": "blue",
+                "value": 0
+              }
             ]
           },
           "unit": "short"
-        }
-      }
-    },
-    {
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
       "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.3.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "hopper_current_uploads",
+          "refId": "A"
+        }
+      ],
       "title": "Current Uploads",
-      "type": "stat",
-      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0},
-      "targets": [
-        {
-          "expr": "hopper_current_uploads",
-          "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
-        }
-      ],
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"value": null, "color": "blue"}
+              {
+                "color": "yellow",
+                "value": 0
+              }
             ]
           },
           "unit": "short"
-        }
-      }
-    },
-    {
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
       "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.3.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "hopper_queued_uploads",
+          "refId": "A"
+        }
+      ],
       "title": "Queued Uploads",
-      "type": "stat",
-      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0},
-      "targets": [
-        {
-          "expr": "hopper_queued_uploads",
-          "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
-        }
-      ],
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"value": null, "color": "yellow"}
+              {
+                "color": "purple",
+                "value": 0
+              }
             ]
           },
           "unit": "short"
-        }
-      }
-    },
-    {
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
       "id": 17,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.3.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "hopper_scheduled_uploads",
+          "refId": "A"
+        }
+      ],
       "title": "Scheduled Uploads",
-      "type": "stat",
-      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0},
-      "targets": [
-        {
-          "expr": "hopper_scheduled_uploads",
-          "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
-        }
-      ],
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"value": null, "color": "purple"}
+              {
+                "color": "red",
+                "value": 0
+              }
             ]
           },
           "unit": "short"
-        }
-      }
-    },
-    {
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 8
+      },
       "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.3.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "hopper_failed_uploads",
+          "refId": "A"
+        }
+      ],
       "title": "Failed Uploads",
-      "type": "stat",
-      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 8},
-      "targets": [
-        {
-          "expr": "hopper_failed_uploads",
-          "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
-        }
-      ],
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": {"mode": "thresholds"},
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              {"value": null, "color": "red"}
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
             ]
-          },
-          "unit": "short"
-        }
-      }
-    },
-    {
-      "id": 5,
-      "title": "Login Attempts Rate",
-      "type": "stat",
-      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 8},
-      "targets": [
-        {
-          "expr": "sum(rate(hopper_login_attempts_total[5m]))",
-          "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "color": {"mode": "thresholds"},
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {"value": null, "color": "green"}
-            ]
-          },
-          "unit": "reqps"
-        }
-      }
-    },
-    {
-      "id": 6,
-      "title": "Login Success vs Failure",
-      "type": "piechart",
-      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 8},
-      "targets": [
-        {
-          "expr": "sum by (status) (rate(hopper_login_attempts_total[5m]))",
-          "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
-        }
-      ]
-    },
-    {
-      "id": 11,
-      "title": "Login Methods",
-      "type": "piechart",
-      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 8},
-      "targets": [
-        {
-          "expr": "sum by (method) (rate(hopper_login_attempts_total[5m]))",
-          "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
-        }
-      ]
-    },
-    {
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
       "id": 7,
-      "title": "Upload Status Over Time",
-      "type": "timeseries",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.3.0",
       "targets": [
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
           "expr": "hopper_current_uploads",
-          "refId": "A",
           "legendFormat": "Current Uploads",
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+          "refId": "A"
         },
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
           "expr": "hopper_queued_uploads",
-          "refId": "B",
           "legendFormat": "Queued Uploads",
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+          "refId": "B"
         },
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
           "expr": "hopper_scheduled_uploads",
-          "refId": "C",
           "legendFormat": "Scheduled Uploads",
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+          "refId": "C"
         },
         {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
           "expr": "hopper_failed_uploads",
-          "refId": "D",
           "legendFormat": "Failed Uploads",
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+          "refId": "D"
         }
-      ]
+      ],
+      "title": "Upload Status Over Time",
+      "type": "timeseries"
     },
     {
-      "id": 8,
-      "title": "Login Attempts Over Time",
-      "type": "timeseries",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
-      "targets": [
-        {
-          "expr": "sum(rate(hopper_login_attempts_total{status=\"success\"}[5m]))",
-          "refId": "A",
-          "legendFormat": "Successful Logins",
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
         },
-        {
-          "expr": "sum(rate(hopper_login_attempts_total{status=\"failure\"}[5m]))",
-          "refId": "B",
-          "legendFormat": "Failed Logins",
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
-        }
-      ]
-    },
-    {
-      "id": 12,
-      "title": "Login Methods Over Time",
-      "type": "timeseries",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
-      "targets": [
-        {
-          "expr": "sum(rate(hopper_login_attempts_total{method=\"email\"}[5m]))",
-          "refId": "A",
-          "legendFormat": "Email/Password",
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
-        },
-        {
-          "expr": "sum(rate(hopper_login_attempts_total{method=\"google\"}[5m]))",
-          "refId": "B",
-          "legendFormat": "Google OAuth",
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
-        }
-      ]
-    },
-    {
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "user_email"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 200
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "created_at"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 200
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "scheduled_time"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 200
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 80
+              },
+              {
+                "id": "custom.align",
+                "value": "center"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
       "id": 9,
-      "title": "Users with Active Uploads",
-      "type": "table",
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 32},
-      "targets": [
-        {
-          "expr": "hopper_user_uploads",
-          "refId": "A",
-          "format": "table",
-          "instant": true,
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "align": "auto",
-            "displayMode": "auto"
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {"id": "byName", "options": "user_email"},
-            "properties": [
-              {"id": "custom.width", "value": 200}
-            ]
-          },
-          {
-            "matcher": {"id": "byName", "options": "status"},
-            "properties": [
-              {"id": "custom.width", "value": 120},
-              {
-                "id": "color",
-                "value": {
-                  "mode": "thresholds"
-                }
-              },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {"value": null, "color": "green"},
-                    {"value": 0, "color": "yellow"},
-                    {"value": 0, "color": "red"}
-                  ]
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {"id": "byName", "options": "Value"},
-            "properties": [
-              {"id": "custom.width", "value": 80},
-              {"id": "custom.align", "value": "center"}
-            ]
-          }
-        ]
-      },
       "options": {
+        "cellHeight": "sm",
         "showHeader": true,
         "sortBy": [
           {
@@ -324,178 +557,269 @@
             "displayName": "Value"
           }
         ]
-      }
+      },
+      "pluginVersion": "12.3.0",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {},
+            "indexByName": {
+              "user_email": 0,
+              "created_at": 1,
+              "scheduled_time": 2,
+              "Value": 3
+            },
+            "renameByName": {
+              "user_email": "User",
+              "created_at": "Added to Queue",
+              "scheduled_time": "Scheduled Upload Time",
+              "Value": "Count"
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "hopper_scheduled_uploads_detail",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Scheduled Uploads",
+      "type": "table"
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.3.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "sum(rate(hopper_login_attempts_total{status=\"success\", method=\"email\"}[5m]))",
+          "legendFormat": "Email - Success",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "sum(rate(hopper_login_attempts_total{status=\"failure\", method=\"email\"}[5m]))",
+          "legendFormat": "Email - Failure",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "sum(rate(hopper_login_attempts_total{status=\"success\", method=\"google\"}[5m]))",
+          "legendFormat": "Google OAuth - Success",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "sum(rate(hopper_login_attempts_total{status=\"failure\", method=\"google\"}[5m]))",
+          "legendFormat": "Google OAuth - Failure",
+          "refId": "D"
+        }
+      ],
+      "title": "Login Attempts by Status and Method",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 12,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
       "id": 10,
-      "title": "Backend Logs (Docker - same as make logs)",
-      "type": "logs",
-      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 42},
-      "targets": [
-        {
-          "expr": "{job=\"docker\", container=~\".*hopper-dev-backend.*\"}",
-          "refId": "A",
-          "datasource": {"type": "loki", "uid": "loki"}
-        }
-      ],
       "options": {
         "dedupStrategy": "none",
+        "enableInfiniteScrolling": false,
         "enableLogDetails": true,
         "prettifyLogMessage": false,
         "showCommonLabels": false,
+        "showControls": true,
         "showLabels": true,
         "showTime": true,
         "sortOrder": "Descending",
         "wrapLogMessage": false
-      }
-    },
-    {
-      "id": 13,
-      "title": "Login Attempts by Method and Status",
-      "type": "table",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 54},
-      "targets": [
-        {
-          "expr": "sum by (method, status) (rate(hopper_login_attempts_total[5m]))",
-          "refId": "A",
-          "format": "table",
-          "instant": true,
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "align": "auto",
-            "displayMode": "auto"
-          },
-          "unit": "reqps"
-        },
-        "overrides": [
-          {
-            "matcher": {"id": "byName", "options": "method"},
-            "properties": [
-              {"id": "custom.width", "value": 120}
-            ]
-          },
-          {
-            "matcher": {"id": "byName", "options": "status"},
-            "properties": [
-              {"id": "custom.width", "value": 100},
-              {
-                "id": "color",
-                "value": {
-                  "mode": "thresholds"
-                }
-              },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {"value": null, "color": "green"},
-                    {"value": 0, "color": "red"}
-                  ]
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {"id": "byName", "options": "Value"},
-            "properties": [
-              {"id": "custom.width", "value": 100},
-              {"id": "custom.align", "value": "center"}
-            ]
-          }
-        ]
       },
-      "options": {
-        "showHeader": true,
-        "sortBy": [
-          {
-            "desc": true,
-            "displayName": "Value"
-          }
-        ]
-      }
-    },
-    {
-      "id": 14,
-      "title": "Total Login Attempts (Last Hour)",
-      "type": "stat",
-      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 54},
+      "pluginVersion": "12.3.0",
       "targets": [
         {
-          "expr": "sum(increase(hopper_login_attempts_total[1h]))",
-          "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "color": {"mode": "thresholds"},
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {"value": null, "color": "blue"}
-            ]
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
           },
-          "unit": "short"
-        }
-      }
-    },
-    {
-      "id": 15,
-      "title": "Failed Login Attempts (Last Hour)",
-      "type": "stat",
-      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 54},
-      "targets": [
-        {
-          "expr": "sum(increase(hopper_login_attempts_total{status=\"failure\"}[1h]))",
-          "refId": "A",
-          "datasource": {"type": "prometheus", "uid": "Prometheus"}
+          "expr": "{job=\"docker\", environment=\"development\"}${log_level:query}",
+          "refId": "A"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "color": {"mode": "thresholds"},
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {"value": null, "color": "red"}
-            ]
-          },
-          "unit": "short"
-        }
-      }
-    },
-    {
-      "id": 16,
-      "title": "All Container Logs (Docker)",
-      "type": "logs",
-      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 62},
-      "targets": [
-        {
-          "expr": "{job=\"docker\", environment=\"development\"}",
-          "refId": "A",
-          "datasource": {"type": "loki", "uid": "loki"}
-        }
-      ],
-      "options": {
-        "dedupStrategy": "none",
-        "enableLogDetails": true,
-        "prettifyLogMessage": false,
-        "showCommonLabels": false,
-        "showLabels": true,
-        "showTime": true,
-        "sortOrder": "Descending",
-        "wrapLogMessage": false
-      }
+      "title": "Container Logs",
+      "type": "logs"
     }
   ],
+  "preload": false,
+  "refresh": "10s",
+  "schemaVersion": 42,
+  "tags": [
+    "hopper",
+    "monitoring",
+    "dev"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": "Error",
+          "value": " |= \"error\""
+        },
+        "hide": 0,
+        "label": "Log Level",
+        "name": "log_level",
+        "options": [
+          {
+            "selected": false,
+            "text": "All",
+            "value": ""
+          },
+          {
+            "selected": true,
+            "text": "Error",
+            "value": " |= \"error\""
+          },
+          {
+            "selected": false,
+            "text": "Warning",
+            "value": " |= \"warning\""
+          },
+          {
+            "selected": false,
+            "text": "Info",
+            "value": " |= \"info\""
+          },
+          {
+            "selected": false,
+            "text": "Debug",
+            "value": " |= \"debug\""
+          }
+        ],
+        "query": "error : warning : info : debug",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      }
+    ]
+  },
   "time": {
     "from": "now-6h",
     "to": "now"
   },
-  "editable": true
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Hopper Monitoring Dashboard (Dev)",
+  "uid": "hopper-monitoring-dev",
+  "version": 2
 }

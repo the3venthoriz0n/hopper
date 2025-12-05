@@ -5,7 +5,7 @@ datasources:
     type: loki
     uid: loki
     access: proxy
-    url: http://hopper-dev-loki:3100
+    url: http://dev-hopper-loki:3100
     isDefault: false
     editable: true
     jsonData:

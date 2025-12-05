@@ -8,10 +8,10 @@ global:
 scrape_configs:
   - job_name: 'otel-collector'
     static_configs:
-      - targets: ['hopper-dev-otel-collector:8889']
+      - targets: ['dev-hopper-otel-collector:8889']
     metrics_path: '/metrics'
 
   - job_name: 'backend'
     static_configs:
-      - targets: ['hopper-dev-backend:8000']
+      - targets: ['dev-hopper-backend:8000']
     metrics_path: '/metrics'

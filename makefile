@@ -10,7 +10,7 @@ GIT_VERSION := $(shell git describe --tags --always 2>/dev/null || echo "dev")
 export GIT_VERSION
 
 # Compose command builder
-COMPOSE = docker compose -p hopper-$(ENV) -f docker-compose.$(ENV).yml --env-file .env.$(ENV)
+COMPOSE = docker compose -p $(ENV)-hopper -f docker-compose.$(ENV).yml --env-file .env.$(ENV)
 
 # Service filter (optional: make logs SERVICE=backend)
 SERVICE ?=
@@ -74,19 +74,24 @@ rebuild: down sync test
 	@docker image prune -f
 	@echo "✅ $(ENV) rebuild complete!"
 
-rebuild-grafana:
+rebuild-grafana: sync
 	@echo "🔄 Rebuilding Grafana for $(ENV) environment..."
-	@$(COMPOSE) stop grafana
+	@echo "🗑️  Clearing Grafana cache to ensure fresh load..."
+	@$(COMPOSE) stop grafana || true
+	@$(COMPOSE) rm -f grafana || true
+	@docker volume rm $(ENV)-hopper_grafana_data 2>/dev/null || echo "⚠️  Volume doesn't exist (ok)"
+	@echo "🔨 Building Grafana image with updated dashboards..."
 	@$(COMPOSE) build --no-cache grafana
+	@echo "🚀 Starting Grafana..."
 	@$(COMPOSE) up -d grafana
-	@echo "✅ Grafana rebuild complete!"
-	@echo "💡 If dashboard doesn't appear, run: make clear-grafana-cache"
+	@echo "✅ Grafana rebuild complete! Dashboard should appear within 10-30 seconds."
+	@echo "💡 Check Grafana logs if dashboard doesn't appear: make logs SERVICE=grafana"
 
 clear-grafana-cache:
 	@echo "🗑️  Clearing Grafana cache for $(ENV) environment..."
 	@$(COMPOSE) stop grafana || true
 	@$(COMPOSE) rm -f grafana || true
-	@docker volume rm hopper_$(ENV)_grafana_data 2>/dev/null || echo "⚠️  Volume hopper_$(ENV)_grafana_data doesn't exist (already cleared)"
+	@docker volume rm $(ENV)-hopper_grafana_data 2>/dev/null || echo "⚠️  Volume $(ENV)-hopper_grafana_data doesn't exist (already cleared)"
 	@$(COMPOSE) up -d grafana
 	@echo "✅ Grafana cache cleared! Dashboard will reload from provisioned files."
 
@@ -103,4 +108,5 @@ shell:
 clean:
 	@docker container prune -f
 	@docker image prune -f
+	@docker volume prune -f
 	@echo "✅ Cleanup complete!"

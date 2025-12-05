@@ -143,6 +143,15 @@ try:
 except ValueError:
     user_uploads_gauge = REGISTRY._names_to_collectors.get('hopper_user_uploads')
 
+try:
+    scheduled_uploads_detail_gauge = Gauge(
+        'hopper_scheduled_uploads_detail',
+        'Scheduled uploads with scheduled time and created date',
+        ['user_id', 'user_email', 'scheduled_time', 'created_at']
+    )
+except ValueError:
+    scheduled_uploads_detail_gauge = REGISTRY._names_to_collectors.get('hopper_scheduled_uploads_detail')
+
 # ============================================================================
 # DATABASE AND REDIS INITIALIZATION (Lifespan Events)
 # ============================================================================
@@ -4068,6 +4077,33 @@ async def update_metrics_task():
                         user_email=user_email or f"user_{user_id}",
                         status=status
                     ).set(count)
+                
+                # Get scheduled uploads with scheduled_time and created_at for detailed view
+                try:
+                    scheduled_uploads_detail_gauge.clear()
+                except AttributeError:
+                    pass
+                
+                scheduled_videos = db.query(
+                    User.id,
+                    User.email,
+                    Video.scheduled_time,
+                    Video.created_at
+                ).join(Video).filter(
+                    Video.status == "scheduled",
+                    Video.scheduled_time.isnot(None)
+                ).all()
+                
+                # Set metrics for each scheduled video
+                for user_id, user_email, scheduled_time, created_at in scheduled_videos:
+                    scheduled_time_str = scheduled_time.isoformat() if scheduled_time else ""
+                    created_at_str = created_at.isoformat() if created_at else ""
+                    scheduled_uploads_detail_gauge.labels(
+                        user_id=str(user_id),
+                        user_email=user_email or f"user_{user_id}",
+                        scheduled_time=scheduled_time_str,
+                        created_at=created_at_str
+                    ).set(1)
                 
             except Exception as e:
                 logger.error(f"Error updating metrics: {e}", exc_info=True)

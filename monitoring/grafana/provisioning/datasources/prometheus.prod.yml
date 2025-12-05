@@ -4,7 +4,7 @@ datasources:
   - name: Prometheus
     type: prometheus
     access: proxy
-    url: http://hopper-prod-prometheus:9090
+    url: http://prod-hopper-prometheus:9090
     isDefault: true
     editable: true
     jsonData:

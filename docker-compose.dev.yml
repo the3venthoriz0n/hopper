@@ -1,13 +1,13 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: hopper-dev-postgres
+    container_name: dev-hopper-postgres
     environment:
       - POSTGRES_DB=hopper
       - POSTGRES_USER=hopper
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-hopper_dev_password}
     volumes:
-      - hopper_dev_postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     ports:
       - "5433:5432"  # Map host 5433 to container 5432 to avoid conflict
     networks:
@@ -20,10 +20,10 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: hopper-dev-redis
+    container_name: dev-hopper-redis
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     volumes:
-      - hopper_dev_redis_data:/data
+      - redis_data:/data
     ports:
       - "6380:6379"  # Map host 6380 to container 6379 to avoid conflict
     networks:
@@ -36,12 +36,12 @@ services:
 
   backend:
     build: ./backend
-    container_name: hopper-dev-backend
+    container_name: dev-hopper-backend
     ports:
       - "8000:8000"
     volumes:
-      - hopper_dev_backend_uploads:/app/uploads
-      - hopper_dev_backend_sessions:/app/sessions
+      - backend_uploads:/app/uploads
+      - backend_sessions:/app/sessions
       - /mnt/y/Misc/_DevRemote/hopper_sync/backend:/app
     depends_on:
       - postgres
@@ -62,10 +62,10 @@ services:
       - TIKTOK_CLIENT_SECRET=${TIKTOK_CLIENT_SECRET}
       - FACEBOOK_APP_ID=${FACEBOOK_APP_ID}
       - FACEBOOK_APP_SECRET=${FACEBOOK_APP_SECRET}
-      - DATABASE_URL=postgresql://hopper:${POSTGRES_PASSWORD:-hopper_dev_password}@hopper-dev-postgres:5432/hopper
-      - REDIS_URL=redis://hopper-dev-redis:6379/0
+      - DATABASE_URL=postgresql://hopper:${POSTGRES_PASSWORD:-hopper_dev_password}@dev-hopper-postgres:5432/hopper
+      - REDIS_URL=redis://dev-hopper-redis:6379/0
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://hopper-dev-otel-collector:4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://dev-hopper-otel-collector:4317
       - OTEL_SERVICE_NAME=hopper-backend
       - OTEL_RESOURCE_ATTRIBUTES=service.name=hopper-backend,service.version=1.0.0,deployment.environment=${ENVIRONMENT:-development}
     logging:
@@ -86,7 +86,7 @@ services:
         REACT_APP_FRONTEND_URL: ${FRONTEND_URL}
         REACT_APP_ENVIRONMENT: development
         REACT_APP_VERSION: ${GIT_VERSION}
-    container_name: hopper-dev-frontend
+    container_name: dev-hopper-frontend
     ports:
       - "3000:3000"
     volumes:
@@ -115,7 +115,7 @@ services:
     build:
       context: ./monitoring
       dockerfile: Dockerfile.otel
-    container_name: hopper-dev-otel-collector
+    container_name: dev-hopper-otel-collector
     ports:
       - "4317:4317"   # OTLP gRPC receiver
       - "4318:4318"   # OTLP HTTP receiver
@@ -134,9 +134,9 @@ services:
       dockerfile: Dockerfile.prometheus
       args:
         ENV: dev
-    container_name: hopper-dev-prometheus
+    container_name: dev-hopper-prometheus
     volumes:
-      - hopper_dev_prometheus_data:/prometheus
+      - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -154,12 +154,12 @@ services:
     build:
       context: ./monitoring
       dockerfile: Dockerfile.loki
-    container_name: hopper-dev-loki
+    container_name: dev-hopper-loki
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
     volumes:
-      - hopper_dev_loki_data:/loki
+      - loki_data:/loki
     networks:
       - hopper_default
 
@@ -169,7 +169,7 @@ services:
       dockerfile: Dockerfile.promtail
       args:
         ENV: dev
-    container_name: hopper-dev-promtail
+    container_name: dev-hopper-promtail
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
@@ -185,9 +185,9 @@ services:
       dockerfile: Dockerfile.grafana
       args:
         ENV: dev
-    container_name: hopper-dev-grafana
+    container_name: dev-hopper-grafana
     volumes:
-      - hopper_dev_grafana_data:/var/lib/grafana
+      - grafana_data:/var/lib/grafana
     ports:
       - "3011:3000"
     environment:
@@ -208,10 +208,10 @@ networks:
     external: true
 
 volumes:
-  hopper_dev_postgres_data:
-  hopper_dev_redis_data:
-  hopper_dev_backend_uploads:
-  hopper_dev_backend_sessions:
-  hopper_dev_prometheus_data:
-  hopper_dev_grafana_data:
-  hopper_dev_loki_data:
+  postgres_data:
+  redis_data:
+  backend_uploads:
+  backend_sessions:
+  prometheus_data:
+  grafana_data:
+  loki_data:

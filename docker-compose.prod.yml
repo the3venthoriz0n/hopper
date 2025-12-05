@@ -1,13 +1,13 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: hopper-prod-postgres
+    container_name: prod-hopper-postgres
     environment:
       - POSTGRES_DB=hopper
       - POSTGRES_USER=hopper
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     volumes:
-      - hopper_prod_postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     networks:
       - hopper_default
     logging:
@@ -19,10 +19,10 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: hopper-prod-redis
+    container_name: prod-hopper-redis
     command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
     volumes:
-      - hopper_prod_redis_data:/data
+      - redis_data:/data
     networks:
       - hopper_default
     logging:
@@ -34,12 +34,12 @@ services:
 
   backend:
     build: ./backend
-    container_name: hopper-prod-backend
+    container_name: prod-hopper-backend
     ports:
       - "8001:8000"
     volumes:
-      - hopper_prod_backend_uploads:/app/uploads
-      - hopper_prod_backend_sessions:/app/sessions
+      - backend_uploads:/app/uploads
+      - backend_sessions:/app/sessions
     depends_on:
       - postgres
       - redis
@@ -59,10 +59,10 @@ services:
       - TIKTOK_CLIENT_SECRET=${TIKTOK_CLIENT_SECRET}
       - FACEBOOK_APP_ID=${FACEBOOK_APP_ID}
       - FACEBOOK_APP_SECRET=${FACEBOOK_APP_SECRET}
-      - DATABASE_URL=postgresql://hopper:${POSTGRES_PASSWORD}@hopper-prod-postgres:5432/hopper
-      - REDIS_URL=redis://hopper-prod-redis:6379/0
+      - DATABASE_URL=postgresql://hopper:${POSTGRES_PASSWORD}@prod-hopper-postgres:5432/hopper
+      - REDIS_URL=redis://prod-hopper-redis:6379/0
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://hopper-prod-otel-collector:4317
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://prod-hopper-otel-collector:4317
       - OTEL_SERVICE_NAME=hopper-backend
       - OTEL_RESOURCE_ATTRIBUTES=service.name=hopper-backend,service.version=1.0.0,deployment.environment=${ENVIRONMENT:-production}
     logging:
@@ -84,7 +84,7 @@ services:
         REACT_APP_ENVIRONMENT: production
         REACT_APP_VERSION: ${GIT_VERSION}
         ENVIRONMENT: prod
-    container_name: hopper-prod-frontend
+    container_name: prod-hopper-frontend
     ports:
       - "3010:3000"
     depends_on:
@@ -108,7 +108,7 @@ services:
     build:
       context: ./monitoring
       dockerfile: Dockerfile.otel
-    container_name: hopper-prod-otel-collector
+    container_name: prod-hopper-otel-collector
     ports:
       - "4319:4317"   # OTLP gRPC receiver
       - "4320:4318"   # OTLP HTTP receiver
@@ -127,9 +127,9 @@ services:
       dockerfile: Dockerfile.prometheus
       args:
         ENV: prod
-    container_name: hopper-prod-prometheus
+    container_name: prod-hopper-prometheus
     volumes:
-      - hopper_prod_prometheus_data:/prometheus
+      - prometheus_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -147,12 +147,12 @@ services:
     build:
       context: ./monitoring
       dockerfile: Dockerfile.loki
-    container_name: hopper-prod-loki
+    container_name: prod-hopper-loki
     ports:
       - "3101:3100"
     command: -config.file=/etc/loki/local-config.yaml
     volumes:
-      - hopper_prod_loki_data:/loki
+      - loki_data:/loki
     networks:
       - hopper_default
 
@@ -162,7 +162,7 @@ services:
       dockerfile: Dockerfile.promtail
       args:
         ENV: prod
-    container_name: hopper-prod-promtail
+    container_name: prod-hopper-promtail
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
@@ -178,9 +178,9 @@ services:
       dockerfile: Dockerfile.grafana
       args:
         ENV: prod
-    container_name: hopper-prod-grafana
+    container_name: prod-hopper-grafana
     volumes:
-      - hopper_prod_grafana_data:/var/lib/grafana
+      - grafana_data:/var/lib/grafana
     ports:
       - "3012:3000"
     environment:
@@ -201,11 +201,11 @@ networks:
     external: true
 
 volumes:
-  hopper_prod_postgres_data:
-  hopper_prod_redis_data:
-  hopper_prod_backend_uploads:
-  hopper_prod_backend_sessions:
-  hopper_prod_prometheus_data:
-  hopper_prod_grafana_data:
-  hopper_prod_loki_data:
+  postgres_data:
+  redis_data:
+  backend_uploads:
+  backend_sessions:
+  prometheus_data:
+  grafana_data:
+  loki_data:
 
