@@ -1522,7 +1522,13 @@ def auth_youtube(request: Request, user_id: int = Depends(require_auth)):
     )
     
     # Store user_id in state parameter
-    url, state = flow.authorization_url(access_type='offline', state=str(user_id))
+    # ROOT CAUSE FIX: Add prompt='consent' to force Google to always return refresh_token
+    # Without this, Google only returns refresh_token on first authorization
+    url, state = flow.authorization_url(
+        access_type='offline',
+        prompt='consent',
+        state=str(user_id)
+    )
     return {"url": url}
 
 @app.get("/api/auth/youtube/callback")
@@ -1562,6 +1568,12 @@ def auth_callback(code: str, state: str, request: Request, response: Response):
     
     flow.fetch_token(code=code)
     flow_creds = flow.credentials
+    
+    # ROOT CAUSE FIX: Validate refresh_token is present
+    # Google only returns refresh_token with access_type='offline' and prompt='consent'
+    if not flow_creds.refresh_token:
+        youtube_logger.error(f"YouTube OAuth did not return refresh_token for user {user_id}. This usually means the OAuth consent screen needs to be shown again.")
+        raise HTTPException(400, "Failed to obtain refresh token. Please try connecting again - you may need to grant permissions again.")
     
     # Create complete Credentials object
     creds = Credentials(
