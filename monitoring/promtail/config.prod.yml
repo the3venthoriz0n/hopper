@@ -32,9 +32,16 @@ scrape_configs:
       - regex:
           expression: 'prod-hopper-backend'
           source: tag
+      - regex:
+          expression: '(?i)\blevel=(?P<level>debug|info|warn|warning|error|fatal|panic)\b|"(?P<level>DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC)":'
+          source: output
+      - template:
+          source: level
+          template: '{{ if .level }}{{ .level | ToLower }}{{ else }}info{{ end }}'
       - labels:
           stream:
           container: tag
+          level:
       - output:
           source: output
 
@@ -60,8 +67,15 @@ scrape_configs:
       - regex:
           expression: 'prod-hopper-(?P<container>.*)'
           source: tag
+      - regex:
+          expression: '(?i)\blevel=(?P<level>debug|info|warn|warning|error|fatal|panic)\b|"(?P<level>DEBUG|INFO|WARN|WARNING|ERROR|FATAL|PANIC)":'
+          source: output
+      - template:
+          source: level
+          template: '{{ if .level }}{{ .level | ToLower }}{{ else }}info{{ end }}'
       - labels:
           stream:
           container: tag
+          level:
       - output:
           source: output
