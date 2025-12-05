@@ -4305,14 +4305,23 @@ async def scheduler_task():
                         try:
                             scheduled_time = datetime.fromisoformat(video.scheduled_time) if isinstance(video.scheduled_time, str) else video.scheduled_time
                             
-                            # If scheduled time has passed, upload the video
+                            # ROOT CAUSE FIX: Upload if scheduled time has passed
+                            # This handles both:
+                            # 1. Videos scheduled for future upload (status="scheduled")
+                            # 2. Videos that were uploading when server restarted (status="uploading")
                             if current_time >= scheduled_time:
                                 video_id = video.id
                                 videos_processed += 1
                                 scheduler_videos_processed_counter.inc()
-                                print(f"Uploading scheduled video for user {user_id}: {video.filename}")
+                                
+                                # Log whether this is a retry or new upload
+                                if video.status == "uploading":
+                                    upload_logger.info(f"Retrying upload for video that was in progress: {video.filename} (user {user_id})")
+                                else:
+                                    upload_logger.info(f"Uploading scheduled video for user {user_id}: {video.filename}")
                                 
                                 # Mark as uploading - use shared session
+                                # This is idempotent - safe to call even if already "uploading"
                                 db_helpers.update_video(video_id, user_id, db=db, status="uploading")
                                 
                                 # Upload to each enabled destination - uploader functions query DB directly

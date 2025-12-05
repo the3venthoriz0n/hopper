@@ -269,6 +269,9 @@ def get_all_scheduled_videos(db: Session = None) -> Dict[int, List[Video]]:
     """Get all scheduled videos across all users, grouped by user_id
     Optimized for scheduler task - single query instead of N queries.
     
+    ROOT CAUSE FIX: Also includes videos in "uploading" status with scheduled_time.
+    This ensures videos that were uploading when server restarted are retried.
+    
     Args:
         db: Database session (if None, creates its own - for backward compatibility)
     
@@ -281,9 +284,12 @@ def get_all_scheduled_videos(db: Session = None) -> Dict[int, List[Video]]:
         should_close = True
     
     try:
-        # Single query to get all scheduled videos
+        # ROOT CAUSE FIX: Include both "scheduled" and "uploading" videos with scheduled_time
+        # This ensures:
+        # 1. Videos scheduled for future upload are included
+        # 2. Videos that were uploading when server restarted are retried
         scheduled_videos = db.query(Video).filter(
-            Video.status == 'scheduled',
+            Video.status.in_(['scheduled', 'uploading']),
             Video.scheduled_time.isnot(None)
         ).order_by(Video.scheduled_time).all()
         
