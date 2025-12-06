@@ -1,0 +1,4 @@
+FROM grafana/loki:latest
+
+COPY loki/config.dev.yaml /etc/loki/local-config.yaml
+
