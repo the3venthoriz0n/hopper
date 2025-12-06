@@ -54,39 +54,50 @@ from fastapi.responses import Response as FastAPIResponse
 
 # Get environment for OTEL (before ENVIRONMENT is set)
 OTEL_ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+OTEL_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 
-# Initialize OpenTelemetry
-resource = Resource.create({
-    "service.name": os.getenv("OTEL_SERVICE_NAME", "hopper-backend"),
-    "service.version": "1.0.0",
-    "deployment.environment": OTEL_ENVIRONMENT
-})
+def initialize_otel():
+    """Initialize OpenTelemetry providers - called during application startup, not at import time"""
+    if not OTEL_ENDPOINT:
+        return False
+    
+    try:
+        # Initialize OpenTelemetry
+        resource = Resource.create({
+            "service.name": os.getenv("OTEL_SERVICE_NAME", "hopper-backend"),
+            "service.version": "1.0.0",
+            "deployment.environment": OTEL_ENVIRONMENT
+        })
 
-# Trace provider
-trace_provider = TracerProvider(resource=resource)
-otlp_trace_exporter = OTLPSpanExporter(
-    endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"),
-    insecure=True
-)
-trace_provider.add_span_processor(BatchSpanProcessor(otlp_trace_exporter))
-trace.set_tracer_provider(trace_provider)
+        # Trace provider
+        trace_provider = TracerProvider(resource=resource)
+        otlp_trace_exporter = OTLPSpanExporter(
+            endpoint=OTEL_ENDPOINT,
+            insecure=True
+        )
+        trace_provider.add_span_processor(BatchSpanProcessor(otlp_trace_exporter))
+        trace.set_tracer_provider(trace_provider)
 
-# Metrics provider
-otlp_metric_exporter = OTLPMetricExporter(
-    endpoint=os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"),
-    insecure=True
-)
-# ROOT CAUSE FIX: Reduce export interval to ensure metrics are exported more frequently
-# Also set timeout to prevent metrics from being dropped
-metric_reader = PeriodicExportingMetricReader(
-    otlp_metric_exporter, 
-    export_interval_millis=5000,
-    export_timeout_millis=30000
-)
-metrics_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
-metrics.set_meter_provider(metrics_provider)
+        # Metrics provider
+        otlp_metric_exporter = OTLPMetricExporter(
+            endpoint=OTEL_ENDPOINT,
+            insecure=True
+        )
+        metric_reader = PeriodicExportingMetricReader(
+            otlp_metric_exporter, 
+            export_interval_millis=5000,
+            export_timeout_millis=30000
+        )
+        metrics_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
+        metrics.set_meter_provider(metrics_provider)
+        
+        return True
+    except Exception as e:
+        # Log but don't fail if OTEL setup fails
+        print(f"Warning: Failed to initialize OpenTelemetry: {e}")
+        return False
 
-# Get tracer and meter
+# Get tracer and meter (will use defaults if OTEL not initialized)
 tracer = trace.get_tracer(__name__)
 meter = metrics.get_meter(__name__)
 
@@ -217,6 +228,21 @@ except ValueError:
 async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown"""
     # Startup
+    
+    # Initialize OpenTelemetry providers (if configured)
+    otel_initialized = initialize_otel()
+    otel_logging_initialized = False
+    
+    if otel_initialized:
+        # Setup OTEL logging handler
+        otel_logging_initialized = setup_otel_logging()
+        if otel_logging_initialized:
+            logger.info(f"OpenTelemetry fully initialized (LOG_LEVEL={LOG_LEVEL}), exporting to {OTEL_ENDPOINT}")
+        else:
+            logger.warning("OpenTelemetry metrics/traces initialized but logging setup failed")
+    else:
+        logger.info("OpenTelemetry not configured (OTEL_EXPORTER_OTLP_ENDPOINT not set) - running without distributed tracing")
+    
     logger.info("Initializing database...")
     try:
         init_db()
@@ -234,11 +260,10 @@ async def lifespan(app: FastAPI):
         raise
     
     # Instrument SQLAlchemy after database initialization
-    # ROOT CAUSE FIX: SQLAlchemy instrumentation automatically generates metrics
     try:
         from models import engine
         SQLAlchemyInstrumentor().instrument(engine=engine)
-        logger.info("SQLAlchemy instrumentation enabled with metrics")
+        logger.info("SQLAlchemy instrumentation enabled")
     except Exception as e:
         logger.warning(f"Failed to instrument SQLAlchemy: {e}")
     
@@ -301,9 +326,11 @@ ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 # Configure logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
-# Set up OpenTelemetry logging handler if OTEL endpoint is configured
-otel_endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
-if otel_endpoint:
+def setup_otel_logging():
+    """Setup OTEL logging handler - called during application startup, NOT at import time"""
+    if not OTEL_ENDPOINT:
+        return False
+        
     try:
         from opentelemetry._logs import set_logger_provider
         from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
@@ -319,12 +346,11 @@ if otel_endpoint:
         logger_provider = LoggerProvider(resource=log_resource)
         set_logger_provider(logger_provider)
         
-        # Set up the OTLP log exporter (use same endpoint as traces/metrics)
+        # Set up the OTLP log exporter
         log_exporter = OTLPLogExporter(
-            endpoint=otel_endpoint,
+            endpoint=OTEL_ENDPOINT,
             insecure=True
         )
-        # ROOT CAUSE FIX: Configure log processor with timeout to prevent log drops
         log_processor = BatchLogRecordProcessor(
             log_exporter,
             max_queue_size=2048,
@@ -333,45 +359,25 @@ if otel_endpoint:
         )
         logger_provider.add_log_record_processor(log_processor)
         
-        # Create a logging handler and attach it to the root logger
+        # Add OTEL handler to root logger
         handler = LoggingHandler(level=logging.NOTSET, logger_provider=logger_provider)
         logging.getLogger().addHandler(handler)
         
-        # Also configure basic logging format for console output
-        logging.basicConfig(
-            level=getattr(logging, LOG_LEVEL, logging.INFO),
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S',
-            handlers=[logging.StreamHandler(), handler]  # Both console and OTEL
-        )
-        logger = logging.getLogger(__name__)
-        logger.info(f"OpenTelemetry logging enabled, sending logs to {otel_endpoint}")
-    except ImportError as e:
-        # Fallback to standard logging if OTEL logging not available
-        logging.basicConfig(
-            level=getattr(logging, LOG_LEVEL, logging.INFO),
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        logger = logging.getLogger(__name__)
-        logger.warning(f"OpenTelemetry logging not available ({e}), using standard logging")
+        return True
     except Exception as e:
-        # Fallback on any error
-        logging.basicConfig(
-            level=getattr(logging, LOG_LEVEL, logging.INFO),
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        logger = logging.getLogger(__name__)
-        logger.warning(f"Failed to setup OpenTelemetry logging ({e}), using standard logging")
-else:
-    # Standard logging configuration
-    logging.basicConfig(
-        level=getattr(logging, LOG_LEVEL, logging.INFO),
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    logger = logging.getLogger(__name__)
+        print(f"Warning: Failed to setup OTEL logging: {e}")
+        return False
+
+# Configure basic logging (console only) at module import time
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    force=True
+)
+
+# Create logger instance (OTEL handler will be added during app startup if configured)
+logger = logging.getLogger(__name__)
 
 # Create specific loggers for different components
 upload_logger = logging.getLogger("upload")
