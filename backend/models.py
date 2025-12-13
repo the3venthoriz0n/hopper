@@ -1,5 +1,5 @@
 """Database models for Hopper"""
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, ForeignKey, JSON, Index
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, ForeignKey, JSON, Index, BigInteger, UniqueConstraint
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from datetime import datetime, timezone
 import os
@@ -25,11 +25,17 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=True)  # Nullable for OAuth-only users
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    stripe_customer_id = Column(String(255), nullable=True, index=True)  # Stripe customer ID
+    unlimited_tokens = Column(Boolean, default=False, nullable=False)  # Admin-granted unlimited tokens
+    is_admin = Column(Boolean, default=False, nullable=False)  # Admin role flag
     
     # Relationships
     videos = relationship("Video", back_populates="user", cascade="all, delete-orphan")
     settings = relationship("Setting", back_populates="user", cascade="all, delete-orphan")
     oauth_tokens = relationship("OAuthToken", back_populates="user", cascade="all, delete-orphan")
+    subscription = relationship("Subscription", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    token_balance = relationship("TokenBalance", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    token_transactions = relationship("TokenTransaction", back_populates="user", cascade="all, delete-orphan")
 
 
 class Video(Base):
@@ -46,9 +52,12 @@ class Video(Base):
     error = Column(Text)  # Error message if failed
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     scheduled_time = Column(DateTime(timezone=True))  # For scheduled uploads
+    file_size_bytes = Column(BigInteger, nullable=True)  # File size for token calculation
+    tokens_consumed = Column(Integer, nullable=True)  # Tokens consumed for this upload
     
     # Relationship
     user = relationship("User", back_populates="videos")
+    token_transactions = relationship("TokenTransaction", back_populates="video")
     
     # Composite indexes for common query patterns
     __table_args__ = (
@@ -96,6 +105,82 @@ class OAuthToken(Base):
     __table_args__ = (
         Index('ix_oauth_tokens_user_platform', 'user_id', 'platform'),  # For get_oauth_token queries
     )
+
+
+class Subscription(Base):
+    """Stripe subscription information"""
+    __tablename__ = "subscriptions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    stripe_subscription_id = Column(String(255), unique=True, nullable=False, index=True)
+    stripe_customer_id = Column(String(255), nullable=False, index=True)
+    plan_type = Column(String(50), nullable=False)  # 'free', 'medium', 'pro'
+    status = Column(String(50), nullable=False)  # 'active', 'canceled', 'past_due', 'unpaid', 'trialing'
+    current_period_start = Column(DateTime(timezone=True), nullable=False)
+    current_period_end = Column(DateTime(timezone=True), nullable=False)
+    cancel_at_period_end = Column(Boolean, default=False, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+    
+    # Relationship
+    user = relationship("User", back_populates="subscription")
+
+
+class TokenBalance(Base):
+    """User token balance and period tracking"""
+    __tablename__ = "token_balances"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    tokens_remaining = Column(Integer, default=0, nullable=False)
+    tokens_used_this_period = Column(Integer, default=0, nullable=False)
+    period_start = Column(DateTime(timezone=True), nullable=False)
+    period_end = Column(DateTime(timezone=True), nullable=False)
+    unlimited_tokens = Column(Boolean, default=False, nullable=False)  # Redundant with User.unlimited_tokens but kept for query efficiency
+    last_reset_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+    
+    # Relationship
+    user = relationship("User", back_populates="token_balance")
+
+
+class TokenTransaction(Base):
+    """Token transaction audit log"""
+    __tablename__ = "token_transactions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    video_id = Column(Integer, ForeignKey("videos.id", ondelete="SET NULL"), nullable=True)
+    transaction_type = Column(String(50), nullable=False)  # 'upload', 'purchase', 'refund', 'reset', 'grant'
+    tokens = Column(Integer, nullable=False)  # Positive for additions, negative for deductions
+    balance_before = Column(Integer, nullable=False)
+    balance_after = Column(Integer, nullable=False)
+    metadata = Column(JSON, default=dict)  # Store file size, filename, etc.
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
+    
+    # Relationships
+    user = relationship("User", back_populates="token_transactions")
+    video = relationship("Video", back_populates="token_transactions")
+    
+    # Index for common query patterns
+    __table_args__ = (
+        Index('ix_token_transactions_user_created', 'user_id', 'created_at'),  # For transaction history queries
+    )
+
+
+class StripeEvent(Base):
+    """Stripe webhook event log for idempotency"""
+    __tablename__ = "stripe_events"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    stripe_event_id = Column(String(255), unique=True, nullable=False, index=True)
+    event_type = Column(String(100), nullable=False, index=True)
+    processed = Column(Boolean, default=False, nullable=False)
+    payload = Column(JSON, nullable=False)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
 def init_db():

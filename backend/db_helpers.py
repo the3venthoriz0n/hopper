@@ -306,7 +306,7 @@ def get_all_scheduled_videos(db: Session = None) -> Dict[int, List[Video]]:
             db.close()
 
 
-def add_user_video(user_id: int, filename: str, path: str, generated_title: str = None, db: Session = None) -> Video:
+def add_user_video(user_id: int, filename: str, path: str, generated_title: str = None, file_size_bytes: int = None, tokens_consumed: int = None, db: Session = None) -> Video:
     """Add a video to user's queue
     
     Args:
@@ -314,6 +314,8 @@ def add_user_video(user_id: int, filename: str, path: str, generated_title: str 
         filename: Video filename
         path: Video file path
         generated_title: Generated title (optional)
+        file_size_bytes: File size in bytes (optional)
+        tokens_consumed: Tokens consumed for this upload (optional)
         db: Database session (if None, creates its own - for backward compatibility)
     """
     should_close = False
@@ -327,7 +329,9 @@ def add_user_video(user_id: int, filename: str, path: str, generated_title: str 
             filename=filename,
             path=path,
             status="pending",
-            generated_title=generated_title
+            generated_title=generated_title,
+            file_size_bytes=file_size_bytes,
+            tokens_consumed=tokens_consumed
         )
         db.add(video)
         db.commit()

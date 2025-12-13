@@ -24,7 +24,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
 # Database and auth imports
-from models import init_db, get_db, User, Video, Setting, OAuthToken
+from models import init_db, get_db, User, Video, Setting, OAuthToken, SessionLocal
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from auth import hash_password, verify_password, create_user, authenticate_user, get_user_by_id, get_or_create_oauth_user, set_user_password
@@ -32,6 +32,17 @@ import redis_client
 from pydantic import BaseModel, EmailStr
 import db_helpers
 from encryption import encrypt, decrypt
+from token_helpers import (
+    check_tokens_available, deduct_tokens, get_token_balance, 
+    get_token_transactions, reset_tokens_for_subscription
+)
+from stripe_config import calculate_tokens_from_bytes, PLANS, ensure_stripe_products
+from stripe_helpers import (
+    create_stripe_customer, create_checkout_session, get_customer_portal_url,
+    get_subscription_info, update_subscription_from_stripe,
+    log_stripe_event, mark_stripe_event_processed, create_free_subscription
+)
+from models import Subscription, TokenBalance, StripeEvent
 
 # OpenTelemetry imports
 from opentelemetry import trace, metrics
@@ -267,10 +278,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to instrument SQLAlchemy: {e}")
     
-    # Start the scheduler task
-    logger.info("Starting scheduler task...")
+    # Start the scheduler tasks
+    logger.info("Starting scheduler tasks...")
     asyncio.create_task(scheduler_task())
-    logger.info("Scheduler task started")
+    asyncio.create_task(token_reset_scheduler_task())
+    logger.info("Scheduler tasks started")
     
     # Start the cleanup task
     logger.info("Starting cleanup task...")
@@ -971,6 +983,7 @@ async def security_middleware(request: Request, call_next):
             path == "/api/auth/logout" or
             path == "/api/auth/me" or
             path == "/api/auth/google/login" or
+            path == "/api/stripe/webhook" or  # Stripe webhook must be public (no auth)
             path == "/metrics"  # Prometheus metrics endpoint
         )
         
@@ -1143,6 +1156,20 @@ def register(request_data: RegisterRequest, request: Request, response: Response
         
         # Create user
         user = create_user(request_data.email, request_data.password)
+        
+        # Create Stripe customer and free subscription (non-blocking, log errors but don't fail registration)
+        try:
+            db = SessionLocal()
+            try:
+                create_stripe_customer(user.email, user.id, db)
+                # Create free subscription automatically
+                create_free_subscription(user.id, db)
+            except Exception as e:
+                logger.warning(f"Failed to create Stripe customer/subscription for user {user.id}: {e}")
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning(f"Error creating Stripe customer/subscription during registration: {e}")
         
         # Create session
         session_id = secrets.token_urlsafe(32)
@@ -3176,8 +3203,8 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
     # Save file to disk with streaming and size validation
     # ROOT CAUSE FIX: Use streaming to handle large files without loading entire file into memory
     path = UPLOAD_DIR / file.filename
+    file_size = 0
     try:
-        file_size = 0
         chunk_size = 1024 * 1024  # 1MB chunks
         
         with open(path, "wb") as f:
@@ -3217,6 +3244,32 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
         upload_logger.error(f"Failed to save video file {file.filename}: {str(e)}", exc_info=True)
         raise HTTPException(500, f"Failed to save video file: {str(e)}")
     
+    # Calculate tokens required for this upload (1 token = 10MB)
+    tokens_required = calculate_tokens_from_bytes(file_size)
+    
+    # Check if user has enough tokens (before adding to database)
+    if not check_tokens_available(user_id, tokens_required, db):
+        # Clean up uploaded file
+        try:
+            if path.exists():
+                path.unlink()
+        except:
+            pass
+        
+        # Get current balance for error message
+        balance_info = get_token_balance(user_id, db)
+        if balance_info and balance_info.get('unlimited'):
+            # This shouldn't happen, but handle it gracefully
+            tokens_remaining = "unlimited"
+        else:
+            tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
+        
+        size_mb = file_size / (1024 * 1024)
+        raise HTTPException(
+            402,  # Payment Required
+            f"Insufficient tokens. File requires {tokens_required} tokens ({size_mb:.2f} MB), but you have {tokens_remaining} tokens remaining. Please upgrade your plan or purchase more tokens."
+        )
+    
     # Generate YouTube title
     filename_no_ext = file.filename.rsplit('.', 1)[0]
     title_template = youtube_settings.get('title_template', '') or global_settings.get('title_template', '{filename}')
@@ -3226,17 +3279,33 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
         global_settings.get('wordbank', [])
     )
     
-    # Add to database
+    # Add to database with file size and tokens
     # ROOT CAUSE FIX: Store absolute path to prevent path resolution issues
     video = db_helpers.add_user_video(
         user_id=user_id,
         filename=file.filename,
         path=str(path.resolve()),  # Ensure absolute path
         generated_title=youtube_title,
+        file_size_bytes=file_size,
+        tokens_consumed=tokens_required,
         db=db
     )
     
-    upload_logger.info(f"Video added for user {user_id}: {file.filename}")
+    # Deduct tokens after successful database entry
+    deduct_tokens(
+        user_id=user_id,
+        tokens=tokens_required,
+        transaction_type='upload',
+        video_id=video.id,
+        metadata={
+            'filename': file.filename,
+            'file_size_bytes': file_size,
+            'file_size_mb': round(file_size / (1024 * 1024), 2)
+        },
+        db=db
+    )
+    
+    upload_logger.info(f"Video added for user {user_id}: {file.filename} ({file_size / (1024*1024):.2f} MB, {tokens_required} tokens)")
     
     # Return the same format as GET /api/videos for consistency
     # Get settings and tokens to compute titles (batch load to prevent N+1)
@@ -3245,6 +3314,290 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
     
     # Build video response using the same helper function as GET endpoint
     return build_video_response(video, all_settings, all_tokens, user_id)
+
+# ============================================================================
+# SUBSCRIPTION & TOKEN MANAGEMENT ENDPOINTS
+# ============================================================================
+
+@app.get("/api/subscription/plans")
+def get_subscription_plans():
+    """Get available subscription plans"""
+    return {
+        "plans": [
+            {
+                "key": plan_key,
+                "name": plan_config["name"],
+                "monthly_tokens": plan_config["monthly_tokens"],
+                "stripe_price_id": plan_config.get("stripe_price_id"),
+            }
+            for plan_key, plan_config in PLANS.items()
+        ]
+    }
+
+
+@app.get("/api/subscription/current")
+def get_current_subscription(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+    """Get user's current subscription"""
+    subscription_info = get_subscription_info(user_id, db)
+    token_balance = get_token_balance(user_id, db)
+    
+    return {
+        "subscription": subscription_info,
+        "token_balance": token_balance,
+    }
+
+
+@app.post("/api/subscription/create-checkout")
+def create_subscription_checkout(
+    plan_key: str,
+    request: Request,
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
+    """Create Stripe checkout session for subscription"""
+    if plan_key not in PLANS:
+        raise HTTPException(400, f"Invalid plan: {plan_key}")
+    
+    plan = PLANS[plan_key]
+    if not plan.get("stripe_price_id"):
+        raise HTTPException(400, f"Plan {plan_key} is not configured with a Stripe price")
+    
+    # Get frontend URL from environment or request
+    frontend_url = os.getenv("FRONTEND_URL", str(request.base_url).rstrip("/"))
+    success_url = f"{frontend_url}/subscription/success?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{frontend_url}/subscription"
+    
+    session_data = create_checkout_session(user_id, plan["stripe_price_id"], success_url, cancel_url, db)
+    
+    if not session_data:
+        raise HTTPException(500, "Failed to create checkout session")
+    
+    return session_data
+
+
+@app.get("/api/subscription/portal")
+def get_subscription_portal(
+    request: Request,
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
+    """Get Stripe customer portal URL"""
+    frontend_url = os.getenv("FRONTEND_URL", str(request.base_url).rstrip("/"))
+    return_url = f"{frontend_url}/subscription"
+    
+    portal_url = get_customer_portal_url(user_id, return_url, db)
+    
+    if not portal_url:
+        raise HTTPException(500, "Failed to create portal session")
+    
+    return {"url": portal_url}
+
+
+@app.get("/api/tokens/balance")
+def get_tokens_balance(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+    """Get current token balance"""
+    balance = get_token_balance(user_id, db)
+    return balance
+
+
+@app.get("/api/tokens/transactions")
+def get_tokens_transactions(
+    limit: int = 50,
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
+    """Get token transaction history"""
+    transactions = get_token_transactions(user_id, limit, db)
+    return {"transactions": transactions}
+
+
+# ============================================================================
+# STRIPE WEBHOOK ENDPOINT
+# ============================================================================
+
+@app.post("/api/stripe/webhook")
+async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+    """Handle Stripe webhook events"""
+    import stripe
+    from stripe_config import STRIPE_WEBHOOK_SECRET
+    
+    if not STRIPE_WEBHOOK_SECRET:
+        raise HTTPException(500, "Stripe webhook secret not configured")
+    
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+    
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, STRIPE_WEBHOOK_SECRET
+        )
+    except ValueError as e:
+        logger.error(f"Invalid payload in Stripe webhook: {e}")
+        raise HTTPException(400, "Invalid payload")
+    except stripe.error.SignatureVerificationError as e:
+        logger.error(f"Invalid signature in Stripe webhook: {e}")
+        raise HTTPException(400, "Invalid signature")
+    
+    # Log event for idempotency
+    stripe_event = log_stripe_event(event["id"], event["type"], event, db)
+    
+    if stripe_event.processed:
+        logger.info(f"Stripe event {event['id']} already processed, skipping")
+        return {"status": "already_processed"}
+    
+    try:
+        # Handle different event types
+        if event["type"] == "checkout.session.completed":
+            # Subscription created via checkout
+            session = event["data"]["object"]
+            if session["mode"] == "subscription":
+                subscription_id = session["subscription"]
+                subscription = stripe.Subscription.retrieve(subscription_id)
+                update_subscription_from_stripe(subscription, db)
+                
+                # Reset tokens for new subscription
+                user_id = int(subscription.metadata.get("user_id", 0))
+                if user_id:
+                    plan_type = "free"  # Default, will be determined from price
+                    for plan_key, plan_config in PLANS.items():
+                        if plan_config.get("stripe_price_id") == subscription.items.data[0].price.id:
+                            plan_type = plan_key
+                            break
+                    
+                    reset_tokens_for_subscription(
+                        user_id,
+                        plan_type,
+                        datetime.fromtimestamp(subscription.current_period_start, tz=timezone.utc),
+                        datetime.fromtimestamp(subscription.current_period_end, tz=timezone.utc),
+                        db
+                    )
+        
+        elif event["type"] == "customer.subscription.created":
+            subscription = event["data"]["object"]
+            update_subscription_from_stripe(subscription, db)
+            
+        elif event["type"] == "customer.subscription.updated":
+            subscription = event["data"]["object"]
+            updated_sub = update_subscription_from_stripe(subscription, db)
+            
+            # If subscription renewed, reset tokens
+            if updated_sub and updated_sub.status == "active":
+                # Check if this is a renewal (period_end is in the future and different from stored)
+                stored_sub = db.query(Subscription).filter(
+                    Subscription.stripe_subscription_id == subscription.id
+                ).first()
+                
+                if stored_sub:
+                    new_period_end = datetime.fromtimestamp(subscription.current_period_end, tz=timezone.utc)
+                    if new_period_end > stored_sub.current_period_end:
+                        # Subscription renewed, reset tokens
+                        reset_tokens_for_subscription(
+                            updated_sub.user_id,
+                            updated_sub.plan_type,
+                            datetime.fromtimestamp(subscription.current_period_start, tz=timezone.utc),
+                            new_period_end,
+                            db
+                        )
+        
+        elif event["type"] == "customer.subscription.deleted":
+            subscription = event["data"]["object"]
+            sub = db.query(Subscription).filter(
+                Subscription.stripe_subscription_id == subscription.id
+            ).first()
+            if sub:
+                sub.status = "canceled"
+                db.commit()
+        
+        elif event["type"] == "invoice.payment_succeeded":
+            invoice = event["data"]["object"]
+            if invoice.get("subscription"):
+                # Subscription payment succeeded
+                subscription_id = invoice["subscription"]
+                subscription = stripe.Subscription.retrieve(subscription_id)
+                update_subscription_from_stripe(subscription, db)
+        
+        elif event["type"] == "invoice.payment_failed":
+            invoice = event["data"]["object"]
+            if invoice.get("subscription"):
+                subscription_id = invoice["subscription"]
+                subscription = stripe.Subscription.retrieve(subscription_id)
+                update_subscription_from_stripe(subscription, db)
+        
+        # Mark event as processed
+        mark_stripe_event_processed(event["id"], db)
+        
+        logger.info(f"Processed Stripe event: {event['type']} ({event['id']})")
+        return {"status": "success"}
+        
+    except Exception as e:
+        logger.error(f"Error processing Stripe webhook event {event['id']}: {e}", exc_info=True)
+        mark_stripe_event_processed(event["id"], db, error_message=str(e))
+        raise HTTPException(500, "Error processing webhook")
+
+
+# ============================================================================
+# ADMIN ENDPOINTS
+# ============================================================================
+
+def require_admin(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)) -> User:
+    """Dependency: Require admin role, return user"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    if not user.is_admin:
+        raise HTTPException(403, "Admin access required")
+    return user
+
+
+@app.post("/api/admin/users/{target_user_id}/unlimited-tokens")
+def grant_unlimited_tokens(
+    target_user_id: int,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Grant unlimited tokens to a user (admin only)"""
+    target_user = db.query(User).filter(User.id == target_user_id).first()
+    if not target_user:
+        raise HTTPException(404, "User not found")
+    
+    target_user.unlimited_tokens = True
+    
+    # Update token balance if it exists
+    balance = db.query(TokenBalance).filter(TokenBalance.user_id == target_user_id).first()
+    if balance:
+        balance.unlimited_tokens = True
+    
+    db.commit()
+    
+    logger.info(f"Admin {admin_user.id} granted unlimited tokens to user {target_user_id}")
+    
+    return {"message": f"Unlimited tokens granted to user {target_user_id}"}
+
+
+@app.delete("/api/admin/users/{target_user_id}/unlimited-tokens")
+def revoke_unlimited_tokens(
+    target_user_id: int,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Revoke unlimited tokens from a user (admin only)"""
+    target_user = db.query(User).filter(User.id == target_user_id).first()
+    if not target_user:
+        raise HTTPException(404, "User not found")
+    
+    target_user.unlimited_tokens = False
+    
+    # Update token balance if it exists
+    balance = db.query(TokenBalance).filter(TokenBalance.user_id == target_user_id).first()
+    if balance:
+        balance.unlimited_tokens = False
+    
+    db.commit()
+    
+    logger.info(f"Admin {admin_user.id} revoked unlimited tokens from user {target_user_id}")
+    
+    return {"message": f"Unlimited tokens revoked from user {target_user_id}"}
+
 
 @app.get("/api/upload/limits")
 async def get_upload_limits():
@@ -4424,6 +4777,62 @@ async def scheduler_task():
             print(f"Error in scheduler task: {e}")
             scheduler_runs_counter.labels(status="failure").inc()
             await asyncio.sleep(30)
+
+
+async def token_reset_scheduler_task():
+    """Background task to reset tokens for subscriptions that have reached their period end"""
+    logger.info("Starting token reset scheduler task...")
+    
+    while True:
+        try:
+            await asyncio.sleep(3600)  # Check every hour
+            
+            db = SessionLocal()
+            try:
+                now = datetime.now(timezone.utc)
+                
+                # Find subscriptions that need token reset (period_end has passed, but tokens not reset)
+                subscriptions = db.query(Subscription).filter(
+                    Subscription.status == 'active',
+                    Subscription.current_period_end <= now
+                ).all()
+                
+                for subscription in subscriptions:
+                    # Check if tokens have been reset for this period
+                    balance = db.query(TokenBalance).filter(
+                        TokenBalance.user_id == subscription.user_id
+                    ).first()
+                    
+                    # Reset if period_end has passed and last_reset_at is before period_end
+                    should_reset = False
+                    if not balance:
+                        should_reset = True
+                    elif not balance.last_reset_at:
+                        should_reset = True
+                    elif balance.last_reset_at < subscription.current_period_end:
+                        should_reset = True
+                    
+                    if should_reset:
+                        logger.info(f"Resetting tokens for user {subscription.user_id} (subscription {subscription.id})")
+                        reset_tokens_for_subscription(
+                            subscription.user_id,
+                            subscription.plan_type,
+                            subscription.current_period_start,
+                            subscription.current_period_end,
+                            db
+                        )
+                
+                db.commit()
+                
+            except Exception as e:
+                logger.error(f"Error in token reset scheduler: {e}", exc_info=True)
+                db.rollback()
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.error(f"Fatal error in token reset scheduler: {e}", exc_info=True)
+            await asyncio.sleep(3600)  # Wait before retrying
 
 # Scheduler startup is now handled in the lifespan event handler above
 

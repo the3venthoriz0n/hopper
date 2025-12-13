@@ -62,6 +62,10 @@ services:
       - DATABASE_URL=postgresql://hopper:${POSTGRES_PASSWORD}@prod-hopper-postgres:5432/hopper
       - REDIS_URL=redis://prod-hopper-redis:6379/0
       - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - STRIPE_API_VERSION=${STRIPE_API_VERSION:-2024-11-20.acacia}
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://prod-hopper-otel-collector:4317
       - OTEL_SERVICE_NAME=hopper-backend
       - OTEL_RESOURCE_ATTRIBUTES=service.name=hopper-backend,service.version=1.0.0,deployment.environment=${ENVIRONMENT:-production}
