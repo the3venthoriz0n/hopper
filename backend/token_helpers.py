@@ -154,7 +154,7 @@ def deduct_tokens(
             tokens=-tokens,  # Negative for deduction
             balance_before=balance_before,
             balance_after=balance_after,
-            metadata=metadata or {}
+            transaction_metadata=metadata or {}
         )
         db.add(transaction)
         db.commit()
@@ -239,7 +239,7 @@ def add_tokens(
             tokens=tokens,
             balance_before=balance_before,
             balance_after=balance_after,
-            metadata=metadata or {}
+            transaction_metadata=metadata or {}
         )
         db.add(transaction)
         db.commit()
@@ -303,7 +303,7 @@ def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: da
             tokens=monthly_tokens - balance_before,  # Net change
             balance_before=balance_before,
             balance_after=monthly_tokens,
-            metadata={'plan_type': plan_type, 'period_start': period_start.isoformat(), 'period_end': period_end.isoformat()}
+            transaction_metadata={'plan_type': plan_type, 'period_start': period_start.isoformat(), 'period_end': period_end.isoformat()}
         )
         db.add(transaction)
         db.commit()
@@ -340,7 +340,7 @@ def get_token_transactions(user_id: int, limit: int = 50, db: Session = None) ->
                 'tokens': t.tokens,
                 'balance_before': t.balance_before,
                 'balance_after': t.balance_after,
-                'metadata': t.metadata,
+                'metadata': t.transaction_metadata,
                 'created_at': t.created_at.isoformat(),
                 'video_id': t.video_id,
             }

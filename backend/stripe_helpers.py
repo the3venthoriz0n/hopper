@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timezone, timedelta
 
 from models import User, Subscription, StripeEvent
-from stripe_config import STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, PLANS
+from stripe_config import STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, PLANS, get_plans
 
 logger = logging.getLogger(__name__)
 
@@ -257,7 +257,7 @@ def update_subscription_from_stripe(stripe_subscription: stripe.Subscription, db
         # Determine plan type from price ID
         price_id = stripe_subscription.items.data[0].price.id
         plan_type = 'free'  # Default
-        for plan_key, plan_config in PLANS.items():
+        for plan_key, plan_config in get_plans().items():
             if plan_config.get('stripe_price_id') == price_id:
                 plan_type = plan_key
                 break

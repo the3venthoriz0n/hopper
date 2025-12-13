@@ -36,7 +36,7 @@ from token_helpers import (
     check_tokens_available, deduct_tokens, get_token_balance, 
     get_token_transactions, reset_tokens_for_subscription
 )
-from stripe_config import calculate_tokens_from_bytes, PLANS, ensure_stripe_products
+from stripe_config import calculate_tokens_from_bytes, PLANS, ensure_stripe_products, get_plans
 from stripe_helpers import (
     create_stripe_customer, create_checkout_session, get_customer_portal_url,
     get_subscription_info, update_subscription_from_stripe,
@@ -3355,10 +3355,11 @@ def create_subscription_checkout(
     db: Session = Depends(get_db)
 ):
     """Create Stripe checkout session for subscription"""
-    if plan_key not in PLANS:
+    plans = get_plans()
+    if plan_key not in plans:
         raise HTTPException(400, f"Invalid plan: {plan_key}")
     
-    plan = PLANS[plan_key]
+    plan = plans[plan_key]
     if not plan.get("stripe_price_id"):
         raise HTTPException(400, f"Plan {plan_key} is not configured with a Stripe price")
     
@@ -3459,7 +3460,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 user_id = int(subscription.metadata.get("user_id", 0))
                 if user_id:
                     plan_type = "free"  # Default, will be determined from price
-                    for plan_key, plan_config in PLANS.items():
+                    for plan_key, plan_config in get_plans().items():
                         if plan_config.get("stripe_price_id") == subscription.items.data[0].price.id:
                             plan_type = plan_key
                             break

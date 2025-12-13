@@ -20,7 +20,7 @@ RSYNC_OPTS="-avz --delete"
 echo "Syncing backend..."
 rsync $RSYNC_OPTS \
     --exclude '__pycache__' --exclude '*.pyc' --exclude 'uploads/' \
-    --exclude 'sessions/' --exclude '.env' \
+    --exclude 'sessions/' --exclude '.env' --exclude 'venv/' \
     ./backend/ "${SYNC_DEST}/backend/"
 
 echo "Syncing frontend..."

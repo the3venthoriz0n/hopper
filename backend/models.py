@@ -157,7 +157,7 @@ class TokenTransaction(Base):
     tokens = Column(Integer, nullable=False)  # Positive for additions, negative for deductions
     balance_before = Column(Integer, nullable=False)
     balance_after = Column(Integer, nullable=False)
-    metadata = Column(JSON, default=dict)  # Store file size, filename, etc.
+    transaction_metadata = Column(JSON, default=dict)  # Store file size, filename, etc. (renamed from 'metadata' to avoid SQLAlchemy reserved name)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
     
     # Relationships
