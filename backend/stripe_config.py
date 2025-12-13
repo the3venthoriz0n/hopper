@@ -55,20 +55,20 @@ PLANS_TEST = {
     'free': {
         'name': 'Hopper Free',
         'monthly_tokens': 10,
-        'stripe_price_id': "",
-        'stripe_product_id': "",
+        'stripe_price_id': "price_1Se2XZAJugrwwGJAIGrRqT92",
+        'stripe_product_id': "prod_TbF1UTDoRuGhOy",
     },
     'medium': {
         'name': 'Hopper Medium',
         'monthly_tokens': 100,
-        'stripe_price_id': "",
-        'stripe_product_id': "",
+        'stripe_price_id': "price_1Se2XZAJugrwwGJA6zdgFohu",
+        'stripe_product_id': "prod_TbF1KSxCYnqVzT",
     },
     'pro': {
         'name': 'Hopper Pro',
         'monthly_tokens': 500,
-        'stripe_price_id': "",
-        'stripe_product_id': "",
+        'stripe_price_id': "price_1Se2XaAJugrwwGJAzeUZsFiy",
+        'stripe_product_id': "prod_TbF1urcgxdTYYv",
     }
 }
 
