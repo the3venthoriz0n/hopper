@@ -302,29 +302,14 @@ def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: da
         monthly_tokens = get_plan_monthly_tokens(plan_type)
         
         # ALWAYS ADD tokens to current balance (never replace)
-        # This ensures granted tokens are preserved
+        # This ensures granted tokens are preserved and persist across subscription signups
         balance_before = balance.tokens_remaining
         
-        # Check if this is truly the first setup (tokens are 0 AND period is uninitialized)
-        # Only in this case, we set tokens instead of adding (to avoid adding to 0)
-        # But if user has ANY tokens (including granted), always add
-        period_uninitialized = (balance.period_start == balance.period_end)
-        
-        # Only treat as first setup if tokens are 0 AND period is completely uninitialized
-        # This is the ONLY case where we set instead of add
-        is_first_setup = (balance.tokens_remaining == 0 and period_uninitialized)
-        
-        if is_first_setup:
-            # First time setup with 0 tokens and uninitialized period - set to plan allocation
-            balance.tokens_remaining = monthly_tokens
-            tokens_added = monthly_tokens
-            logger.info(f"First token setup for user {user_id} on {plan_type} plan: setting to {monthly_tokens} tokens")
-        else:
-            # Renewal, period change, or user has tokens (including granted) - ADD tokens to current balance
-            # This preserves any granted tokens
-            balance.tokens_remaining = balance_before + monthly_tokens  # ADD, don't replace
-            tokens_added = monthly_tokens
-            logger.info(f"Tokens added for user {user_id} on {plan_type} plan: {balance_before} + {monthly_tokens} = {balance.tokens_remaining} tokens (preserving existing tokens)")
+        # Always add tokens to current balance, even if it's 0
+        # This preserves any granted tokens the user may have received
+        balance.tokens_remaining = balance_before + monthly_tokens
+        tokens_added = monthly_tokens
+        logger.info(f"Tokens added for user {user_id} on {plan_type} plan: {balance_before} + {monthly_tokens} = {balance.tokens_remaining} tokens (preserving existing tokens including granted tokens)")
         
         balance.tokens_used_this_period = 0
         balance.period_start = period_start
@@ -340,7 +325,7 @@ def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: da
             tokens=tokens_added,  # Amount added
             balance_before=balance_before,
             balance_after=balance.tokens_remaining,
-            transaction_metadata={'plan_type': plan_type, 'period_start': period_start.isoformat(), 'period_end': period_end.isoformat(), 'is_first_setup': is_first_setup}
+            transaction_metadata={'plan_type': plan_type, 'period_start': period_start.isoformat(), 'period_end': period_end.isoformat()}
         )
         db.add(transaction)
         db.commit()
@@ -407,14 +392,18 @@ def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db
         monthly_tokens = get_plan_monthly_tokens(subscription.plan_type)
         amount_mismatch = token_balance.tokens_remaining != monthly_tokens
         
+        # Check if period is uninitialized (indicates new subscription or first-time setup)
+        period_uninitialized = (token_balance.period_start == token_balance.period_end)
+        
         # IMPORTANT: Always preserve tokens when switching plans. Only reset tokens on period renewals.
         # This means:
-        # - If period changed AND it's a genuine renewal (not a plan switch), reset tokens
+        # - If period changed AND it's a genuine renewal (not a plan switch), ADD monthly tokens
+        # - If period is uninitialized (new subscription), ADD monthly tokens
         # - If only amount changed (plan switch), preserve tokens and just update period
-        # - Tokens should accumulate across plan changes
+        # - Tokens should accumulate across plan changes and persist across subscription signups
         
         if period_mismatch:
-            # Period changed - could be a renewal OR a plan switch
+            # Period changed - could be a renewal, plan switch, or new subscription
             # Check if this is likely a plan switch by comparing old and new subscription periods
             # If the period dates are very close (within a few minutes), it's likely a plan switch, not a renewal
             period_start_diff = abs((subscription.current_period_start - token_balance.period_start).total_seconds())
@@ -422,12 +411,24 @@ def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db
             
             # Plan switch: period changes happen within minutes (same day)
             # Renewal: period_end moves forward by ~30 days (monthly cycle)
+            # New subscription: period is uninitialized OR period_end is in the future from now
             is_likely_plan_switch = period_start_diff < 3600  # Less than 1 hour difference = likely plan switch
             is_likely_renewal = (period_end_diff > 2592000 * 0.9 and  # At least 90% of a month (23+ days)
                                 period_end_diff < 2592000 * 1.1)  # At most 110% of a month (33 days)
+            is_new_subscription = period_uninitialized or subscription.current_period_end > datetime.now(timezone.utc)
             
-            if is_likely_plan_switch and not is_likely_renewal:
-                # This is likely a plan switch, not a renewal - preserve tokens
+            if is_new_subscription and not is_likely_plan_switch:
+                # New subscription - ADD monthly tokens to current balance (preserves granted tokens)
+                logger.info(f"Token period mismatch for user {user_id}, subscription {subscription_id}. Detected new subscription (period uninitialized or future-dated). Adding {monthly_tokens} tokens to current balance of {token_balance.tokens_remaining}.")
+                return reset_tokens_for_subscription(
+                    user_id,
+                    subscription.plan_type,
+                    subscription.current_period_start,
+                    subscription.current_period_end,
+                    db
+                )
+            elif is_likely_plan_switch and not is_likely_renewal:
+                # This is likely a plan switch, not a renewal - preserve tokens and update period
                 logger.info(f"Token period mismatch for user {user_id}, subscription {subscription_id}. Detected plan switch (period diff: {period_start_diff}s). Preserving {token_balance.tokens_remaining} tokens and updating period.")
                 token_balance.period_start = subscription.current_period_start
                 token_balance.period_end = subscription.current_period_end
@@ -445,18 +446,49 @@ def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db
                     db
                 )
             else:
-                # Uncertain case - preserve tokens to be safe (could be a plan switch or unusual renewal)
-                logger.info(f"Token period mismatch for user {user_id}, subscription {subscription_id}. Uncertain case (period_start_diff: {period_start_diff}s, period_end_diff: {period_end_diff/86400:.1f} days). Preserving {token_balance.tokens_remaining} tokens and updating period.")
-                token_balance.period_start = subscription.current_period_start
-                token_balance.period_end = subscription.current_period_end
-                token_balance.updated_at = datetime.now(timezone.utc)
-                db.commit()
-                return True
+                # Uncertain case - to be safe, ADD monthly tokens (preserves granted tokens)
+                # This handles edge cases where we can't determine if it's a renewal or new subscription
+                logger.info(f"Token period mismatch for user {user_id}, subscription {subscription_id}. Uncertain case (period_start_diff: {period_start_diff}s, period_end_diff: {period_end_diff/86400:.1f} days). Adding {monthly_tokens} tokens to current balance of {token_balance.tokens_remaining} to ensure monthly allocation is granted.")
+                return reset_tokens_for_subscription(
+                    user_id,
+                    subscription.plan_type,
+                    subscription.current_period_start,
+                    subscription.current_period_end,
+                    db
+                )
         elif amount_mismatch:
-            # Amount mismatch but period matches - this is definitely a plan switch
-            # Always preserve tokens on plan switches
-            logger.info(f"Token amount mismatch for user {user_id}, subscription {subscription_id} (plan: {subscription.plan_type}, current: {token_balance.tokens_remaining}, expected: {monthly_tokens}). Preserving tokens (plan switch detected).")
-            return True
+            # Amount mismatch but period matches - this could be a plan switch or user has granted tokens
+            # Check if we need to add monthly tokens for this period
+            # If period_end is in the future, this is an active subscription and tokens should have been added
+            # If tokens haven't been added for this period, add them now
+            if subscription.current_period_end > datetime.now(timezone.utc):
+                # Active subscription - check if monthly tokens were already added for this period
+                # Look for a 'reset' transaction for this period
+                from models import TokenTransaction
+                recent_reset = db.query(TokenTransaction).filter(
+                    TokenTransaction.user_id == user_id,
+                    TokenTransaction.transaction_type == 'reset',
+                    TokenTransaction.created_at >= subscription.current_period_start
+                ).first()
+                
+                if not recent_reset:
+                    # No reset transaction for this period - add monthly tokens
+                    logger.info(f"Token amount mismatch for user {user_id}, subscription {subscription_id} (plan: {subscription.plan_type}, current: {token_balance.tokens_remaining}, expected: {monthly_tokens}). No reset transaction found for this period. Adding {monthly_tokens} tokens to current balance.")
+                    return reset_tokens_for_subscription(
+                        user_id,
+                        subscription.plan_type,
+                        subscription.current_period_start,
+                        subscription.current_period_end,
+                        db
+                    )
+                else:
+                    # Reset transaction exists - user has granted tokens, preserve them
+                    logger.info(f"Token amount mismatch for user {user_id}, subscription {subscription_id} (plan: {subscription.plan_type}, current: {token_balance.tokens_remaining}, expected: {monthly_tokens}). Reset transaction found - preserving tokens (user has granted tokens).")
+                    return True
+            else:
+                # Period ended - preserve tokens (plan switch detected)
+                logger.info(f"Token amount mismatch for user {user_id}, subscription {subscription_id} (plan: {subscription.plan_type}, current: {token_balance.tokens_remaining}, expected: {monthly_tokens}). Period ended - preserving tokens (plan switch detected).")
+                return True
         else:
             logger.debug(f"Tokens already synced for user {user_id}, subscription {subscription_id}")
             return True

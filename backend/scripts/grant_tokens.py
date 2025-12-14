@@ -113,8 +113,10 @@ def reset_subscription(email: str):
             print(f"   Period: {now.date()} → {period_end.date()}")
         else:
             # Reset token balance for regular plans
+            # ALWAYS ADD monthly tokens to current balance (never replace)
+            # This preserves any granted tokens the user may have
             old_balance = balance.tokens_remaining
-            balance.tokens_remaining = monthly_tokens
+            balance.tokens_remaining = old_balance + monthly_tokens  # ADD, don't replace
             balance.tokens_used_this_period = 0
             balance.period_start = now
             balance.period_end = period_end
@@ -125,7 +127,7 @@ def reset_subscription(email: str):
             transaction = TokenTransaction(
                 user_id=user.id,
                 transaction_type='reset',
-                tokens=monthly_tokens,
+                tokens=monthly_tokens,  # Amount added
                 balance_before=old_balance,
                 balance_after=balance.tokens_remaining,
                 transaction_metadata={'reason': 'admin_reset', 'admin_script': True, 'plan_type': subscription.plan_type},
@@ -136,7 +138,7 @@ def reset_subscription(email: str):
             print(f"✅ Reset subscription for {email}")
             print(f"   Plan: {subscription.plan_type}")
             print(f"   Period: {now.date()} → {period_end.date()}")
-            print(f"   Tokens: {old_balance} → {monthly_tokens}")
+            print(f"   Tokens: {old_balance} + {monthly_tokens} = {balance.tokens_remaining} (preserved existing tokens)")
         return True
         
     except Exception as e:
