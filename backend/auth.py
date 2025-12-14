@@ -86,6 +86,22 @@ def get_or_create_oauth_user(email: str) -> tuple[User, bool]:
         db.add(user)
         db.commit()
         db.refresh(user)
+        
+        # Create Stripe customer and free subscription for new user
+        try:
+            from stripe_helpers import create_stripe_customer, create_free_subscription
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            create_stripe_customer(user.email, user.id, db)
+            create_free_subscription(user.id, db)
+            logger.info(f"Created Stripe customer and free subscription for OAuth user {user.id}")
+        except Exception as e:
+            # Log error but don't fail user creation
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to create Stripe customer/subscription for OAuth user {user.id}: {e}")
+        
         return user, True
     finally:
         db.close()

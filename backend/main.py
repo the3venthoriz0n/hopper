@@ -3339,6 +3339,27 @@ def get_subscription_plans():
 def get_current_subscription(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
     """Get user's current subscription"""
     subscription_info = get_subscription_info(user_id, db)
+    
+    # If user doesn't have a subscription, create a free one
+    if not subscription_info:
+        logger.info(f"User {user_id} has no subscription, creating free subscription")
+        free_sub = create_free_subscription(user_id, db)
+        if free_sub:
+            subscription_info = get_subscription_info(user_id, db)
+        else:
+            # If creation fails, return a default response
+            logger.error(f"Failed to create free subscription for user {user_id}")
+            return {
+                "subscription": None,
+                "token_balance": {
+                    "tokens_remaining": 0,
+                    "tokens_used_this_period": 0,
+                    "unlimited": False,
+                    "period_start": None,
+                    "period_end": None,
+                }
+            }
+    
     token_balance = get_token_balance(user_id, db)
     
     return {
