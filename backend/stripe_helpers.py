@@ -29,24 +29,63 @@ def create_stripe_customer(email: str, user_id: int, db: Session) -> Optional[st
         return None
     
     try:
+        # Always query fresh user object to avoid stale data
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             logger.error(f"User {user_id} not found")
             return None
             
         if user.stripe_customer_id:
-            logger.info(f"User {user_id} already has Stripe customer: {user.stripe_customer_id}")
-            return user.stripe_customer_id
+            # Verify the customer actually exists in Stripe before returning it
+            existing_customer_id = user.stripe_customer_id
+            try:
+                stripe.Customer.retrieve(existing_customer_id)
+                logger.info(f"User {user_id} already has valid Stripe customer: {existing_customer_id}")
+                return existing_customer_id
+            except stripe.error.InvalidRequestError as e:
+                if 'No such customer' in str(e):
+                    logger.warning(f"Customer {existing_customer_id} in DB doesn't exist in Stripe for user {user_id}, creating new one")
+                    # Clear the invalid customer ID so we create a new one
+                    user.stripe_customer_id = None
+                    db.commit()
+                    # Re-query user to ensure we have fresh state
+                    db.expire(user)
+                    user = db.query(User).filter(User.id == user_id).first()
+                else:
+                    # Some other error, log and continue to create new customer
+                    logger.warning(f"Error verifying customer {existing_customer_id} for user {user_id}: {e}, creating new one")
+                    user.stripe_customer_id = None
+                    db.commit()
+                    db.expire(user)
+                    user = db.query(User).filter(User.id == user_id).first()
+            except Exception as e:
+                logger.warning(f"Unexpected error verifying customer {existing_customer_id} for user {user_id}: {e}, creating new one")
+                user.stripe_customer_id = None
+                db.commit()
+                db.expire(user)
+                user = db.query(User).filter(User.id == user_id).first()
         
+        # Double-check that customer_id is None before creating
+        if user.stripe_customer_id:
+            logger.error(f"Unexpected: user {user_id} still has customer_id {user.stripe_customer_id} after clearing. This should not happen.")
+            # Force clear it
+            user.stripe_customer_id = None
+            db.commit()
+            db.expire(user)
+            user = db.query(User).filter(User.id == user_id).first()
+        
+        # At this point, user.stripe_customer_id should definitely be None
+        # Create a new customer
         customer = stripe.Customer.create(
             email=email,
             metadata={'user_id': str(user_id)}
         )
         
+        # Update user with new customer ID
         user.stripe_customer_id = customer.id
         db.commit()
         
-        logger.info(f"Created Stripe customer for user {user_id}: {customer.id}")
+        logger.info(f"Created Stripe customer for user {user_id}: {customer.id} (replaced old invalid customer)")
         return customer.id
         
     except stripe.error.StripeError as e:
@@ -76,29 +115,10 @@ def ensure_stripe_customer_exists(user_id: int, db: Session) -> Optional[str]:
         logger.error(f"User {user_id} not found")
         return None
     
-    customer_id = user.stripe_customer_id
-    if not customer_id:
-        # No customer ID, create one
-        customer_id = create_stripe_customer(user.email, user_id, db)
-        return customer_id
-    
-    # Verify customer exists in Stripe (may have been deleted)
-    try:
-        stripe.Customer.retrieve(customer_id)
-        return customer_id
-    except stripe.error.InvalidRequestError as e:
-        if 'No such customer' in str(e):
-            logger.warning(f"Customer {customer_id} not found in Stripe for user {user_id}, creating new customer")
-            # Customer was deleted, create a new one
-            customer_id = create_stripe_customer(user.email, user_id, db)
-            return customer_id
-        else:
-            # Some other error, log and return None
-            logger.error(f"Error retrieving customer {customer_id} for user {user_id}: {e}")
-            return None
-    except Exception as e:
-        logger.error(f"Unexpected error checking customer {customer_id} for user {user_id}: {e}", exc_info=True)
-        return None
+    # create_stripe_customer now verifies the customer exists in Stripe before returning it
+    # If the customer doesn't exist, it will clear the old ID and create a new one
+    customer_id = create_stripe_customer(user.email, user_id, db)
+    return customer_id
 
 
 def _has_active_paid_subscription(customer_id: str, exclude_subscription_id: Optional[str] = None) -> bool:
@@ -244,13 +264,27 @@ def create_checkout_session(
     except stripe.error.InvalidRequestError as e:
         # Handle case where customer doesn't exist (shouldn't happen after our check, but safety net)
         if 'No such customer' in str(e):
-            logger.warning(f"Customer not found when creating checkout session for user {user_id}, attempting to recreate")
+            old_customer_id = customer_id  # Store the old ID for logging
+            logger.warning(f"Customer {old_customer_id} not found when creating checkout session for user {user_id}, attempting to recreate")
+            
+            # Expire and refresh user object to ensure we get latest state from DB
+            db.expire(user)
+            db.refresh(user)
+            
+            # Force clear the customer_id in the database if it still exists
+            if user.stripe_customer_id:
+                logger.info(f"Clearing stale customer_id {user.stripe_customer_id} from database for user {user_id}")
+                user.stripe_customer_id = None
+                db.commit()
+                db.refresh(user)
+            
             # Try to recreate customer and retry
-            customer_id = ensure_stripe_customer_exists(user_id, db)
-            if customer_id:
+            new_customer_id = ensure_stripe_customer_exists(user_id, db)
+            if new_customer_id and new_customer_id != old_customer_id:
+                logger.info(f"Recreated customer for user {user_id}: {old_customer_id} -> {new_customer_id}")
                 try:
                     session = stripe.checkout.Session.create(
-                        customer=customer_id,
+                        customer=new_customer_id,  # Use the new customer ID
                         payment_method_types=['card'],
                         line_items=[{
                             'price': price_id,
@@ -270,8 +304,18 @@ def create_checkout_session(
                         'session_id': session.id,
                         'url': session.url
                     }
+                except stripe.error.InvalidRequestError as retry_e:
+                    if 'No such customer' in str(retry_e):
+                        logger.error(f"Still getting 'No such customer' error after recreating customer for user {user_id}. Customer ID used: {new_customer_id}. Error: {retry_e}")
+                    else:
+                        logger.error(f"Stripe error creating checkout session after recreating customer for user {user_id}: {retry_e}")
                 except Exception as retry_e:
                     logger.error(f"Failed to create checkout session after recreating customer for user {user_id}: {retry_e}")
+            else:
+                if new_customer_id == old_customer_id:
+                    logger.error(f"ensure_stripe_customer_exists returned the same invalid customer_id {old_customer_id} for user {user_id}")
+                else:
+                    logger.error(f"Failed to recreate customer for user {user_id}")
             return None
         else:
             logger.error(f"Stripe error creating checkout session for user {user_id}: {e}")
