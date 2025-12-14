@@ -59,6 +59,48 @@ def create_stripe_customer(email: str, user_id: int, db: Session) -> Optional[st
         return None
 
 
+def ensure_stripe_customer_exists(user_id: int, db: Session) -> Optional[str]:
+    """
+    Ensure user has a valid Stripe customer that exists in Stripe.
+    Creates a new customer if the existing one doesn't exist in Stripe.
+    
+    Args:
+        user_id: User ID
+        db: Database session
+        
+    Returns:
+        Valid Stripe customer ID or None if creation failed
+    """
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        logger.error(f"User {user_id} not found")
+        return None
+    
+    customer_id = user.stripe_customer_id
+    if not customer_id:
+        # No customer ID, create one
+        customer_id = create_stripe_customer(user.email, user_id, db)
+        return customer_id
+    
+    # Verify customer exists in Stripe (may have been deleted)
+    try:
+        stripe.Customer.retrieve(customer_id)
+        return customer_id
+    except stripe.error.InvalidRequestError as e:
+        if 'No such customer' in str(e):
+            logger.warning(f"Customer {customer_id} not found in Stripe for user {user_id}, creating new customer")
+            # Customer was deleted, create a new one
+            customer_id = create_stripe_customer(user.email, user_id, db)
+            return customer_id
+        else:
+            # Some other error, log and return None
+            logger.error(f"Error retrieving customer {customer_id} for user {user_id}: {e}")
+            return None
+    except Exception as e:
+        logger.error(f"Unexpected error checking customer {customer_id} for user {user_id}: {e}", exc_info=True)
+        return None
+
+
 def _has_active_paid_subscription(customer_id: str, exclude_subscription_id: Optional[str] = None) -> bool:
     """
     Check if customer has any active paid subscriptions in Stripe.
@@ -138,12 +180,10 @@ def create_checkout_session(
             logger.error(f"User {user_id} not found")
             return None
         
-        # Ensure user has Stripe customer
-        customer_id = user.stripe_customer_id
+        # Ensure user has a valid Stripe customer that exists in Stripe
+        customer_id = ensure_stripe_customer_exists(user_id, db)
         if not customer_id:
-            customer_id = create_stripe_customer(user.email, user_id, db)
-            if not customer_id:
-                return None
+            return None
         
         # Check for existing active paid subscriptions
         existing_subscription = db.query(Subscription).filter(
@@ -201,6 +241,41 @@ def create_checkout_session(
         
     except ValueError:
         raise
+    except stripe.error.InvalidRequestError as e:
+        # Handle case where customer doesn't exist (shouldn't happen after our check, but safety net)
+        if 'No such customer' in str(e):
+            logger.warning(f"Customer not found when creating checkout session for user {user_id}, attempting to recreate")
+            # Try to recreate customer and retry
+            customer_id = ensure_stripe_customer_exists(user_id, db)
+            if customer_id:
+                try:
+                    session = stripe.checkout.Session.create(
+                        customer=customer_id,
+                        payment_method_types=['card'],
+                        line_items=[{
+                            'price': price_id,
+                            'quantity': 1,
+                        }],
+                        mode='subscription',
+                        success_url=success_url,
+                        cancel_url=cancel_url,
+                        metadata={'user_id': str(user_id)},
+                        subscription_data={
+                            'metadata': {'user_id': str(user_id)},
+                        },
+                        allow_promotion_codes=True,
+                    )
+                    logger.info(f"Created checkout session for user {user_id} after recreating customer: {session.id}")
+                    return {
+                        'session_id': session.id,
+                        'url': session.url
+                    }
+                except Exception as retry_e:
+                    logger.error(f"Failed to create checkout session after recreating customer for user {user_id}: {retry_e}")
+            return None
+        else:
+            logger.error(f"Stripe error creating checkout session for user {user_id}: {e}")
+            return None
     except stripe.error.StripeError as e:
         logger.error(f"Stripe error creating checkout session for user {user_id}: {e}")
         return None
@@ -226,13 +301,14 @@ def get_customer_portal_url(user_id: int, return_url: str, db: Session) -> Optio
         return None
     
     try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user or not user.stripe_customer_id:
-            logger.error(f"User {user_id} has no Stripe customer")
+        # Ensure user has a valid Stripe customer that exists in Stripe
+        customer_id = ensure_stripe_customer_exists(user_id, db)
+        if not customer_id:
+            logger.error(f"User {user_id} has no valid Stripe customer")
             return None
         
         session = stripe.billing_portal.Session.create(
-            customer=user.stripe_customer_id,
+            customer=customer_id,
             return_url=return_url,
         )
         
@@ -409,12 +485,10 @@ def create_stripe_subscription(user_id: int, price_id: str, db: Session) -> Opti
             logger.error(f"User {user_id} not found")
             return None
         
-        # Ensure user has Stripe customer
-        customer_id = user.stripe_customer_id
+        # Ensure user has a valid Stripe customer that exists in Stripe
+        customer_id = ensure_stripe_customer_exists(user_id, db)
         if not customer_id:
-            customer_id = create_stripe_customer(user.email, user_id, db)
-            if not customer_id:
-                return None
+            return None
         
         # Create subscription in Stripe
         stripe_subscription = stripe.Subscription.create(

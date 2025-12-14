@@ -3387,14 +3387,17 @@ function Home() {
                                   }}>
                                     {isThisPlanLoading ? '⏳' : '⬆️ Upgrade'}
                                   </span>
-                                ) : plan.key === 'free' && subscription.plan_type !== 'free' && subscription.status === 'active' ? (
+                                ) : plan.key === 'free' && subscription.plan_type !== 'free' ? (
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       const currentTokens = tokenBalance?.tokens_remaining || 0;
+                                      const isAlreadyCanceled = subscription.status === 'canceled';
                                       setConfirmDialog({
                                         title: 'Switch to Free Plan?',
-                                        message: `Are you sure you want to switch to the free plan? Your current subscription will be canceled immediately. Your current token balance (${currentTokens} tokens) will be preserved.`,
+                                        message: isAlreadyCanceled 
+                                          ? `Switch to the free plan? Your current token balance (${currentTokens} tokens) will be preserved.`
+                                          : `Are you sure you want to switch to the free plan? Your current subscription will be canceled immediately. Your current token balance (${currentTokens} tokens) will be preserved.`,
                                         onConfirm: () => {
                                           setConfirmDialog(null);
                                           handleCancelSubscription();
