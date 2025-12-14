@@ -383,6 +383,7 @@ def handle_subscription_renewal(user_id: int, subscription: 'Subscription', old_
     period_diff_days = (new_period_end - old_period_end).total_seconds() / 86400
     
     # Renewal: period moves forward by ~30 days (20-35 days to account for month length variations)
+    # Use wider range to catch edge cases (28-32 days for standard months, but allow 20-35 for safety)
     if 20 <= period_diff_days <= 35:
         logger.info(
             f"✅ RENEWAL DETECTED: User {user_id} (subscription {subscription.stripe_subscription_id}): "
@@ -408,9 +409,10 @@ def handle_subscription_renewal(user_id: int, subscription: 'Subscription', old_
         return result
     
     # Period changed but not by a month - likely a plan switch or other change
-    logger.debug(
-        f"Period changed for user {user_id} but not a renewal (diff: {period_diff_days:.1f} days) - "
-        f"likely plan switch or other subscription change"
+    logger.warning(
+        f"⚠️  Period changed for user {user_id} but NOT detected as renewal (diff: {period_diff_days:.1f} days, expected 20-35). "
+        f"Old: {old_period_end}, New: {new_period_end}. "
+        f"This may be a renewal that wasn't caught - check period calculation."
     )
     return False
 

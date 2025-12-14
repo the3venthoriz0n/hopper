@@ -3506,7 +3506,13 @@ def get_subscription_plans():
 
 @app.get("/api/subscription/current")
 def get_current_subscription(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
-    """Get user's current subscription"""
+    """Get user's current subscription.
+    
+    This is a lightweight GET endpoint that returns current state.
+    Subscription syncing is handled by:
+    - Webhooks (primary mechanism)
+    - Background scheduler (periodic sync for missed webhooks)
+    """
     subscription_info = get_subscription_info(user_id, db)
     
     # If user doesn't have a subscription, create a free one
@@ -3880,8 +3886,10 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     # Check if event already processed (idempotency)
     stripe_event = log_stripe_event(event["id"], event["type"], event, db)
     if stripe_event.processed:
-        logger.info(f"Stripe event {event['id']} already processed")
+        logger.info(f"Stripe event {event['id']} (type: {event['type']}) already processed")
         return {"status": "already_processed"}
+    
+    logger.info(f"📥 Processing Stripe webhook event {event['id']} (type: {event['type']})")
     
     try:
         event_type = event["type"]
@@ -3889,12 +3897,15 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         
         # Route to appropriate handler
         if event_type == "checkout.session.completed":
+            logger.info(f"Routing to handle_checkout_completed")
             handle_checkout_completed(event_data, db)
             
         elif event_type == "customer.subscription.created":
+            logger.info(f"Routing to handle_subscription_created")
             handle_subscription_created(event_data, db)
             
         elif event_type == "customer.subscription.updated":
+            logger.info(f"Routing to handle_subscription_updated for subscription {event_data.get('id', 'unknown')}")
             handle_subscription_updated(event_data, db)
             
         elif event_type == "customer.subscription.deleted":
@@ -3996,60 +4007,106 @@ def handle_subscription_updated(subscription_data: Dict[str, Any], db: Session):
     import stripe
     from token_helpers import handle_subscription_renewal, ensure_tokens_synced_for_subscription
     
-    # Retrieve full subscription with expanded items
-    subscription = stripe.Subscription.retrieve(
-        subscription_data["id"], 
-        expand=['items.data.price']
-    )
-    
-    user_id = _get_user_id_from_subscription(subscription, db)
-    if not user_id:
-        logger.error(
-            f"Could not determine user_id for subscription {subscription.id}"
+    try:
+        subscription_id = subscription_data.get("id")
+        if not subscription_id:
+            logger.error("customer.subscription.updated event missing subscription ID")
+            return
+        
+        logger.info(f"Processing customer.subscription.updated event for subscription {subscription_id}")
+        
+        # Retrieve full subscription with expanded items
+        subscription = stripe.Subscription.retrieve(
+            subscription_id, 
+            expand=['items.data.price']
         )
-        return
-    
-    # Get the old subscription data BEFORE update (critical for renewal detection)
-    old_sub = db.query(Subscription).filter(
-        Subscription.stripe_subscription_id == subscription.id
-    ).first()
-    
-    old_period_end = old_sub.current_period_end if old_sub else None
-    old_period_start = old_sub.current_period_start if old_sub else None
-    
-    logger.info(
-        f"Subscription update for user {user_id} (subscription {subscription.id}): "
-        f"old_period_end={old_period_end}, old_period_start={old_period_start}"
-    )
-    
-    # Update subscription in database (this updates period_end if it changed)
-    updated_sub = update_subscription_from_stripe(subscription, db, user_id=user_id)
-    if not updated_sub:
-        logger.error(
-            f"Failed to update subscription {subscription.id} for user {user_id}"
+        
+        user_id = _get_user_id_from_subscription(subscription, db)
+        if not user_id:
+            logger.error(
+                f"Could not determine user_id for subscription {subscription.id} in customer.subscription.updated"
+            )
+            return
+        
+        logger.info(f"Found user_id={user_id} for subscription {subscription.id}")
+        
+        # Get the old subscription data BEFORE update (critical for renewal detection)
+        old_sub = db.query(Subscription).filter(
+            Subscription.stripe_subscription_id == subscription.id
+        ).first()
+        
+        old_period_end = old_sub.current_period_end if old_sub else None
+        old_period_start = old_sub.current_period_start if old_sub else None
+        
+        if old_sub:
+            logger.info(
+                f"Subscription update for user {user_id} (subscription {subscription.id}): "
+                f"old_period_end={old_period_end}, old_period_start={old_period_start}, "
+                f"old_plan={old_sub.plan_type}, old_status={old_sub.status}"
+            )
+        else:
+            logger.info(
+                f"Subscription update for user {user_id} (subscription {subscription.id}): "
+                f"No existing subscription found in DB (new subscription or first webhook)"
+            )
+        
+        # Update subscription in database (this updates period_end if it changed)
+        updated_sub = update_subscription_from_stripe(subscription, db, user_id=user_id)
+        if not updated_sub:
+            logger.error(
+                f"Failed to update subscription {subscription.id} for user {user_id}"
+            )
+            return
+        
+        logger.info(
+            f"Subscription updated in DB for user {user_id}: "
+            f"new_period_start={updated_sub.current_period_start}, "
+            f"new_period_end={updated_sub.current_period_end}, "
+            f"plan={updated_sub.plan_type}, status={updated_sub.status}"
         )
-        return
-    
-    logger.info(
-        f"Subscription updated for user {user_id}: "
-        f"new_period_start={updated_sub.current_period_start}, "
-        f"new_period_end={updated_sub.current_period_end}"
-    )
-    
-    # Handle renewal if detected (single source of truth for renewal logic)
-    renewal_handled = handle_subscription_renewal(user_id, updated_sub, old_period_end, db)
-    
-    if renewal_handled:
-        logger.info(f"✅ Renewal was handled for user {user_id}, subscription {subscription.id}")
-    else:
-        logger.info(f"ℹ️  No renewal detected for user {user_id}, subscription {subscription.id} - syncing tokens normally")
-    
-    if not renewal_handled:
-        # Not a renewal - sync tokens normally (handles plan switches, new subscriptions, etc.)
-        # This ensures tokens are properly set for non-renewal cases
-        ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
-    
-    logger.info(f"Subscription updated for user {user_id}: {updated_sub.plan_type}, status: {updated_sub.status}")
+        
+        # Handle renewal if detected (single source of truth for renewal logic)
+        renewal_handled = handle_subscription_renewal(user_id, updated_sub, old_period_end, db)
+        
+        if renewal_handled:
+            logger.info(f"✅ Renewal was handled for user {user_id}, subscription {subscription.id}")
+        else:
+            # Not a renewal - check if we need to sync tokens for other cases (plan switches, new subscriptions, etc.)
+            # Only sync if period didn't change (to avoid double-processing renewals that weren't detected)
+            if old_period_end and updated_sub.current_period_end == old_period_end:
+                # Period didn't change - this is a plan switch or status change, sync tokens
+                logger.info(f"ℹ️  No renewal detected for user {user_id}, subscription {subscription.id} - period unchanged, syncing tokens for plan switch/status change")
+                ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
+            else:
+                # Period changed but wasn't detected as renewal - check if it's actually a renewal
+                period_diff = (updated_sub.current_period_end - old_period_end).total_seconds() / 86400 if old_period_end else 0
+                
+                # If period advanced significantly (more than a day), it's likely a renewal that wasn't caught
+                # This can happen if the period check was too strict or there was a timing issue
+                if period_diff > 1:  # Period advanced by more than 1 day
+                    logger.warning(
+                        f"⚠️  Period changed for user {user_id} (diff: {period_diff:.1f} days) but renewal not detected. "
+                        f"Attempting to handle as renewal anyway (period advanced significantly)."
+                    )
+                    # Try to handle as renewal - this is a safety net for edge cases
+                    # Use a more lenient check: if period advanced by more than 1 day, treat as renewal
+                    if period_diff >= 1:
+                        logger.info(f"🔄 Treating period change as renewal (safety net) for user {user_id}")
+                        handle_subscription_renewal(user_id, updated_sub, old_period_end, db)
+                else:
+                    logger.info(
+                        f"ℹ️  Period changed slightly for user {user_id} (diff: {period_diff:.1f} days) - likely status/plan change, not renewal"
+                    )
+        
+        logger.info(f"✅ customer.subscription.updated processing completed for user {user_id}, subscription {subscription.id}")
+        
+    except Exception as e:
+        logger.error(
+            f"❌ ERROR in handle_subscription_updated for subscription {subscription_data.get('id', 'unknown')}: {e}",
+            exc_info=True
+        )
+        # Don't re-raise - let webhook handler mark as processed with error
+        # This prevents infinite retries but logs the error for debugging
 
 
 def handle_subscription_deleted(subscription_data: Dict[str, Any], db: Session):

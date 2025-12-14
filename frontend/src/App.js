@@ -412,10 +412,14 @@ function Home() {
       ]);
       
       setSubscription(subscriptionRes.data.subscription);
-      setTokenBalance(subscriptionRes.data.token_balance);
+      // Only update token balance if we got valid data (preserve old value while loading)
+      if (subscriptionRes.data.token_balance) {
+        setTokenBalance(subscriptionRes.data.token_balance);
+      }
       setAvailablePlans(plansRes.data.plans || []);
     } catch (err) {
       console.error('Error loading subscription:', err);
+      // Don't clear token balance on error - keep displaying old value
     }
   }, [API, user]);
 
