@@ -3803,9 +3803,9 @@ def handle_checkout_completed(session_data: Dict[str, Any], db: Session):
     # Cancel any existing paid subscriptions (prevent duplicates)
     _cancel_existing_subscriptions(user_id, subscription_id, db)
     
-    # Sync tokens for the new subscription (idempotent)
-    from token_helpers import ensure_tokens_synced_for_subscription
-    ensure_tokens_synced_for_subscription(user_id, subscription_id, db)
+    # Note: Subscription creation is handled by customer.subscription.created event
+    # We don't sync tokens here because subscription may not exist in DB yet
+    # Tokens will be synced by customer.subscription.created handler
     
     logger.info(f"Checkout completed for user {user_id}, subscription {subscription_id}")
 
@@ -3908,8 +3908,11 @@ def handle_invoice_payment_succeeded(invoice_data: Dict[str, Any], db: Session):
     if not subscription_id:
         return
     
-    # Refresh subscription data
-    subscription = stripe.Subscription.retrieve(subscription_id)
+    # Refresh subscription data with expanded items
+    subscription = stripe.Subscription.retrieve(
+        subscription_id,
+        expand=['items.data.price']
+    )
     user_id = _get_user_id_from_subscription(subscription, db)
     
     if user_id:
@@ -3925,8 +3928,11 @@ def handle_invoice_payment_failed(invoice_data: Dict[str, Any], db: Session):
     if not subscription_id:
         return
     
-    # Update subscription status
-    subscription = stripe.Subscription.retrieve(subscription_id)
+    # Update subscription status with expanded items
+    subscription = stripe.Subscription.retrieve(
+        subscription_id,
+        expand=['items.data.price']
+    )
     user_id = _get_user_id_from_subscription(subscription, db)
     
     if user_id:

@@ -363,10 +363,35 @@ def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db
         # Check if token balance period matches subscription period
         token_balance = get_or_create_token_balance(user_id, db)
         
-        # Reset tokens if period doesn't match (idempotent check)
-        if (token_balance.period_start != subscription.current_period_start or 
-            token_balance.period_end != subscription.current_period_end):
-            logger.info(f"Token period mismatch for user {user_id}, subscription {subscription_id}. Resetting tokens.")
+        # Reset tokens if:
+        # 1. Period doesn't match (renewal or new subscription)
+        # 2. Token amount doesn't match plan allocation (plan changed, but skip for unlimited)
+        period_mismatch = (token_balance.period_start != subscription.current_period_start or 
+                          token_balance.period_end != subscription.current_period_end)
+        
+        # For unlimited plans, only check period mismatch (amount is always -1)
+        if subscription.plan_type == 'unlimited':
+            if period_mismatch:
+                logger.info(f"Token period mismatch for user {user_id}, subscription {subscription_id} (unlimited plan). Updating period.")
+                # Unlimited plans don't need token reset, but update period
+                token_balance.period_start = subscription.current_period_start
+                token_balance.period_end = subscription.current_period_end
+                token_balance.updated_at = datetime.now(timezone.utc)
+                db.commit()
+                return True
+            else:
+                logger.debug(f"Tokens already synced for user {user_id}, subscription {subscription_id} (unlimited)")
+                return True
+        
+        # For regular plans, check both period and amount
+        monthly_tokens = get_plan_monthly_tokens(subscription.plan_type)
+        amount_mismatch = token_balance.tokens_remaining != monthly_tokens
+        
+        if period_mismatch or amount_mismatch:
+            if period_mismatch:
+                logger.info(f"Token period mismatch for user {user_id}, subscription {subscription_id}. Resetting tokens.")
+            if amount_mismatch:
+                logger.info(f"Token amount mismatch for user {user_id}, subscription {subscription_id} (plan: {subscription.plan_type}, current: {token_balance.tokens_remaining}, expected: {monthly_tokens}). Resetting tokens.")
             return reset_tokens_for_subscription(
                 user_id,
                 subscription.plan_type,

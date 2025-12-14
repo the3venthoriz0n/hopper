@@ -387,6 +387,56 @@ def create_unlimited_subscription(
         return None
 
 
+def create_stripe_subscription(user_id: int, price_id: str, db: Session) -> Optional[Subscription]:
+    """
+    Create a Stripe subscription directly (admin use).
+    
+    Args:
+        user_id: User ID
+        price_id: Stripe price ID for the plan
+        db: Database session
+        
+    Returns:
+        Subscription model instance or None if creation failed
+    """
+    if not STRIPE_SECRET_KEY:
+        logger.error("Cannot create Stripe subscription: STRIPE_SECRET_KEY not set")
+        return None
+    
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            logger.error(f"User {user_id} not found")
+            return None
+        
+        # Ensure user has Stripe customer
+        customer_id = user.stripe_customer_id
+        if not customer_id:
+            customer_id = create_stripe_customer(user.email, user_id, db)
+            if not customer_id:
+                return None
+        
+        # Create subscription in Stripe
+        stripe_subscription = stripe.Subscription.create(
+            customer=customer_id,
+            items=[{'price': price_id}],
+            metadata={'user_id': str(user_id)},
+        )
+        
+        # Update database subscription from Stripe subscription
+        subscription = update_subscription_from_stripe(stripe_subscription, db, user_id=user_id)
+        
+        logger.info(f"Created Stripe subscription for user {user_id}: {stripe_subscription.id}")
+        return subscription
+        
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error creating subscription for user {user_id}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error creating Stripe subscription for user {user_id}: {e}", exc_info=True)
+        return None
+
+
 def get_subscription_info(user_id: int, db: Session) -> Optional[Dict[str, Any]]:
     """Get subscription information for a user."""
     subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
@@ -429,6 +479,8 @@ def update_subscription_from_stripe(
         Subscription model instance or None if update failed
     """
     try:
+        logger.info(f"update_subscription_from_stripe called for subscription {stripe_subscription.id}, user_id={user_id}")
+        
         # Determine user_id
         if not user_id and stripe_subscription.metadata:
             user_id = stripe_subscription.metadata.get('user_id')
@@ -446,22 +498,77 @@ def update_subscription_from_stripe(
             logger.error(f"Cannot determine user_id for subscription {stripe_subscription.id}")
             return None
         
+        logger.info(f"Determined user_id={user_id} for subscription {stripe_subscription.id}")
+        
         # Extract subscription details
-        if not hasattr(stripe_subscription, 'items') or not stripe_subscription.items:
-            logger.error(f"Subscription {stripe_subscription.id} has no items")
+        # Handle both legacy format (subscription.plan) and modern format (subscription.items.data[0].price)
+        # Note: Even in legacy format, subscription.plan.id is actually a price ID (starts with price_)
+        price_id = None
+        
+        # First, check for legacy format: subscription.plan.id (this is actually a price ID)
+        # Handle both dict and object formats
+        if hasattr(stripe_subscription, 'plan') and stripe_subscription.plan:
+            plan_id = None
+            if isinstance(stripe_subscription.plan, dict):
+                plan_id = stripe_subscription.plan.get('id')
+            elif hasattr(stripe_subscription.plan, 'id'):
+                plan_id = stripe_subscription.plan.id
+            
+            if plan_id:
+                price_id = plan_id
+                logger.info(f"Found legacy plan format for subscription {stripe_subscription.id}: {price_id}")
+        
+        # If not legacy, check modern format: subscription.items.data[0].price
+        if not price_id:
+            items_data = []
+            if hasattr(stripe_subscription, 'items') and stripe_subscription.items:
+                items_data = stripe_subscription.items.data if hasattr(stripe_subscription.items, 'data') else []
+            
+            # Check if we need to expand items
+            needs_expansion = (
+                not items_data or
+                (items_data and len(items_data) > 0 and (
+                    not hasattr(items_data[0], 'price') or
+                    not items_data[0].price or
+                    not hasattr(items_data[0].price, 'id')
+                ))
+            )
+            
+            if needs_expansion:
+                # Retrieve subscription with expanded items
+                logger.debug(f"Retrieving subscription {stripe_subscription.id} with expanded items")
+                stripe_subscription = stripe.Subscription.retrieve(
+                    stripe_subscription.id,
+                    expand=['items.data.price']
+                )
+                # Re-check legacy format after expansion (in case it wasn't present before)
+                if not price_id and hasattr(stripe_subscription, 'plan') and stripe_subscription.plan:
+                    plan_id = None
+                    if isinstance(stripe_subscription.plan, dict):
+                        plan_id = stripe_subscription.plan.get('id')
+                    elif hasattr(stripe_subscription.plan, 'id'):
+                        plan_id = stripe_subscription.plan.id
+                    
+                    if plan_id:
+                        price_id = plan_id
+                        logger.info(f"Found legacy plan format after expansion for subscription {stripe_subscription.id}: {price_id}")
+                
+                if hasattr(stripe_subscription, 'items') and stripe_subscription.items:
+                    items_data = stripe_subscription.items.data if hasattr(stripe_subscription.items, 'data') else []
+            
+            # Try to get price from items (modern format)
+            if not price_id and items_data and len(items_data) > 0:
+                first_item = items_data[0]
+                if hasattr(first_item, 'price') and first_item.price and hasattr(first_item.price, 'id'):
+                    price_id = first_item.price.id
+                    logger.info(f"Found modern items format for subscription {stripe_subscription.id}: {price_id}")
+        
+        if not price_id:
+            logger.error(f"Subscription {stripe_subscription.id} has no price/plan data (checked both legacy plan and modern items formats)")
             return None
         
-        items_data = stripe_subscription.items.data if hasattr(stripe_subscription.items, 'data') else []
-        if not items_data:
-            logger.error(f"Subscription {stripe_subscription.id} has no items data")
-            return None
-        
-        price = items_data[0].price
-        if not price or not hasattr(price, 'id'):
-            logger.error(f"Subscription {stripe_subscription.id} has no price")
-            return None
-        
-        plan_type = _get_plan_type_from_price(price.id)
+        plan_type = _get_plan_type_from_price(price_id)
+        logger.info(f"Determined plan_type={plan_type} for subscription {stripe_subscription.id} (price_id={price_id})")
         
         # Map Stripe status
         status_map = {
@@ -476,10 +583,17 @@ def update_subscription_from_stripe(
         status = status_map.get(stripe_subscription.status, 'active')
         
         # Find or create subscription
+        # First, check if subscription with this stripe_subscription_id exists
         subscription = db.query(Subscription).filter(
             Subscription.stripe_subscription_id == stripe_subscription.id
         ).first()
         
+        if subscription:
+            logger.info(f"Found existing subscription {subscription.id} with stripe_subscription_id {stripe_subscription.id}")
+        else:
+            logger.info(f"No subscription found with stripe_subscription_id {stripe_subscription.id}, checking for existing user subscription")
+        
+        # If found but belongs to different user, update user_id
         if subscription and subscription.user_id != user_id:
             logger.warning(
                 f"Subscription {stripe_subscription.id} belongs to user {subscription.user_id}, "
@@ -487,24 +601,36 @@ def update_subscription_from_stripe(
             )
             subscription.user_id = user_id
         
+        # If not found by stripe_subscription_id, check if user has existing subscription
         if not subscription:
-            subscription = db.query(Subscription).filter(
+            existing_user_sub = db.query(Subscription).filter(
                 Subscription.user_id == user_id
             ).first()
             
-            if subscription:
-                # Remove conflicting subscription if it exists
+            if existing_user_sub:
+                logger.info(f"User {user_id} has existing subscription {existing_user_sub.id} with different stripe_subscription_id {existing_user_sub.stripe_subscription_id}")
+                # User has existing subscription - update it to use new stripe_subscription_id
+                # But first, check if new stripe_subscription_id already exists (orphaned)
                 conflicting = db.query(Subscription).filter(
                     Subscription.stripe_subscription_id == stripe_subscription.id
                 ).first()
                 
-                if conflicting:
-                    logger.info(f"Removing conflicting subscription {conflicting.id}")
+                if conflicting and conflicting.id != existing_user_sub.id:
+                    # Orphaned subscription exists - delete it
+                    logger.info(f"Removing orphaned subscription {conflicting.id} with stripe_subscription_id {stripe_subscription.id}")
                     db.delete(conflicting)
                     db.flush()
+                
+                # Use existing subscription and update it
+                subscription = existing_user_sub
+                logger.info(f"Updating existing subscription {subscription.id} for user {user_id} to use new Stripe subscription {stripe_subscription.id}")
+            else:
+                logger.info(f"User {user_id} has no existing subscription, will create new one")
         
         # Update or create subscription
         if subscription:
+            # Update existing subscription
+            logger.info(f"Updating subscription {subscription.id} for user {user_id}")
             subscription.user_id = user_id
             subscription.stripe_subscription_id = stripe_subscription.id
             subscription.stripe_customer_id = stripe_subscription.customer
@@ -519,6 +645,8 @@ def update_subscription_from_stripe(
             subscription.cancel_at_period_end = stripe_subscription.cancel_at_period_end
             subscription.updated_at = datetime.now(timezone.utc)
         else:
+            # Create new subscription (user has no existing subscription)
+            logger.info(f"Creating new subscription for user {user_id} with stripe_subscription_id {stripe_subscription.id}")
             subscription = Subscription(
                 user_id=user_id,
                 stripe_subscription_id=stripe_subscription.id,
@@ -534,24 +662,66 @@ def update_subscription_from_stripe(
                 cancel_at_period_end=stripe_subscription.cancel_at_period_end,
             )
             db.add(subscription)
+            logger.info(f"Added subscription to session for user {user_id}")
         
+        logger.info(f"Committing subscription for user {user_id}, stripe_subscription_id {stripe_subscription.id}")
         db.commit()
+        logger.info(f"Commit successful, refreshing subscription")
         db.refresh(subscription)
         
-        logger.info(f"Updated subscription for user {user_id}: {plan_type} ({status})")
+        # Verify subscription was actually saved
+        verification = db.query(Subscription).filter(
+            Subscription.stripe_subscription_id == stripe_subscription.id
+        ).first()
+        if not verification:
+            logger.error(f"CRITICAL: Subscription {stripe_subscription.id} was not found in database after commit!")
+            return None
+        
+        logger.info(f"Successfully updated/created subscription {subscription.id} for user {user_id}: {plan_type} ({status})")
         return subscription
         
     except IntegrityError as e:
         db.rollback()
+        error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
         logger.error(
-            f"Database constraint violation for subscription {stripe_subscription.id}: {e}", 
+            f"Database IntegrityError for subscription {stripe_subscription.id} (user_id: {user_id}): {error_msg}", 
             exc_info=True
         )
+        
+        # Try to recover: if it's a unique constraint on stripe_subscription_id, 
+        # find and update the existing subscription
+        if 'stripe_subscription_id' in error_msg.lower() or 'unique' in error_msg.lower():
+            existing = db.query(Subscription).filter(
+                Subscription.stripe_subscription_id == stripe_subscription.id
+            ).first()
+            if existing:
+                logger.info(f"Found existing subscription {existing.id} with stripe_subscription_id {stripe_subscription.id}, updating it")
+                try:
+                    existing.user_id = user_id
+                    existing.stripe_customer_id = stripe_subscription.customer
+                    existing.plan_type = plan_type
+                    existing.status = status
+                    existing.current_period_start = datetime.fromtimestamp(
+                        stripe_subscription.current_period_start, tz=timezone.utc
+                    )
+                    existing.current_period_end = datetime.fromtimestamp(
+                        stripe_subscription.current_period_end, tz=timezone.utc
+                    )
+                    existing.cancel_at_period_end = stripe_subscription.cancel_at_period_end
+                    existing.updated_at = datetime.now(timezone.utc)
+                    db.commit()
+                    db.refresh(existing)
+                    logger.info(f"Recovered subscription {existing.id} for user {user_id}")
+                    return existing
+                except Exception as recover_error:
+                    logger.error(f"Failed to recover subscription: {recover_error}", exc_info=True)
+                    db.rollback()
+        
         return None
     except Exception as e:
         db.rollback()
         logger.error(
-            f"Error updating subscription {stripe_subscription.id}: {e}", 
+            f"Unexpected error updating subscription {stripe_subscription.id} (user_id: {user_id}): {e}", 
             exc_info=True
         )
         return None
