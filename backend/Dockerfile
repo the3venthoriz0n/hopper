@@ -17,5 +17,8 @@ COPY scripts/ ./scripts/
 
 EXPOSE 8000
 
-CMD ["python", "main.py"]
+# Use uvicorn with reload for development (ENVIRONMENT=development)
+# For production, use gunicorn or uvicorn without reload
+# --reload enables hot reload, --reload-dir specifies directories to watch
+CMD ["sh", "-c", "if [ \"$ENVIRONMENT\" = \"development\" ]; then uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app; else python main.py; fi"]
 

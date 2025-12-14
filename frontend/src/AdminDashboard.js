@@ -4,6 +4,8 @@ import axios from 'axios';
 
 // Get CSRF token from axios interceptor
 let csrfToken = null;
+
+// Intercept responses to extract CSRF token
 axios.interceptors.response.use(
   (response) => {
     const token = response.headers['x-csrf-token'] || response.headers['X-CSRF-Token'];
@@ -16,6 +18,19 @@ axios.interceptors.response.use(
     if (error.response?.status === 401) {
       window.location.href = '/';
     }
+    return Promise.reject(error);
+  }
+);
+
+// Intercept requests to add CSRF token to ALL requests (including GET for admin endpoints)
+axios.interceptors.request.use(
+  (config) => {
+    if (csrfToken) {
+      config.headers['X-CSRF-Token'] = csrfToken;
+    }
+    return config;
+  },
+  (error) => {
     return Promise.reject(error);
   }
 );
@@ -44,6 +59,22 @@ function AdminDashboard() {
   const [transactions, setTransactions] = useState([]);
   const [showTransactions, setShowTransactions] = useState(false);
 
+  // Fetch CSRF token on mount
+  useEffect(() => {
+    const fetchCsrfToken = async () => {
+      try {
+        const response = await axios.get(`${API}/auth/csrf`, { withCredentials: true });
+        if (response.headers['x-csrf-token'] || response.headers['X-CSRF-Token']) {
+          csrfToken = response.headers['x-csrf-token'] || response.headers['X-CSRF-Token'];
+        }
+      } catch (err) {
+        console.error('Failed to fetch CSRF token:', err);
+      }
+    };
+    fetchCsrfToken();
+  }, []);
+
+  // Load users when page or searchTerm changes
   useEffect(() => {
     loadUsers();
   }, [page, searchTerm]);
@@ -58,7 +89,10 @@ function AdminDashboard() {
       if (searchTerm) {
         params.append('search', searchTerm);
       }
-      const response = await axios.get(`${API}/admin/users?${params.toString()}`);
+      const response = await axios.get(`${API}/admin/users?${params.toString()}`, {
+        headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
+        withCredentials: true
+      });
       setUsers(response.data.users);
       setTotal(response.data.total);
     } catch (err) {
@@ -76,7 +110,10 @@ function AdminDashboard() {
   const loadUserDetails = async (userId) => {
     try {
       setLoading(true);
-      const response = await axios.get(`${API}/admin/users/${userId}`);
+      const response = await axios.get(`${API}/admin/users/${userId}`, {
+        headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
+        withCredentials: true
+      });
       setUserDetails(response.data);
       setSelectedUser(response.data.user);
     } catch (err) {
@@ -89,7 +126,10 @@ function AdminDashboard() {
   const loadTransactions = async (userId) => {
     try {
       setLoading(true);
-      const response = await axios.get(`${API}/admin/users/${userId}/transactions?limit=50`);
+      const response = await axios.get(`${API}/admin/users/${userId}/transactions?limit=50`, {
+        headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
+        withCredentials: true
+      });
       setTransactions(response.data.transactions);
       setShowTransactions(true);
     } catch (err) {
@@ -127,28 +167,28 @@ function AdminDashboard() {
     }
   };
 
-  const handleGrantUnlimited = async (userId, grant) => {
+  const handleUnlimitedPlan = async (userId, enroll) => {
     setLoading(true);
     try {
-      if (grant) {
+      if (enroll) {
         await axios.post(
-          `${API}/admin/users/${userId}/unlimited-tokens`,
+          `${API}/admin/users/${userId}/unlimited-plan`,
           {},
           { 
             headers: { 'X-CSRF-Token': csrfToken },
             withCredentials: true
           }
         );
-        setMessage(`✅ Granted unlimited tokens`);
+        setMessage(`✅ Enrolled user in unlimited plan`);
       } else {
         await axios.delete(
-          `${API}/admin/users/${userId}/unlimited-tokens`,
+          `${API}/admin/users/${userId}/unlimited-plan`,
           { 
             headers: { 'X-CSRF-Token': csrfToken },
             withCredentials: true
           }
         );
-        setMessage(`✅ Revoked unlimited tokens`);
+        setMessage(`✅ Unenrolled user from unlimited plan`);
       }
       loadUserDetails(userId);
       loadUsers();
@@ -246,7 +286,7 @@ function AdminDashboard() {
                   <tr style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.1)' }}>
                     <th style={{ textAlign: 'left', padding: '0.5rem', color: '#999', fontSize: '0.85rem' }}>ID</th>
                     <th style={{ textAlign: 'left', padding: '0.5rem', color: '#999', fontSize: '0.85rem' }}>Email</th>
-                    <th style={{ textAlign: 'left', padding: '0.5rem', color: '#999', fontSize: '0.85rem' }}>Unlimited</th>
+                    <th style={{ textAlign: 'left', padding: '0.5rem', color: '#999', fontSize: '0.85rem' }}>Plan</th>
                     <th style={{ textAlign: 'left', padding: '0.5rem', color: '#999', fontSize: '0.85rem' }}>Admin</th>
                   </tr>
                 </thead>
@@ -273,8 +313,8 @@ function AdminDashboard() {
                     >
                       <td style={{ padding: '0.75rem', fontSize: '0.9rem' }}>{user.id}</td>
                       <td style={{ padding: '0.75rem', fontSize: '0.9rem' }}>{user.email}</td>
-                      <td style={{ padding: '0.75rem', fontSize: '0.9rem' }}>
-                        {user.unlimited_tokens ? '✅' : '❌'}
+                      <td style={{ padding: '0.75rem', fontSize: '0.9rem', textTransform: 'capitalize' }}>
+                        {user.plan_type || 'N/A'}
                       </td>
                       <td style={{ padding: '0.75rem', fontSize: '0.9rem' }}>
                         {user.is_admin ? '✅' : '❌'}
@@ -353,6 +393,18 @@ function AdminDashboard() {
                       )}
                     </div>
 
+                    {userDetails.token_usage && (
+                      <div style={{ marginBottom: '1.5rem', padding: '1rem', background: 'rgba(0, 0, 0, 0.2)', borderRadius: '6px' }}>
+                        <div style={{ fontSize: '0.85rem', color: '#999', marginBottom: '0.5rem' }}>Token Usage</div>
+                        <div style={{ fontSize: '0.9rem', color: '#fff', marginBottom: '0.25rem' }}>
+                          This Period: <span style={{ color: '#818cf8', fontWeight: '600' }}>{userDetails.token_usage.tokens_used_this_period}</span>
+                        </div>
+                        <div style={{ fontSize: '0.9rem', color: '#fff' }}>
+                          Total All Time: <span style={{ color: '#818cf8', fontWeight: '600' }}>{userDetails.token_usage.total_tokens_used}</span>
+                        </div>
+                      </div>
+                    )}
+
                     <div style={{ marginBottom: '1.5rem' }}>
                       <h3 style={{ color: '#fff', fontSize: '1rem', marginBottom: '0.75rem' }}>Grant Tokens</h3>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -404,37 +456,37 @@ function AdminDashboard() {
                     </div>
 
                     <div style={{ marginBottom: '1.5rem' }}>
-                      <h3 style={{ color: '#fff', fontSize: '1rem', marginBottom: '0.75rem' }}>Unlimited Tokens</h3>
+                      <h3 style={{ color: '#fff', fontSize: '1rem', marginBottom: '0.75rem' }}>Unlimited Plan</h3>
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button
-                          onClick={() => handleGrantUnlimited(selectedUser.id, true)}
-                          disabled={loading || selectedUser.unlimited_tokens}
+                          onClick={() => handleUnlimitedPlan(selectedUser.id, true)}
+                          disabled={loading || userDetails.user?.plan_type === 'unlimited'}
                           style={{
                             padding: '0.5rem 1rem',
-                            background: loading || selectedUser.unlimited_tokens ? 'rgba(255, 255, 255, 0.05)' : 'rgba(34, 197, 94, 0.3)',
+                            background: loading || userDetails.user?.plan_type === 'unlimited' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(34, 197, 94, 0.3)',
                             border: '1px solid rgba(255, 255, 255, 0.2)',
                             borderRadius: '4px',
                             color: '#fff',
-                            cursor: loading || selectedUser.unlimited_tokens ? 'not-allowed' : 'pointer',
+                            cursor: loading || userDetails.user?.plan_type === 'unlimited' ? 'not-allowed' : 'pointer',
                             fontSize: '0.9rem'
                           }}
                         >
-                          Grant Unlimited
+                          Enroll Unlimited Plan
                         </button>
                         <button
-                          onClick={() => handleGrantUnlimited(selectedUser.id, false)}
-                          disabled={loading || !selectedUser.unlimited_tokens}
+                          onClick={() => handleUnlimitedPlan(selectedUser.id, false)}
+                          disabled={loading || userDetails.user?.plan_type !== 'unlimited'}
                           style={{
                             padding: '0.5rem 1rem',
-                            background: loading || !selectedUser.unlimited_tokens ? 'rgba(255, 255, 255, 0.05)' : 'rgba(239, 68, 68, 0.3)',
+                            background: loading || userDetails.user?.plan_type !== 'unlimited' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(239, 68, 68, 0.3)',
                             border: '1px solid rgba(255, 255, 255, 0.2)',
                             borderRadius: '4px',
                             color: '#fff',
-                            cursor: loading || !selectedUser.unlimited_tokens ? 'not-allowed' : 'pointer',
+                            cursor: loading || userDetails.user?.plan_type !== 'unlimited' ? 'not-allowed' : 'pointer',
                             fontSize: '0.9rem'
                           }}
                         >
-                          Revoke Unlimited
+                          Unenroll Unlimited Plan
                         </button>
                       </div>
                     </div>

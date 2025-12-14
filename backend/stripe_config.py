@@ -2,7 +2,7 @@
 import os
 import logging
 import stripe
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +73,8 @@ PLANS_TEST = {
     'unlimited': {
         'name': 'Hopper Unlimited',
         'monthly_tokens': -1,  # -1 indicates unlimited
-        'stripe_price_id': "",  # Will be created by setup_stripe.py
-        'stripe_product_id': "",  # Will be created by setup_stripe.py
+        'stripe_price_id': "price_1Se5neAJugrwwGJA4rBNs9Dj",  # Will be created by setup_stripe.py
+        'stripe_product_id': "prod_TbGbiQEe5xslFa",  # Will be created by setup_stripe.py
         'hidden': True,  # Hidden from public plans list (dev/admin only)
     }
 }
@@ -189,6 +189,22 @@ def get_plan_monthly_tokens(plan_type: str) -> int:
     if plan:
         return plan['monthly_tokens']  # -1 for unlimited, otherwise token count
     return plans['free']['monthly_tokens']  # Default to free
+
+
+def get_plan_price_id(plan_type: str) -> Optional[str]:
+    """Get Stripe price ID for a plan type
+    
+    Args:
+        plan_type: Plan type ('free', 'medium', 'pro', 'unlimited')
+        
+    Returns:
+        Stripe price ID or None if not found/configured
+    """
+    plans = get_plans()
+    plan = plans.get(plan_type)
+    if plan:
+        return plan.get('stripe_price_id')
+    return None
 
 
 def ensure_stripe_products():

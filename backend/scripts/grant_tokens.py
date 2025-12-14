@@ -102,7 +102,7 @@ def reset_subscription(email: str):
         subscription.updated_at = now
         
         # Handle unlimited plan (don't reset token balance, just update period)
-        if subscription.plan_type == 'unlimited' or user.unlimited_tokens:
+        if subscription.plan_type == 'unlimited':
             balance.period_start = now
             balance.period_end = period_end
             balance.last_reset_at = now
@@ -150,7 +150,8 @@ def reset_subscription(email: str):
 
 
 def set_unlimited(email: str, unlimited: bool):
-    """Set or remove unlimited tokens for a user"""
+    """Set or remove unlimited plan for a user (DEPRECATED: Use assign_unlimited_plan instead)"""
+    print("⚠️  WARNING: set_unlimited is deprecated. Use --unlimited-plan flag instead.")
     db = SessionLocal()
     try:
         user = db.query(User).filter(User.email == email).first()
@@ -158,9 +159,7 @@ def set_unlimited(email: str, unlimited: bool):
             print(f"❌ User not found: {email}")
             return False
         
-        user.unlimited_tokens = unlimited
-        
-        # If enabling unlimited, also update subscription to unlimited plan
+        # If enabling unlimited, update subscription to unlimited plan
         if unlimited:
             subscription = db.query(Subscription).filter(Subscription.user_id == user.id).first()
             if not subscription:
@@ -228,15 +227,11 @@ def assign_unlimited_plan(email: str):
         subscription.status = 'active'
         subscription.updated_at = datetime.now(timezone.utc)
         
-        # Set unlimited_tokens flag
-        user.unlimited_tokens = True
-        
         db.commit()
         
         print(f"✅ Assigned unlimited plan to {email}")
         print(f"   Previous plan: {old_plan}")
         print(f"   New plan: unlimited")
-        print(f"   Unlimited tokens: enabled")
         return True
         
     except Exception as e:

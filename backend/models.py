@@ -26,7 +26,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=True)  # Nullable for OAuth-only users
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     stripe_customer_id = Column(String(255), nullable=True, index=True)  # Stripe customer ID
-    unlimited_tokens = Column(Boolean, default=False, nullable=False)  # Admin-granted unlimited tokens
+    # unlimited_tokens = Column(Boolean, default=False, nullable=False)  # DEPRECATED: Now controlled by subscription.plan_type
     is_admin = Column(Boolean, default=False, nullable=False)  # Admin role flag
     
     # Relationships
@@ -137,7 +137,7 @@ class TokenBalance(Base):
     tokens_used_this_period = Column(Integer, default=0, nullable=False)
     period_start = Column(DateTime(timezone=True), nullable=False)
     period_end = Column(DateTime(timezone=True), nullable=False)
-    unlimited_tokens = Column(Boolean, default=False, nullable=False)  # Redundant with User.unlimited_tokens but kept for query efficiency
+    # unlimited_tokens = Column(Boolean, default=False, nullable=False)  # DEPRECATED: Now controlled by subscription.plan_type
     last_reset_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)

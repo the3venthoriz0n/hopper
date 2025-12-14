@@ -36,11 +36,12 @@ from token_helpers import (
     check_tokens_available, deduct_tokens, add_tokens, get_token_balance, 
     get_token_transactions, reset_tokens_for_subscription
 )
-from stripe_config import calculate_tokens_from_bytes, PLANS, ensure_stripe_products, get_plans
+from stripe_config import calculate_tokens_from_bytes, PLANS, ensure_stripe_products, get_plans, get_plan_price_id
 from stripe_helpers import (
     create_stripe_customer, create_checkout_session, get_customer_portal_url,
     get_subscription_info, update_subscription_from_stripe,
-    log_stripe_event, mark_stripe_event_processed, create_free_subscription
+    log_stripe_event, mark_stripe_event_processed, create_free_subscription,
+    create_stripe_subscription
 )
 from models import Subscription, TokenBalance, StripeEvent
 
@@ -3681,55 +3682,106 @@ def require_admin(user_id: int = Depends(require_csrf_new), db: Session = Depend
         raise HTTPException(403, "Admin access required")
     return user
 
+def require_admin_get(request: Request, user_id: int = Depends(require_auth), db: Session = Depends(get_db)) -> User:
+    """Dependency: Require admin role for GET requests (no CSRF required)"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    if not user.is_admin:
+        raise HTTPException(403, "Admin access required")
+    return user
 
-@app.post("/api/admin/users/{target_user_id}/unlimited-tokens")
-def grant_unlimited_tokens(
+
+@app.post("/api/admin/users/{target_user_id}/unlimited-plan")
+def enroll_unlimited_plan(
     target_user_id: int,
     admin_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
-    """Grant unlimited tokens to a user (admin only)"""
+    """Enroll a user in the unlimited plan by creating a Stripe subscription (admin only)"""
+    import stripe
+    
     target_user = db.query(User).filter(User.id == target_user_id).first()
     if not target_user:
         raise HTTPException(404, "User not found")
     
-    target_user.unlimited_tokens = True
+    # Get price ID from stripe_config
+    price_id = get_plan_price_id('unlimited')
+    if not price_id:
+        raise HTTPException(500, "Unlimited plan price ID not configured in Stripe")
     
-    # Update token balance if it exists
-    balance = db.query(TokenBalance).filter(TokenBalance.user_id == target_user_id).first()
-    if balance:
-        balance.unlimited_tokens = True
+    # Check if user already has a subscription
+    existing_subscription = db.query(Subscription).filter(Subscription.user_id == target_user_id).first()
     
-    db.commit()
+    if existing_subscription:
+        # If user already has unlimited plan, return success
+        if existing_subscription.plan_type == 'unlimited':
+            return {"message": f"User {target_user_id} already has unlimited plan"}
+        
+        # Cancel existing subscription in Stripe if it's a real Stripe subscription
+        if existing_subscription.stripe_subscription_id and not existing_subscription.stripe_subscription_id.startswith('free_'):
+            try:
+                stripe.Subscription.modify(
+                    existing_subscription.stripe_subscription_id,
+                    cancel_at_period_end=True
+                )
+                logger.info(f"Cancelled existing subscription {existing_subscription.stripe_subscription_id} for user {target_user_id}")
+            except Exception as e:
+                logger.warning(f"Failed to cancel existing Stripe subscription: {e}")
     
-    logger.info(f"Admin {admin_user.id} granted unlimited tokens to user {target_user_id}")
+    # Create new Stripe subscription for unlimited plan
+    subscription = create_stripe_subscription(target_user_id, price_id, db)
     
-    return {"message": f"Unlimited tokens granted to user {target_user_id}"}
+    if not subscription:
+        raise HTTPException(500, "Failed to create Stripe subscription for unlimited plan")
+    
+    logger.info(f"Admin {admin_user.id} enrolled user {target_user_id} in unlimited plan via Stripe")
+    
+    return {"message": f"User {target_user_id} enrolled in unlimited plan"}
 
 
-@app.delete("/api/admin/users/{target_user_id}/unlimited-tokens")
-def revoke_unlimited_tokens(
+@app.delete("/api/admin/users/{target_user_id}/unlimited-plan")
+def unenroll_unlimited_plan(
     target_user_id: int,
     admin_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
-    """Revoke unlimited tokens from a user (admin only)"""
+    """Unenroll a user from the unlimited plan by canceling Stripe subscription (admin only)"""
+    from stripe_helpers import create_free_subscription
+    import stripe
+    
     target_user = db.query(User).filter(User.id == target_user_id).first()
     if not target_user:
         raise HTTPException(404, "User not found")
     
-    target_user.unlimited_tokens = False
+    subscription = db.query(Subscription).filter(Subscription.user_id == target_user_id).first()
+    if not subscription:
+        raise HTTPException(404, "User has no subscription")
     
-    # Update token balance if it exists
-    balance = db.query(TokenBalance).filter(TokenBalance.user_id == target_user_id).first()
-    if balance:
-        balance.unlimited_tokens = False
+    if subscription.plan_type != 'unlimited':
+        raise HTTPException(400, f"User is not on unlimited plan (current: {subscription.plan_type})")
     
+    # Cancel Stripe subscription if it's a real Stripe subscription
+    if subscription.stripe_subscription_id and not subscription.stripe_subscription_id.startswith('free_'):
+        try:
+            stripe.Subscription.delete(subscription.stripe_subscription_id)
+            logger.info(f"Cancelled Stripe subscription {subscription.stripe_subscription_id} for user {target_user_id}")
+        except stripe.error.StripeError as e:
+            logger.warning(f"Failed to cancel Stripe subscription: {e}")
+            # Continue anyway - we'll still update the database
+    
+    # Create free subscription to replace it
+    old_subscription_id = subscription.stripe_subscription_id
+    db.delete(subscription)
     db.commit()
     
-    logger.info(f"Admin {admin_user.id} revoked unlimited tokens from user {target_user_id}")
+    free_subscription = create_free_subscription(target_user_id, db)
+    if not free_subscription:
+        raise HTTPException(500, "Failed to create free subscription")
     
-    return {"message": f"Unlimited tokens revoked from user {target_user_id}"}
+    logger.info(f"Admin {admin_user.id} unenrolled user {target_user_id} from unlimited plan")
+    
+    return {"message": f"User {target_user_id} unenrolled from unlimited plan"}
 
 
 @app.get("/api/admin/users")
@@ -3737,7 +3789,7 @@ def list_users(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     search: Optional[str] = None,
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_admin_get),
     db: Session = Depends(get_db)
 ):
     """List users with basic info (admin only)"""
@@ -3748,12 +3800,16 @@ def list_users(
     total = query.count()
     users = query.order_by(User.created_at.desc()).offset((page-1)*limit).limit(limit).all()
     
+    # Get subscriptions for all users in one query
+    user_ids = [u.id for u in users]
+    subscriptions = {s.user_id: s for s in db.query(Subscription).filter(Subscription.user_id.in_(user_ids)).all()}
+    
     return {
         "users": [{
             "id": u.id,
             "email": u.email,
             "created_at": u.created_at.isoformat(),
-            "unlimited_tokens": u.unlimited_tokens,
+            "plan_type": subscriptions.get(u.id).plan_type if subscriptions.get(u.id) else None,
             "is_admin": u.is_admin
         } for u in users],
         "total": total,
@@ -3765,7 +3821,7 @@ def list_users(
 @app.get("/api/admin/users/{user_id}")
 def get_user_details(
     user_id: int,
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_admin_get),
     db: Session = Depends(get_db)
 ):
     """Get detailed user information (admin only)"""
@@ -3779,16 +3835,28 @@ def get_user_details(
     # Get subscription info
     subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
     
+    # Calculate total tokens used (sum of all positive token transactions)
+    from sqlalchemy import func
+    from models import TokenTransaction
+    total_tokens_used = db.query(func.sum(TokenTransaction.tokens)).filter(
+        TokenTransaction.user_id == user_id,
+        TokenTransaction.tokens > 0
+    ).scalar() or 0
+    
     return {
         "user": {
             "id": user.id,
             "email": user.email,
             "created_at": user.created_at.isoformat(),
-            "unlimited_tokens": user.unlimited_tokens,
+            "plan_type": subscription.plan_type if subscription else None,
             "is_admin": user.is_admin,
             "stripe_customer_id": user.stripe_customer_id
         },
         "token_balance": balance,
+        "token_usage": {
+            "tokens_used_this_period": balance.get("tokens_used_this_period", 0) if balance else 0,
+            "total_tokens_used": int(total_tokens_used)
+        },
         "subscription": {
             "plan_type": subscription.plan_type if subscription else None,
             "status": subscription.status if subscription else None
@@ -3830,7 +3898,7 @@ def grant_tokens(
 def get_user_transactions_admin(
     user_id: int,
     limit: int = Query(50, ge=1, le=200),
-    admin_user: User = Depends(require_admin),
+    admin_user: User = Depends(require_admin_get),
     db: Session = Depends(get_db)
 ):
     """Get token transaction history for a user (admin only)"""

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timezone, timedelta
 
 from models import User, Subscription, StripeEvent
-from stripe_config import STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, PLANS, get_plans
+from stripe_config import STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, PLANS, get_plans, get_plan_price_id
 
 logger = logging.getLogger(__name__)
 
@@ -235,6 +235,58 @@ def get_subscription_info(user_id: int, db: Session) -> Optional[Dict[str, Any]]
         'current_period_end': subscription.current_period_end.isoformat(),
         'cancel_at_period_end': subscription.cancel_at_period_end,
     }
+
+
+def create_stripe_subscription(user_id: int, price_id: str, db: Session) -> Optional[Subscription]:
+    """
+    Create a Stripe subscription directly (admin use, no payment required for unlimited plan).
+    
+    Args:
+        user_id: User ID
+        price_id: Stripe price ID for the plan
+        db: Database session
+        
+    Returns:
+        Subscription model instance or None if creation failed
+    """
+    if not STRIPE_SECRET_KEY:
+        logger.error("Cannot create Stripe subscription: STRIPE_SECRET_KEY not set")
+        return None
+    
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            logger.error(f"User {user_id} not found")
+            return None
+        
+        # Ensure user has Stripe customer
+        customer_id = user.stripe_customer_id
+        if not customer_id:
+            customer_id = create_stripe_customer(user.email, user_id, db)
+            if not customer_id:
+                return None
+        
+        # Create subscription in Stripe
+        stripe_subscription = stripe.Subscription.create(
+            customer=customer_id,
+            items=[{'price': price_id}],
+            metadata={'user_id': str(user_id)},
+            # For admin-granted unlimited plan, we can set trial_end to None and payment_behavior to 'default_incomplete'
+            # But since unlimited is free ($0), it should work without payment
+        )
+        
+        # Update database subscription from Stripe subscription
+        subscription = update_subscription_from_stripe(stripe_subscription, db)
+        
+        logger.info(f"Created Stripe subscription for user {user_id}: {stripe_subscription.id}")
+        return subscription
+        
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error creating subscription for user {user_id}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error creating Stripe subscription for user {user_id}: {e}", exc_info=True)
+        return None
 
 
 def update_subscription_from_stripe(stripe_subscription: stripe.Subscription, db: Session) -> Optional[Subscription]:

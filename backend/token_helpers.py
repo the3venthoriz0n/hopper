@@ -33,12 +33,15 @@ def get_or_create_token_balance(user_id: int, db: Session) -> TokenBalance:
 
 def get_token_balance(user_id: int, db: Session) -> Dict[str, Any]:
     """Get current token balance information for a user"""
+    from models import Subscription
+    
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return None
     
-    # Check if user has unlimited tokens
-    if user.unlimited_tokens:
+    # Check if user has unlimited plan
+    subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+    if subscription and subscription.plan_type == 'unlimited':
         return {
             'tokens_remaining': -1,  # -1 indicates unlimited
             'tokens_used_this_period': 0,
@@ -65,12 +68,15 @@ def check_tokens_available(user_id: int, tokens_required: int, db: Session) -> b
     Returns:
         True if tokens are available, False otherwise
     """
+    from models import Subscription
+    
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return False
     
-    # Unlimited tokens bypass check
-    if user.unlimited_tokens:
+    # Unlimited plan bypasses check
+    subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+    if subscription and subscription.plan_type == 'unlimited':
         return True
     
     balance = get_or_create_token_balance(user_id, db)
@@ -107,13 +113,16 @@ def deduct_tokens(
         should_close = False
     
     try:
+        from models import Subscription
+        
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             logger.error(f"User {user_id} not found for token deduction")
             return False
         
-        # Unlimited tokens bypass deduction
-        if user.unlimited_tokens:
+        # Unlimited plan bypasses deduction
+        subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+        if subscription and subscription.plan_type == 'unlimited':
             # Still log the transaction for audit purposes
             balance_before = -1
             balance_after = -1
@@ -199,13 +208,16 @@ def add_tokens(
         should_close = False
     
     try:
+        from models import Subscription
+        
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             logger.error(f"User {user_id} not found for token addition")
             return False
         
-        # Unlimited tokens bypass addition (but still log)
-        if user.unlimited_tokens:
+        # Unlimited plan bypasses addition (but still log)
+        subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+        if subscription and subscription.plan_type == 'unlimited':
             balance_before = -1
             balance_after = -1
             transaction = TokenTransaction(
@@ -272,13 +284,16 @@ def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: da
         True if reset was successful, False otherwise
     """
     try:
+        from models import Subscription
+        
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             logger.error(f"User {user_id} not found for token reset")
             return False
         
-        # Unlimited tokens don't need reset
-        if user.unlimited_tokens:
+        # Unlimited plan doesn't need reset
+        subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+        if subscription and subscription.plan_type == 'unlimited':
             return True
         
         balance = get_or_create_token_balance(user_id, db)
