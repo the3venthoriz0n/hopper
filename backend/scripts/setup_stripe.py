@@ -20,6 +20,7 @@ PRODUCTS = {
     'free': {'name': 'Hopper Free', 'description': '10 tokens per month', 'monthly_tokens': 10, 'price_cents': 0},
     'medium': {'name': 'Hopper Medium', 'description': '100 tokens per month', 'monthly_tokens': 100, 'price_cents': 999},
     'pro': {'name': 'Hopper Pro', 'description': '500 tokens per month', 'monthly_tokens': 500, 'price_cents': 2999},
+    # Note: unlimited is kept in Stripe for potential future use, but currently subscriptions are created directly in DB (like free plan)
     'unlimited': {'name': 'Hopper Unlimited', 'description': 'Unlimited tokens', 'monthly_tokens': -1, 'price_cents': 0, 'hidden': True}
 }
 
