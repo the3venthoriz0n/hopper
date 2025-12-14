@@ -69,6 +69,13 @@ PLANS_TEST = {
         'monthly_tokens': 500,
         'stripe_price_id': "price_1Se2XaAJugrwwGJAzeUZsFiy",
         'stripe_product_id': "prod_TbF1urcgxdTYYv",
+    },
+    'unlimited': {
+        'name': 'Hopper Unlimited',
+        'monthly_tokens': -1,  # -1 indicates unlimited
+        'stripe_price_id': "",  # Will be created by setup_stripe.py
+        'stripe_product_id': "",  # Will be created by setup_stripe.py
+        'hidden': True,  # Hidden from public plans list (dev/admin only)
     }
 }
 
@@ -92,6 +99,13 @@ PLANS_LIVE = {
         'monthly_tokens': 500,
         'stripe_price_id': "",  # Auto-updated by setup_stripe.py
         'stripe_product_id': "",  # Auto-updated by setup_stripe.py
+    },
+    'unlimited': {
+        'name': 'Hopper Unlimited',
+        'monthly_tokens': -1,  # -1 indicates unlimited
+        'stripe_price_id': "",  # Auto-updated by setup_stripe.py
+        'stripe_product_id': "",  # Auto-updated by setup_stripe.py
+        'hidden': True,  # Hidden from public plans list (dev/admin only)
     }
 }
 
@@ -165,11 +179,15 @@ def calculate_tokens_from_bytes(file_size_bytes: int) -> int:
 
 
 def get_plan_monthly_tokens(plan_type: str) -> int:
-    """Get monthly token allocation for a plan"""
+    """Get monthly token allocation for a plan
+    
+    Returns:
+        -1 for unlimited plan, otherwise the monthly token count
+    """
     plans = get_plans()
     plan = plans.get(plan_type)
     if plan:
-        return plan['monthly_tokens']
+        return plan['monthly_tokens']  # -1 for unlimited, otherwise token count
     return plans['free']['monthly_tokens']  # Default to free
 
 

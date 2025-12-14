@@ -509,7 +509,9 @@ def build_video_response(video: Video, all_settings: Dict[str, Dict], all_tokens
         "generated_title": video.generated_title,
         "custom_settings": video.custom_settings or {},
         "error": video.error,
-        "scheduled_time": video.scheduled_time.isoformat() if video.scheduled_time else None
+        "scheduled_time": video.scheduled_time.isoformat() if video.scheduled_time else None,
+        "file_size_bytes": video.file_size_bytes,
+        "tokens_consumed": video.tokens_consumed or 0
     }
     
     # Add upload progress from Redis if available
@@ -3295,7 +3297,7 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
 
 @app.get("/api/subscription/plans")
 def get_subscription_plans():
-    """Get available subscription plans"""
+    """Get available subscription plans (excludes hidden/dev-only plans)"""
     return {
         "plans": [
             {
@@ -3305,6 +3307,7 @@ def get_subscription_plans():
                 "stripe_price_id": plan_config.get("stripe_price_id"),
             }
             for plan_key, plan_config in PLANS.items()
+            if not plan_config.get("hidden", False)  # Exclude hidden plans
         ]
     }
 
@@ -3851,6 +3854,17 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
         youtube_logger.error(f"Video {video_id} not found for user {user_id}")
         return
     
+    # Check token balance before uploading (only if tokens not already consumed)
+    if video.file_size_bytes and video.tokens_consumed == 0:
+        tokens_required = calculate_tokens_from_bytes(video.file_size_bytes)
+        if not check_tokens_available(user_id, tokens_required, db):
+            balance_info = get_token_balance(user_id, db)
+            tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
+            error_msg = f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining"
+            db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+            youtube_logger.error(error_msg)
+            return
+    
     # Get YouTube credentials from database
     youtube_token = db_helpers.get_oauth_token(user_id, "youtube", db=db)
     if not youtube_token:
@@ -4108,6 +4122,17 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         tiktok_logger.error(f"Video {video_id} not found for user {user_id}")
         return
     
+    # Check token balance before uploading (only if tokens not already consumed)
+    if video.file_size_bytes and video.tokens_consumed == 0:
+        tokens_required = calculate_tokens_from_bytes(video.file_size_bytes)
+        if not check_tokens_available(user_id, tokens_required, db):
+            balance_info = get_token_balance(user_id, db)
+            tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
+            error_msg = f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining"
+            db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+            tiktok_logger.error(error_msg)
+            return
+    
     # Get TikTok credentials from database
     tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
     if not tiktok_token:
@@ -4282,6 +4307,17 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
     if not video:
         instagram_logger.error(f"Video {video_id} not found for user {user_id}")
         return
+    
+    # Check token balance before uploading (only if tokens not already consumed)
+    if video.file_size_bytes and video.tokens_consumed == 0:
+        tokens_required = calculate_tokens_from_bytes(video.file_size_bytes)
+        if not check_tokens_available(user_id, tokens_required, db):
+            balance_info = get_token_balance(user_id, db)
+            tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
+            error_msg = f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining"
+            db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+            instagram_logger.error(error_msg)
+            return
     
     # Get Instagram credentials from database
     instagram_token = db_helpers.get_oauth_token(user_id, "instagram", db=db)

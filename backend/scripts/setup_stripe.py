@@ -44,6 +44,13 @@ PRODUCTS = {
         'description': '500 tokens per month',
         'monthly_tokens': 500,
         'price_cents': 2999,  # $29.99/month
+    },
+    'unlimited': {
+        'name': 'Hopper Unlimited',
+        'description': 'Unlimited tokens (dev/admin only)',
+        'monthly_tokens': -1,  # -1 indicates unlimited
+        'price_cents': 0,  # Free (dev/admin only, not purchasable)
+        'hidden': True,  # Hidden from public plans
     }
 }
 
@@ -481,24 +488,42 @@ Examples:
     
     args = parser.parse_args()
     
-    # Load .env file if specified
+    # Load .env file if specified (optional - will use existing env vars if file not found)
     if args.env_file:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        backend_dir = os.path.dirname(script_dir)
-        project_root = os.path.dirname(backend_dir)
-        env_file = os.path.join(project_root, f'.env.{args.env_file}')
+        # Try multiple possible locations for .env file
+        possible_paths = [
+            # Inside Docker container (project mounted at /app)
+            f'/app/.env.{args.env_file}',
+            # From script location (if running locally)
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), f'.env.{args.env_file}'),
+            # Current directory
+            f'.env.{args.env_file}',
+            # Home directory
+            os.path.join(os.path.expanduser('~'), f'.env.{args.env_file}'),
+        ]
         
-        if not load_env_file(env_file):
-            sys.exit(1)
+        env_file_found = False
+        for env_file in possible_paths:
+            if os.path.exists(env_file):
+                if load_env_file(env_file):
+                    env_file_found = True
+                    break
+        
+        if not env_file_found:
+            print(f"⚠️  Warning: .env.{args.env_file} not found in any of these locations:")
+            for path in possible_paths:
+                print(f"   - {path}")
+            print("   Continuing with existing environment variables...")
     
     # Get API key from args or environment
     api_key = args.api_key or os.getenv('STRIPE_SECRET_KEY')
     if not api_key:
         print("\n❌ Error: STRIPE_SECRET_KEY not found")
         print("Please either:")
-        print("  1. Use --env-file dev or --env-file prod")
+        print("  1. Use --env-file dev or --env-file prod (if .env file exists)")
         print("  2. Use --api-key sk_test_... or --api-key sk_live_...")
         print("  3. Set STRIPE_SECRET_KEY environment variable")
+        print("\nNote: If running in Docker, environment variables should already be set via docker-compose.")
         sys.exit(1)
     
     # Detect or validate mode

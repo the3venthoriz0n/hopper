@@ -130,6 +130,7 @@ function Home() {
   const [tokenBalance, setTokenBalance] = useState(null);
   const [availablePlans, setAvailablePlans] = useState([]);
   const [loadingSubscription, setLoadingSubscription] = useState(false);
+  const [notification, setNotification] = useState(null); // For popup notifications
 
   // Check if user is authenticated
   useEffect(() => {
@@ -418,6 +419,17 @@ function Home() {
     }
   }, [user, loadSubscription]);
 
+  // Refresh token balance periodically (every 5 seconds) to keep it updated
+  useEffect(() => {
+    if (!user) return;
+    
+    const tokenRefreshInterval = setInterval(() => {
+      loadSubscription();
+    }, 5000);
+    
+    return () => clearInterval(tokenRefreshInterval);
+  }, [user, loadSubscription]);
+
   // Handle subscription upgrade
   const handleUpgrade = async (planKey) => {
     setLoadingSubscription(true);
@@ -453,17 +465,46 @@ function Home() {
   const loadVideos = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/videos`);
+      const newData = res.data;
+      
       setVideos(prevVideos => {
-        const newData = res.data;
+        // Check for new token-related failures
+        if (prevVideos && prevVideos.length > 0) {
+          newData.forEach(newVideo => {
+            const prevVideo = prevVideos.find(v => v.id === newVideo.id);
+            // If video status changed to "failed" with token error
+            if (prevVideo && prevVideo.status !== 'failed' && newVideo.status === 'failed') {
+              if (newVideo.error && newVideo.error.toLowerCase().includes('insufficient tokens')) {
+                // Show popup notification
+                setNotification({
+                  type: 'error',
+                  title: 'Insufficient Tokens',
+                  message: newVideo.error || `Not enough tokens to upload "${newVideo.filename}". Please upgrade your plan or wait for your token balance to reset.`,
+                  videoFilename: newVideo.filename
+                });
+                // Auto-dismiss after 10 seconds
+                setTimeout(() => setNotification(null), 10000);
+              }
+            }
+          });
+        }
+        
         if (JSON.stringify(prevVideos) === JSON.stringify(newData)) {
           return prevVideos;
         }
+        
         return newData;
       });
+      
+      // Refresh token balance when videos change (in case tokens were deducted)
+      // Do this outside setState to avoid dependency issues
+      if (user) {
+        loadSubscription();
+      }
     } catch (err) {
       console.error('Error loading videos:', err);
     }
-  }, [API]);
+  }, [API, user, loadSubscription]);
 
   // Calculate tokens required for a file (1 token = 10MB)
   const calculateTokens = (fileSizeBytes) => {
@@ -1162,6 +1203,109 @@ function Home() {
 
   return (
     <div className="app">
+      {/* Notification Popup */}
+      {notification && (
+        <div
+          style={{
+            position: 'fixed',
+            top: '20px',
+            right: '20px',
+            zIndex: 10000,
+            minWidth: '350px',
+            maxWidth: '500px',
+            padding: '1.25rem',
+            background: notification.type === 'error' 
+              ? 'linear-gradient(135deg, rgba(239, 68, 68, 0.95) 0%, rgba(220, 38, 38, 0.95) 100%)'
+              : 'linear-gradient(135deg, rgba(34, 197, 94, 0.95) 0%, rgba(22, 163, 74, 0.95) 100%)',
+            border: notification.type === 'error'
+              ? '2px solid rgba(239, 68, 68, 1)'
+              : '2px solid rgba(34, 197, 94, 1)',
+            borderRadius: '12px',
+            boxShadow: '0 10px 40px rgba(0, 0, 0, 0.3)',
+            color: 'white',
+            animation: 'slideInRight 0.3s ease-out',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.75rem'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', flex: 1 }}>
+              <span style={{ fontSize: '1.5rem', flexShrink: 0 }}>
+                {notification.type === 'error' ? '⚠️' : '✅'}
+              </span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '0.5rem' }}>
+                  {notification.title}
+                </div>
+                <div style={{ fontSize: '0.95rem', lineHeight: '1.5', opacity: 0.95 }}>
+                  {notification.message}
+                </div>
+                {notification.videoFilename && (
+                  <div style={{ fontSize: '0.85rem', marginTop: '0.5rem', opacity: 0.85, fontStyle: 'italic' }}>
+                    Video: {notification.videoFilename}
+                  </div>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={() => setNotification(null)}
+              style={{
+                background: 'rgba(255, 255, 255, 0.2)',
+                border: '1px solid rgba(255, 255, 255, 0.3)',
+                borderRadius: '6px',
+                color: 'white',
+                cursor: 'pointer',
+                padding: '0.25rem 0.5rem',
+                fontSize: '1.2rem',
+                lineHeight: '1',
+                transition: 'all 0.2s',
+                flexShrink: 0
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+              }}
+            >
+              ×
+            </button>
+          </div>
+          {notification.type === 'error' && (
+            <button
+              onClick={() => {
+                setNotification(null);
+                setShowAccountSettings(true);
+              }}
+              style={{
+                marginTop: '0.5rem',
+                padding: '0.75rem 1rem',
+                background: 'rgba(255, 255, 255, 0.2)',
+                border: '1px solid rgba(255, 255, 255, 0.4)',
+                borderRadius: '8px',
+                color: 'white',
+                cursor: 'pointer',
+                fontSize: '0.95rem',
+                fontWeight: '600',
+                transition: 'all 0.2s',
+                width: '100%'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+                e.target.style.borderColor = 'rgba(255, 255, 255, 0.6)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+                e.target.style.borderColor = 'rgba(255, 255, 255, 0.4)';
+              }}
+            >
+              🪙 View Subscription & Tokens
+            </button>
+          )}
+        </div>
+      )}
+      
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
         <h1>{appTitle}</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
