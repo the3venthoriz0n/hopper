@@ -3719,7 +3719,7 @@ def enroll_unlimited_plan(
             return {"message": f"User {target_user_id} already has unlimited plan"}
         
         # Cancel existing subscription in Stripe if it's a real Stripe subscription
-        if existing_subscription.stripe_subscription_id and not existing_subscription.stripe_subscription_id.startswith('free_'):
+        if existing_subscription.stripe_subscription_id and not existing_subscription.stripe_subscription_id.startswith(('free_', 'unlimited_')):
             try:
                 stripe.Subscription.modify(
                     existing_subscription.stripe_subscription_id,
@@ -3729,13 +3729,22 @@ def enroll_unlimited_plan(
             except Exception as e:
                 logger.warning(f"Failed to cancel existing Stripe subscription: {e}")
     
+    # Preserve current token balance before enrolling in unlimited
+    from token_helpers import get_or_create_token_balance
+    token_balance = get_or_create_token_balance(target_user_id, db)
+    preserved_tokens = token_balance.tokens_remaining
+    
     # Create new Stripe subscription for unlimited plan
     subscription = create_stripe_subscription(target_user_id, price_id, db)
     
     if not subscription:
         raise HTTPException(500, "Failed to create Stripe subscription for unlimited plan")
     
-    logger.info(f"Admin {admin_user.id} enrolled user {target_user_id} in unlimited plan via Stripe")
+    # Save preserved token balance to subscription
+    subscription.preserved_tokens_balance = preserved_tokens
+    db.commit()
+    
+    logger.info(f"Admin {admin_user.id} enrolled user {target_user_id} in unlimited plan (preserved {preserved_tokens} tokens)")
     
     return {"message": f"User {target_user_id} enrolled in unlimited plan"}
 
@@ -3761,8 +3770,11 @@ def unenroll_unlimited_plan(
     if subscription.plan_type != 'unlimited':
         raise HTTPException(400, f"User is not on unlimited plan (current: {subscription.plan_type})")
     
+    # Get preserved token balance before deleting subscription
+    preserved_tokens = subscription.preserved_tokens_balance if subscription.preserved_tokens_balance is not None else 0
+    
     # Cancel Stripe subscription if it's a real Stripe subscription
-    if subscription.stripe_subscription_id and not subscription.stripe_subscription_id.startswith('free_'):
+    if subscription.stripe_subscription_id and not subscription.stripe_subscription_id.startswith(('free_', 'unlimited_')):
         try:
             stripe.Subscription.delete(subscription.stripe_subscription_id)
             logger.info(f"Cancelled Stripe subscription {subscription.stripe_subscription_id} for user {target_user_id}")
@@ -3779,7 +3791,13 @@ def unenroll_unlimited_plan(
     if not free_subscription:
         raise HTTPException(500, "Failed to create free subscription")
     
-    logger.info(f"Admin {admin_user.id} unenrolled user {target_user_id} from unlimited plan")
+    # Restore preserved token balance
+    from token_helpers import get_or_create_token_balance
+    token_balance = get_or_create_token_balance(target_user_id, db)
+    token_balance.tokens_remaining = preserved_tokens
+    db.commit()
+    
+    logger.info(f"Admin {admin_user.id} unenrolled user {target_user_id} from unlimited plan (restored {preserved_tokens} tokens)")
     
     return {"message": f"User {target_user_id} unenrolled from unlimited plan"}
 
