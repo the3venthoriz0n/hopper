@@ -237,6 +237,86 @@ def get_subscription_info(user_id: int, db: Session) -> Optional[Dict[str, Any]]
     }
 
 
+def create_unlimited_subscription(user_id: int, preserved_tokens: int, db: Session) -> Optional[Subscription]:
+    """
+    Create an unlimited subscription directly in the database (no Stripe subscription needed).
+    Works like free subscriptions - creates a database record with a fake subscription ID.
+    
+    Args:
+        user_id: User ID
+        preserved_tokens: Token balance to preserve (will be restored when unenrolling)
+        db: Database session
+        
+    Returns:
+        Subscription model instance or None if creation failed
+    """
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            logger.error(f"User {user_id} not found")
+            return None
+        
+        # Ensure user has Stripe customer (for consistency, but not required for unlimited)
+        if not user.stripe_customer_id:
+            customer_id = create_stripe_customer(user.email, user_id, db)
+            if not customer_id:
+                # Create a placeholder customer ID if Stripe is not available
+                customer_id = f"unlimited_customer_{user_id}"
+        else:
+            customer_id = user.stripe_customer_id
+        
+        # Check if subscription already exists
+        existing = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+        if existing:
+            # Update existing subscription to unlimited
+            existing.plan_type = 'unlimited'
+            existing.status = 'active'
+            existing.stripe_customer_id = customer_id
+            existing.preserved_tokens_balance = preserved_tokens
+            # Use a fake subscription ID for unlimited (not a real Stripe subscription)
+            if not existing.stripe_subscription_id.startswith('unlimited_'):
+                existing.stripe_subscription_id = f'unlimited_{user_id}_{int(datetime.now(timezone.utc).timestamp())}'
+            # Set period dates (unlimited doesn't expire, but we set monthly periods like free)
+            now = datetime.now(timezone.utc)
+            period_end = now.replace(day=1) + timedelta(days=32)
+            period_end = period_end.replace(day=now.day)
+            existing.current_period_start = now
+            existing.current_period_end = period_end
+            existing.cancel_at_period_end = False
+            db.commit()
+            db.refresh(existing)
+            logger.info(f"Updated subscription to unlimited for user {user_id} (preserved {preserved_tokens} tokens)")
+            return existing
+        
+        # Create new unlimited subscription (no Stripe subscription needed, like free plan)
+        now = datetime.now(timezone.utc)
+        period_end = now.replace(day=1) + timedelta(days=32)  # Next month, same day
+        period_end = period_end.replace(day=now.day)  # Keep same day of month
+        
+        subscription = Subscription(
+            user_id=user_id,
+            stripe_subscription_id=f'unlimited_{user_id}_{int(now.timestamp())}',
+            stripe_customer_id=customer_id,
+            plan_type='unlimited',
+            status='active',
+            current_period_start=now,
+            current_period_end=period_end,
+            cancel_at_period_end=False,
+            preserved_tokens_balance=preserved_tokens,
+        )
+        db.add(subscription)
+        db.commit()
+        db.refresh(subscription)
+        
+        logger.info(f"Created unlimited subscription for user {user_id} (preserved {preserved_tokens} tokens)")
+        return subscription
+        
+    except Exception as e:
+        logger.error(f"Error creating unlimited subscription for user {user_id}: {e}", exc_info=True)
+        db.rollback()
+        return None
+
+
 def create_stripe_subscription(user_id: int, price_id: str, db: Session) -> Optional[Subscription]:
     """
     Create a Stripe subscription directly (admin use, no payment required for unlimited plan).

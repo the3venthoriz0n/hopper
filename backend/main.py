@@ -41,7 +41,7 @@ from stripe_helpers import (
     create_stripe_customer, create_checkout_session, get_customer_portal_url,
     get_subscription_info, update_subscription_from_stripe,
     log_stripe_event, mark_stripe_event_processed, create_free_subscription,
-    create_stripe_subscription
+    create_unlimited_subscription, create_stripe_subscription
 )
 from models import Subscription, TokenBalance, StripeEvent
 
@@ -3698,17 +3698,12 @@ def enroll_unlimited_plan(
     admin_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
-    """Enroll a user in the unlimited plan by creating a Stripe subscription (admin only)"""
+    """Enroll a user in the unlimited plan (admin only). Works like free plan - no Stripe subscription needed."""
     import stripe
     
     target_user = db.query(User).filter(User.id == target_user_id).first()
     if not target_user:
         raise HTTPException(404, "User not found")
-    
-    # Get price ID from stripe_config
-    price_id = get_plan_price_id('unlimited')
-    if not price_id:
-        raise HTTPException(500, "Unlimited plan price ID not configured in Stripe")
     
     # Check if user already has a subscription
     existing_subscription = db.query(Subscription).filter(Subscription.user_id == target_user_id).first()
@@ -3734,15 +3729,11 @@ def enroll_unlimited_plan(
     token_balance = get_or_create_token_balance(target_user_id, db)
     preserved_tokens = token_balance.tokens_remaining
     
-    # Create new Stripe subscription for unlimited plan
-    subscription = create_stripe_subscription(target_user_id, price_id, db)
+    # Create unlimited subscription (no Stripe subscription needed, like free plan)
+    subscription = create_unlimited_subscription(target_user_id, preserved_tokens, db)
     
     if not subscription:
-        raise HTTPException(500, "Failed to create Stripe subscription for unlimited plan")
-    
-    # Save preserved token balance to subscription
-    subscription.preserved_tokens_balance = preserved_tokens
-    db.commit()
+        raise HTTPException(500, "Failed to create unlimited subscription")
     
     logger.info(f"Admin {admin_user.id} enrolled user {target_user_id} in unlimited plan (preserved {preserved_tokens} tokens)")
     
