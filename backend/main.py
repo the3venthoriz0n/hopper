@@ -1,65 +1,85 @@
-from urllib.parse import urlencode, unquote, quote
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Response, Cookie, Depends, Header, Query
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
-from pathlib import Path
-import uvicorn
-import os
+# Standard library imports
 import asyncio
 import json
-import secrets
+import logging
+import os
 import random
 import re
-import httpx
-import logging
-from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Any
-from functools import wraps
+import secrets
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from functools import wraps
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+from urllib.parse import quote, unquote, urlencode
 
-from google_auth_oauthlib.flow import Flow
-from google.oauth2.credentials import Credentials
+# Third-party imports
+import httpx
+import stripe
+import uvicorn
+from fastapi import (
+    Cookie, Depends, FastAPI, File, Header, HTTPException,
+    Query, Request, Response, UploadFile
+)
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response as FastAPIResponse
+from pydantic import BaseModel, EmailStr
+from sqlalchemy import func
+from sqlalchemy.orm import Session
+
+# Google API imports
 from google.auth.transport.requests import Request as GoogleRequest
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 
-# Database and auth imports
-from models import init_db, get_db, User, Video, Setting, OAuthToken, SessionLocal
-from sqlalchemy.orm import Session
-from sqlalchemy import func
-from auth import hash_password, verify_password, create_user, authenticate_user, get_user_by_id, get_or_create_oauth_user, set_user_password
-import redis_client
-from pydantic import BaseModel, EmailStr
-import db_helpers
-from encryption import encrypt, decrypt
-from token_helpers import (
-    check_tokens_available, deduct_tokens, add_tokens, get_token_balance, 
-    get_token_transactions, reset_tokens_for_subscription, ensure_tokens_synced_for_subscription
-)
-from stripe_config import calculate_tokens_from_bytes, PLANS, ensure_stripe_products, get_plans, get_plan_price_id
-from stripe_helpers import (
-    create_stripe_customer, create_checkout_session, get_customer_portal_url,
-    get_subscription_info, update_subscription_from_stripe,
-    log_stripe_event, mark_stripe_event_processed, create_free_subscription,
-    create_unlimited_subscription, create_stripe_subscription
-)
-from models import Subscription, TokenBalance, StripeEvent
-
 # OpenTelemetry imports
-from opentelemetry import trace, metrics
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry import metrics, trace
+from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
-from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.sdk.resources import Resource
-from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST, REGISTRY
-from fastapi.responses import Response as FastAPIResponse
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, Counter, Gauge, generate_latest
 
+# Local imports - Database
+from models import (
+    OAuthToken, SessionLocal, Setting, StripeEvent, Subscription,
+    TokenBalance, User, Video, get_db, init_db
+)
+
+# Local imports - Auth & Utils
+import db_helpers
+import redis_client
+from auth import (
+    authenticate_user, create_user, get_or_create_oauth_user,
+    get_user_by_id, hash_password, set_user_password, verify_password
+)
+from encryption import decrypt, encrypt
+
+# Local imports - Token & Stripe
+from stripe_config import (
+    PLANS, calculate_tokens_from_bytes, ensure_stripe_products,
+    get_plan_price_id, get_plans
+)
+from stripe_helpers import (
+    create_checkout_session, create_free_subscription,
+    create_stripe_customer, create_unlimited_subscription,
+    get_customer_portal_url, get_subscription_info,
+    log_stripe_event, mark_stripe_event_processed,
+    update_subscription_from_stripe
+)
+from token_helpers import (
+    add_tokens, check_tokens_available, deduct_tokens,
+    ensure_tokens_synced_for_subscription, get_token_balance,
+    get_token_transactions, reset_tokens_for_subscription
+)
 # ============================================================================
 # OPENTELEMETRY INITIALIZATION
 # ============================================================================
@@ -3783,6 +3803,10 @@ def handle_checkout_completed(session_data: Dict[str, Any], db: Session):
     # Cancel any existing paid subscriptions (prevent duplicates)
     _cancel_existing_subscriptions(user_id, subscription_id, db)
     
+    # Sync tokens for the new subscription (idempotent)
+    from token_helpers import ensure_tokens_synced_for_subscription
+    ensure_tokens_synced_for_subscription(user_id, subscription_id, db)
+    
     logger.info(f"Checkout completed for user {user_id}, subscription {subscription_id}")
 
 
@@ -3966,194 +3990,6 @@ def _cancel_existing_subscriptions(user_id: int, new_subscription_id: str, db: S
                 logger.warning(
                     f"Failed to cancel subscription {sub.stripe_subscription_id}: {e}"
                 )
-
-def handle_checkout_completed(session_data: Dict[str, Any], db: Session):
-    """Handle checkout.session.completed event."""
-    if session_data["mode"] != "subscription":
-        return
-    
-    subscription_id = session_data.get("subscription")
-    if not subscription_id:
-        logger.warning("Checkout session has no subscription ID")
-        return
-    
-    # Get user_id
-    user_id = _get_user_id_from_session(session_data, db)
-    if not user_id:
-        logger.error(f"Could not determine user_id for checkout session {session_data['id']}")
-        return
-    
-    # Cancel any existing paid subscriptions (prevent duplicates)
-    _cancel_existing_subscriptions(user_id, subscription_id, db)
-    
-    # Sync tokens for the new subscription
-    _ensure_tokens_synced(user_id, subscription_id, db)
-
-
-def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
-    """Handle customer.subscription.created event."""
-    import stripe
-    
-    # Retrieve full subscription with expanded items
-    subscription = stripe.Subscription.retrieve(
-        subscription_data["id"], 
-        expand=['items.data.price']
-    )
-    
-    user_id = _get_user_id_from_subscription(subscription, db)
-    if not user_id:
-        logger.error(
-            f"Could not determine user_id for subscription {subscription.id}"
-        )
-        return
-    
-    # Create or update subscription in database
-    updated_sub = update_subscription_from_stripe(subscription, db, user_id=user_id)
-    if not updated_sub:
-        logger.error(
-            f"Failed to create/update subscription {subscription.id} for user {user_id}"
-        )
-        return
-    
-    # Sync tokens
-    _ensure_tokens_synced(user_id, subscription.id, db)
-
-
-def handle_subscription_updated(subscription_data: Dict[str, Any], db: Session):
-    """Handle customer.subscription.updated event."""
-    import stripe
-    
-    # Retrieve full subscription with expanded items
-    subscription = stripe.Subscription.retrieve(
-        subscription_data["id"], 
-        expand=['items.data.price']
-    )
-    
-    user_id = _get_user_id_from_subscription(subscription, db)
-    if not user_id:
-        logger.error(
-            f"Could not determine user_id for subscription {subscription.id}"
-        )
-        return
-    
-    # Update subscription in database
-    updated_sub = update_subscription_from_stripe(subscription, db, user_id=user_id)
-    if not updated_sub:
-        logger.error(
-            f"Failed to update subscription {subscription.id} for user {user_id}"
-        )
-        return
-    
-    # Sync tokens (handles renewals and period changes)
-    _ensure_tokens_synced(user_id, subscription.id, db)
-
-
-def handle_subscription_deleted(subscription_data: Dict[str, Any], db: Session):
-    """Handle customer.subscription.deleted event."""
-    subscription = db.query(Subscription).filter(
-        Subscription.stripe_subscription_id == subscription_data["id"]
-    ).first()
-    
-    if subscription:
-        subscription.status = "canceled"
-        db.commit()
-        logger.info(f"Marked subscription {subscription_data['id']} as canceled")
-
-
-def handle_invoice_payment_succeeded(invoice_data: Dict[str, Any], db: Session):
-    """Handle invoice.payment_succeeded event."""
-    import stripe
-    
-    subscription_id = invoice_data.get("subscription")
-    if not subscription_id:
-        return
-    
-    # Refresh subscription data
-    subscription = stripe.Subscription.retrieve(subscription_id)
-    update_subscription_from_stripe(subscription, db)
-
-
-def handle_invoice_payment_failed(invoice_data: Dict[str, Any], db: Session):
-    """Handle invoice.payment_failed event."""
-    import stripe
-    
-    subscription_id = invoice_data.get("subscription")
-    if not subscription_id:
-        return
-    
-    # Update subscription status
-    subscription = stripe.Subscription.retrieve(subscription_id)
-    update_subscription_from_stripe(subscription, db)
-
-
-def _get_user_id_from_session(session_data: Dict[str, Any], db: Session) -> Optional[int]:
-    """Extract user_id from checkout session."""
-    # Try metadata first
-    if session_data.get("metadata") and session_data["metadata"].get("user_id"):
-        return int(session_data["metadata"]["user_id"])
-    
-    # Fallback to customer lookup
-    customer_id = session_data.get("customer")
-    if customer_id:
-        user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
-        if user:
-            return user.id
-    
-    return None
-
-
-def _get_user_id_from_subscription(subscription: stripe.Subscription, db: Session) -> Optional[int]:
-    """Extract user_id from Stripe subscription."""
-    # Try metadata first
-    if subscription.metadata and subscription.metadata.get("user_id"):
-        return int(subscription.metadata["user_id"])
-    
-    # Fallback to customer lookup
-    customer_id = subscription.customer
-    if customer_id:
-        user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
-        if user:
-            return user.id
-    
-    return None
-
-
-def _cancel_existing_subscriptions(user_id: int, new_subscription_id: str, db: Session):
-    """Cancel any existing paid Stripe subscriptions for a user."""
-    import stripe
-    
-    existing_subs = db.query(Subscription).filter(
-        Subscription.user_id == user_id,
-        Subscription.status == 'active',
-        Subscription.stripe_subscription_id != new_subscription_id
-    ).all()
-    
-    for sub in existing_subs:
-        # Only cancel real Stripe subscriptions (not free/unlimited)
-        if (sub.stripe_subscription_id and 
-            not sub.stripe_subscription_id.startswith(('free_', 'unlimited_'))):
-            
-            try:
-                stripe.Subscription.delete(sub.stripe_subscription_id)
-                sub.status = 'canceled'
-                db.commit()
-                logger.info(f"Canceled old subscription {sub.stripe_subscription_id}")
-            except stripe.error.StripeError as e:
-                logger.warning(
-                    f"Failed to cancel subscription {sub.stripe_subscription_id}: {e}"
-                )
-
-
-def _ensure_tokens_synced(user_id: int, subscription_id: str, db: Session):
-    """Ensure user tokens are synced for their subscription (idempotent)."""
-    try:
-        # Import here to avoid circular dependency
-        from token_helpers import ensure_tokens_synced_for_subscription
-        ensure_tokens_synced_for_subscription(user_id, subscription_id, db)
-    except ImportError:
-        logger.warning("token_helpers module not available, skipping token sync")
-    except Exception as e:
-        logger.error(f"Error syncing tokens for user {user_id}: {e}", exc_info=True)
 
 # ============================================================================
 # ADMIN ENDPOINTS

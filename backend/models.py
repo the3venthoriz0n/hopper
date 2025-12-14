@@ -1,5 +1,5 @@
 """Database models for Hopper"""
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, ForeignKey, JSON, Index, BigInteger, UniqueConstraint
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Boolean, ForeignKey, JSON, Index, BigInteger, UniqueConstraint, func
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from datetime import datetime, timezone
 import os
@@ -26,7 +26,6 @@ class User(Base):
     password_hash = Column(String(255), nullable=True)  # Nullable for OAuth-only users
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     stripe_customer_id = Column(String(255), nullable=True, index=True)  # Stripe customer ID
-    # unlimited_tokens = Column(Boolean, default=False, nullable=False)  # DEPRECATED: Now controlled by subscription.plan_type
     is_admin = Column(Boolean, default=False, nullable=False)  # Admin role flag
     
     # Relationships
@@ -61,8 +60,8 @@ class Video(Base):
     
     # Composite indexes for common query patterns
     __table_args__ = (
-        Index('ix_videos_user_status', 'user_id', 'status'),  # For filtering videos by user and status
-        Index('ix_videos_status_scheduled_time', 'status', 'scheduled_time'),  # For scheduler queries
+        Index('ix_videos_user_status', 'user_id', 'status'),
+        Index('ix_videos_status_scheduled_time', 'status', 'scheduled_time'),
     )
 
 
@@ -79,9 +78,9 @@ class Setting(Base):
     # Relationship
     user = relationship("User", back_populates="settings")
     
-    # Composite index for common query pattern (user_id, category)
+    # Composite index for common query pattern
     __table_args__ = (
-        Index('ix_settings_user_category', 'user_id', 'category'),  # For get_user_settings queries
+        Index('ix_settings_user_category', 'user_id', 'category'),
     )
 
 
@@ -95,15 +94,15 @@ class OAuthToken(Base):
     access_token = Column(Text, nullable=False)  # Encrypted
     refresh_token = Column(Text)  # Encrypted
     expires_at = Column(DateTime(timezone=True))
-    extra_data = Column(JSON)  # For platform-specific data (e.g., TikTok open_id, Instagram business_account_id)
+    extra_data = Column(JSON)  # For platform-specific data
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     # Relationship
     user = relationship("User", back_populates="oauth_tokens")
     
-    # Composite index for common query pattern (user_id, platform)
+    # Composite index for common query pattern
     __table_args__ = (
-        Index('ix_oauth_tokens_user_platform', 'user_id', 'platform'),  # For get_oauth_token queries
+        Index('ix_oauth_tokens_user_platform', 'user_id', 'platform'),
     )
 
 
@@ -133,36 +132,27 @@ class TokenBalance(Base):
     __tablename__ = "token_balances"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
     
     # Token tracking
-    tokens = Column(Integer, default=0, nullable=False)  # Total tokens for period
-    tokens_used = Column(Integer, default=0, nullable=False)  # Tokens used in period
+    tokens_remaining = Column(Integer, default=0, nullable=False)  # Current remaining tokens
+    tokens_used_this_period = Column(Integer, default=0, nullable=False)  # Tokens used in current period
     
     # Billing period tracking
     period_start = Column(DateTime(timezone=True), nullable=False)
     period_end = Column(DateTime(timezone=True), nullable=False)
-    plan_type = Column(String(50), nullable=False)  # free, basic, pro, unlimited
+    last_reset_at = Column(DateTime(timezone=True), nullable=True)  # Last time tokens were reset
     
     # Timestamps
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+    
+    # Relationship
+    user = relationship("User", back_populates="token_balance")
     
     def __repr__(self):
-        return f"<TokenBalance(user_id={self.user_id}, tokens={self.tokens}, used={self.tokens_used}, plan={self.plan_type})>"
-    
-    @property
-    def tokens_remaining(self):
-        """Calculate remaining tokens"""
-        if self.plan_type == 'unlimited':
-            return float('inf')
-        return max(0, self.tokens - self.tokens_used)
-    
-    @property
-    def is_period_active(self):
-        """Check if current period is active"""
-        now = datetime.now(timezone.utc)
-        return self.period_start <= now <= self.period_end
+        return f"<TokenBalance(user_id={self.user_id}, remaining={self.tokens_remaining}, used={self.tokens_used_this_period})>"
+
 
 class TokenTransaction(Base):
     """Token transaction audit log"""
@@ -175,7 +165,7 @@ class TokenTransaction(Base):
     tokens = Column(Integer, nullable=False)  # Positive for additions, negative for deductions
     balance_before = Column(Integer, nullable=False)
     balance_after = Column(Integer, nullable=False)
-    transaction_metadata = Column(JSON, default=dict)  # Store file size, filename, etc. (renamed from 'metadata' to avoid SQLAlchemy reserved name)
+    transaction_metadata = Column(JSON, default=dict)  # Store file size, filename, etc.
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
     
     # Relationships
@@ -184,7 +174,7 @@ class TokenTransaction(Base):
     
     # Index for common query patterns
     __table_args__ = (
-        Index('ix_token_transactions_user_created', 'user_id', 'created_at'),  # For transaction history queries
+        Index('ix_token_transactions_user_created', 'user_id', 'created_at'),
     )
 
 
@@ -213,4 +203,3 @@ def get_db():
         yield db
     finally:
         db.close()
-
