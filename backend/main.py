@@ -4042,10 +4042,17 @@ def handle_subscription_deleted(subscription_data: Dict[str, Any], db: Session):
 def handle_invoice_payment_succeeded(invoice_data: Dict[str, Any], db: Session):
     """Handle invoice.payment_succeeded event."""
     import stripe
+    from token_helpers import ensure_tokens_synced_for_subscription
     
     subscription_id = invoice_data.get("subscription")
     if not subscription_id:
         return
+    
+    # Get existing subscription to check if this is a renewal
+    existing_sub = db.query(Subscription).filter(
+        Subscription.stripe_subscription_id == subscription_id
+    ).first()
+    old_period_end = existing_sub.current_period_end if existing_sub else None
     
     # Refresh subscription data with expanded items
     subscription = stripe.Subscription.retrieve(
@@ -4055,8 +4062,24 @@ def handle_invoice_payment_succeeded(invoice_data: Dict[str, Any], db: Session):
     user_id = _get_user_id_from_subscription(subscription, db)
     
     if user_id:
-        update_subscription_from_stripe(subscription, db, user_id=user_id)
-        logger.info(f"Payment succeeded for subscription {subscription_id}")
+        # Update subscription in database
+        updated_sub = update_subscription_from_stripe(subscription, db, user_id=user_id)
+        if not updated_sub:
+            logger.error(f"Failed to update subscription {subscription_id} for user {user_id}")
+            return
+        
+        # Check if this is a renewal (period_end moved forward)
+        new_period_end = updated_sub.current_period_end
+        is_renewal = old_period_end and new_period_end > old_period_end
+        
+        if is_renewal:
+            logger.info(f"Invoice payment succeeded for subscription {subscription_id} - detected renewal (period_end: {old_period_end} -> {new_period_end})")
+        
+        # Always sync tokens (idempotent - handles renewals and ensures tokens are added)
+        # This is critical for renewals to add monthly tokens
+        ensure_tokens_synced_for_subscription(user_id, subscription_id, db)
+        
+        logger.info(f"Payment succeeded for subscription {subscription_id}, tokens synced for user {user_id}")
 
 
 def handle_invoice_payment_failed(invoice_data: Dict[str, Any], db: Session):
@@ -5773,6 +5796,7 @@ async def token_reset_scheduler_task():
                 now = datetime.now(timezone.utc)
                 
                 # Find subscriptions that need token reset (period_end has passed, but tokens not reset)
+                # This handles both Stripe subscriptions (renewed via webhooks) and free subscriptions (renewed manually)
                 subscriptions = db.query(Subscription).filter(
                     Subscription.status == 'active',
                     Subscription.current_period_end <= now
@@ -5786,21 +5810,58 @@ async def token_reset_scheduler_task():
                     
                     # Reset if period_end has passed and last_reset_at is before period_end
                     should_reset = False
+                    is_renewal = False
                     if not balance:
                         should_reset = True
+                        is_renewal = False  # New subscription, add tokens
                     elif not balance.last_reset_at:
                         should_reset = True
+                        is_renewal = False  # First time setup, add tokens
                     elif balance.last_reset_at < subscription.current_period_end:
                         should_reset = True
+                        # Check if this is a renewal: if token balance period_end exists and is different from subscription period_end
+                        # This indicates the subscription period has moved forward (renewal)
+                        if balance.period_end and balance.period_end != subscription.current_period_end:
+                            # Period changed - this is a renewal
+                            # Also check if the period_end moved forward by approximately a month (renewal)
+                            period_diff_days = (subscription.current_period_end - balance.period_end).total_seconds() / 86400
+                            if 20 <= period_diff_days <= 35:  # Approximately a month (renewal)
+                                is_renewal = True
+                            else:
+                                is_renewal = False  # Period changed but not by a month (plan switch or other)
+                        else:
+                            is_renewal = False  # First time for this period, but not a renewal
                     
                     if should_reset:
-                        logger.info(f"Resetting tokens for user {subscription.user_id} (subscription {subscription.id})")
+                        # For free subscriptions, we need to update the period dates when renewing
+                        # Stripe subscriptions have their periods updated via webhooks
+                        period_start = subscription.current_period_start
+                        period_end = subscription.current_period_end
+                        
+                        # If period has ended, calculate new period (for free plans or missed renewals)
+                        if subscription.current_period_end <= now:
+                            # Calculate new period: extend by one month from current period_end
+                            from datetime import timedelta
+                            period_start = subscription.current_period_end
+                            # Add approximately one month (30 days)
+                            period_end = period_start + timedelta(days=30)
+                            
+                            # Update subscription period (especially important for free plans)
+                            subscription.current_period_start = period_start
+                            subscription.current_period_end = period_end
+                            subscription.updated_at = now
+                            db.flush()  # Flush to ensure period is updated before token reset
+                            
+                            logger.info(f"Updated subscription period for user {subscription.user_id}: {period_start} -> {period_end}")
+                        
+                        logger.info(f"Resetting tokens for user {subscription.user_id} (subscription {subscription.id}, plan: {subscription.plan_type}), is_renewal={is_renewal}")
                         reset_tokens_for_subscription(
                             subscription.user_id,
                             subscription.plan_type,
-                            subscription.current_period_start,
-                            subscription.current_period_end,
-                            db
+                            period_start,
+                            period_end,
+                            db,
+                            is_renewal=is_renewal
                         )
                 
                 db.commit()

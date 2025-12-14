@@ -268,10 +268,12 @@ def add_tokens(
             db.close()
 
 
-def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: datetime, period_end: datetime, db: Session) -> bool:
+def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: datetime, period_end: datetime, db: Session, is_renewal: bool = False) -> bool:
     """
-    Add monthly tokens for a user's subscription period renewal.
-    ADDS the plan's monthly allocation to current balance (does not replace).
+    Reset or add monthly tokens for a user's subscription period.
+    
+    On RENEWAL (is_renewal=True): Resets tokens to monthly allocation (clears to 0, then sets to monthly_tokens)
+    On NEW SUBSCRIPTION (is_renewal=False): Adds monthly tokens to current balance (preserves granted tokens)
     
     Args:
         user_id: User ID
@@ -279,6 +281,7 @@ def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: da
         period_start: Start of the billing period
         period_end: End of the billing period
         db: Database session
+        is_renewal: If True, reset tokens to monthly allocation. If False, add to current balance.
         
     Returns:
         True if reset was successful, False otherwise
@@ -301,15 +304,19 @@ def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: da
         # Get monthly allocation for plan
         monthly_tokens = get_plan_monthly_tokens(plan_type)
         
-        # ALWAYS ADD tokens to current balance (never replace)
-        # This ensures granted tokens are preserved and persist across subscription signups
         balance_before = balance.tokens_remaining
         
-        # Always add tokens to current balance, even if it's 0
-        # This preserves any granted tokens the user may have received
-        balance.tokens_remaining = balance_before + monthly_tokens
-        tokens_added = monthly_tokens
-        logger.info(f"Tokens added for user {user_id} on {plan_type} plan: {balance_before} + {monthly_tokens} = {balance.tokens_remaining} tokens (preserving existing tokens including granted tokens)")
+        if is_renewal:
+            # RENEWAL: Reset tokens to monthly allocation (clear to 0, then set to monthly_tokens)
+            # This is the only time tokens should be reset to the plan's initial value
+            balance.tokens_remaining = monthly_tokens
+            tokens_change = monthly_tokens - balance_before
+            logger.info(f"Subscription renewal for user {user_id} on {plan_type} plan: tokens reset from {balance_before} to {monthly_tokens} (monthly allocation)")
+        else:
+            # NEW SUBSCRIPTION: Add monthly tokens to current balance (preserves granted tokens)
+            balance.tokens_remaining = balance_before + monthly_tokens
+            tokens_change = monthly_tokens
+            logger.info(f"New subscription for user {user_id} on {plan_type} plan: {balance_before} + {monthly_tokens} = {balance.tokens_remaining} tokens (preserving existing tokens including granted tokens)")
         
         balance.tokens_used_this_period = 0
         balance.period_start = period_start
@@ -322,10 +329,15 @@ def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: da
             user_id=user_id,
             video_id=None,
             transaction_type='reset',
-            tokens=tokens_added,  # Amount added
+            tokens=tokens_change,  # Net change in tokens
             balance_before=balance_before,
             balance_after=balance.tokens_remaining,
-            transaction_metadata={'plan_type': plan_type, 'period_start': period_start.isoformat(), 'period_end': period_end.isoformat()}
+            transaction_metadata={
+                'plan_type': plan_type,
+                'period_start': period_start.isoformat(),
+                'period_end': period_end.isoformat(),
+                'is_renewal': is_renewal
+            }
         )
         db.add(transaction)
         db.commit()
@@ -436,14 +448,16 @@ def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db
                 db.commit()
                 return True
             elif is_likely_renewal:
-                # This is a genuine renewal - ADD monthly tokens to current balance
-                logger.info(f"Token period mismatch for user {user_id}, subscription {subscription_id}. Detected renewal (period_end moved forward by {period_end_diff/86400:.1f} days). Adding {monthly_tokens} tokens to current balance of {token_balance.tokens_remaining}.")
+                # This is a genuine renewal - RESET tokens to monthly allocation (clear to 0, then set to monthly_tokens)
+                # Renewals are the only time tokens should be reset to the plan's initial value
+                logger.info(f"Token period mismatch for user {user_id}, subscription {subscription_id}. Detected renewal (period_end moved forward by {period_end_diff/86400:.1f} days). Resetting tokens from {token_balance.tokens_remaining} to {monthly_tokens} (monthly allocation).")
                 return reset_tokens_for_subscription(
                     user_id,
                     subscription.plan_type,
                     subscription.current_period_start,
                     subscription.current_period_end,
-                    db
+                    db,
+                    is_renewal=True
                 )
             else:
                 # Uncertain case - to be safe, ADD monthly tokens (preserves granted tokens)
