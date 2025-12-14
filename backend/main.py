@@ -4015,6 +4015,12 @@ def handle_subscription_updated(subscription_data: Dict[str, Any], db: Session):
     ).first()
     
     old_period_end = old_sub.current_period_end if old_sub else None
+    old_period_start = old_sub.current_period_start if old_sub else None
+    
+    logger.info(
+        f"Subscription update for user {user_id} (subscription {subscription.id}): "
+        f"old_period_end={old_period_end}, old_period_start={old_period_start}"
+    )
     
     # Update subscription in database (this updates period_end if it changed)
     updated_sub = update_subscription_from_stripe(subscription, db, user_id=user_id)
@@ -4024,8 +4030,19 @@ def handle_subscription_updated(subscription_data: Dict[str, Any], db: Session):
         )
         return
     
+    logger.info(
+        f"Subscription updated for user {user_id}: "
+        f"new_period_start={updated_sub.current_period_start}, "
+        f"new_period_end={updated_sub.current_period_end}"
+    )
+    
     # Handle renewal if detected (single source of truth for renewal logic)
     renewal_handled = handle_subscription_renewal(user_id, updated_sub, old_period_end, db)
+    
+    if renewal_handled:
+        logger.info(f"✅ Renewal was handled for user {user_id}, subscription {subscription.id}")
+    else:
+        logger.info(f"ℹ️  No renewal detected for user {user_id}, subscription {subscription.id} - syncing tokens normally")
     
     if not renewal_handled:
         # Not a renewal - sync tokens normally (handles plan switches, new subscriptions, etc.)

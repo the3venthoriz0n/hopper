@@ -308,10 +308,14 @@ def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: da
         
         if is_renewal:
             # RENEWAL: Reset tokens to monthly allocation (clear to 0, then set to monthly_tokens)
-            # This is the only time tokens should be reset to the plan's initial value
+            # This is the ONLY time tokens should be reset to the plan's initial value
+            # Tokens do NOT carry over on renewal - they are reset to the monthly allocation
             balance.tokens_remaining = monthly_tokens
             tokens_change = monthly_tokens - balance_before
-            logger.info(f"Subscription renewal for user {user_id} on {plan_type} plan: tokens reset from {balance_before} to {monthly_tokens} (monthly allocation)")
+            logger.info(
+                f"🔄 RENEWAL: User {user_id} on {plan_type} plan - tokens RESET from {balance_before} to {monthly_tokens} "
+                f"(monthly allocation). Tokens do NOT carry over on renewal."
+            )
         else:
             # NEW SUBSCRIPTION: Add monthly tokens to current balance (preserves granted tokens)
             balance.tokens_remaining = balance_before + monthly_tokens
@@ -381,20 +385,27 @@ def handle_subscription_renewal(user_id: int, subscription: 'Subscription', old_
     # Renewal: period moves forward by ~30 days (20-35 days to account for month length variations)
     if 20 <= period_diff_days <= 35:
         logger.info(
-            f"Subscription renewal detected for user {user_id} (subscription {subscription.stripe_subscription_id}): "
-            f"period_end advanced by {period_diff_days:.1f} days ({old_period_end} -> {new_period_end})"
+            f"✅ RENEWAL DETECTED: User {user_id} (subscription {subscription.stripe_subscription_id}): "
+            f"period_end advanced by {period_diff_days:.1f} days ({old_period_end} -> {new_period_end}). "
+            f"Resetting tokens to monthly allocation (tokens do NOT carry over)."
         )
         
-        # Reset tokens to monthly allocation on renewal
-        reset_tokens_for_subscription(
+        # Reset tokens to monthly allocation on renewal (is_renewal=True ensures reset, not add)
+        result = reset_tokens_for_subscription(
             user_id,
             subscription.plan_type,
             subscription.current_period_start,
             subscription.current_period_end,
             db,
-            is_renewal=True
+            is_renewal=True  # CRITICAL: This flag ensures tokens are RESET, not added
         )
-        return True
+        
+        if result:
+            logger.info(f"✅ Renewal token reset completed for user {user_id}")
+        else:
+            logger.error(f"❌ Renewal token reset FAILED for user {user_id}")
+        
+        return result
     
     # Period changed but not by a month - likely a plan switch or other change
     logger.debug(
@@ -507,17 +518,22 @@ def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db
                 db.commit()
                 return True
             elif is_likely_renewal:
-                # This is a genuine renewal - RESET tokens to monthly allocation (clear to 0, then set to monthly_tokens)
-                # Renewals are the only time tokens should be reset to the plan's initial value
-                logger.info(f"Token period mismatch for user {user_id}, subscription {subscription_id}. Detected renewal (period_end moved forward by {period_end_diff/86400:.1f} days). Resetting tokens from {token_balance.tokens_remaining} to {monthly_tokens} (monthly allocation).")
-                return reset_tokens_for_subscription(
-                    user_id,
-                    subscription.plan_type,
-                    subscription.current_period_start,
-                    subscription.current_period_end,
-                    db,
-                    is_renewal=True
+                # This looks like a renewal, but renewals should be handled by handle_subscription_renewal()
+                # This function should not handle renewals - it's only for repair/sync of non-renewal cases
+                # If we're here, it means handle_subscription_renewal() didn't detect it (maybe period check was too strict)
+                # Log a warning and update the period, but don't reset tokens (let the renewal handler do it)
+                logger.warning(
+                    f"Token period mismatch for user {user_id}, subscription {subscription_id}. "
+                    f"Detected potential renewal (period_end moved forward by {period_end_diff/86400:.1f} days), "
+                    f"but handle_subscription_renewal() should have handled this. "
+                    f"Updating period only - tokens should be reset by renewal handler."
                 )
+                # Just update the period - don't reset tokens here
+                token_balance.period_start = subscription.current_period_start
+                token_balance.period_end = subscription.current_period_end
+                token_balance.updated_at = datetime.now(timezone.utc)
+                db.commit()
+                return True
             else:
                 # Uncertain case - to be safe, ADD monthly tokens (preserves granted tokens)
                 # This handles edge cases where we can't determine if it's a renewal or new subscription
