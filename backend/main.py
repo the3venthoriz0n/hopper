@@ -342,6 +342,10 @@ class LoginRequest(BaseModel):
 class SetPasswordRequest(BaseModel):
     password: str
 
+
+class CheckoutRequest(BaseModel):
+    plan_key: str
+
 class GrantTokensRequest(BaseModel):
     amount: int
     reason: Optional[str] = None
@@ -3482,12 +3486,13 @@ def get_current_subscription(user_id: int = Depends(require_auth), db: Session =
 
 @app.post("/api/subscription/create-checkout")
 def create_subscription_checkout(
-    plan_key: str,
+    checkout_request: CheckoutRequest,
     request: Request,
     user_id: int = Depends(require_csrf_new),
     db: Session = Depends(get_db)
 ):
     """Create Stripe checkout session for subscription"""
+    plan_key = checkout_request.plan_key
     plans = get_plans()
     if plan_key not in plans:
         raise HTTPException(400, f"Invalid plan: {plan_key}")
@@ -3509,13 +3514,97 @@ def create_subscription_checkout(
     return session_data
 
 
+@app.get("/api/subscription/checkout-status")
+def check_checkout_status(
+    session_id: str = Query(..., description="Stripe checkout session ID"),
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
+    """
+    Check the status of a Stripe checkout session and verify if subscription was created.
+    This endpoint allows the frontend to verify payment completion without polling subscription state.
+    """
+    import stripe
+    from stripe_config import STRIPE_SECRET_KEY
+    
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(500, "Stripe not configured")
+    
+    try:
+        # Retrieve checkout session from Stripe
+        session = stripe.checkout.Session.retrieve(session_id)
+        
+        # Verify this session belongs to the current user
+        session_user_id = None
+        if session.metadata and session.metadata.get("user_id"):
+            session_user_id = int(session.metadata["user_id"])
+        elif session.customer:
+            # Fallback: check if customer matches current user
+            user = db.query(User).filter(User.id == user_id).first()
+            if user and user.stripe_customer_id == session.customer:
+                session_user_id = user_id
+        
+        if session_user_id != user_id:
+            raise HTTPException(403, "Checkout session does not belong to current user")
+        
+        # Check session status
+        if session.payment_status != "paid":
+            return {
+                "status": "pending",
+                "payment_status": session.payment_status,
+                "subscription_created": False
+            }
+        
+        # If subscription mode, check if subscription exists
+        subscription_created = False
+        subscription_id = None
+        if session.mode == "subscription" and session.subscription:
+            subscription_id = session.subscription
+            # Check if subscription exists in our database
+            sub = db.query(Subscription).filter(
+                Subscription.stripe_subscription_id == subscription_id
+            ).first()
+            subscription_created = sub is not None
+        
+        return {
+            "status": "completed" if session.payment_status == "paid" else "pending",
+            "payment_status": session.payment_status,
+            "subscription_created": subscription_created,
+            "subscription_id": subscription_id,
+            "mode": session.mode
+        }
+        
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error checking checkout session {session_id}: {e}")
+        raise HTTPException(500, f"Error checking checkout session: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error checking checkout session {session_id}: {e}", exc_info=True)
+        raise HTTPException(500, "Error checking checkout session")
+
+
 @app.get("/api/subscription/portal")
 def get_subscription_portal(
     request: Request,
     user_id: int = Depends(require_auth),
     db: Session = Depends(get_db)
 ):
-    """Get Stripe customer portal URL"""
+    """
+    Get subscription management URL.
+    - If user is on free plan, redirects to purchase/upgrade page
+    - If user has paid subscription, opens Stripe customer portal
+    """
+    from stripe_helpers import get_subscription_info
+    
+    subscription_info = get_subscription_info(user_id, db)
+    
+    # If user is on free plan or has no subscription, redirect to purchase page
+    if not subscription_info or subscription_info.get('plan_type') == 'free':
+        frontend_url = os.getenv("FRONTEND_URL", str(request.base_url).rstrip("/"))
+        # Return URL to subscription page where they can see plans and purchase
+        purchase_url = f"{frontend_url}/subscription"
+        return {"url": purchase_url, "action": "purchase"}
+    
+    # If user has a paid subscription, open Stripe customer portal
     frontend_url = os.getenv("FRONTEND_URL", str(request.base_url).rstrip("/"))
     return_url = f"{frontend_url}/subscription"
     
@@ -3524,7 +3613,7 @@ def get_subscription_portal(
     if not portal_url:
         raise HTTPException(500, "Failed to create portal session")
     
-    return {"url": portal_url}
+    return {"url": portal_url, "action": "manage"}
 
 
 @app.get("/api/tokens/balance")
@@ -3587,24 +3676,44 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             if session["mode"] == "subscription":
                 subscription_id = session["subscription"]
                 subscription = stripe.Subscription.retrieve(subscription_id)
-                update_subscription_from_stripe(subscription, db)
+                
+                # Get user_id from session metadata first (more reliable), then subscription metadata, then customer
+                user_id = None
+                if session.get("metadata") and session["metadata"].get("user_id"):
+                    user_id = int(session["metadata"]["user_id"])
+                    logger.info(f"Got user_id {user_id} from checkout session metadata")
+                elif subscription.metadata.get("user_id"):
+                    user_id = int(subscription.metadata["user_id"])
+                    logger.info(f"Got user_id {user_id} from subscription metadata")
+                else:
+                    # Fallback: get user_id from customer
+                    customer_id = subscription.customer
+                    user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
+                    if user:
+                        user_id = user.id
+                        logger.info(f"Got user_id {user_id} from customer lookup")
+                
+                if not user_id:
+                    logger.error(f"Could not determine user_id for checkout session {session['id']}")
+                    raise HTTPException(500, "Could not determine user_id from checkout session")
+                
+                # Update subscription in database
+                updated_subscription = update_subscription_from_stripe(subscription, db)
+                if not updated_subscription:
+                    logger.error(f"Failed to update subscription {subscription_id} for user {user_id}")
+                    raise HTTPException(500, "Failed to update subscription")
                 
                 # Reset tokens for new subscription
-                user_id = int(subscription.metadata.get("user_id", 0))
-                if user_id:
-                    plan_type = "free"  # Default, will be determined from price
-                    for plan_key, plan_config in get_plans().items():
-                        if plan_config.get("stripe_price_id") == subscription.items.data[0].price.id:
-                            plan_type = plan_key
-                            break
-                    
-                    reset_tokens_for_subscription(
-                        user_id,
-                        plan_type,
-                        datetime.fromtimestamp(subscription.current_period_start, tz=timezone.utc),
-                        datetime.fromtimestamp(subscription.current_period_end, tz=timezone.utc),
-                        db
-                    )
+                plan_type = updated_subscription.plan_type
+                logger.info(f"Resetting tokens for user {user_id}, plan {plan_type}")
+                reset_tokens_for_subscription(
+                    user_id,
+                    plan_type,
+                    datetime.fromtimestamp(subscription.current_period_start, tz=timezone.utc),
+                    datetime.fromtimestamp(subscription.current_period_end, tz=timezone.utc),
+                    db
+                )
+                logger.info(f"Successfully processed checkout.session.completed for user {user_id}, plan {plan_type}")
         
         elif event["type"] == "customer.subscription.created":
             subscription = event["data"]["object"]

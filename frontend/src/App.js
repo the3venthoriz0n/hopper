@@ -53,6 +53,7 @@ axios.interceptors.request.use(
 
 function Home() {
   const navigate = useNavigate();
+  const location = useLocation();
   
   // Build API URL at runtime - always use HTTPS
   const getApiUrl = () => {
@@ -400,7 +401,6 @@ function Home() {
     }
   }, [API]);
 
-  // Load subscription and token balance
   const loadSubscription = useCallback(async () => {
     if (!user) return;
     
@@ -424,6 +424,123 @@ function Home() {
       loadSubscription();
     }
   }, [user, loadSubscription]);
+
+  // Check for checkout success (from /subscription/success route or query param)
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const sessionId = urlParams.get('session_id');
+    const isSuccessPage = location.pathname === '/subscription/success' || urlParams.get('checkout') === 'success';
+    
+    if (isSuccessPage && user && sessionId) {
+      setMessage('✅ Payment successful! Processing your subscription update...');
+      
+      let attempts = 0;
+      const maxAttempts = 10; // Max polling attempts
+      let pollTimeout = null;
+      let isCleanedUp = false;
+      
+      // Exponential backoff: start at 500ms, double each time, max 5s
+      const getPollDelay = (attempt) => Math.min(500 * Math.pow(2, attempt), 5000);
+      
+      const checkCheckoutStatus = async () => {
+        if (isCleanedUp) return;
+        
+        attempts++;
+        try {
+          // Check checkout session status (more reliable than polling subscription)
+          const statusRes = await axios.get(`${API}/subscription/checkout-status`, {
+            params: { session_id: sessionId }
+          });
+          
+          const { status, payment_status, subscription_created } = statusRes.data;
+          
+          if (status === 'completed' && payment_status === 'paid') {
+            // Payment confirmed, now check if subscription was created
+            if (subscription_created) {
+              // Subscription is ready, reload subscription data and show success
+              await loadSubscription();
+              setMessage('✅ Subscription upgraded successfully! Your new plan is now active.');
+              
+              // Clean up URL and redirect
+              if (location.pathname === '/subscription/success') {
+                navigate('/subscription', { replace: true });
+              } else {
+                urlParams.delete('checkout');
+                urlParams.delete('session_id');
+                const newUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
+                window.history.replaceState({}, '', newUrl);
+              }
+              return; // Stop polling
+            } else if (attempts < maxAttempts) {
+              // Payment confirmed but subscription not created yet (webhook processing)
+              // Continue polling with exponential backoff
+              const delay = getPollDelay(attempts);
+              pollTimeout = setTimeout(checkCheckoutStatus, delay);
+              return;
+            }
+          }
+          
+          // If we've exhausted attempts, show message and redirect
+          if (attempts >= maxAttempts) {
+            if (payment_status === 'paid') {
+              setMessage('✅ Payment successful! Your subscription should be active shortly. If you don\'t see the update, please refresh the page.');
+            } else {
+              setMessage('✅ Payment processing. Your subscription will be active shortly.');
+            }
+            if (location.pathname === '/subscription/success') {
+              navigate('/subscription', { replace: true });
+            }
+            return;
+          }
+          
+          // Continue polling with exponential backoff
+          const delay = getPollDelay(attempts);
+          pollTimeout = setTimeout(checkCheckoutStatus, delay);
+          
+        } catch (err) {
+          console.error('Error checking checkout status:', err);
+          
+          // If it's a 403 or 404, the session might be invalid - stop polling
+          if (err.response?.status === 403 || err.response?.status === 404) {
+            setMessage('⚠️ Could not verify checkout session. Please check your subscription status.');
+            if (location.pathname === '/subscription/success') {
+              navigate('/subscription', { replace: true });
+            }
+            return;
+          }
+          
+          // For other errors, retry with exponential backoff
+          if (attempts < maxAttempts) {
+            const delay = getPollDelay(attempts);
+            pollTimeout = setTimeout(checkCheckoutStatus, delay);
+          } else {
+            setMessage('✅ Payment successful! Your subscription should be active shortly.');
+            if (location.pathname === '/subscription/success') {
+              navigate('/subscription', { replace: true });
+            }
+          }
+        }
+      };
+      
+      // Start polling with initial delay
+      pollTimeout = setTimeout(checkCheckoutStatus, getPollDelay(0));
+      
+      // Cleanup on unmount
+      return () => {
+        isCleanedUp = true;
+        if (pollTimeout) {
+          clearTimeout(pollTimeout);
+        }
+      };
+    } else if (isSuccessPage && user && !sessionId) {
+      // No session_id, just reload subscription and show message
+      loadSubscription();
+      setMessage('✅ Payment successful! Your subscription should be active shortly.');
+      if (location.pathname === '/subscription/success') {
+        navigate('/subscription', { replace: true });
+      }
+    }
+  }, [user, API, location.pathname, navigate, loadSubscription]);
 
   // Refresh token balance periodically (every 5 seconds) to keep it updated
   useEffect(() => {
@@ -452,17 +569,30 @@ function Home() {
     }
   };
 
-  // Handle manage subscription (Stripe customer portal)
+  // Handle manage subscription (Stripe customer portal or purchase page)
   const handleManageSubscription = async () => {
     setLoadingSubscription(true);
     try {
       const res = await axios.get(`${API}/subscription/portal`);
       if (res.data.url) {
-        window.location.href = res.data.url;
+        if (res.data.action === 'purchase') {
+          // User is on free plan - scroll to plans section or show purchase options
+          // The URL points back to the subscription page, so we just scroll to plans
+          const plansSection = document.getElementById('subscription-plans');
+          if (plansSection) {
+            plansSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          } else {
+            // If plans section doesn't exist, just navigate to the page
+            window.location.href = res.data.url;
+          }
+        } else {
+          // User has paid subscription - open Stripe customer portal
+          window.location.href = res.data.url;
+        }
       }
     } catch (err) {
-      console.error('Error opening customer portal:', err);
-      setMessage('❌ Failed to open subscription portal. Please try again.');
+      console.error('Error opening subscription portal:', err);
+      setMessage('❌ Failed to open subscription management. Please try again.');
     } finally {
       setLoadingSubscription(false);
     }
@@ -3018,16 +3148,18 @@ function Home() {
 
                     {/* Available Plans */}
                     {availablePlans.length > 0 && (
-                      <div style={{ marginBottom: '1rem' }}>
+                      <div id="subscription-plans" style={{ marginBottom: '1rem' }}>
                         <div style={{ fontSize: '0.85rem', color: '#999', marginBottom: '0.75rem' }}>
                           Available Plans
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                           {availablePlans.map(plan => {
                             const isCurrent = subscription.plan_type === plan.key;
+                            const canUpgrade = !isCurrent && plan.key !== 'free' && plan.stripe_price_id;
                             return (
                               <div 
                                 key={plan.key}
+                                onClick={canUpgrade ? () => handleUpgrade(plan.key) : undefined}
                                 style={{
                                   padding: '0.75rem',
                                   background: isCurrent ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255, 255, 255, 0.05)',
@@ -3035,7 +3167,26 @@ function Home() {
                                   borderRadius: '6px',
                                   display: 'flex',
                                   justifyContent: 'space-between',
-                                  alignItems: 'center'
+                                  alignItems: 'center',
+                                  cursor: canUpgrade ? 'pointer' : 'default',
+                                  transition: canUpgrade ? 'all 0.2s ease' : 'none',
+                                  opacity: loadingSubscription && canUpgrade ? 0.6 : 1
+                                }}
+                                onMouseEnter={(e) => {
+                                  if (canUpgrade && !loadingSubscription) {
+                                    e.currentTarget.style.background = 'rgba(99, 102, 241, 0.15)';
+                                    e.currentTarget.style.border = '1px solid rgba(99, 102, 241, 0.6)';
+                                    e.currentTarget.style.transform = 'translateY(-2px)';
+                                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(99, 102, 241, 0.3)';
+                                  }
+                                }}
+                                onMouseLeave={(e) => {
+                                  if (canUpgrade) {
+                                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                                    e.currentTarget.style.border = '1px solid rgba(255, 255, 255, 0.1)';
+                                    e.currentTarget.style.transform = 'translateY(0)';
+                                    e.currentTarget.style.boxShadow = 'none';
+                                  }
                                 }}
                               >
                                 <div>
@@ -3051,7 +3202,7 @@ function Home() {
                                     {plan.monthly_tokens} tokens/month
                                   </div>
                                 </div>
-                                {isCurrent && (
+                                {isCurrent ? (
                                   <span style={{ 
                                     fontSize: '0.75rem', 
                                     padding: '0.25rem 0.5rem',
@@ -3062,44 +3213,24 @@ function Home() {
                                   }}>
                                     CURRENT
                                   </span>
-                                )}
+                                ) : canUpgrade ? (
+                                  <span style={{ 
+                                    fontSize: '0.75rem', 
+                                    padding: '0.25rem 0.5rem',
+                                    background: 'rgba(99, 102, 241, 0.3)',
+                                    color: '#818cf8',
+                                    borderRadius: '4px',
+                                    fontWeight: '600'
+                                  }}>
+                                    {loadingSubscription ? '⏳' : '⬆️ Upgrade'}
+                                  </span>
+                                ) : null}
                               </div>
                             );
                           })}
                         </div>
                       </div>
                     )}
-
-                    {/* Manage Subscription Button */}
-                    <button 
-                      onClick={handleManageSubscription}
-                      disabled={loadingSubscription}
-                      style={{
-                        width: '100%',
-                        padding: '0.75rem',
-                        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '6px',
-                        cursor: loadingSubscription ? 'not-allowed' : 'pointer',
-                        fontSize: '0.95rem',
-                        fontWeight: '600',
-                        transition: 'all 0.2s',
-                        opacity: loadingSubscription ? 0.6 : 1
-                      }}
-                      onMouseEnter={(e) => {
-                        if (!loadingSubscription) {
-                          e.target.style.transform = 'translateY(-2px)';
-                          e.target.style.boxShadow = '0 4px 12px rgba(102, 126, 234, 0.4)';
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        e.target.style.transform = 'translateY(0)';
-                        e.target.style.boxShadow = 'none';
-                      }}
-                    >
-                      {loadingSubscription ? '⏳ Loading...' : '⚙️ Manage Subscription'}
-                    </button>
                   </>
                 ) : (
                   <div style={{ textAlign: 'center', padding: '1rem', color: '#999' }}>
@@ -3294,6 +3425,8 @@ function App() {
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/delete-your-data" element={<DeleteYourData />} />
+      <Route path="/subscription" element={<Home />} />
+      <Route path="/subscription/success" element={<Home />} />
     </Routes>
   );
 }
