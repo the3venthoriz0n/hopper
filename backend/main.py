@@ -1,5 +1,5 @@
 from urllib.parse import urlencode, unquote, quote
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Response, Cookie, Depends, Header
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Response, Cookie, Depends, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse, HTMLResponse
 from pathlib import Path
@@ -2920,15 +2920,15 @@ def get_global_settings(user_id: int = Depends(require_auth), db: Session = Depe
 def update_global_settings(
     user_id: int = Depends(require_csrf_new),
     db: Session = Depends(get_db),
-    title_template: str = None,
-    description_template: str = None,
-    upload_immediately: bool = None,
-    schedule_mode: str = None,
-    schedule_interval_value: int = None,
-    schedule_interval_unit: str = None,
-    schedule_start_time: str = None,
-    allow_duplicates: bool = None,
-    upload_first_immediately: bool = None
+    title_template: Optional[str] = Query(None),
+    description_template: Optional[str] = Query(None),
+    upload_immediately: Optional[bool] = Query(None),
+    schedule_mode: Optional[str] = Query(None),
+    schedule_interval_value: Optional[int] = Query(None),
+    schedule_interval_unit: Optional[str] = Query(None),
+    schedule_start_time: Optional[str] = Query(None),
+    allow_duplicates: Optional[bool] = Query(None),
+    upload_first_immediately: Optional[bool] = Query(None)
 ):
     """Update global settings"""
     if title_template is not None:
@@ -3252,16 +3252,39 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
     # ROOT CAUSE FIX: Use streaming to handle large files without loading entire file into memory
     path = UPLOAD_DIR / file.filename
     file_size = 0
+    start_time = asyncio.get_event_loop().time()
+    last_log_time = start_time
+    chunk_count = 0
+    
     try:
         chunk_size = 1024 * 1024  # 1MB chunks
         
         with open(path, "wb") as f:
             while True:
-                chunk = await file.read(chunk_size)
+                # Read chunk with explicit timeout to detect connection issues
+                try:
+                    chunk = await asyncio.wait_for(file.read(chunk_size), timeout=300.0)  # 5 minute timeout per chunk
+                except asyncio.TimeoutError:
+                    upload_logger.error(f"Chunk read timeout for user {user_id}: {file.filename} (received {file_size / (1024*1024):.2f} MB)")
+                    raise
+                
                 if not chunk:
                     break
                 
                 file_size += len(chunk)
+                chunk_count += 1
+                current_time = asyncio.get_event_loop().time()
+                
+                # Log progress every 10MB or every 30 seconds
+                if file_size % (10 * 1024 * 1024) < chunk_size or (current_time - last_log_time) >= 30:
+                    elapsed = current_time - start_time
+                    speed_mbps = (file_size / (1024 * 1024)) / elapsed if elapsed > 0 else 0
+                    upload_logger.info(
+                        f"Upload progress for user {user_id}: {file.filename} - "
+                        f"{file_size / (1024*1024):.2f} MB received ({chunk_count} chunks, "
+                        f"{speed_mbps:.2f} MB/s, {elapsed:.1f}s elapsed)"
+                    )
+                    last_log_time = current_time
                 
                 # Validate file size during streaming (before writing entire file)
                 if file_size > MAX_FILE_SIZE:
@@ -3281,7 +3304,13 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
                 
                 f.write(chunk)
         
-        upload_logger.info(f"Video added for user {user_id}: {file.filename} ({file_size / (1024*1024):.2f} MB)")
+        elapsed_total = asyncio.get_event_loop().time() - start_time
+        avg_speed = (file_size / (1024 * 1024)) / elapsed_total if elapsed_total > 0 else 0
+        upload_logger.info(
+            f"Video added for user {user_id}: {file.filename} "
+            f"({file_size / (1024*1024):.2f} MB, {chunk_count} chunks, "
+            f"{avg_speed:.2f} MB/s, {elapsed_total:.1f}s total)"
+        )
     except HTTPException:
         raise
     except asyncio.TimeoutError as e:
@@ -3291,8 +3320,21 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
                 path.unlink()
         except:
             pass
-        upload_logger.error(f"Upload timeout for user {user_id}: {file.filename} (received {file_size / (1024*1024):.2f} MB before timeout)", exc_info=True)
-        raise HTTPException(504, f"Upload timeout: The file upload was interrupted. Please try again with a smaller file or check your connection.")
+        elapsed = asyncio.get_event_loop().time() - start_time if 'start_time' in locals() else 0
+        upload_logger.error(
+            f"Upload timeout for user {user_id}: {file.filename} "
+            f"(received {file_size / (1024*1024):.2f} MB in {elapsed:.1f}s, {chunk_count} chunks) - "
+            f"Likely caused by proxy/reverse proxy timeout (Cloudflare default: 100s free, 600s paid)",
+            exc_info=True
+        )
+        raise HTTPException(
+            504, 
+            f"Upload timeout: The file upload was interrupted after {elapsed:.0f} seconds. "
+            f"This is likely due to a proxy timeout (e.g., Cloudflare). "
+            f"Please try again or contact support if the issue persists."
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         # Clean up partial file on error
         try:
@@ -3301,8 +3343,35 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
         except:
             pass
         error_type = type(e).__name__
-        upload_logger.error(f"Failed to save video file for user {user_id}: {file.filename} (received {file_size / (1024*1024):.2f} MB, error: {error_type}: {str(e)})", exc_info=True)
-        raise HTTPException(500, f"Failed to save video file: {str(e)}")
+        elapsed = asyncio.get_event_loop().time() - start_time if 'start_time' in locals() else 0
+        
+        # Check for connection-related errors that might indicate proxy timeout
+        error_str = str(e).lower()
+        is_connection_error = any(keyword in error_str for keyword in [
+            'connection', 'reset', 'closed', 'broken', 'timeout', 
+            'gateway', 'proxy', 'cloudflare'
+        ])
+        
+        if is_connection_error:
+            upload_logger.error(
+                f"Connection error during upload for user {user_id}: {file.filename} "
+                f"(received {file_size / (1024*1024):.2f} MB in {elapsed:.1f}s, {chunk_count} chunks) - "
+                f"Error: {error_type}: {str(e)} - Likely proxy/reverse proxy timeout",
+                exc_info=True
+            )
+            raise HTTPException(
+                504,
+                f"Upload failed: Connection was interrupted after {elapsed:.0f} seconds. "
+                f"This may be due to a proxy timeout. Please try again."
+            )
+        else:
+            upload_logger.error(
+                f"Failed to save video file for user {user_id}: {file.filename} "
+                f"(received {file_size / (1024*1024):.2f} MB in {elapsed:.1f}s, {chunk_count} chunks, "
+                f"error: {error_type}: {str(e)})",
+                exc_info=True
+            )
+            raise HTTPException(500, f"Failed to save video file: {str(e)}")
     
     # Calculate tokens required for this upload (1 token = 10MB)
     tokens_required = calculate_tokens_from_bytes(file_size)
@@ -5256,16 +5325,20 @@ if __name__ == "__main__":
     reload = os.getenv("ENVIRONMENT", "development") == "development"
     
     # Configure uvicorn for large file uploads
-    # - timeout_keep_alive: Keep connections alive for 5 minutes (for large uploads)
+    # - timeout_keep_alive: Keep connections alive for 30 minutes (for very large uploads)
     # - timeout_graceful_shutdown: Allow 30 seconds for graceful shutdown
     # - limit_concurrency: Allow up to 100 concurrent connections
     # - limit_max_requests: No limit on requests per worker
     # Note: Starlette/FastAPI default max request body size is 1MB, but we handle streaming
     # For very large files, we need to ensure timeouts are sufficient
+    # IMPORTANT: If behind Cloudflare or other proxy, their timeout may be shorter:
+    # - Cloudflare Free: 100 seconds
+    # - Cloudflare Paid: 600 seconds (10 minutes)
+    # - Consider using Cloudflare Workers or direct connection for large uploads
     config = {
         "host": "0.0.0.0",
         "port": 8000,
-        "timeout_keep_alive": 300,  # 5 minutes - keep connections alive for large uploads
+        "timeout_keep_alive": 1800,  # 30 minutes - keep connections alive for very large uploads
         "timeout_graceful_shutdown": 30,
         "limit_concurrency": 100,
         "limit_max_requests": None,  # No limit

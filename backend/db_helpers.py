@@ -42,10 +42,10 @@ def get_user_settings(user_id: int, category: str = "global", db: Session = None
         settings_dict = {}
         for setting in settings:
             try:
-                # Try to parse as JSON first
+                # Parse as JSON (booleans, numbers, lists, etc. are properly deserialized)
                 settings_dict[setting.key] = json.loads(setting.value)
             except (json.JSONDecodeError, TypeError):
-                # If not JSON, use as string
+                # If not JSON, use as string (legacy data)
                 settings_dict[setting.key] = setting.value
         
         # Return defaults if no settings found
@@ -62,7 +62,15 @@ def get_user_settings(user_id: int, category: str = "global", db: Session = None
                 "allow_duplicates": False,
                 "upload_first_immediately": True
             }
+            # Merge defaults with user settings, ensuring boolean values are always booleans
             result = {**defaults, **settings_dict}
+            # Normalize boolean settings (handle legacy string values - one-time conversion)
+            boolean_keys = ["allow_duplicates", "upload_immediately", "upload_first_immediately"]
+            for key in boolean_keys:
+                if key in result and isinstance(result[key], str):
+                    # Convert legacy string to boolean and update in database
+                    result[key] = result[key].lower() in ("true", "1", "yes")
+                    set_user_setting(user_id, category, key, result[key], db=db)
         elif category == "youtube":
             defaults = {
                 "visibility": "private",
@@ -132,10 +140,10 @@ def get_all_user_settings(user_id: int, db: Session = None) -> Dict[str, Dict[st
                 settings_by_category[setting.category] = {}
             
             try:
-                # Try to parse as JSON first
+                # Parse as JSON (booleans, numbers, lists, etc. are properly deserialized)
                 settings_by_category[setting.category][setting.key] = json.loads(setting.value)
             except (json.JSONDecodeError, TypeError):
-                # If not JSON, use as string
+                # If not JSON, use as string (legacy data)
                 settings_by_category[setting.category][setting.key] = setting.value
         
         # Apply defaults for each category
@@ -154,6 +162,13 @@ def get_all_user_settings(user_id: int, db: Session = None) -> Dict[str, Dict[st
             "allow_duplicates": False
         }
         result["global"] = {**global_defaults, **settings_by_category.get("global", {})}
+        # Normalize boolean settings (handle legacy string values - one-time conversion)
+        boolean_keys = ["allow_duplicates", "upload_immediately", "upload_first_immediately"]
+        for key in boolean_keys:
+            if key in result["global"] and isinstance(result["global"][key], str):
+                # Convert legacy string to boolean and update in database
+                result["global"][key] = result["global"][key].lower() in ("true", "1", "yes")
+                set_user_setting(user_id, "global", key, result["global"][key], db=db)
         
         # YouTube settings
         youtube_defaults = {

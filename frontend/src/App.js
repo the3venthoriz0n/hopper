@@ -737,6 +737,8 @@ function Home() {
   const updateGlobalSettings = async (key, value) => {
     try {
       const params = new URLSearchParams();
+      // URLSearchParams automatically converts booleans to strings
+      // FastAPI Query() will convert them back to booleans
       params.append(key, value);
       const res = await axios.post(`${API}/global/settings?${params.toString()}`);
       setGlobalSettings(res.data);
@@ -1024,7 +1026,16 @@ function Home() {
         // Handle timeout errors
         if (isTimeout) {
           const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-          errorMsg = `Upload timeout: The file "${file.name}" (${fileSizeMB} MB) is too large or the connection is too slow. Please try a smaller file or check your internet connection.`;
+          const timeoutMinutes = (timeoutMs / (60 * 1000)).toFixed(1);
+          
+          // Check if this might be a proxy timeout (Cloudflare free plan: 100s, paid: 600s)
+          const isLikelyProxyTimeout = timeoutMs >= 100000 && fileSizeMB < 500; // If timeout is high but file is relatively small
+          
+          if (isLikelyProxyTimeout) {
+            errorMsg = `Upload timeout: The file "${file.name}" (${fileSizeMB} MB) timed out after ${timeoutMinutes} minutes. This is likely due to a proxy timeout (e.g., Cloudflare has a 100-second limit on free plans). Please try again or contact support.`;
+          } else {
+            errorMsg = `Upload timeout: The file "${file.name}" (${fileSizeMB} MB) timed out after ${timeoutMinutes} minutes. The connection may be too slow or there may be a proxy timeout. Please try a smaller file or check your internet connection.`;
+          }
           
           setNotification({
             type: 'error',
@@ -1032,7 +1043,7 @@ function Home() {
             message: errorMsg,
             videoFilename: file.name
           });
-          setTimeout(() => setNotification(null), 15000);
+          setTimeout(() => setNotification(null), 20000);
         }
         // Handle network errors (connection reset, network failure, etc.)
         else if (isNetworkError) {
@@ -1444,7 +1455,7 @@ function Home() {
               ×
             </button>
           </div>
-          {notification.type === 'error' && (
+          {notification.type === 'error' && notification.title === 'Insufficient Tokens' && (
             <button
               onClick={() => {
                 setNotification(null);
