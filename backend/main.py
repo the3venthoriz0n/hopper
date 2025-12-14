@@ -3961,7 +3961,12 @@ def handle_checkout_completed(session_data: Dict[str, Any], db: Session):
 
 
 def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
-    """Handle customer.subscription.created event."""
+    """Handle customer.subscription.created event.
+    
+    This fires when a NEW subscription is created. However, during upgrades,
+    Stripe may fire both .created and .updated events. We need to ensure
+    tokens are only added once.
+    """
     import stripe
     from token_helpers import ensure_tokens_synced_for_subscription
     
@@ -3978,6 +3983,11 @@ def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
         )
         return
     
+    # Check if subscription already exists in DB (might have been created by .updated event first)
+    existing_sub = db.query(Subscription).filter(
+        Subscription.stripe_subscription_id == subscription.id
+    ).first()
+    
     # Create or update subscription in database
     updated_sub = update_subscription_from_stripe(subscription, db, user_id=user_id)
     if not updated_sub:
@@ -3986,8 +3996,13 @@ def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
         )
         return
     
-    # Sync tokens for new subscription (idempotent)
-    ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
+    # Only sync tokens if this is truly a NEW subscription (didn't exist before)
+    # If it already existed, it means .updated event already processed it, so don't add tokens again
+    if not existing_sub:
+        logger.info(f"New subscription created for user {user_id}: {updated_sub.plan_type} - syncing tokens")
+        ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
+    else:
+        logger.info(f"Subscription {subscription.id} already existed in DB (likely processed by .updated event first) - skipping token sync to avoid double-adding")
     
     logger.info(f"Subscription created for user {user_id}: {updated_sub.plan_type}")
 
@@ -4035,8 +4050,37 @@ def handle_subscription_updated(subscription_data: Dict[str, Any], db: Session):
             Subscription.stripe_subscription_id == subscription.id
         ).first()
         
+        # Also get user's current subscription (might be different if this is a new subscription during upgrade)
+        user_current_sub = db.query(Subscription).filter(
+            Subscription.user_id == user_id
+        ).first()
+        
         old_period_end = old_sub.current_period_end if old_sub else None
         old_period_start = old_sub.current_period_start if old_sub else None
+        old_plan_type = old_sub.plan_type if old_sub else None
+        
+        # If this is a new subscription (old_sub is None) but user has an existing subscription,
+        # check if it's a plan switch (upgrade/downgrade)
+        is_new_subscription = old_sub is None
+        is_plan_switch = False
+        
+        # Get plan type from Stripe subscription (before updating DB)
+        from stripe_helpers import _get_plan_type_from_price
+        price_id = None
+        if hasattr(subscription, 'items') and subscription.items and subscription.items.data:
+            first_item = subscription.items.data[0]
+            if hasattr(first_item, 'price') and first_item.price:
+                price_id = first_item.price.id if hasattr(first_item.price, 'id') else None
+        new_plan_type = _get_plan_type_from_price(price_id) if price_id else None
+        
+        if is_new_subscription and user_current_sub and user_current_sub.stripe_subscription_id != subscription.id:
+            # New subscription created, but user had a different subscription - this is an upgrade/downgrade
+            is_plan_switch = user_current_sub.plan_type != new_plan_type if new_plan_type else True
+            old_plan_type = user_current_sub.plan_type
+            logger.info(
+                f"New subscription {subscription.id} created for user {user_id} who had subscription {user_current_sub.stripe_subscription_id} "
+                f"(plan: {user_current_sub.plan_type} -> {new_plan_type}). This is likely an upgrade/downgrade."
+            )
         
         if old_sub:
             logger.info(
@@ -4071,31 +4115,49 @@ def handle_subscription_updated(subscription_data: Dict[str, Any], db: Session):
         if renewal_handled:
             logger.info(f"✅ Renewal was handled for user {user_id}, subscription {subscription.id}")
         else:
-            # Not a renewal - check if we need to sync tokens for other cases (plan switches, new subscriptions, etc.)
-            # Only sync if period didn't change (to avoid double-processing renewals that weren't detected)
-            if old_period_end and updated_sub.current_period_end == old_period_end:
-                # Period didn't change - this is a plan switch or status change, sync tokens
-                logger.info(f"ℹ️  No renewal detected for user {user_id}, subscription {subscription.id} - period unchanged, syncing tokens for plan switch/status change")
+            # Not a renewal - check what type of change this is
+            if is_new_subscription and not is_plan_switch:
+                # Truly new subscription (first time) - .created event should handle tokens
+                # But if .updated fires first, handle it here
+                logger.info(f"ℹ️  New subscription for user {user_id} (subscription {subscription.id}) - syncing tokens")
+                ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
+            elif is_plan_switch or (old_sub and old_sub.plan_type != updated_sub.plan_type):
+                # Plan switch detected (plan changed) - preserve tokens, only update period
+                # This handles upgrades/downgrades where tokens should be preserved
+                from token_helpers import get_token_balance, get_or_create_token_balance
+                token_balance = get_token_balance(user_id, db)
+                current_tokens = token_balance.get('tokens_remaining', 0) if token_balance else 0
+                logger.info(
+                    f"🔄 Plan switch detected for user {user_id}: {old_plan_type} -> {updated_sub.plan_type}. "
+                    f"Preserving tokens (current: {current_tokens}), updating period only."
+                )
+                # Just update the period, preserve tokens
+                balance = get_or_create_token_balance(user_id, db)
+                balance.period_start = updated_sub.current_period_start
+                balance.period_end = updated_sub.current_period_end
+                balance.updated_at = datetime.now(timezone.utc)
+                db.commit()
+                logger.info(f"✅ Plan switch completed - tokens preserved: {balance.tokens_remaining}")
+            elif old_period_end and updated_sub.current_period_end == old_period_end:
+                # Period didn't change and plan didn't change - status change or other update
+                logger.info(f"ℹ️  Status/other change for user {user_id}, subscription {subscription.id} - syncing tokens")
                 ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
             else:
-                # Period changed but wasn't detected as renewal - check if it's actually a renewal
+                # Period changed but wasn't detected as renewal and plan didn't change
                 period_diff = (updated_sub.current_period_end - old_period_end).total_seconds() / 86400 if old_period_end else 0
                 
                 # If period advanced significantly (more than a day), it's likely a renewal that wasn't caught
-                # This can happen if the period check was too strict or there was a timing issue
-                if period_diff > 1:  # Period advanced by more than 1 day
+                if period_diff > 1:
                     logger.warning(
                         f"⚠️  Period changed for user {user_id} (diff: {period_diff:.1f} days) but renewal not detected. "
                         f"Attempting to handle as renewal anyway (period advanced significantly)."
                     )
-                    # Try to handle as renewal - this is a safety net for edge cases
-                    # Use a more lenient check: if period advanced by more than 1 day, treat as renewal
                     if period_diff >= 1:
                         logger.info(f"🔄 Treating period change as renewal (safety net) for user {user_id}")
                         handle_subscription_renewal(user_id, updated_sub, old_period_end, db)
                 else:
                     logger.info(
-                        f"ℹ️  Period changed slightly for user {user_id} (diff: {period_diff:.1f} days) - likely status/plan change, not renewal"
+                        f"ℹ️  Period changed slightly for user {user_id} (diff: {period_diff:.1f} days) - likely status change, not renewal"
                     )
         
         logger.info(f"✅ customer.subscription.updated processing completed for user {user_id}, subscription {subscription.id}")

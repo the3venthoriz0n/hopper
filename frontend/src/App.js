@@ -1843,7 +1843,7 @@ function Home() {
                   e.target.style.boxShadow = '0 4px 12px rgba(239, 68, 68, 0.3)';
                 }}
               >
-                Clear All
+                OK
               </button>
             </div>
           </div>
@@ -3258,38 +3258,7 @@ function Home() {
                 
                 {subscription && tokenBalance ? (
                   <>
-                    {/* Current Plan */}
-                    <div style={{ marginBottom: '1rem' }}>
-                      <div style={{ fontSize: '0.85rem', color: '#999', marginBottom: '0.25rem' }}>Current Plan</div>
-                      <div style={{ fontSize: '1.1rem', fontWeight: '600', color: 'white', textTransform: 'capitalize', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                        <span>{subscription.plan_type}</span>
-                        {(() => {
-                          const currentPlan = availablePlans.find(p => p.key === subscription.plan_type);
-                          return currentPlan?.price && (
-                            <span style={{ 
-                              fontSize: '0.9rem', 
-                              fontWeight: '500', 
-                              color: '#818cf8'
-                            }}>
-                              {currentPlan.price.formatted}
-                            </span>
-                          );
-                        })()}
-                        {subscription.status !== 'active' && (
-                          <span style={{ 
-                            fontSize: '0.75rem', 
-                            padding: '0.25rem 0.5rem',
-                            background: 'rgba(239, 68, 68, 0.2)',
-                            color: '#ef4444',
-                            borderRadius: '4px',
-                            textTransform: 'uppercase'
-                          }}>
-                            {subscription.status}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
+                    
                     {/* Token Balance */}
                     <div style={{ 
                       padding: '1rem', 

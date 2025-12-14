@@ -328,6 +328,9 @@ def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: da
         balance.last_reset_at = datetime.now(timezone.utc)
         balance.updated_at = datetime.now(timezone.utc)
         
+        # Get subscription ID for metadata
+        subscription_id = subscription.stripe_subscription_id if subscription else None
+        
         # Create transaction record
         transaction = TokenTransaction(
             user_id=user_id,
@@ -340,7 +343,8 @@ def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: da
                 'plan_type': plan_type,
                 'period_start': period_start.isoformat(),
                 'period_end': period_end.isoformat(),
-                'is_renewal': is_renewal
+                'is_renewal': is_renewal,
+                'subscription_id': subscription_id  # Track which subscription this was for
             }
         )
         db.add(transaction)
@@ -427,7 +431,8 @@ def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db
     - Manual intervention is needed
     
     This function does NOT detect renewals - that's handled by handle_subscription_renewal().
-    This function only ensures the token balance matches the subscription state.
+    This function does NOT handle plan switches - that's handled by handle_subscription_updated().
+    This function only ensures the token balance matches the subscription state for NEW subscriptions.
     
     Args:
         user_id: User ID
@@ -438,7 +443,7 @@ def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db
         True if tokens are synced (or were already synced), False if subscription not found
     """
     try:
-        from models import Subscription
+        from models import Subscription, TokenTransaction
         
         # Get subscription from database
         subscription = db.query(Subscription).filter(
@@ -451,6 +456,42 @@ def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db
         
         # Check if token balance period matches subscription period
         token_balance = get_or_create_token_balance(user_id, db)
+        
+        # Check if tokens were already added for this user recently
+        # This prevents double-adding when both .created and .updated events fire for the same subscription
+        # or when upgrading (new subscription created but tokens already processed)
+        now = datetime.now(timezone.utc)
+        recent_reset = db.query(TokenTransaction).filter(
+            TokenTransaction.user_id == user_id,
+            TokenTransaction.transaction_type == 'reset',
+            TokenTransaction.created_at >= now - timedelta(minutes=5)  # Within last 5 minutes
+        ).order_by(TokenTransaction.created_at.desc()).first()
+        
+        # If a recent reset transaction exists, tokens were already processed
+        # This prevents double-adding tokens when both .created and .updated events fire
+        if recent_reset:
+            metadata = recent_reset.transaction_metadata or {}
+            reset_subscription_id = metadata.get('subscription_id')
+            reset_plan_type = metadata.get('plan_type')
+            is_renewal = metadata.get('is_renewal', False)
+            
+            # If it was a renewal, don't skip - renewals should reset tokens
+            if not is_renewal:
+                logger.info(
+                    f"Recent reset transaction found for user {user_id} (created at {recent_reset.created_at}, "
+                    f"subscription_id: {reset_subscription_id}, plan: {reset_plan_type}, is_renewal: {is_renewal}). "
+                    f"Skipping token sync to avoid double-adding. Current balance: {token_balance.tokens_remaining}"
+                )
+                
+                # Just ensure period is updated to match subscription
+                if token_balance.period_start != subscription.current_period_start or token_balance.period_end != subscription.current_period_end:
+                    token_balance.period_start = subscription.current_period_start
+                    token_balance.period_end = subscription.current_period_end
+                    token_balance.updated_at = datetime.now(timezone.utc)
+                    db.commit()
+                    logger.info(f"Updated token balance period to match subscription period")
+                
+                return True
         
         # Reset tokens if:
         # 1. Period doesn't match (renewal or new subscription)
@@ -479,12 +520,9 @@ def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db
         # Check if period is uninitialized (indicates new subscription or first-time setup)
         period_uninitialized = (token_balance.period_start == token_balance.period_end)
         
-        # IMPORTANT: Always preserve tokens when switching plans. Only reset tokens on period renewals.
-        # This means:
-        # - If period changed AND it's a genuine renewal (not a plan switch), ADD monthly tokens
-        # - If period is uninitialized (new subscription), ADD monthly tokens
-        # - If only amount changed (plan switch), preserve tokens and just update period
-        # - Tokens should accumulate across plan changes and persist across subscription signups
+        # IMPORTANT: This function should ONLY handle truly new subscriptions.
+        # Plan switches and renewals are handled by their respective handlers.
+        # If we're here and tokens were already added (checked above), we should preserve them.
         
         if period_mismatch:
             # Period changed - could be a renewal, plan switch, or new subscription
