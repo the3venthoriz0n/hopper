@@ -630,6 +630,36 @@ function Home() {
     }
   };
 
+  // Handle cancel subscription
+  const handleCancelSubscription = async () => {
+    setLoadingSubscription(true);
+    try {
+      const res = await axios.post(`${API}/subscription/cancel`);
+      if (res.data.status === 'success') {
+        setMessage(`✅ ${res.data.message}`);
+        // Reload subscription data to reflect the change
+        await loadSubscription();
+        setNotification({
+          type: 'success',
+          title: 'Subscription Canceled',
+          message: `Your subscription has been canceled and you've been switched to the free plan. Your ${res.data.tokens_preserved || 0} tokens have been preserved.`
+        });
+        setTimeout(() => setNotification(null), 5000);
+      }
+    } catch (err) {
+      console.error('Error canceling subscription:', err);
+      setMessage('❌ Failed to cancel subscription. Please try again.');
+      setNotification({
+        type: 'error',
+        title: 'Cancel Failed',
+        message: err.response?.data?.detail || err.response?.data?.message || 'Failed to cancel subscription. Please try again.'
+      });
+      setTimeout(() => setNotification(null), 5000);
+    } finally {
+      setLoadingSubscription(false);
+    }
+  };
+
   const loadVideos = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/videos`);
@@ -3236,16 +3266,62 @@ function Home() {
                                   </div>
                                 </div>
                                 {isCurrent ? (
-                                  <span style={{ 
-                                    fontSize: '0.75rem', 
-                                    padding: '0.25rem 0.5rem',
-                                    background: 'rgba(34, 197, 94, 0.2)',
-                                    color: '#22c55e',
-                                    borderRadius: '4px',
-                                    fontWeight: '600'
-                                  }}>
-                                    CURRENT
-                                  </span>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                    <span style={{ 
+                                      fontSize: '0.75rem', 
+                                      padding: '0.25rem 0.5rem',
+                                      background: 'rgba(34, 197, 94, 0.2)',
+                                      color: '#22c55e',
+                                      borderRadius: '4px',
+                                      fontWeight: '600'
+                                    }}>
+                                      CURRENT
+                                    </span>
+                                    {subscription.plan_type !== 'free' && subscription.status === 'active' && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          const currentTokens = tokenBalance?.tokens_remaining || 0;
+                                          setConfirmDialog({
+                                            title: 'Cancel Subscription?',
+                                            message: `Are you sure you want to cancel your subscription? Your subscription will be canceled immediately and you'll be switched to the free plan. Your current token balance (${currentTokens} tokens) will be preserved.`,
+                                            onConfirm: () => {
+                                              setConfirmDialog(null);
+                                              handleCancelSubscription();
+                                            },
+                                            onCancel: () => setConfirmDialog(null)
+                                          });
+                                        }}
+                                        disabled={loadingSubscription}
+                                        style={{
+                                          padding: '0.5rem 0.75rem',
+                                          background: 'rgba(239, 68, 68, 0.2)',
+                                          border: '1px solid rgba(239, 68, 68, 0.5)',
+                                          borderRadius: '4px',
+                                          color: '#ef4444',
+                                          cursor: loadingSubscription ? 'not-allowed' : 'pointer',
+                                          fontSize: '0.75rem',
+                                          fontWeight: '600',
+                                          transition: 'all 0.2s ease',
+                                          opacity: loadingSubscription ? 0.6 : 1
+                                        }}
+                                        onMouseEnter={(e) => {
+                                          if (!loadingSubscription) {
+                                            e.currentTarget.style.background = 'rgba(239, 68, 68, 0.3)';
+                                            e.currentTarget.style.border = '1px solid rgba(239, 68, 68, 0.7)';
+                                          }
+                                        }}
+                                        onMouseLeave={(e) => {
+                                          if (!loadingSubscription) {
+                                            e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)';
+                                            e.currentTarget.style.border = '1px solid rgba(239, 68, 68, 0.5)';
+                                          }
+                                        }}
+                                      >
+                                        Cancel
+                                      </button>
+                                    )}
+                                  </div>
                                 ) : canUpgrade ? (
                                   <span style={{ 
                                     fontSize: '0.75rem', 
@@ -3257,6 +3333,49 @@ function Home() {
                                   }}>
                                     {isThisPlanLoading ? '⏳' : '⬆️ Upgrade'}
                                   </span>
+                                ) : plan.key === 'free' && subscription.plan_type !== 'free' && subscription.status === 'active' ? (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const currentTokens = tokenBalance?.tokens_remaining || 0;
+                                      setConfirmDialog({
+                                        title: 'Switch to Free Plan?',
+                                        message: `Are you sure you want to switch to the free plan? Your current subscription will be canceled immediately. Your current token balance (${currentTokens} tokens) will be preserved.`,
+                                        onConfirm: () => {
+                                          setConfirmDialog(null);
+                                          handleCancelSubscription();
+                                        },
+                                        onCancel: () => setConfirmDialog(null)
+                                      });
+                                    }}
+                                    disabled={loadingSubscription}
+                                    style={{
+                                      padding: '0.5rem 0.75rem',
+                                      background: 'rgba(99, 102, 241, 0.2)',
+                                      border: '1px solid rgba(99, 102, 241, 0.5)',
+                                      borderRadius: '4px',
+                                      color: '#818cf8',
+                                      cursor: loadingSubscription ? 'not-allowed' : 'pointer',
+                                      fontSize: '0.75rem',
+                                      fontWeight: '600',
+                                      transition: 'all 0.2s ease',
+                                      opacity: loadingSubscription ? 0.6 : 1
+                                    }}
+                                    onMouseEnter={(e) => {
+                                      if (!loadingSubscription) {
+                                        e.currentTarget.style.background = 'rgba(99, 102, 241, 0.3)';
+                                        e.currentTarget.style.border = '1px solid rgba(99, 102, 241, 0.7)';
+                                      }
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      if (!loadingSubscription) {
+                                        e.currentTarget.style.background = 'rgba(99, 102, 241, 0.2)';
+                                        e.currentTarget.style.border = '1px solid rgba(99, 102, 241, 0.5)';
+                                      }
+                                    }}
+                                  >
+                                    Switch to Free
+                                  </button>
                                 ) : null}
                               </div>
                             );

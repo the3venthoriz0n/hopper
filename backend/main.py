@@ -3686,6 +3686,117 @@ def get_subscription_portal(
     return {"url": portal_url, "action": "manage"}
 
 
+@app.post("/api/subscription/cancel")
+def cancel_subscription(
+    user_id: int = Depends(require_auth),
+    db: Session = Depends(get_db)
+):
+    """
+    Cancel the user's subscription and switch to free plan.
+    Cancels the Stripe subscription immediately and updates the local subscription record.
+    Preserves the user's current token balance.
+    """
+    from token_helpers import get_or_create_token_balance
+    
+    # Get current subscription
+    subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+    
+    if not subscription:
+        raise HTTPException(404, "No subscription found")
+    
+    # If already on free plan, nothing to do
+    if subscription.plan_type == 'free':
+        return {
+            "status": "success",
+            "message": "Already on free plan",
+            "plan_type": "free"
+        }
+    
+    # Get current token balance to preserve it
+    token_balance = get_or_create_token_balance(user_id, db)
+    current_tokens = token_balance.tokens_remaining
+    
+    # If unlimited plan (admin-created), just switch to free
+    if subscription.stripe_subscription_id and subscription.stripe_subscription_id.startswith('unlimited_'):
+        subscription.plan_type = 'free'
+        subscription.stripe_subscription_id = f"free_{user_id}_{int(datetime.now(timezone.utc).timestamp())}"
+        subscription.status = 'active'
+        subscription.cancel_at_period_end = False
+        
+        # Update period dates but preserve tokens
+        now = datetime.now(timezone.utc)
+        period_end = (now.replace(day=1) + timedelta(days=32)).replace(day=now.day)
+        subscription.current_period_start = now
+        subscription.current_period_end = period_end
+        subscription.updated_at = datetime.now(timezone.utc)
+        
+        # Update token balance period but keep current token amount
+        token_balance.period_start = now
+        token_balance.period_end = period_end
+        token_balance.updated_at = datetime.now(timezone.utc)
+        # tokens_remaining stays the same (preserved)
+        
+        db.commit()
+        
+        logger.info(f"User {user_id} switched from unlimited to free plan, preserved {current_tokens} tokens")
+        return {
+            "status": "success",
+            "message": "Switched to free plan",
+            "plan_type": "free",
+            "tokens_preserved": current_tokens
+        }
+    
+    # Cancel Stripe subscription if it's a real Stripe subscription
+    if subscription.stripe_subscription_id and not subscription.stripe_subscription_id.startswith('free_'):
+        try:
+            # Cancel immediately (not at period end)
+            stripe.Subscription.delete(subscription.stripe_subscription_id)
+            logger.info(f"Canceled Stripe subscription {subscription.stripe_subscription_id} for user {user_id}")
+        except stripe.error.StripeError as e:
+            logger.warning(f"Failed to cancel Stripe subscription {subscription.stripe_subscription_id}: {e}")
+            # Continue anyway - we'll update the local record
+    
+    # Switch to free plan
+    now = datetime.now(timezone.utc)
+    period_end = (now.replace(day=1) + timedelta(days=32)).replace(day=now.day)
+    
+    subscription.plan_type = 'free'
+    subscription.stripe_subscription_id = f"free_{user_id}_{int(now.timestamp())}"
+    subscription.status = 'active'
+    subscription.current_period_start = now
+    subscription.current_period_end = period_end
+    subscription.cancel_at_period_end = False
+    subscription.updated_at = datetime.now(timezone.utc)
+    
+    # Update token balance period but preserve current token amount
+    token_balance.period_start = now
+    token_balance.period_end = period_end
+    token_balance.updated_at = datetime.now(timezone.utc)
+    # tokens_remaining stays the same (preserved)
+    
+    db.commit()
+    
+    logger.info(f"User {user_id} canceled subscription and switched to free plan, preserved {current_tokens} tokens")
+    return {
+        "status": "success",
+        "message": "Subscription canceled and switched to free plan",
+        "plan_type": "free",
+        "tokens_preserved": current_tokens
+    }
+
+
+@app.post("/api/subscription/switch-to-free")
+def switch_to_free_plan(
+    user_id: int = Depends(require_auth),
+    db: Session = Depends(get_db)
+):
+    """
+    Switch user to free plan (alias for cancel subscription).
+    This is the same as canceling the subscription.
+    """
+    return cancel_subscription(user_id=user_id, db=db)
+
+
 @app.get("/api/tokens/balance")
 def get_tokens_balance(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
     """Get current token balance"""
