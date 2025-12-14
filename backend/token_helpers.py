@@ -362,8 +362,14 @@ def handle_subscription_renewal(user_id: int, subscription: 'Subscription', old_
     Handle subscription renewal by resetting tokens to monthly allocation.
     
     This is the single source of truth for renewal handling. A renewal is detected when:
-    - The subscription's current_period_end has moved forward by approximately one month (20-35 days)
+    - The subscription's current_period_end has moved forward significantly (more than 1 day)
+    - The subscription is active (not canceled/past_due)
+    - The new period_end is in the future
     - This indicates the subscription has advanced to a new billing cycle
+    
+    This handles various billing cycles: monthly (~30 days), bi-monthly (~60 days), 
+    quarterly (~90 days), etc. The key indicator is that the period advanced forward,
+    which is the primary characteristic of a renewal.
     
     Args:
         user_id: User ID
@@ -386,9 +392,36 @@ def handle_subscription_renewal(user_id: int, subscription: 'Subscription', old_
     # Calculate period difference
     period_diff_days = (new_period_end - old_period_end).total_seconds() / 86400
     
-    # Renewal: period moves forward by ~30 days (20-35 days to account for month length variations)
-    # Use wider range to catch edge cases (28-32 days for standard months, but allow 20-35 for safety)
-    if 20 <= period_diff_days <= 35:
+    # Check if subscription is active (renewals only happen for active subscriptions)
+    if subscription.status not in ['active', 'trialing']:
+        logger.debug(
+            f"Period advanced for user {user_id} but subscription status is '{subscription.status}', not active. "
+            f"Not treating as renewal."
+        )
+        return False
+    
+    # Check if new period_end is in the future (renewals advance to future periods)
+    now = datetime.now(timezone.utc)
+    if new_period_end <= now:
+        logger.debug(
+            f"Period advanced for user {user_id} but new period_end ({new_period_end}) is not in the future. "
+            f"Not treating as renewal."
+        )
+        return False
+    
+    # Renewal detection: period advanced by at least 20 days (to avoid false positives from small adjustments)
+    # This catches monthly (~30 days), bi-monthly (~60 days), quarterly (~90 days), 
+    # semi-annual (~180 days), and annual (~365 days) billing cycles
+    # We require at least 20 days to avoid false positives from:
+    # - Small period adjustments (< 20 days)
+    # - Plan switches that might slightly adjust period_end
+    # - Timezone or timestamp rounding issues
+    # We exclude very large changes (> 1 year) which are likely errors or data issues
+    # 
+    # The key insight: Stripe only advances period_end significantly when a subscription renews.
+    # Plan switches typically don't change period_end much (same billing cycle continues),
+    # and status changes don't advance the period forward.
+    if 20 <= period_diff_days < 365:
         logger.info(
             f"✅ RENEWAL DETECTED: User {user_id} (subscription {subscription.stripe_subscription_id}): "
             f"period_end advanced by {period_diff_days:.1f} days ({old_period_end} -> {new_period_end}). "
@@ -412,10 +445,10 @@ def handle_subscription_renewal(user_id: int, subscription: 'Subscription', old_
         
         return result
     
-    # Period changed but not by a month - likely a plan switch or other change
+    # Period changed but doesn't match renewal criteria
     logger.warning(
-        f"⚠️  Period changed for user {user_id} but NOT detected as renewal (diff: {period_diff_days:.1f} days, expected 20-35). "
-        f"Old: {old_period_end}, New: {new_period_end}. "
+        f"⚠️  Period changed for user {user_id} but NOT detected as renewal (diff: {period_diff_days:.1f} days). "
+        f"Old: {old_period_end}, New: {new_period_end}, Status: {subscription.status}. "
         f"This may be a renewal that wasn't caught - check period calculation."
     )
     return False

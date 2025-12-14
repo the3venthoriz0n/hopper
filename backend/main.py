@@ -4067,8 +4067,11 @@ def handle_subscription_updated(subscription_data: Dict[str, Any], db: Session):
         # Get plan type from Stripe subscription (before updating DB)
         from stripe_helpers import _get_plan_type_from_price
         price_id = None
-        if hasattr(subscription, 'items') and subscription.items and subscription.items.data:
-            first_item = subscription.items.data[0]
+        items_data = []
+        if hasattr(subscription, 'items') and subscription.items:
+            items_data = subscription.items.data if hasattr(subscription.items, 'data') else []
+        if items_data and len(items_data) > 0:
+            first_item = items_data[0]
             if hasattr(first_item, 'price') and first_item.price:
                 price_id = first_item.price.id if hasattr(first_item.price, 'id') else None
         new_plan_type = _get_plan_type_from_price(price_id) if price_id else None
@@ -5976,13 +5979,13 @@ async def token_reset_scheduler_task():
                         # Check if this is a renewal: if token balance period_end exists and is different from subscription period_end
                         # This indicates the subscription period has moved forward (renewal)
                         if balance.period_end and balance.period_end != subscription.current_period_end:
-                            # Period changed - this is a renewal
-                            # Also check if the period_end moved forward by approximately a month (renewal)
+                            # Period changed - check if it's a renewal
+                            # Use the same logic as handle_subscription_renewal: period advanced by at least 20 days
                             period_diff_days = (subscription.current_period_end - balance.period_end).total_seconds() / 86400
-                            if 20 <= period_diff_days <= 35:  # Approximately a month (renewal)
+                            if 20 <= period_diff_days < 365:  # Reasonable billing cycle (monthly, bi-monthly, quarterly, etc.)
                                 is_renewal = True
                             else:
-                                is_renewal = False  # Period changed but not by a month (plan switch or other)
+                                is_renewal = False  # Period changed but not by a reasonable amount (plan switch or other)
                         else:
                             is_renewal = False  # First time for this period, but not a renewal
                     
