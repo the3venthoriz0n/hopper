@@ -349,13 +349,72 @@ def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: da
         return False
 
 
+def handle_subscription_renewal(user_id: int, subscription: 'Subscription', old_period_end: Optional[datetime], db: Session) -> bool:
+    """
+    Handle subscription renewal by resetting tokens to monthly allocation.
+    
+    This is the single source of truth for renewal handling. A renewal is detected when:
+    - The subscription's current_period_end has moved forward by approximately one month (20-35 days)
+    - This indicates the subscription has advanced to a new billing cycle
+    
+    Args:
+        user_id: User ID
+        subscription: Subscription model instance (already updated with new period)
+        old_period_end: The previous period_end before the update (None if new subscription)
+        db: Database session
+        
+    Returns:
+        True if renewal was handled, False otherwise
+    """
+    if not old_period_end:
+        # No previous period - this is a new subscription, not a renewal
+        return False
+    
+    new_period_end = subscription.current_period_end
+    if new_period_end <= old_period_end:
+        # Period didn't advance - not a renewal
+        return False
+    
+    # Calculate period difference
+    period_diff_days = (new_period_end - old_period_end).total_seconds() / 86400
+    
+    # Renewal: period moves forward by ~30 days (20-35 days to account for month length variations)
+    if 20 <= period_diff_days <= 35:
+        logger.info(
+            f"Subscription renewal detected for user {user_id} (subscription {subscription.stripe_subscription_id}): "
+            f"period_end advanced by {period_diff_days:.1f} days ({old_period_end} -> {new_period_end})"
+        )
+        
+        # Reset tokens to monthly allocation on renewal
+        reset_tokens_for_subscription(
+            user_id,
+            subscription.plan_type,
+            subscription.current_period_start,
+            subscription.current_period_end,
+            db,
+            is_renewal=True
+        )
+        return True
+    
+    # Period changed but not by a month - likely a plan switch or other change
+    logger.debug(
+        f"Period changed for user {user_id} but not a renewal (diff: {period_diff_days:.1f} days) - "
+        f"likely plan switch or other subscription change"
+    )
+    return False
+
+
 def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db: Session) -> bool:
     """
     Ensure tokens are properly synced for a subscription.
-    This is idempotent and safe to call multiple times.
     
-    Checks if token balance period matches subscription period, and resets if needed.
-    This handles cases where webhooks haven't fired yet or tokens weren't reset.
+    This is a repair/sync function for cases where:
+    - Webhooks haven't fired yet
+    - Tokens weren't reset due to errors
+    - Manual intervention is needed
+    
+    This function does NOT detect renewals - that's handled by handle_subscription_renewal().
+    This function only ensures the token balance matches the subscription state.
     
     Args:
         user_id: User ID

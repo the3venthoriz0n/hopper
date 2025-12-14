@@ -3982,9 +3982,19 @@ def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
 
 
 def handle_subscription_updated(subscription_data: Dict[str, Any], db: Session):
-    """Handle customer.subscription.updated event."""
+    """Handle customer.subscription.updated event.
+    
+    This is the PRIMARY event for subscription state changes, including renewals.
+    Stripe fires this event when:
+    - Subscription renews (period advances)
+    - Plan changes
+    - Status changes
+    - Other subscription property changes
+    
+    For renewals, the current_period_start and current_period_end advance.
+    """
     import stripe
-    from token_helpers import ensure_tokens_synced_for_subscription
+    from token_helpers import handle_subscription_renewal, ensure_tokens_synced_for_subscription
     
     # Retrieve full subscription with expanded items
     subscription = stripe.Subscription.retrieve(
@@ -3999,14 +4009,14 @@ def handle_subscription_updated(subscription_data: Dict[str, Any], db: Session):
         )
         return
     
-    # Get the old subscription data before update
+    # Get the old subscription data BEFORE update (critical for renewal detection)
     old_sub = db.query(Subscription).filter(
         Subscription.stripe_subscription_id == subscription.id
     ).first()
     
     old_period_end = old_sub.current_period_end if old_sub else None
     
-    # Update subscription in database
+    # Update subscription in database (this updates period_end if it changed)
     updated_sub = update_subscription_from_stripe(subscription, db, user_id=user_id)
     if not updated_sub:
         logger.error(
@@ -4014,17 +4024,15 @@ def handle_subscription_updated(subscription_data: Dict[str, Any], db: Session):
         )
         return
     
-    # Check if this is a renewal (period changed)
-    new_period_end = updated_sub.current_period_end
-    is_renewal = old_period_end and new_period_end > old_period_end
+    # Handle renewal if detected (single source of truth for renewal logic)
+    renewal_handled = handle_subscription_renewal(user_id, updated_sub, old_period_end, db)
     
-    if is_renewal:
-        logger.info(f"Subscription renewed for user {user_id}, resetting tokens")
+    if not renewal_handled:
+        # Not a renewal - sync tokens normally (handles plan switches, new subscriptions, etc.)
+        # This ensures tokens are properly set for non-renewal cases
+        ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
     
-    # Always sync tokens (idempotent - handles renewals and period changes)
-    ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
-    
-    logger.info(f"Subscription updated for user {user_id}: {updated_sub.plan_type}")
+    logger.info(f"Subscription updated for user {user_id}: {updated_sub.plan_type}, status: {updated_sub.status}")
 
 
 def handle_subscription_deleted(subscription_data: Dict[str, Any], db: Session):
@@ -4040,46 +4048,56 @@ def handle_subscription_deleted(subscription_data: Dict[str, Any], db: Session):
 
 
 def handle_invoice_payment_succeeded(invoice_data: Dict[str, Any], db: Session):
-    """Handle invoice.payment_succeeded event."""
+    """Handle invoice.payment_succeeded event.
+    
+    This event fires when an invoice payment succeeds. It can be for:
+    - New subscription (billing_reason: 'subscription_create')
+    - Renewal (billing_reason: 'subscription_cycle')
+    - Plan change (billing_reason: 'subscription_update')
+    - Manual invoice (billing_reason: 'manual')
+    
+    IMPORTANT: Token renewal is handled by customer.subscription.updated, not here.
+    This handler only ensures the subscription state is updated. If the subscription
+    period has advanced, customer.subscription.updated will have already fired and
+    handled the renewal. This is a safety net to ensure subscription state is current.
+    """
     import stripe
     from token_helpers import ensure_tokens_synced_for_subscription
     
     subscription_id = invoice_data.get("subscription")
     if not subscription_id:
+        # Not a subscription invoice, skip
         return
     
-    # Get existing subscription to check if this is a renewal
-    existing_sub = db.query(Subscription).filter(
-        Subscription.stripe_subscription_id == subscription_id
-    ).first()
-    old_period_end = existing_sub.current_period_end if existing_sub else None
-    
-    # Refresh subscription data with expanded items
+    # Update subscription state from Stripe (ensures we have latest period info)
     subscription = stripe.Subscription.retrieve(
         subscription_id,
         expand=['items.data.price']
     )
     user_id = _get_user_id_from_subscription(subscription, db)
     
-    if user_id:
-        # Update subscription in database
-        updated_sub = update_subscription_from_stripe(subscription, db, user_id=user_id)
-        if not updated_sub:
-            logger.error(f"Failed to update subscription {subscription_id} for user {user_id}")
-            return
-        
-        # Check if this is a renewal (period_end moved forward)
-        new_period_end = updated_sub.current_period_end
-        is_renewal = old_period_end and new_period_end > old_period_end
-        
-        if is_renewal:
-            logger.info(f"Invoice payment succeeded for subscription {subscription_id} - detected renewal (period_end: {old_period_end} -> {new_period_end})")
-        
-        # Always sync tokens (idempotent - handles renewals and ensures tokens are added)
-        # This is critical for renewals to add monthly tokens
-        ensure_tokens_synced_for_subscription(user_id, subscription_id, db)
-        
-        logger.info(f"Payment succeeded for subscription {subscription_id}, tokens synced for user {user_id}")
+    if not user_id:
+        logger.error(f"Could not determine user_id for subscription {subscription_id} in invoice.payment_succeeded")
+        return
+    
+    # Update subscription in database (this may trigger customer.subscription.updated if period changed)
+    updated_sub = update_subscription_from_stripe(subscription, db, user_id=user_id)
+    if not updated_sub:
+        logger.error(f"Failed to update subscription {subscription_id} for user {user_id}")
+        return
+    
+    # Note: We don't handle token renewal here because:
+    # 1. customer.subscription.updated is the canonical event for subscription state changes
+    # 2. It fires when the period advances, which is the definitive signal for renewal
+    # 3. invoice.payment_succeeded can fire before the period advances in some edge cases
+    # 4. This separation ensures single responsibility and prevents duplicate processing
+    
+    # Only sync tokens as a safety net (handles edge cases where subscription.updated didn't fire)
+    # This is idempotent and won't double-process renewals
+    ensure_tokens_synced_for_subscription(user_id, subscription_id, db)
+    
+    billing_reason = invoice_data.get("billing_reason", "unknown")
+    logger.info(f"Invoice payment succeeded for subscription {subscription_id} (billing_reason: {billing_reason}), subscription state updated for user {user_id}")
 
 
 def handle_invoice_payment_failed(invoice_data: Dict[str, Any], db: Session):
