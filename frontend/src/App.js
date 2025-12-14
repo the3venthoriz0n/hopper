@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Link, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import axios from 'axios';
 import './App.css';
 import Terms from './Terms';
 import Privacy from './Privacy';
 import DeleteYourData from './DeleteYourData';
 import Login from './Login';
+import AdminDashboard from './AdminDashboard';
 
 // Configure axios to send cookies with every request
 axios.defaults.withCredentials = true;
@@ -65,6 +66,7 @@ function Home() {
   
   // Authentication state
   const [user, setUser] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   
   // All state hooks must be declared before any conditional returns (Rules of Hooks)
@@ -163,12 +165,15 @@ function Home() {
       const res = await axios.get(`${API}/auth/me`);
       if (res.data.user) {
         setUser(res.data.user);
+        setIsAdmin(res.data.user.is_admin || false);
       } else {
         setUser(null);
+        setIsAdmin(false);
       }
     } catch (err) {
       console.error('Auth check failed:', err);
       setUser(null);
+      setIsAdmin(false);
     } finally {
       setAuthLoading(false);
     }
@@ -3254,6 +3259,7 @@ function App() {
   return (
     <Routes>
       <Route path="/" element={<Home />} />
+      <Route path="/admin" element={<AdminDashboard />} />
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/delete-your-data" element={<DeleteYourData />} />

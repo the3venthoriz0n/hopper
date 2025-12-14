@@ -33,7 +33,7 @@ from pydantic import BaseModel, EmailStr
 import db_helpers
 from encryption import encrypt, decrypt
 from token_helpers import (
-    check_tokens_available, deduct_tokens, get_token_balance, 
+    check_tokens_available, deduct_tokens, add_tokens, get_token_balance, 
     get_token_transactions, reset_tokens_for_subscription
 )
 from stripe_config import calculate_tokens_from_bytes, PLANS, ensure_stripe_products, get_plans
@@ -340,6 +340,10 @@ class LoginRequest(BaseModel):
 
 class SetPasswordRequest(BaseModel):
     password: str
+
+class GrantTokensRequest(BaseModel):
+    amount: int
+    reason: Optional[str] = None
 
 class UserResponse(BaseModel):
     id: int
@@ -1203,7 +1207,8 @@ def register(request_data: RegisterRequest, request: Request, response: Response
             "user": {
                 "id": user.id,
                 "email": user.email,
-                "created_at": user.created_at.isoformat()
+                "created_at": user.created_at.isoformat(),
+                "is_admin": user.is_admin
             }
         }
     except ValueError as e:
@@ -1240,7 +1245,8 @@ def login(request_data: LoginRequest, request: Request, response: Response):
             "user": {
                 "id": user.id,
                 "email": user.email,
-                "created_at": user.created_at.isoformat()
+                "created_at": user.created_at.isoformat(),
+                "is_admin": user.is_admin
             }
         }
     except HTTPException as e:
@@ -1406,7 +1412,8 @@ def get_current_user(request: Request):
             "user": {
                 "id": user.id,
                 "email": user.email,
-                "created_at": user.created_at.isoformat()
+                "created_at": user.created_at.isoformat(),
+                "is_admin": user.is_admin
             }
         }
     except Exception as e:
@@ -3723,6 +3730,116 @@ def revoke_unlimited_tokens(
     logger.info(f"Admin {admin_user.id} revoked unlimited tokens from user {target_user_id}")
     
     return {"message": f"Unlimited tokens revoked from user {target_user_id}"}
+
+
+@app.get("/api/admin/users")
+def list_users(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=100),
+    search: Optional[str] = None,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """List users with basic info (admin only)"""
+    query = db.query(User)
+    if search:
+        query = query.filter(User.email.ilike(f"%{search}%"))
+    
+    total = query.count()
+    users = query.order_by(User.created_at.desc()).offset((page-1)*limit).limit(limit).all()
+    
+    return {
+        "users": [{
+            "id": u.id,
+            "email": u.email,
+            "created_at": u.created_at.isoformat(),
+            "unlimited_tokens": u.unlimited_tokens,
+            "is_admin": u.is_admin
+        } for u in users],
+        "total": total,
+        "page": page,
+        "limit": limit
+    }
+
+
+@app.get("/api/admin/users/{user_id}")
+def get_user_details(
+    user_id: int,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Get detailed user information (admin only)"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    
+    # Get token balance
+    balance = get_token_balance(user_id, db)
+    
+    # Get subscription info
+    subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+    
+    return {
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "created_at": user.created_at.isoformat(),
+            "unlimited_tokens": user.unlimited_tokens,
+            "is_admin": user.is_admin,
+            "stripe_customer_id": user.stripe_customer_id
+        },
+        "token_balance": balance,
+        "subscription": {
+            "plan_type": subscription.plan_type if subscription else None,
+            "status": subscription.status if subscription else None
+        } if subscription else None
+    }
+
+
+@app.post("/api/admin/users/{user_id}/grant-tokens")
+def grant_tokens(
+    user_id: int,
+    request_data: GrantTokensRequest,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Grant a specific amount of tokens to a user (admin only)"""
+    if request_data.amount <= 0:
+        raise HTTPException(400, "Token amount must be positive")
+    
+    target_user = db.query(User).filter(User.id == user_id).first()
+    if not target_user:
+        raise HTTPException(404, "User not found")
+    
+    success = add_tokens(
+        user_id=user_id,
+        tokens=request_data.amount,
+        transaction_type='grant',
+        metadata={'admin_id': admin_user.id, 'reason': request_data.reason or 'admin_grant'},
+        db=db
+    )
+    
+    if not success:
+        raise HTTPException(500, "Failed to grant tokens")
+    
+    logger.info(f"Admin {admin_user.id} granted {request_data.amount} tokens to user {user_id}")
+    return {"message": f"Granted {request_data.amount} tokens to user {user_id}"}
+
+
+@app.get("/api/admin/users/{user_id}/transactions")
+def get_user_transactions_admin(
+    user_id: int,
+    limit: int = Query(50, ge=1, le=200),
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Get token transaction history for a user (admin only)"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "User not found")
+    
+    transactions = get_token_transactions(user_id, limit, db)
+    return {"transactions": transactions}
 
 
 @app.get("/api/upload/limits")

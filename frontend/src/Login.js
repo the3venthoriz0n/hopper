@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
 // Build API URL at runtime - always use HTTPS for production-like domains
@@ -19,6 +20,7 @@ const getApiUrl = () => {
 const API = getApiUrl();
 
 function Login({ onLoginSuccess }) {
+  const navigate = useNavigate();
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -61,6 +63,10 @@ function Login({ onLoginSuccess }) {
       setMessage(`✅ ${isLogin ? 'Login' : 'Registration'} successful!`);
       if (onLoginSuccess) {
         onLoginSuccess(response.data.user);
+      }
+      // Redirect admins to admin dashboard
+      if (response.data.user?.is_admin) {
+        setTimeout(() => navigate('/admin'), 500);
       }
     } catch (err) {
       const errorMsg = err.response?.data?.detail || err.message || 'Authentication failed';
