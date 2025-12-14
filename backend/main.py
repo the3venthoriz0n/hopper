@@ -3236,6 +3236,8 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
     # because Content-Length includes the entire request (boundaries, field names, etc.), not just the file.
     # FastAPI's UploadFile.size may also not be set. We validate during streaming instead.
     
+    upload_logger.info(f"Starting upload for user {user_id}: {file.filename} (Content-Type: {file.content_type})")
+    
     # Get user settings
     global_settings = db_helpers.get_user_settings(user_id, "global", db=db)
     youtube_settings = db_helpers.get_user_settings(user_id, "youtube", db=db)
@@ -3282,6 +3284,15 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
         upload_logger.info(f"Video added for user {user_id}: {file.filename} ({file_size / (1024*1024):.2f} MB)")
     except HTTPException:
         raise
+    except asyncio.TimeoutError as e:
+        # Clean up partial file on timeout
+        try:
+            if path.exists():
+                path.unlink()
+        except:
+            pass
+        upload_logger.error(f"Upload timeout for user {user_id}: {file.filename} (received {file_size / (1024*1024):.2f} MB before timeout)", exc_info=True)
+        raise HTTPException(504, f"Upload timeout: The file upload was interrupted. Please try again with a smaller file or check your connection.")
     except Exception as e:
         # Clean up partial file on error
         try:
@@ -3289,7 +3300,8 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
                 path.unlink()
         except:
             pass
-        upload_logger.error(f"Failed to save video file {file.filename}: {str(e)}", exc_info=True)
+        error_type = type(e).__name__
+        upload_logger.error(f"Failed to save video file for user {user_id}: {file.filename} (received {file_size / (1024*1024):.2f} MB, error: {error_type}: {str(e)})", exc_info=True)
         raise HTTPException(500, f"Failed to save video file: {str(e)}")
     
     # Calculate tokens required for this upload (1 token = 10MB)
@@ -3704,6 +3716,35 @@ def delete_video(video_id: int, user_id: int = Depends(require_csrf_new), db: Se
                 upload_logger.warning(f"Could not delete file {video_path}: {e}")
     
     return {"ok": True}
+
+@app.delete("/api/videos")
+def delete_all_videos(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+    """Delete all videos from user's queue"""
+    videos = db_helpers.get_user_videos(user_id, db=db)
+    deleted_count = 0
+    
+    # Delete all video files and database records
+    for video in videos:
+        # Skip videos that are currently uploading
+        if video.status == 'uploading':
+            continue
+            
+        # Clean up file if it exists
+        video_path = Path(video.path).resolve()
+        if video_path.exists():
+            try:
+                video_path.unlink()
+            except Exception as e:
+                upload_logger.warning(f"Could not delete file {video_path}: {e}")
+        
+        # Delete from database
+        db.delete(video)
+        deleted_count += 1
+    
+    db.commit()
+    upload_logger.info(f"Deleted {deleted_count} videos for user {user_id}")
+    
+    return {"ok": True, "deleted": deleted_count}
 
 @app.post("/api/videos/{video_id}/recompute-title")
 def recompute_video_title(video_id: int, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
@@ -5213,8 +5254,26 @@ if __name__ == "__main__":
     # Use reload=True in development for hot reload
     # Must pass app as import string for reload to work
     reload = os.getenv("ENVIRONMENT", "development") == "development"
+    
+    # Configure uvicorn for large file uploads
+    # - timeout_keep_alive: Keep connections alive for 5 minutes (for large uploads)
+    # - timeout_graceful_shutdown: Allow 30 seconds for graceful shutdown
+    # - limit_concurrency: Allow up to 100 concurrent connections
+    # - limit_max_requests: No limit on requests per worker
+    # Note: Starlette/FastAPI default max request body size is 1MB, but we handle streaming
+    # For very large files, we need to ensure timeouts are sufficient
+    config = {
+        "host": "0.0.0.0",
+        "port": 8000,
+        "timeout_keep_alive": 300,  # 5 minutes - keep connections alive for large uploads
+        "timeout_graceful_shutdown": 30,
+        "limit_concurrency": 100,
+        "limit_max_requests": None,  # No limit
+    }
+    
     if reload:
-        uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+        config["reload"] = True
+        uvicorn.run("main:app", **config)
     else:
-        uvicorn.run(app, host="0.0.0.0", port=8000)
+        uvicorn.run(app, **config)
 

@@ -131,6 +131,7 @@ function Home() {
   const [availablePlans, setAvailablePlans] = useState([]);
   const [loadingSubscription, setLoadingSubscription] = useState(false);
   const [notification, setNotification] = useState(null); // For popup notifications
+  const [confirmDialog, setConfirmDialog] = useState(null); // For confirmation dialogs
 
   // Check if user is authenticated
   useEffect(() => {
@@ -983,12 +984,20 @@ function Home() {
     setVideos(prev => [...prev, tempVideo]);
     
       try {
+        // Calculate timeout based on file size (allow 1 minute per 100MB, minimum 5 minutes, maximum 2 hours)
+        const timeoutMs = Math.max(5 * 60 * 1000, Math.min(2 * 60 * 60 * 1000, (file.size / (100 * 1024 * 1024)) * 60 * 1000));
+        
         const res = await axios.post(`${API}/videos`, form, {
+          timeout: timeoutMs,
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
           onUploadProgress: (progressEvent) => {
-            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-            setVideos(prev => prev.map(v =>
-              v.id === tempId ? { ...v, progress: percent } : v
-            ));
+            if (progressEvent.total) {
+              const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              setVideos(prev => prev.map(v =>
+                v.id === tempId ? { ...v, progress: percent } : v
+              ));
+            }
           }
         });
         
@@ -1002,14 +1011,44 @@ function Home() {
         setMessage(`✅ Added ${file.name} to queue (will cost ${tokensRequired} ${tokensRequired === 1 ? 'token' : 'tokens'} on upload)`);
       } catch (err) {
         setVideos(prev => prev.filter(v => v.id !== tempId));
-        let errorMsg = err.response?.data?.detail || err.message || 'Error adding video';
         
-        // Check if error is due to file size (either 413 status or connection closed during large upload)
+        // Enhanced error detection
+        const isTimeout = err.code === 'ECONNABORTED' || err.message?.includes('timeout') || err.message?.includes('Timeout');
+        const isNetworkError = !err.response && (err.code === 'ERR_NETWORK' || err.code === 'ECONNRESET' || err.code === 'ETIMEDOUT');
         const isFileSizeError = err.response?.status === 413 || 
                                 (!err.response && file.size > maxSizeBytes) ||
                                 (err.message && (err.message.includes('413') || err.message.includes('Payload Too Large')));
         
-        if (isFileSizeError) {
+        let errorMsg = err.response?.data?.detail || err.message || 'Error adding video';
+        
+        // Handle timeout errors
+        if (isTimeout) {
+          const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+          errorMsg = `Upload timeout: The file "${file.name}" (${fileSizeMB} MB) is too large or the connection is too slow. Please try a smaller file or check your internet connection.`;
+          
+          setNotification({
+            type: 'error',
+            title: 'Upload Timeout',
+            message: errorMsg,
+            videoFilename: file.name
+          });
+          setTimeout(() => setNotification(null), 15000);
+        }
+        // Handle network errors (connection reset, network failure, etc.)
+        else if (isNetworkError) {
+          const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+          errorMsg = `Network error: The upload of "${file.name}" (${fileSizeMB} MB) was interrupted. This may be due to file size limits, network issues, or server timeout. Please try a smaller file.`;
+          
+          setNotification({
+            type: 'error',
+            title: 'Upload Failed',
+            message: errorMsg,
+            videoFilename: file.name
+          });
+          setTimeout(() => setNotification(null), 15000);
+        }
+        // Handle file size errors
+        else if (isFileSizeError) {
           // File too large - show popup notification
           const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
           const fileSizeGB = (file.size / (1024 * 1024 * 1024)).toFixed(2);
@@ -1034,18 +1073,72 @@ function Home() {
           }
         } else if (err.response?.status === 401) {
           errorMsg = 'Session expired. Please refresh the page.';
-        } else if (!err.response) {
-          errorMsg = 'Network error. Please check your connection.';
+        } else if (!err.response && !isTimeout && !isNetworkError) {
+          // Generic network error (not already handled)
+          const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+          errorMsg = `Upload failed: "${file.name}" (${fileSizeMB} MB). Please check your connection and try again.`;
+          
+          setNotification({
+            type: 'error',
+            title: 'Upload Failed',
+            message: errorMsg,
+            videoFilename: file.name
+          });
+          setTimeout(() => setNotification(null), 10000);
         }
         
-        setMessage(`❌ ${errorMsg}`);
-        console.error('Error adding video:', err);
+        // Only show message if we haven't shown a notification
+        if (!isTimeout && !isNetworkError && !isFileSizeError && err.response?.status !== 401) {
+          setMessage(`❌ ${errorMsg}`);
+        } else if (!isTimeout && !isNetworkError && !isFileSizeError) {
+          setMessage(`❌ ${errorMsg}`);
+        }
+        
+        console.error('Error adding video:', {
+          error: err,
+          code: err.code,
+          message: err.message,
+          response: err.response?.status,
+          fileSize: file.size,
+          fileName: file.name
+        });
       }
   };
 
   const removeVideo = async (id) => {
     await axios.delete(`${API}/videos/${id}`);
     setVideos(videos.filter(v => v.id !== id));
+  };
+
+  const clearAllVideos = async () => {
+    // Filter out videos that are currently uploading
+    const nonUploadingVideos = videos.filter(v => v.status !== 'uploading');
+    
+    if (nonUploadingVideos.length === 0) {
+      setMessage('No videos to clear (all videos are currently uploading)');
+      return;
+    }
+    
+    // Show confirmation dialog
+    setConfirmDialog({
+      title: 'Clear All Videos',
+      message: `Are you sure you want to clear all ${nonUploadingVideos.length} video(s) from the queue? This action cannot be undone.`,
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        try {
+          const res = await axios.delete(`${API}/videos`);
+          setVideos(videos.filter(v => v.status === 'uploading')); // Keep only uploading videos
+          setMessage(`✅ Cleared ${res.data.deleted} video(s) from queue`);
+        } catch (err) {
+          const errorMsg = err.response?.data?.detail || err.message || 'Error clearing videos';
+          setMessage(`❌ ${errorMsg}`);
+          console.error('Error clearing videos:', err);
+        }
+      },
+      onCancel: () => {
+        setConfirmDialog(null);
+      }
+    });
   };
 
   const cancelScheduled = async () => {
@@ -1382,6 +1475,114 @@ function Home() {
               🪙 View Subscription & Tokens
             </button>
           )}
+        </div>
+      )}
+
+      {/* Confirmation Dialog */}
+      {confirmDialog && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.6)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 10001,
+            animation: 'fadeIn 0.2s ease-out'
+          }}
+          onClick={(e) => {
+            // Close dialog when clicking backdrop
+            if (e.target === e.currentTarget) {
+              confirmDialog.onCancel();
+            }
+          }}
+        >
+          <div
+            style={{
+              background: 'linear-gradient(135deg, rgba(30, 30, 30, 0.98) 0%, rgba(20, 20, 20, 0.98) 100%)',
+              border: '2px solid rgba(239, 68, 68, 0.5)',
+              borderRadius: '16px',
+              padding: '2rem',
+              minWidth: '400px',
+              maxWidth: '500px',
+              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.5)',
+              color: 'white',
+              animation: 'scaleIn 0.2s ease-out',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '1.5rem'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem' }}>
+              <span style={{ fontSize: '2rem', flexShrink: 0 }}>⚠️</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '1.3rem', fontWeight: '700', marginBottom: '0.75rem' }}>
+                  {confirmDialog.title}
+                </div>
+                <div style={{ fontSize: '1rem', lineHeight: '1.6', opacity: 0.9 }}>
+                  {confirmDialog.message}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+              <button
+                onClick={confirmDialog.onCancel}
+                style={{
+                  padding: '0.75rem 1.5rem',
+                  background: 'rgba(156, 163, 175, 0.2)',
+                  border: '1px solid rgba(156, 163, 175, 0.4)',
+                  borderRadius: '8px',
+                  color: 'white',
+                  cursor: 'pointer',
+                  fontSize: '1rem',
+                  fontWeight: '600',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.background = 'rgba(156, 163, 175, 0.3)';
+                  e.target.style.borderColor = 'rgba(156, 163, 175, 0.6)';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.background = 'rgba(156, 163, 175, 0.2)';
+                  e.target.style.borderColor = 'rgba(156, 163, 175, 0.4)';
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDialog.onConfirm}
+                style={{
+                  padding: '0.75rem 1.5rem',
+                  background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.9) 0%, rgba(220, 38, 38, 0.9) 100%)',
+                  border: '1px solid rgba(239, 68, 68, 1)',
+                  borderRadius: '8px',
+                  color: 'white',
+                  cursor: 'pointer',
+                  fontSize: '1rem',
+                  fontWeight: '600',
+                  transition: 'all 0.2s',
+                  boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.background = 'linear-gradient(135deg, rgba(239, 68, 68, 1) 0%, rgba(220, 38, 38, 1) 100%)';
+                  e.target.style.transform = 'translateY(-1px)';
+                  e.target.style.boxShadow = '0 6px 16px rgba(239, 68, 68, 0.4)';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.background = 'linear-gradient(135deg, rgba(239, 68, 68, 0.9) 0%, rgba(220, 38, 38, 0.9) 100%)';
+                  e.target.style.transform = 'translateY(0)';
+                  e.target.style.boxShadow = '0 4px 12px rgba(239, 68, 68, 0.3)';
+                }}
+              >
+                Clear All
+              </button>
+            </div>
+          </div>
         </div>
       )}
       
@@ -2269,7 +2470,38 @@ function Home() {
       {/* Queue */}
       {message && <div className="message">{message}</div>}
       <div className="card">
-        <h2>Queue ({videos.length})</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <h2 style={{ margin: 0 }}>Queue ({videos.length})</h2>
+          {videos.length > 0 && videos.some(v => v.status !== 'uploading') && (
+            <button
+              onClick={clearAllVideos}
+              style={{
+                padding: '0.5rem 1rem',
+                background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.9) 0%, rgba(220, 38, 38, 0.9) 100%)',
+                border: '1px solid rgba(239, 68, 68, 1)',
+                borderRadius: '8px',
+                color: 'white',
+                cursor: 'pointer',
+                fontSize: '0.9rem',
+                fontWeight: '600',
+                transition: 'all 0.2s',
+                boxShadow: '0 2px 8px rgba(239, 68, 68, 0.3)'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.background = 'linear-gradient(135deg, rgba(239, 68, 68, 1) 0%, rgba(220, 38, 38, 1) 100%)';
+                e.target.style.transform = 'translateY(-1px)';
+                e.target.style.boxShadow = '0 4px 12px rgba(239, 68, 68, 0.4)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.background = 'linear-gradient(135deg, rgba(239, 68, 68, 0.9) 0%, rgba(220, 38, 38, 0.9) 100%)';
+                e.target.style.transform = 'translateY(0)';
+                e.target.style.boxShadow = '0 2px 8px rgba(239, 68, 68, 0.3)';
+              }}
+            >
+              Clear All
+            </button>
+          )}
+        </div>
         {videos.length === 0 ? (
           <p className="empty">No videos</p>
         ) : (
