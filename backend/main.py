@@ -3688,11 +3688,18 @@ def get_tokens_transactions(
 # STRIPE WEBHOOK ENDPOINT
 # ============================================================================
 
+
 @app.post("/api/stripe/webhook")
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
-    """Handle Stripe webhook events"""
+    """Handle Stripe webhook events."""
     import stripe
     from stripe_config import STRIPE_WEBHOOK_SECRET
+    from stripe_helpers import (
+        log_stripe_event, 
+        mark_stripe_event_processed,
+        update_subscription_from_stripe
+    )
+    from token_helpers import ensure_tokens_synced_for_subscription
     
     if not STRIPE_WEBHOOK_SECRET:
         raise HTTPException(500, "Stripe webhook secret not configured")
@@ -3711,188 +3718,442 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         logger.error(f"Invalid signature in Stripe webhook: {e}")
         raise HTTPException(400, "Invalid signature")
     
-    # Log event for idempotency
+    # Check if event already processed (idempotency)
     stripe_event = log_stripe_event(event["id"], event["type"], event, db)
-    
     if stripe_event.processed:
-        logger.info(f"Stripe event {event['id']} already processed, skipping")
+        logger.info(f"Stripe event {event['id']} already processed")
         return {"status": "already_processed"}
     
     try:
-        # Handle different event types
-        if event["type"] == "checkout.session.completed":
-            # Subscription created via checkout
-            # Note: Subscription creation/update is handled by customer.subscription.created/updated events
-            # This handler only cancels old subscriptions and resets tokens
-            session = event["data"]["object"]
-            if session["mode"] == "subscription":
-                subscription_id = session["subscription"]
-                
-                # Get user_id from session metadata first (most reliable)
-                user_id = None
-                if session.get("metadata") and session["metadata"].get("user_id"):
-                    user_id = int(session["metadata"]["user_id"])
-                else:
-                    # Fallback: get user_id from customer
-                    customer_id = session.get("customer")
-                    if customer_id:
-                        user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
-                        if user:
-                            user_id = user.id
-                
-                if not user_id:
-                    logger.error(f"Could not determine user_id for checkout session {session['id']}")
-                    return {"status": "error", "message": "Could not determine user_id"}
-                
-                # Check for existing active subscriptions for this user
-                existing_subscriptions = db.query(Subscription).filter(
-                    Subscription.user_id == user_id,
-                    Subscription.status == 'active',
-                    Subscription.stripe_subscription_id != subscription_id  # Exclude the new one
-                ).all()
-                
-                # Cancel any existing Stripe subscriptions (prevent duplicates)
-                for existing_sub in existing_subscriptions:
-                    if existing_sub.stripe_subscription_id and not existing_sub.stripe_subscription_id.startswith(('free_', 'unlimited_')):
-                        try:
-                            # Cancel the old subscription in Stripe
-                            stripe.Subscription.modify(
-                                existing_sub.stripe_subscription_id,
-                                cancel_at_period_end=False  # Cancel immediately
-                            )
-                            stripe.Subscription.delete(existing_sub.stripe_subscription_id)
-                            
-                            # Mark as canceled in database
-                            existing_sub.status = 'canceled'
-                            db.commit()
-                        except stripe.error.StripeError as e:
-                            logger.warning(f"Failed to cancel existing Stripe subscription {existing_sub.stripe_subscription_id}: {e}")
-                            # Continue anyway - we'll update the new subscription
-                
-                # Get subscription from database (it should have been created by customer.subscription.created event)
-                # We don't create/update subscriptions here - that's handled by customer.subscription.created/updated events
-                db_subscription = db.query(Subscription).filter(
-                    Subscription.stripe_subscription_id == subscription_id
-                ).first()
-                
-                if not db_subscription:
-                    # Subscription doesn't exist yet - this can happen if checkout.session.completed fires before customer.subscription.created
-                    # Log a warning but don't fail - the subscription event will create it and reset tokens
-                    # Subscription doesn't exist yet - will be created by customer.subscription.created event
-                    return {"status": "success", "message": "Subscription will be created by customer.subscription.created event"}
-                
-                # Ensure tokens are synced for this subscription (idempotent)
-                # This handles cases where customer.subscription.created hasn't fired yet or tokens weren't reset
-                ensure_tokens_synced_for_subscription(user_id, subscription_id, db)
+        event_type = event["type"]
+        event_data = event["data"]["object"]
         
-        elif event["type"] == "customer.subscription.created":
-            subscription_data = event["data"]["object"]
-            # Retrieve full subscription object from Stripe with expanded items
-            subscription = stripe.Subscription.retrieve(subscription_data["id"], expand=['items.data.price'])
+        # Route to appropriate handler
+        if event_type == "checkout.session.completed":
+            handle_checkout_completed(event_data, db)
             
-            # Get user_id from subscription metadata, or fallback to customer lookup
-            user_id = None
-            if subscription.metadata and subscription.metadata.get("user_id"):
-                user_id = int(subscription.metadata["user_id"])
-            else:
-                # Fallback: get user_id from customer
-                customer_id = subscription.customer
-                if customer_id:
-                    user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
-                    if user:
-                        user_id = user.id
+        elif event_type == "customer.subscription.created":
+            handle_subscription_created(event_data, db)
             
-            if not user_id:
-                logger.error(f"Could not determine user_id for subscription {subscription.id}. Metadata: {subscription.metadata}, Customer: {subscription.customer}")
-                # Don't raise - log error and return success to prevent Stripe retries
-                return {"status": "error", "message": "Could not determine user_id"}
+        elif event_type == "customer.subscription.updated":
+            handle_subscription_updated(event_data, db)
             
-            # Check if subscription already exists (idempotency)
-            existing_subscription = db.query(Subscription).filter(
-                Subscription.stripe_subscription_id == subscription.id
-            ).first()
+        elif event_type == "customer.subscription.deleted":
+            handle_subscription_deleted(event_data, db)
             
-            # Update or create subscription
-            updated_subscription = update_subscription_from_stripe(subscription, db, user_id=user_id)
+        elif event_type == "invoice.payment_succeeded":
+            handle_invoice_payment_succeeded(event_data, db)
             
-            if not updated_subscription:
-                logger.error(f"Failed to create/update subscription {subscription.id} for user {user_id}")
-                # Don't raise - log error and return success to prevent Stripe retries
-                return {"status": "error", "message": "Failed to create/update subscription"}
-            
-            # Ensure tokens are synced for this subscription (idempotent - handles both new and existing)
-            ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
-            
-        elif event["type"] == "customer.subscription.updated":
-            subscription_data = event["data"]["object"]
-            # Retrieve full subscription object from Stripe with expanded items
-            subscription = stripe.Subscription.retrieve(subscription_data["id"], expand=['items.data.price'])
-            
-            # Get user_id from subscription metadata, or fallback to customer lookup
-            user_id = None
-            if subscription.metadata and subscription.metadata.get("user_id"):
-                user_id = int(subscription.metadata["user_id"])
-            else:
-                # Fallback: get user_id from customer
-                customer_id = subscription.customer
-                if customer_id:
-                    user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
-                    if user:
-                        user_id = user.id
-            
-            if not user_id:
-                logger.error(f"Could not determine user_id for subscription {subscription.id}. Metadata: {subscription.metadata}, Customer: {subscription.customer}")
-                # Don't raise - log error and return success to prevent Stripe retries
-                return {"status": "error", "message": "Could not determine user_id"}
-            
-            updated_sub = update_subscription_from_stripe(subscription, db, user_id=user_id)
-            
-            if not updated_sub:
-                logger.error(f"Failed to update subscription {subscription.id} for user {user_id}")
-                # Don't raise - log error and return success to prevent Stripe retries
-                return {"status": "error", "message": "Failed to update subscription"}
-            
-            # Ensure tokens are synced for this subscription (idempotent - handles renewals and period changes)
-            ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
-        
-        elif event["type"] == "customer.subscription.deleted":
-            subscription = event["data"]["object"]
-            sub = db.query(Subscription).filter(
-                Subscription.stripe_subscription_id == subscription.id
-            ).first()
-            if sub:
-                sub.status = "canceled"
-                db.commit()
-        
-        elif event["type"] == "invoice.payment_succeeded":
-            invoice = event["data"]["object"]
-            if invoice.get("subscription"):
-                # Subscription payment succeeded
-                subscription_id = invoice["subscription"]
-                subscription = stripe.Subscription.retrieve(subscription_id)
-                update_subscription_from_stripe(subscription, db)
-        
-        elif event["type"] == "invoice.payment_failed":
-            invoice = event["data"]["object"]
-            if invoice.get("subscription"):
-                subscription_id = invoice["subscription"]
-                subscription = stripe.Subscription.retrieve(subscription_id)
-                update_subscription_from_stripe(subscription, db)
+        elif event_type == "invoice.payment_failed":
+            handle_invoice_payment_failed(event_data, db)
         
         # Mark event as processed
         mark_stripe_event_processed(event["id"], db)
         
         return {"status": "success"}
         
-    except HTTPException:
-        # Re-raise HTTPExceptions (they're already properly formatted)
-        raise
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"Error processing Stripe webhook event {event['id']} (type: {event.get('type')}): {error_msg}", exc_info=True)
+        logger.error(
+            f"Error processing Stripe webhook event {event['id']} "
+            f"(type: {event.get('type')}): {error_msg}", 
+            exc_info=True
+        )
         mark_stripe_event_processed(event["id"], db, error_message=error_msg)
-        raise HTTPException(500, f"Error processing webhook: {error_msg}")
+        # Return 200 to prevent Stripe retries for unrecoverable errors
+        return {"status": "error", "message": error_msg}
 
+
+def handle_checkout_completed(session_data: Dict[str, Any], db: Session):
+    """Handle checkout.session.completed event."""
+    if session_data["mode"] != "subscription":
+        return
+    
+    subscription_id = session_data.get("subscription")
+    if not subscription_id:
+        logger.warning("Checkout session has no subscription ID")
+        return
+    
+    # Get user_id
+    user_id = _get_user_id_from_session(session_data, db)
+    if not user_id:
+        logger.error(f"Could not determine user_id for checkout session {session_data['id']}")
+        return
+    
+    # Cancel any existing paid subscriptions (prevent duplicates)
+    _cancel_existing_subscriptions(user_id, subscription_id, db)
+    
+    logger.info(f"Checkout completed for user {user_id}, subscription {subscription_id}")
+
+
+def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
+    """Handle customer.subscription.created event."""
+    import stripe
+    from token_helpers import ensure_tokens_synced_for_subscription
+    
+    # Retrieve full subscription with expanded items
+    subscription = stripe.Subscription.retrieve(
+        subscription_data["id"], 
+        expand=['items.data.price']
+    )
+    
+    user_id = _get_user_id_from_subscription(subscription, db)
+    if not user_id:
+        logger.error(
+            f"Could not determine user_id for subscription {subscription.id}"
+        )
+        return
+    
+    # Create or update subscription in database
+    updated_sub = update_subscription_from_stripe(subscription, db, user_id=user_id)
+    if not updated_sub:
+        logger.error(
+            f"Failed to create/update subscription {subscription.id} for user {user_id}"
+        )
+        return
+    
+    # Sync tokens for new subscription (idempotent)
+    ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
+    
+    logger.info(f"Subscription created for user {user_id}: {updated_sub.plan_type}")
+
+
+def handle_subscription_updated(subscription_data: Dict[str, Any], db: Session):
+    """Handle customer.subscription.updated event."""
+    import stripe
+    from token_helpers import ensure_tokens_synced_for_subscription
+    
+    # Retrieve full subscription with expanded items
+    subscription = stripe.Subscription.retrieve(
+        subscription_data["id"], 
+        expand=['items.data.price']
+    )
+    
+    user_id = _get_user_id_from_subscription(subscription, db)
+    if not user_id:
+        logger.error(
+            f"Could not determine user_id for subscription {subscription.id}"
+        )
+        return
+    
+    # Get the old subscription data before update
+    old_sub = db.query(Subscription).filter(
+        Subscription.stripe_subscription_id == subscription.id
+    ).first()
+    
+    old_period_end = old_sub.current_period_end if old_sub else None
+    
+    # Update subscription in database
+    updated_sub = update_subscription_from_stripe(subscription, db, user_id=user_id)
+    if not updated_sub:
+        logger.error(
+            f"Failed to update subscription {subscription.id} for user {user_id}"
+        )
+        return
+    
+    # Check if this is a renewal (period changed)
+    new_period_end = updated_sub.current_period_end
+    is_renewal = old_period_end and new_period_end > old_period_end
+    
+    if is_renewal:
+        logger.info(f"Subscription renewed for user {user_id}, resetting tokens")
+    
+    # Always sync tokens (idempotent - handles renewals and period changes)
+    ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
+    
+    logger.info(f"Subscription updated for user {user_id}: {updated_sub.plan_type}")
+
+
+def handle_subscription_deleted(subscription_data: Dict[str, Any], db: Session):
+    """Handle customer.subscription.deleted event."""
+    subscription = db.query(Subscription).filter(
+        Subscription.stripe_subscription_id == subscription_data["id"]
+    ).first()
+    
+    if subscription:
+        subscription.status = "canceled"
+        db.commit()
+        logger.info(f"Marked subscription {subscription_data['id']} as canceled")
+
+
+def handle_invoice_payment_succeeded(invoice_data: Dict[str, Any], db: Session):
+    """Handle invoice.payment_succeeded event."""
+    import stripe
+    
+    subscription_id = invoice_data.get("subscription")
+    if not subscription_id:
+        return
+    
+    # Refresh subscription data
+    subscription = stripe.Subscription.retrieve(subscription_id)
+    user_id = _get_user_id_from_subscription(subscription, db)
+    
+    if user_id:
+        update_subscription_from_stripe(subscription, db, user_id=user_id)
+        logger.info(f"Payment succeeded for subscription {subscription_id}")
+
+
+def handle_invoice_payment_failed(invoice_data: Dict[str, Any], db: Session):
+    """Handle invoice.payment_failed event."""
+    import stripe
+    
+    subscription_id = invoice_data.get("subscription")
+    if not subscription_id:
+        return
+    
+    # Update subscription status
+    subscription = stripe.Subscription.retrieve(subscription_id)
+    user_id = _get_user_id_from_subscription(subscription, db)
+    
+    if user_id:
+        update_subscription_from_stripe(subscription, db, user_id=user_id)
+        logger.warning(f"Payment failed for subscription {subscription_id}")
+
+
+def _get_user_id_from_session(session_data: Dict[str, Any], db: Session) -> Optional[int]:
+    """Extract user_id from checkout session."""
+    # Try metadata first
+    if session_data.get("metadata") and session_data["metadata"].get("user_id"):
+        return int(session_data["metadata"]["user_id"])
+    
+    # Fallback to customer lookup
+    customer_id = session_data.get("customer")
+    if customer_id:
+        user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
+        if user:
+            return user.id
+    
+    return None
+
+
+def _get_user_id_from_subscription(subscription: stripe.Subscription, db: Session) -> Optional[int]:
+    """Extract user_id from Stripe subscription."""
+    # Try metadata first
+    if subscription.metadata and subscription.metadata.get("user_id"):
+        return int(subscription.metadata["user_id"])
+    
+    # Fallback to customer lookup
+    customer_id = subscription.customer
+    if customer_id:
+        user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
+        if user:
+            return user.id
+    
+    return None
+
+
+def _cancel_existing_subscriptions(user_id: int, new_subscription_id: str, db: Session):
+    """Cancel any existing paid Stripe subscriptions for a user."""
+    import stripe
+    
+    existing_subs = db.query(Subscription).filter(
+        Subscription.user_id == user_id,
+        Subscription.status == 'active',
+        Subscription.stripe_subscription_id != new_subscription_id
+    ).all()
+    
+    for sub in existing_subs:
+        # Only cancel real Stripe subscriptions (not free/unlimited)
+        if (sub.stripe_subscription_id and 
+            not sub.stripe_subscription_id.startswith(('free_', 'unlimited_'))):
+            
+            try:
+                stripe.Subscription.delete(sub.stripe_subscription_id)
+                sub.status = 'canceled'
+                db.commit()
+                logger.info(f"Canceled old subscription {sub.stripe_subscription_id}")
+            except stripe.error.StripeError as e:
+                logger.warning(
+                    f"Failed to cancel subscription {sub.stripe_subscription_id}: {e}"
+                )
+
+def handle_checkout_completed(session_data: Dict[str, Any], db: Session):
+    """Handle checkout.session.completed event."""
+    if session_data["mode"] != "subscription":
+        return
+    
+    subscription_id = session_data.get("subscription")
+    if not subscription_id:
+        logger.warning("Checkout session has no subscription ID")
+        return
+    
+    # Get user_id
+    user_id = _get_user_id_from_session(session_data, db)
+    if not user_id:
+        logger.error(f"Could not determine user_id for checkout session {session_data['id']}")
+        return
+    
+    # Cancel any existing paid subscriptions (prevent duplicates)
+    _cancel_existing_subscriptions(user_id, subscription_id, db)
+    
+    # Sync tokens for the new subscription
+    _ensure_tokens_synced(user_id, subscription_id, db)
+
+
+def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
+    """Handle customer.subscription.created event."""
+    import stripe
+    
+    # Retrieve full subscription with expanded items
+    subscription = stripe.Subscription.retrieve(
+        subscription_data["id"], 
+        expand=['items.data.price']
+    )
+    
+    user_id = _get_user_id_from_subscription(subscription, db)
+    if not user_id:
+        logger.error(
+            f"Could not determine user_id for subscription {subscription.id}"
+        )
+        return
+    
+    # Create or update subscription in database
+    updated_sub = update_subscription_from_stripe(subscription, db, user_id=user_id)
+    if not updated_sub:
+        logger.error(
+            f"Failed to create/update subscription {subscription.id} for user {user_id}"
+        )
+        return
+    
+    # Sync tokens
+    _ensure_tokens_synced(user_id, subscription.id, db)
+
+
+def handle_subscription_updated(subscription_data: Dict[str, Any], db: Session):
+    """Handle customer.subscription.updated event."""
+    import stripe
+    
+    # Retrieve full subscription with expanded items
+    subscription = stripe.Subscription.retrieve(
+        subscription_data["id"], 
+        expand=['items.data.price']
+    )
+    
+    user_id = _get_user_id_from_subscription(subscription, db)
+    if not user_id:
+        logger.error(
+            f"Could not determine user_id for subscription {subscription.id}"
+        )
+        return
+    
+    # Update subscription in database
+    updated_sub = update_subscription_from_stripe(subscription, db, user_id=user_id)
+    if not updated_sub:
+        logger.error(
+            f"Failed to update subscription {subscription.id} for user {user_id}"
+        )
+        return
+    
+    # Sync tokens (handles renewals and period changes)
+    _ensure_tokens_synced(user_id, subscription.id, db)
+
+
+def handle_subscription_deleted(subscription_data: Dict[str, Any], db: Session):
+    """Handle customer.subscription.deleted event."""
+    subscription = db.query(Subscription).filter(
+        Subscription.stripe_subscription_id == subscription_data["id"]
+    ).first()
+    
+    if subscription:
+        subscription.status = "canceled"
+        db.commit()
+        logger.info(f"Marked subscription {subscription_data['id']} as canceled")
+
+
+def handle_invoice_payment_succeeded(invoice_data: Dict[str, Any], db: Session):
+    """Handle invoice.payment_succeeded event."""
+    import stripe
+    
+    subscription_id = invoice_data.get("subscription")
+    if not subscription_id:
+        return
+    
+    # Refresh subscription data
+    subscription = stripe.Subscription.retrieve(subscription_id)
+    update_subscription_from_stripe(subscription, db)
+
+
+def handle_invoice_payment_failed(invoice_data: Dict[str, Any], db: Session):
+    """Handle invoice.payment_failed event."""
+    import stripe
+    
+    subscription_id = invoice_data.get("subscription")
+    if not subscription_id:
+        return
+    
+    # Update subscription status
+    subscription = stripe.Subscription.retrieve(subscription_id)
+    update_subscription_from_stripe(subscription, db)
+
+
+def _get_user_id_from_session(session_data: Dict[str, Any], db: Session) -> Optional[int]:
+    """Extract user_id from checkout session."""
+    # Try metadata first
+    if session_data.get("metadata") and session_data["metadata"].get("user_id"):
+        return int(session_data["metadata"]["user_id"])
+    
+    # Fallback to customer lookup
+    customer_id = session_data.get("customer")
+    if customer_id:
+        user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
+        if user:
+            return user.id
+    
+    return None
+
+
+def _get_user_id_from_subscription(subscription: stripe.Subscription, db: Session) -> Optional[int]:
+    """Extract user_id from Stripe subscription."""
+    # Try metadata first
+    if subscription.metadata and subscription.metadata.get("user_id"):
+        return int(subscription.metadata["user_id"])
+    
+    # Fallback to customer lookup
+    customer_id = subscription.customer
+    if customer_id:
+        user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
+        if user:
+            return user.id
+    
+    return None
+
+
+def _cancel_existing_subscriptions(user_id: int, new_subscription_id: str, db: Session):
+    """Cancel any existing paid Stripe subscriptions for a user."""
+    import stripe
+    
+    existing_subs = db.query(Subscription).filter(
+        Subscription.user_id == user_id,
+        Subscription.status == 'active',
+        Subscription.stripe_subscription_id != new_subscription_id
+    ).all()
+    
+    for sub in existing_subs:
+        # Only cancel real Stripe subscriptions (not free/unlimited)
+        if (sub.stripe_subscription_id and 
+            not sub.stripe_subscription_id.startswith(('free_', 'unlimited_'))):
+            
+            try:
+                stripe.Subscription.delete(sub.stripe_subscription_id)
+                sub.status = 'canceled'
+                db.commit()
+                logger.info(f"Canceled old subscription {sub.stripe_subscription_id}")
+            except stripe.error.StripeError as e:
+                logger.warning(
+                    f"Failed to cancel subscription {sub.stripe_subscription_id}: {e}"
+                )
+
+
+def _ensure_tokens_synced(user_id: int, subscription_id: str, db: Session):
+    """Ensure user tokens are synced for their subscription (idempotent)."""
+    try:
+        # Import here to avoid circular dependency
+        from token_helpers import ensure_tokens_synced_for_subscription
+        ensure_tokens_synced_for_subscription(user_id, subscription_id, db)
+    except ImportError:
+        logger.warning("token_helpers module not available, skipping token sync")
+    except Exception as e:
+        logger.error(f"Error syncing tokens for user {user_id}: {e}", exc_info=True)
 
 # ============================================================================
 # ADMIN ENDPOINTS

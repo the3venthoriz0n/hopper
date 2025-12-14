@@ -133,7 +133,7 @@ def deduct_tokens(
                 tokens=-tokens,  # Negative for deduction
                 balance_before=balance_before,
                 balance_after=balance_after,
-                metadata=metadata or {}
+                transaction_metadata=metadata or {}
             )
             db.add(transaction)
             db.commit()
@@ -227,7 +227,7 @@ def add_tokens(
                 tokens=tokens,
                 balance_before=balance_before,
                 balance_after=balance_after,
-                metadata=metadata or {}
+                transaction_metadata=metadata or {}
             )
             db.add(transaction)
             db.commit()

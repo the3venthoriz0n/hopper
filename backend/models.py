@@ -129,23 +129,40 @@ class Subscription(Base):
 
 
 class TokenBalance(Base):
-    """User token balance and period tracking"""
+    """User token balance for API usage tracking"""
     __tablename__ = "token_balances"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
-    tokens_remaining = Column(Integer, default=0, nullable=False)
-    tokens_used_this_period = Column(Integer, default=0, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False, index=True)
+    
+    # Token tracking
+    tokens = Column(Integer, default=0, nullable=False)  # Total tokens for period
+    tokens_used = Column(Integer, default=0, nullable=False)  # Tokens used in period
+    
+    # Billing period tracking
     period_start = Column(DateTime(timezone=True), nullable=False)
     period_end = Column(DateTime(timezone=True), nullable=False)
-    # unlimited_tokens = Column(Boolean, default=False, nullable=False)  # DEPRECATED: Now controlled by subscription.plan_type
-    last_reset_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
-    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+    plan_type = Column(String(50), nullable=False)  # free, basic, pro, unlimited
     
-    # Relationship
-    user = relationship("User", back_populates="token_balance")
-
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    
+    def __repr__(self):
+        return f"<TokenBalance(user_id={self.user_id}, tokens={self.tokens}, used={self.tokens_used}, plan={self.plan_type})>"
+    
+    @property
+    def tokens_remaining(self):
+        """Calculate remaining tokens"""
+        if self.plan_type == 'unlimited':
+            return float('inf')
+        return max(0, self.tokens - self.tokens_used)
+    
+    @property
+    def is_period_active(self):
+        """Check if current period is active"""
+        now = datetime.now(timezone.utc)
+        return self.period_start <= now <= self.period_end
 
 class TokenTransaction(Base):
     """Token transaction audit log"""
