@@ -124,6 +124,12 @@ function Home() {
   const [newWord, setNewWord] = useState('');
   const [wordbankExpanded, setWordbankExpanded] = useState(false);
   const [maxFileSize, setMaxFileSize] = useState(null);
+  
+  // Subscription & token state
+  const [subscription, setSubscription] = useState(null);
+  const [tokenBalance, setTokenBalance] = useState(null);
+  const [availablePlans, setAvailablePlans] = useState([]);
+  const [loadingSubscription, setLoadingSubscription] = useState(false);
 
   // Check if user is authenticated
   useEffect(() => {
@@ -386,6 +392,63 @@ function Home() {
       console.error('Error loading upload limits:', err);
     }
   }, [API]);
+
+  // Load subscription and token balance
+  const loadSubscription = useCallback(async () => {
+    if (!user) return;
+    
+    try {
+      const [subscriptionRes, plansRes] = await Promise.all([
+        axios.get(`${API}/subscription/current`),
+        axios.get(`${API}/subscription/plans`)
+      ]);
+      
+      setSubscription(subscriptionRes.data.subscription);
+      setTokenBalance(subscriptionRes.data.token_balance);
+      setAvailablePlans(plansRes.data.plans || []);
+    } catch (err) {
+      console.error('Error loading subscription:', err);
+    }
+  }, [API, user]);
+
+  // Load subscription when user changes
+  useEffect(() => {
+    if (user) {
+      loadSubscription();
+    }
+  }, [user, loadSubscription]);
+
+  // Handle subscription upgrade
+  const handleUpgrade = async (planKey) => {
+    setLoadingSubscription(true);
+    try {
+      const res = await axios.post(`${API}/subscription/create-checkout`, { plan_key: planKey });
+      if (res.data.url) {
+        window.location.href = res.data.url;
+      }
+    } catch (err) {
+      console.error('Error creating checkout session:', err);
+      setMessage('❌ Failed to start checkout. Please try again.');
+    } finally {
+      setLoadingSubscription(false);
+    }
+  };
+
+  // Handle manage subscription (Stripe customer portal)
+  const handleManageSubscription = async () => {
+    setLoadingSubscription(true);
+    try {
+      const res = await axios.get(`${API}/subscription/portal`);
+      if (res.data.url) {
+        window.location.href = res.data.url;
+      }
+    } catch (err) {
+      console.error('Error opening customer portal:', err);
+      setMessage('❌ Failed to open subscription portal. Please try again.');
+    } finally {
+      setLoadingSubscription(false);
+    }
+  };
 
   const loadVideos = useCallback(async () => {
     try {
@@ -1070,6 +1133,54 @@ function Home() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
         <h1>{appTitle}</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          {/* Token Balance Indicator */}
+          {tokenBalance && (
+            <div 
+              style={{
+                padding: '0.5rem 1rem',
+                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%)',
+                border: '1px solid rgba(99, 102, 241, 0.3)',
+                borderRadius: '20px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                cursor: 'pointer',
+                transition: 'all 0.2s'
+              }}
+              onClick={() => setShowAccountSettings(true)}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'linear-gradient(135deg, rgba(99, 102, 241, 0.25) 0%, rgba(168, 85, 247, 0.25) 100%)';
+                e.currentTarget.style.transform = 'translateY(-2px)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%)';
+                e.currentTarget.style.transform = 'translateY(0)';
+              }}
+              title="Click to manage subscription"
+            >
+              <span style={{ fontSize: '1rem' }}>🪙</span>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                <span style={{ 
+                  fontSize: '0.7rem', 
+                  color: '#999', 
+                  lineHeight: '1',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px'
+                }}>
+                  Tokens
+                </span>
+                <span style={{ 
+                  fontSize: '1.1rem', 
+                  fontWeight: '700', 
+                  color: '#818cf8',
+                  lineHeight: '1.2'
+                }}>
+                  {tokenBalance.unlimited ? '∞' : tokenBalance.tokens_remaining}
+                </span>
+              </div>
+            </div>
+          )}
+          
           <span style={{ color: '#999', fontSize: '0.9rem' }}>
             {user.email}
           </span>
@@ -2205,6 +2316,157 @@ function Home() {
               }}>
                 <div style={{ fontSize: '0.85rem', color: '#999', marginBottom: '0.25rem' }}>Logged in as</div>
                 <div style={{ fontSize: '1rem', fontWeight: '500', color: 'white' }}>{user.email}</div>
+              </div>
+
+              {/* Subscription & Token Balance */}
+              <div className="form-group" style={{ 
+                padding: '1.5rem', 
+                background: 'rgba(99, 102, 241, 0.1)', 
+                borderRadius: '8px',
+                border: '1px solid rgba(99, 102, 241, 0.3)'
+              }}>
+                <h3 style={{ color: '#818cf8', marginBottom: '1rem', fontSize: '1.1rem', marginTop: 0 }}>
+                  💳 Subscription & Tokens
+                </h3>
+                
+                {subscription && tokenBalance ? (
+                  <>
+                    {/* Current Plan */}
+                    <div style={{ marginBottom: '1rem' }}>
+                      <div style={{ fontSize: '0.85rem', color: '#999', marginBottom: '0.25rem' }}>Current Plan</div>
+                      <div style={{ fontSize: '1.1rem', fontWeight: '600', color: 'white', textTransform: 'capitalize' }}>
+                        {subscription.plan_type}
+                        {subscription.status !== 'active' && (
+                          <span style={{ 
+                            fontSize: '0.75rem', 
+                            marginLeft: '0.5rem', 
+                            padding: '0.25rem 0.5rem',
+                            background: 'rgba(239, 68, 68, 0.2)',
+                            color: '#ef4444',
+                            borderRadius: '4px',
+                            textTransform: 'uppercase'
+                          }}>
+                            {subscription.status}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Token Balance */}
+                    <div style={{ 
+                      padding: '1rem', 
+                      background: 'rgba(0, 0, 0, 0.2)', 
+                      borderRadius: '6px',
+                      marginBottom: '1rem'
+                    }}>
+                      <div style={{ fontSize: '0.85rem', color: '#999', marginBottom: '0.5rem' }}>Available Tokens</div>
+                      <div style={{ fontSize: '2rem', fontWeight: '700', color: '#818cf8', marginBottom: '0.25rem' }}>
+                        {tokenBalance.unlimited ? '∞' : tokenBalance.tokens_remaining}
+                      </div>
+                      {!tokenBalance.unlimited && (
+                        <>
+                          <div style={{ fontSize: '0.75rem', color: '#666' }}>
+                            Used {tokenBalance.tokens_used_this_period} this period
+                          </div>
+                          {tokenBalance.period_end && (
+                            <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.25rem' }}>
+                              Resets: {new Date(tokenBalance.period_end).toLocaleDateString()}
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+
+                    {/* Available Plans */}
+                    {availablePlans.length > 0 && (
+                      <div style={{ marginBottom: '1rem' }}>
+                        <div style={{ fontSize: '0.85rem', color: '#999', marginBottom: '0.75rem' }}>
+                          Available Plans
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                          {availablePlans.map(plan => {
+                            const isCurrent = subscription.plan_type === plan.key;
+                            return (
+                              <div 
+                                key={plan.key}
+                                style={{
+                                  padding: '0.75rem',
+                                  background: isCurrent ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                                  border: isCurrent ? '1px solid rgba(99, 102, 241, 0.5)' : '1px solid rgba(255, 255, 255, 0.1)',
+                                  borderRadius: '6px',
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center'
+                                }}
+                              >
+                                <div>
+                                  <div style={{ 
+                                    fontSize: '0.95rem', 
+                                    fontWeight: '600', 
+                                    color: 'white',
+                                    textTransform: 'capitalize'
+                                  }}>
+                                    {plan.key}
+                                  </div>
+                                  <div style={{ fontSize: '0.75rem', color: '#999' }}>
+                                    {plan.monthly_tokens} tokens/month
+                                  </div>
+                                </div>
+                                {isCurrent && (
+                                  <span style={{ 
+                                    fontSize: '0.75rem', 
+                                    padding: '0.25rem 0.5rem',
+                                    background: 'rgba(34, 197, 94, 0.2)',
+                                    color: '#22c55e',
+                                    borderRadius: '4px',
+                                    fontWeight: '600'
+                                  }}>
+                                    CURRENT
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Manage Subscription Button */}
+                    <button 
+                      onClick={handleManageSubscription}
+                      disabled={loadingSubscription}
+                      style={{
+                        width: '100%',
+                        padding: '0.75rem',
+                        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: loadingSubscription ? 'not-allowed' : 'pointer',
+                        fontSize: '0.95rem',
+                        fontWeight: '600',
+                        transition: 'all 0.2s',
+                        opacity: loadingSubscription ? 0.6 : 1
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!loadingSubscription) {
+                          e.target.style.transform = 'translateY(-2px)';
+                          e.target.style.boxShadow = '0 4px 12px rgba(102, 126, 234, 0.4)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.transform = 'translateY(0)';
+                        e.target.style.boxShadow = 'none';
+                      }}
+                    >
+                      {loadingSubscription ? '⏳ Loading...' : '⚙️ Manage Subscription'}
+                    </button>
+                  </>
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '1rem', color: '#999' }}>
+                    Loading subscription info...
+                  </div>
+                )}
               </div>
 
               {/* Logout Button */}
