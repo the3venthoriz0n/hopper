@@ -3820,16 +3820,8 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 # Don't raise - log error and return success to prevent Stripe retries
                 return {"status": "error", "message": "Failed to create/update subscription"}
             
-            # Reset tokens for new subscription (only if it's actually new)
-            if not existing_subscription:
-                plan_type = updated_subscription.plan_type
-                reset_tokens_for_subscription(
-                    user_id,
-                    plan_type,
-                    datetime.fromtimestamp(subscription.current_period_start, tz=timezone.utc),
-                    datetime.fromtimestamp(subscription.current_period_end, tz=timezone.utc),
-                    db
-                )
+            # Ensure tokens are synced for this subscription (idempotent - handles both new and existing)
+            ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
             
         elif event["type"] == "customer.subscription.updated":
             subscription_data = event["data"]["object"]
@@ -3860,24 +3852,8 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 # Don't raise - log error and return success to prevent Stripe retries
                 return {"status": "error", "message": "Failed to update subscription"}
             
-            # If subscription renewed, reset tokens
-            if updated_sub.status == "active":
-                # Check if this is a renewal (period_end is in the future and different from stored)
-                stored_sub = db.query(Subscription).filter(
-                    Subscription.stripe_subscription_id == subscription.id
-                ).first()
-                
-                if stored_sub:
-                    new_period_end = datetime.fromtimestamp(subscription.current_period_end, tz=timezone.utc)
-                    if new_period_end > stored_sub.current_period_end:
-                        # Subscription renewed, reset tokens
-                        reset_tokens_for_subscription(
-                            updated_sub.user_id,
-                            updated_sub.plan_type,
-                            datetime.fromtimestamp(subscription.current_period_start, tz=timezone.utc),
-                            new_period_end,
-                            db
-                        )
+            # Ensure tokens are synced for this subscription (idempotent - handles renewals and period changes)
+            ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
         
         elif event["type"] == "customer.subscription.deleted":
             subscription = event["data"]["object"]

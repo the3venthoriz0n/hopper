@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from datetime import datetime, timezone, timedelta
 
 from models import User, Subscription, StripeEvent
-from stripe_config import STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, PLANS, get_plans, get_plan_price_id
+from stripe_config import STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, get_plans
 
 logger = logging.getLogger(__name__)
 
@@ -29,38 +29,91 @@ def create_stripe_customer(email: str, user_id: int, db: Session) -> Optional[st
         return None
     
     try:
-        # Check if user already has a customer ID
         user = db.query(User).filter(User.id == user_id).first()
-        if user and user.stripe_customer_id:
+        if not user:
+            logger.error(f"User {user_id} not found")
+            return None
+            
+        if user.stripe_customer_id:
             logger.info(f"User {user_id} already has Stripe customer: {user.stripe_customer_id}")
             return user.stripe_customer_id
         
-        # Create customer in Stripe
         customer = stripe.Customer.create(
             email=email,
             metadata={'user_id': str(user_id)}
         )
         
-        # Update user with customer ID
-        if user:
-            user.stripe_customer_id = customer.id
-            db.commit()
+        user.stripe_customer_id = customer.id
+        db.commit()
         
         logger.info(f"Created Stripe customer for user {user_id}: {customer.id}")
         return customer.id
         
     except stripe.error.StripeError as e:
         logger.error(f"Stripe error creating customer for user {user_id}: {e}")
+        db.rollback()
         return None
     except Exception as e:
         logger.error(f"Error creating Stripe customer for user {user_id}: {e}", exc_info=True)
+        db.rollback()
         return None
 
 
-def create_checkout_session(user_id: int, price_id: str, success_url: str, cancel_url: str, db: Session) -> Optional[Dict[str, Any]]:
+def _has_active_paid_subscription(customer_id: str, exclude_subscription_id: Optional[str] = None) -> bool:
+    """
+    Check if customer has any active paid subscriptions in Stripe.
+    
+    Args:
+        customer_id: Stripe customer ID
+        exclude_subscription_id: Subscription ID to exclude from check
+        
+    Returns:
+        True if customer has active paid subscription, False otherwise
+    """
+    try:
+        subscriptions = stripe.Subscription.list(
+            customer=customer_id,
+            status='active',
+            limit=10
+        )
+        
+        for sub in subscriptions.data:
+            # Skip excluded subscription
+            if exclude_subscription_id and sub.id == exclude_subscription_id:
+                continue
+                
+            # Check if subscription has paid items
+            full_sub = stripe.Subscription.retrieve(sub.id)
+            if (hasattr(full_sub, 'items') and 
+                full_sub.items and 
+                hasattr(full_sub.items, 'data') and 
+                full_sub.items.data):
+                
+                for item in full_sub.items.data:
+                    price = item.price
+                    if (price and 
+                        hasattr(price, 'unit_amount') and 
+                        price.unit_amount and 
+                        price.unit_amount > 0):
+                        return True
+        
+        return False
+        
+    except stripe.error.StripeError as e:
+        logger.warning(f"Error checking Stripe subscriptions for customer {customer_id}: {e}")
+        return False
+
+
+def create_checkout_session(
+    user_id: int, 
+    price_id: str, 
+    success_url: str, 
+    cancel_url: str, 
+    db: Session
+) -> Optional[Dict[str, Any]]:
     """
     Create a Stripe checkout session for subscription.
-    Prevents duplicate subscriptions by checking for existing active subscriptions.
+    Prevents duplicate paid subscriptions.
     
     Args:
         user_id: User ID
@@ -71,7 +124,9 @@ def create_checkout_session(user_id: int, price_id: str, success_url: str, cance
         
     Returns:
         Checkout session dict with URL, or None if creation failed
-        Raises ValueError if user already has an active subscription
+        
+    Raises:
+        ValueError: If user already has an active paid subscription
     """
     if not STRIPE_SECRET_KEY:
         logger.error("Cannot create checkout session: STRIPE_SECRET_KEY not set")
@@ -83,28 +138,6 @@ def create_checkout_session(user_id: int, price_id: str, success_url: str, cance
             logger.error(f"User {user_id} not found")
             return None
         
-        # Check for existing active subscription in database
-        existing_subscription = db.query(Subscription).filter(
-            Subscription.user_id == user_id,
-            Subscription.status == 'active'
-        ).first()
-        
-        if existing_subscription:
-            # Check if it's a real Stripe subscription (not free/unlimited)
-            if existing_subscription.stripe_subscription_id and not existing_subscription.stripe_subscription_id.startswith(('free_', 'unlimited_')):
-                # Verify subscription still exists in Stripe
-                try:
-                    stripe_sub = stripe.Subscription.retrieve(existing_subscription.stripe_subscription_id)
-                    if stripe_sub.status in ['active', 'trialing', 'past_due']:
-                        logger.warning(f"User {user_id} already has active Stripe subscription {existing_subscription.stripe_subscription_id}")
-                        raise ValueError(f"User already has an active subscription. Please manage your subscription through the customer portal.")
-                except stripe.error.StripeError:
-                    # Subscription doesn't exist in Stripe, but exists in DB - allow new checkout
-                    logger.info(f"User {user_id} has subscription in DB but not in Stripe, allowing new checkout")
-            else:
-                # Free or unlimited subscription - allow upgrade to paid plan
-                logger.info(f"User {user_id} has {existing_subscription.plan_type} plan, allowing upgrade to paid plan")
-        
         # Ensure user has Stripe customer
         customer_id = user.stripe_customer_id
         if not customer_id:
@@ -112,39 +145,37 @@ def create_checkout_session(user_id: int, price_id: str, success_url: str, cance
             if not customer_id:
                 return None
         
-        # Check Stripe directly for active PAID subscriptions (double-check)
-        # Allow free $0/month subscriptions - users can upgrade from free to paid
-        try:
-            stripe_subscriptions = stripe.Subscription.list(
-                customer=customer_id,
-                status='active',
-                limit=10
-            )
-            # Filter out $0 subscriptions (free plans) - only block paid subscriptions
-            # When listing subscriptions, items might not be fully loaded, so retrieve each one
-            paid_subscriptions = []
-            for sub in stripe_subscriptions.data:
-                try:
-                    # Retrieve full subscription to ensure items are loaded
-                    full_sub = stripe.Subscription.retrieve(sub.id)
-                    # Access items property (it's a ListObject with .data attribute)
-                    if hasattr(full_sub, 'items') and full_sub.items and hasattr(full_sub.items, 'data') and full_sub.items.data:
-                        if len(full_sub.items.data) > 0:
-                            price = full_sub.items.data[0].price
-                            if price and hasattr(price, 'unit_amount') and price.unit_amount and price.unit_amount > 0:
-                                paid_subscriptions.append(full_sub)
-                except (AttributeError, IndexError, TypeError, stripe.error.StripeError) as e:
-                    logger.warning(f"Error checking subscription {sub.id if hasattr(sub, 'id') else 'unknown'} for paid status: {e}")
-                    continue
-            if paid_subscriptions:
-                # User has active PAID subscription in Stripe
-                logger.warning(f"User {user_id} has {len(paid_subscriptions)} active paid subscription(s) in Stripe")
-                raise ValueError(f"User already has an active subscription. Please manage your subscription through the customer portal.")
-        except stripe.error.StripeError as e:
-            # If error checking Stripe, log but continue (might be network issue)
-            logger.warning(f"Could not check Stripe subscriptions for user {user_id}: {e}")
+        # Check for existing active paid subscriptions
+        existing_subscription = db.query(Subscription).filter(
+            Subscription.user_id == user_id,
+            Subscription.status == 'active'
+        ).first()
         
-        # Create checkout session with subscription settings to prevent duplicates
+        if existing_subscription:
+            # Check if it's a real paid Stripe subscription
+            if (existing_subscription.stripe_subscription_id and 
+                not existing_subscription.stripe_subscription_id.startswith(('free_', 'unlimited_'))):
+                
+                try:
+                    stripe_sub = stripe.Subscription.retrieve(existing_subscription.stripe_subscription_id)
+                    if stripe_sub.status in ['active', 'trialing', 'past_due']:
+                        logger.warning(f"User {user_id} already has active Stripe subscription")
+                        raise ValueError(
+                            "You already have an active subscription. "
+                            "Please manage your subscription through the customer portal."
+                        )
+                except stripe.error.InvalidRequestError:
+                    logger.info(f"Subscription {existing_subscription.stripe_subscription_id} not found in Stripe")
+        
+        # Double-check Stripe for any active paid subscriptions
+        if _has_active_paid_subscription(customer_id):
+            logger.warning(f"User {user_id} has active paid subscription in Stripe")
+            raise ValueError(
+                "You already have an active subscription. "
+                "Please manage your subscription through the customer portal."
+            )
+        
+        # Create checkout session
         session = stripe.checkout.Session.create(
             customer=customer_id,
             payment_method_types=['card'],
@@ -158,10 +189,7 @@ def create_checkout_session(user_id: int, price_id: str, success_url: str, cance
             metadata={'user_id': str(user_id)},
             subscription_data={
                 'metadata': {'user_id': str(user_id)},
-                # Prevent multiple subscriptions by canceling any existing ones
-                # Note: This is handled by our webhook, but Stripe can also handle it
             },
-            # Allow promotion codes if needed
             allow_promotion_codes=True,
         )
         
@@ -171,8 +199,7 @@ def create_checkout_session(user_id: int, price_id: str, success_url: str, cance
             'url': session.url
         }
         
-    except ValueError as e:
-        # Re-raise ValueError (user already has subscription)
+    except ValueError:
         raise
     except stripe.error.StripeError as e:
         logger.error(f"Stripe error creating checkout session for user {user_id}: {e}")
@@ -209,7 +236,7 @@ def get_customer_portal_url(user_id: int, return_url: str, db: Session) -> Optio
             return_url=return_url,
         )
         
-        logger.info(f"Created portal session for user {user_id}: {session.id}")
+        logger.info(f"Created portal session for user {user_id}")
         return session.url
         
     except stripe.error.StripeError as e:
@@ -223,8 +250,6 @@ def get_customer_portal_url(user_id: int, return_url: str, db: Session) -> Optio
 def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription]:
     """
     Create a free subscription for a new user.
-    This creates a local subscription record without a Stripe subscription
-    (since free plan doesn't require payment).
     
     Args:
         user_id: User ID
@@ -234,7 +259,6 @@ def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription
         Subscription model instance or None if creation failed
     """
     try:
-        # Check if user already has a subscription
         existing = db.query(Subscription).filter(Subscription.user_id == user_id).first()
         if existing:
             logger.info(f"User {user_id} already has a subscription")
@@ -252,14 +276,13 @@ def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription
                 logger.error(f"Failed to create Stripe customer for user {user_id}")
                 return None
         
-        # Create free subscription (no Stripe subscription needed for free plan)
+        # Create free subscription
         now = datetime.now(timezone.utc)
-        period_end = now.replace(day=1) + timedelta(days=32)  # Next month, same day
-        period_end = period_end.replace(day=now.day)  # Keep same day of month
+        period_end = (now.replace(day=1) + timedelta(days=32)).replace(day=now.day)
         
         subscription = Subscription(
             user_id=user_id,
-            stripe_subscription_id=f"free_{user_id}_{int(now.timestamp())}",  # Fake subscription ID for free plan
+            stripe_subscription_id=f"free_{user_id}_{int(now.timestamp())}",
             stripe_customer_id=user.stripe_customer_id,
             plan_type='free',
             status='active',
@@ -271,7 +294,7 @@ def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription
         db.commit()
         db.refresh(subscription)
         
-        # Initialize token balance with free plan tokens
+        # Initialize token balance
         from token_helpers import reset_tokens_for_subscription
         reset_tokens_for_subscription(user_id, 'free', now, period_end, db)
         
@@ -284,31 +307,17 @@ def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription
         return None
 
 
-def get_subscription_info(user_id: int, db: Session) -> Optional[Dict[str, Any]]:
-    """Get subscription information for a user"""
-    subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
-    
-    if not subscription:
-        return None
-    
-    return {
-        'subscription_id': subscription.stripe_subscription_id,
-        'plan_type': subscription.plan_type,
-        'status': subscription.status,
-        'current_period_start': subscription.current_period_start.isoformat(),
-        'current_period_end': subscription.current_period_end.isoformat(),
-        'cancel_at_period_end': subscription.cancel_at_period_end,
-    }
-
-
-def create_unlimited_subscription(user_id: int, preserved_tokens: int, db: Session) -> Optional[Subscription]:
+def create_unlimited_subscription(
+    user_id: int, 
+    preserved_tokens: int, 
+    db: Session
+) -> Optional[Subscription]:
     """
-    Create an unlimited subscription directly in the database (no Stripe subscription needed).
-    Works like free subscriptions - creates a database record with a fake subscription ID.
+    Create an unlimited subscription (admin feature, no Stripe subscription).
     
     Args:
         user_id: User ID
-        preserved_tokens: Token balance to preserve (will be restored when unenrolling)
+        preserved_tokens: Token balance to preserve
         db: Database session
         
     Returns:
@@ -320,43 +329,40 @@ def create_unlimited_subscription(user_id: int, preserved_tokens: int, db: Sessi
             logger.error(f"User {user_id} not found")
             return None
         
-        # Ensure user has Stripe customer (for consistency, but not required for unlimited)
-        if not user.stripe_customer_id:
+        # Ensure user has Stripe customer
+        customer_id = user.stripe_customer_id
+        if not customer_id:
             customer_id = create_stripe_customer(user.email, user_id, db)
             if not customer_id:
-                # Create a placeholder customer ID if Stripe is not available
                 customer_id = f"unlimited_customer_{user_id}"
-        else:
-            customer_id = user.stripe_customer_id
+                user.stripe_customer_id = customer_id
+                db.commit()
         
-        # Check if subscription already exists
+        now = datetime.now(timezone.utc)
+        period_end = (now.replace(day=1) + timedelta(days=32)).replace(day=now.day)
+        
         existing = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+        
         if existing:
-            # Update existing subscription to unlimited
+            # Update existing subscription
             existing.plan_type = 'unlimited'
             existing.status = 'active'
             existing.stripe_customer_id = customer_id
             existing.preserved_tokens_balance = preserved_tokens
-            # Use a fake subscription ID for unlimited (not a real Stripe subscription)
+            
             if not existing.stripe_subscription_id.startswith('unlimited_'):
-                existing.stripe_subscription_id = f'unlimited_{user_id}_{int(datetime.now(timezone.utc).timestamp())}'
-            # Set period dates (unlimited doesn't expire, but we set monthly periods like free)
-            now = datetime.now(timezone.utc)
-            period_end = now.replace(day=1) + timedelta(days=32)
-            period_end = period_end.replace(day=now.day)
+                existing.stripe_subscription_id = f'unlimited_{user_id}_{int(now.timestamp())}'
+            
             existing.current_period_start = now
             existing.current_period_end = period_end
             existing.cancel_at_period_end = False
+            
             db.commit()
             db.refresh(existing)
-            logger.info(f"Updated subscription to unlimited for user {user_id} (preserved {preserved_tokens} tokens)")
+            logger.info(f"Updated subscription to unlimited for user {user_id}")
             return existing
         
-        # Create new unlimited subscription (no Stripe subscription needed, like free plan)
-        now = datetime.now(timezone.utc)
-        period_end = now.replace(day=1) + timedelta(days=32)  # Next month, same day
-        period_end = period_end.replace(day=now.day)  # Keep same day of month
-        
+        # Create new unlimited subscription
         subscription = Subscription(
             user_id=user_id,
             stripe_subscription_id=f'unlimited_{user_id}_{int(now.timestamp())}',
@@ -372,7 +378,7 @@ def create_unlimited_subscription(user_id: int, preserved_tokens: int, db: Sessi
         db.commit()
         db.refresh(subscription)
         
-        logger.info(f"Created unlimited subscription for user {user_id} (preserved {preserved_tokens} tokens)")
+        logger.info(f"Created unlimited subscription for user {user_id}")
         return subscription
         
     except Exception as e:
@@ -381,104 +387,83 @@ def create_unlimited_subscription(user_id: int, preserved_tokens: int, db: Sessi
         return None
 
 
-def create_stripe_subscription(user_id: int, price_id: str, db: Session) -> Optional[Subscription]:
-    """
-    Create a Stripe subscription directly (admin use, no payment required for unlimited plan).
+def get_subscription_info(user_id: int, db: Session) -> Optional[Dict[str, Any]]:
+    """Get subscription information for a user."""
+    subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
     
-    Args:
-        user_id: User ID
-        price_id: Stripe price ID for the plan
-        db: Database session
-        
-    Returns:
-        Subscription model instance or None if creation failed
-    """
-    if not STRIPE_SECRET_KEY:
-        logger.error("Cannot create Stripe subscription: STRIPE_SECRET_KEY not set")
+    if not subscription:
         return None
     
-    try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            logger.error(f"User {user_id} not found")
-            return None
-        
-        # Ensure user has Stripe customer
-        customer_id = user.stripe_customer_id
-        if not customer_id:
-            customer_id = create_stripe_customer(user.email, user_id, db)
-            if not customer_id:
-                return None
-        
-        # Create subscription in Stripe
-        stripe_subscription = stripe.Subscription.create(
-            customer=customer_id,
-            items=[{'price': price_id}],
-            metadata={'user_id': str(user_id)},
-            # For admin-granted unlimited plan, we can set trial_end to None and payment_behavior to 'default_incomplete'
-            # But since unlimited is free ($0), it should work without payment
-        )
-        
-        # Update database subscription from Stripe subscription
-        subscription = update_subscription_from_stripe(stripe_subscription, db)
-        
-        logger.info(f"Created Stripe subscription for user {user_id}: {stripe_subscription.id}")
-        return subscription
-        
-    except stripe.error.StripeError as e:
-        logger.error(f"Stripe error creating subscription for user {user_id}: {e}")
-        return None
-    except Exception as e:
-        logger.error(f"Error creating Stripe subscription for user {user_id}: {e}", exc_info=True)
-        return None
+    return {
+        'subscription_id': subscription.stripe_subscription_id,
+        'plan_type': subscription.plan_type,
+        'status': subscription.status,
+        'current_period_start': subscription.current_period_start.isoformat(),
+        'current_period_end': subscription.current_period_end.isoformat(),
+        'cancel_at_period_end': subscription.cancel_at_period_end,
+    }
 
 
-def update_subscription_from_stripe(stripe_subscription: stripe.Subscription, db: Session, user_id: Optional[int] = None) -> Optional[Subscription]:
+def _get_plan_type_from_price(price_id: str) -> str:
+    """Get plan type from Stripe price ID."""
+    for plan_key, plan_config in get_plans().items():
+        if plan_config.get('stripe_price_id') == price_id:
+            return plan_key
+    return 'free'
+
+
+def update_subscription_from_stripe(
+    stripe_subscription: stripe.Subscription, 
+    db: Session, 
+    user_id: Optional[int] = None
+) -> Optional[Subscription]:
     """
     Update or create subscription record from Stripe subscription object.
     
     Args:
         stripe_subscription: Stripe subscription object
         db: Database session
-        user_id: User ID (required). Falls back to metadata if not provided.
+        user_id: User ID (required if not in subscription metadata)
         
     Returns:
         Subscription model instance or None if update failed
     """
     try:
-        # Use provided user_id, or fall back to metadata
-        if not user_id:
-            if stripe_subscription.metadata and stripe_subscription.metadata.get('user_id'):
-                user_id = int(stripe_subscription.metadata.get('user_id'))
+        # Determine user_id
+        if not user_id and stripe_subscription.metadata:
+            user_id = stripe_subscription.metadata.get('user_id')
+            if user_id:
+                user_id = int(user_id)
         
         if not user_id:
-            logger.error(f"No user_id provided or in subscription metadata: {stripe_subscription.id}. Metadata: {stripe_subscription.metadata}")
+            # Fallback: look up by customer
+            customer_id = stripe_subscription.customer
+            user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
+            if user:
+                user_id = user.id
+        
+        if not user_id:
+            logger.error(f"Cannot determine user_id for subscription {stripe_subscription.id}")
             return None
         
-        # Determine plan type from price ID
-        # Ensure items.data is accessible
+        # Extract subscription details
         if not hasattr(stripe_subscription, 'items') or not stripe_subscription.items:
-            logger.error(f"Subscription {stripe_subscription.id} has no items property")
+            logger.error(f"Subscription {stripe_subscription.id} has no items")
             return None
         
         items_data = stripe_subscription.items.data if hasattr(stripe_subscription.items, 'data') else []
-        if not items_data or len(items_data) == 0:
-            logger.error(f"Subscription {stripe_subscription.id} has no items in data")
+        if not items_data:
+            logger.error(f"Subscription {stripe_subscription.id} has no items data")
             return None
         
-        price = items_data[0].price if hasattr(items_data[0], 'price') else None
+        price = items_data[0].price
         if not price or not hasattr(price, 'id'):
-            logger.error(f"Subscription {stripe_subscription.id} has no price in first item")
+            logger.error(f"Subscription {stripe_subscription.id} has no price")
             return None
         
-        price_id = price.id
-        plan_type = 'free'  # Default
-        for plan_key, plan_config in get_plans().items():
-            if plan_config.get('stripe_price_id') == price_id:
-                plan_type = plan_key
-                break
+        plan_type = _get_plan_type_from_price(price.id)
         
-        # Map Stripe status to our status
+        # Map Stripe status
         status_map = {
             'active': 'active',
             'canceled': 'canceled',
@@ -490,46 +475,37 @@ def update_subscription_from_stripe(stripe_subscription: stripe.Subscription, db
         }
         status = status_map.get(stripe_subscription.status, 'active')
         
-        # First, try to find by stripe_subscription_id
+        # Find or create subscription
         subscription = db.query(Subscription).filter(
             Subscription.stripe_subscription_id == stripe_subscription.id
         ).first()
         
-        # If found by stripe_subscription_id, verify it belongs to the correct user
-        if subscription:
-            if subscription.user_id != user_id:
-                # This stripe_subscription_id belongs to a different user
-                # This shouldn't happen, but if it does, we'll update it to the correct user
-                logger.warning(f"Stripe subscription {stripe_subscription.id} found but belongs to user {subscription.user_id}, updating to user {user_id}")
-                subscription.user_id = user_id
+        if subscription and subscription.user_id != user_id:
+            logger.warning(
+                f"Subscription {stripe_subscription.id} belongs to user {subscription.user_id}, "
+                f"updating to user {user_id}"
+            )
+            subscription.user_id = user_id
         
-        # If not found by stripe_subscription_id, check if user already has a subscription
         if not subscription:
             subscription = db.query(Subscription).filter(
                 Subscription.user_id == user_id
             ).first()
             
             if subscription:
-                # User has an existing subscription with different stripe_subscription_id
-                # Check if the new stripe_subscription_id already exists (orphaned record)
-                conflicting_sub = db.query(Subscription).filter(
+                # Remove conflicting subscription if it exists
+                conflicting = db.query(Subscription).filter(
                     Subscription.stripe_subscription_id == stripe_subscription.id
                 ).first()
                 
-                if conflicting_sub:
-                    # The new stripe_subscription_id already exists in the database
-                    # This is likely an orphaned record from a previous failed webhook
-                    # Delete it and update the user's subscription to use the new ID
-                    logger.info(f"Found conflicting subscription {conflicting_sub.id} with stripe_subscription_id {stripe_subscription.id}, deleting it")
-                    db.delete(conflicting_sub)
-                    db.flush()  # Flush to ensure deletion is processed
-                
-                # Update existing subscription to use the new stripe_subscription_id
-                logger.info(f"Updating existing subscription {subscription.id} for user {user_id} to use new Stripe subscription {stripe_subscription.id}")
+                if conflicting:
+                    logger.info(f"Removing conflicting subscription {conflicting.id}")
+                    db.delete(conflicting)
+                    db.flush()
         
+        # Update or create subscription
         if subscription:
-            # Update existing subscription
-            subscription.user_id = user_id  # Ensure user_id is correct
+            subscription.user_id = user_id
             subscription.stripe_subscription_id = stripe_subscription.id
             subscription.stripe_customer_id = stripe_subscription.customer
             subscription.plan_type = plan_type
@@ -543,7 +519,6 @@ def update_subscription_from_stripe(stripe_subscription: stripe.Subscription, db
             subscription.cancel_at_period_end = stripe_subscription.cancel_at_period_end
             subscription.updated_at = datetime.now(timezone.utc)
         else:
-            # Create new subscription (user has no existing subscription)
             subscription = Subscription(
                 user_id=user_id,
                 stripe_subscription_id=stripe_subscription.id,
@@ -563,24 +538,35 @@ def update_subscription_from_stripe(stripe_subscription: stripe.Subscription, db
         db.commit()
         db.refresh(subscription)
         
-        logger.info(f"Updated subscription {subscription.id} for user {user_id}: {plan_type} plan, {status} status")
+        logger.info(f"Updated subscription for user {user_id}: {plan_type} ({status})")
         return subscription
         
     except IntegrityError as e:
-        # Handle database constraint violations (unique constraints)
         db.rollback()
-        error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
-        logger.error(f"Database constraint violation updating subscription from Stripe (subscription_id: {stripe_subscription.id if hasattr(stripe_subscription, 'id') else 'unknown'}, user_id: {user_id}): {error_msg}", exc_info=True)
+        logger.error(
+            f"Database constraint violation for subscription {stripe_subscription.id}: {e}", 
+            exc_info=True
+        )
         return None
     except Exception as e:
-        logger.error(f"Error updating subscription from Stripe (subscription_id: {stripe_subscription.id if hasattr(stripe_subscription, 'id') else 'unknown'}, user_id: {user_id}): {e}", exc_info=True)
         db.rollback()
+        logger.error(
+            f"Error updating subscription {stripe_subscription.id}: {e}", 
+            exc_info=True
+        )
         return None
 
 
-def log_stripe_event(stripe_event_id: str, event_type: str, payload: Dict[str, Any], db: Session) -> StripeEvent:
-    """Log a Stripe webhook event for idempotency"""
-    event = db.query(StripeEvent).filter(StripeEvent.stripe_event_id == stripe_event_id).first()
+def log_stripe_event(
+    stripe_event_id: str, 
+    event_type: str, 
+    payload: Dict[str, Any], 
+    db: Session
+) -> StripeEvent:
+    """Log a Stripe webhook event for idempotency."""
+    event = db.query(StripeEvent).filter(
+        StripeEvent.stripe_event_id == stripe_event_id
+    ).first()
     
     if event:
         return event
@@ -598,13 +584,18 @@ def log_stripe_event(stripe_event_id: str, event_type: str, payload: Dict[str, A
     return event
 
 
-def mark_stripe_event_processed(stripe_event_id: str, db: Session, error_message: Optional[str] = None):
-    """Mark a Stripe event as processed"""
-    event = db.query(StripeEvent).filter(StripeEvent.stripe_event_id == stripe_event_id).first()
+def mark_stripe_event_processed(
+    stripe_event_id: str, 
+    db: Session, 
+    error_message: Optional[str] = None
+):
+    """Mark a Stripe event as processed."""
+    event = db.query(StripeEvent).filter(
+        StripeEvent.stripe_event_id == stripe_event_id
+    ).first()
+    
     if event:
         event.processed = True
         if error_message:
             event.error_message = error_message
         db.commit()
-
-
