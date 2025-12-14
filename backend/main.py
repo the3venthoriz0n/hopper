@@ -3336,7 +3336,7 @@ def get_subscription_plans():
 
 
 @app.get("/api/subscription/current")
-def get_current_subscription(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+def get_current_subscription(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
     """Get user's current subscription"""
     subscription_info = get_subscription_info(user_id, db)
     token_balance = get_token_balance(user_id, db)
@@ -3379,7 +3379,7 @@ def create_subscription_checkout(
 @app.get("/api/subscription/portal")
 def get_subscription_portal(
     request: Request,
-    user_id: int = Depends(require_csrf_new),
+    user_id: int = Depends(require_auth),
     db: Session = Depends(get_db)
 ):
     """Get Stripe customer portal URL"""
@@ -3395,7 +3395,7 @@ def get_subscription_portal(
 
 
 @app.get("/api/tokens/balance")
-def get_tokens_balance(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+def get_tokens_balance(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
     """Get current token balance"""
     balance = get_token_balance(user_id, db)
     return balance
@@ -3404,7 +3404,7 @@ def get_tokens_balance(user_id: int = Depends(require_csrf_new), db: Session = D
 @app.get("/api/tokens/transactions")
 def get_tokens_transactions(
     limit: int = 50,
-    user_id: int = Depends(require_csrf_new),
+    user_id: int = Depends(require_auth),
     db: Session = Depends(get_db)
 ):
     """Get token transaction history"""
