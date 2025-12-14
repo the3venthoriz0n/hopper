@@ -631,6 +631,20 @@ function Home() {
   };
 
   // Handle cancel subscription
+  const handleOpenStripePortal = async () => {
+    setLoadingSubscription(true);
+    try {
+      const res = await axios.get(`${API}/subscription/portal`);
+      if (res.data.url) {
+        window.location.href = res.data.url;
+      }
+    } catch (err) {
+      console.error('Error opening Stripe portal:', err);
+      setMessage('❌ Failed to open subscription management. Please try again.');
+      setLoadingSubscription(false);
+    }
+  };
+
   const handleCancelSubscription = async () => {
     setLoadingSubscription(true);
     try {
@@ -3156,9 +3170,49 @@ function Home() {
                 borderRadius: '8px',
                 border: '1px solid rgba(99, 102, 241, 0.3)'
               }}>
-                <h3 style={{ color: '#818cf8', marginBottom: '1rem', fontSize: '1.1rem', marginTop: 0 }}>
-                  💳 Subscription & Tokens
-                </h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                  <h3 style={{ color: '#818cf8', fontSize: '1.1rem', marginTop: 0, marginBottom: 0 }}>
+                    💳 Subscription & Tokens
+                  </h3>
+                  {subscription && subscription.plan_type !== 'free' && subscription.status === 'active' && (
+                    <button
+                      onClick={handleOpenStripePortal}
+                      disabled={loadingSubscription}
+                      style={{
+                        padding: '0.5rem 0.75rem',
+                        background: 'rgba(99, 102, 241, 0.2)',
+                        border: '1px solid rgba(99, 102, 241, 0.5)',
+                        borderRadius: '6px',
+                        color: '#818cf8',
+                        cursor: loadingSubscription ? 'not-allowed' : 'pointer',
+                        fontSize: '0.85rem',
+                        fontWeight: '600',
+                        transition: 'all 0.2s ease',
+                        opacity: loadingSubscription ? 0.6 : 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem'
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!loadingSubscription) {
+                          e.currentTarget.style.background = 'rgba(99, 102, 241, 0.3)';
+                          e.currentTarget.style.border = '1px solid rgba(99, 102, 241, 0.7)';
+                          e.currentTarget.style.transform = 'translateY(-1px)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!loadingSubscription) {
+                          e.currentTarget.style.background = 'rgba(99, 102, 241, 0.2)';
+                          e.currentTarget.style.border = '1px solid rgba(99, 102, 241, 0.5)';
+                          e.currentTarget.style.transform = 'translateY(0)';
+                        }
+                      }}
+                      title="Manage subscription in Stripe"
+                    >
+                      ⚙️ Manage
+                    </button>
+                  )}
+                </div>
                 
                 {subscription && tokenBalance ? (
                   <>
