@@ -138,11 +138,11 @@
             "type": "prometheus",
             "uid": "Prometheus"
           },
-          "expr": "hopper_current_uploads",
+          "expr": "sum(hopper_successful_uploads_total)",
           "refId": "A"
         }
       ],
-      "title": "Current Uploads",
+      "title": "Successful Uploads",
       "type": "stat"
     },
     {
@@ -287,6 +287,123 @@
             "axisPlacement": "auto",
             "barAlignment": 0,
             "barWidthFactor": 0.6,
+            "drawStyle": "bars",
+            "fillOpacity": 100,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 17
+      },
+      "id": 24,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.3.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "hopper_active_subscriptions{plan_type=\"free\"}",
+          "legendFormat": "Free",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "hopper_active_subscriptions{plan_type=\"medium\"}",
+          "legendFormat": "Medium",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "hopper_active_subscriptions{plan_type=\"pro\"}",
+          "legendFormat": "Pro",
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "Prometheus"
+          },
+          "expr": "hopper_active_subscriptions{plan_type=\"unlimited\"}",
+          "legendFormat": "Unlimited",
+          "refId": "D"
+        }
+      ],
+      "title": "Active Subscriptions by Plan Type",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 0,
             "gradientMode": "none",
@@ -332,13 +449,13 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "/Current Uploads/"
+              "options": "/Successful Uploads/"
             },
             "properties": [
               {
                 "id": "color",
                 "value": {
-                  "fixedColor": "blue",
+                  "fixedColor": "green",
                   "mode": "fixed"
                 }
               }
@@ -418,8 +535,8 @@
             "type": "prometheus",
             "uid": "Prometheus"
           },
-          "expr": "hopper_current_uploads",
-          "legendFormat": "Current Uploads",
+          "expr": "sum(rate(hopper_successful_uploads_total[5m]))",
+          "legendFormat": "Successful Uploads",
           "refId": "A"
         },
         {

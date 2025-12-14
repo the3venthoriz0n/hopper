@@ -223,6 +223,23 @@ except ValueError:
     scheduler_videos_processed_counter = REGISTRY._names_to_collectors.get('hopper_scheduler_videos_processed_total')
 
 try:
+    active_subscriptions_gauge = Gauge(
+        'hopper_active_subscriptions',
+        'Number of active subscriptions by plan type',
+        ['plan_type']  # plan_type: free, medium, pro, unlimited
+    )
+except ValueError:
+    active_subscriptions_gauge = REGISTRY._names_to_collectors.get('hopper_active_subscriptions')
+
+try:
+    successful_uploads_counter = Counter(
+        'hopper_successful_uploads_total',
+        'Total number of successful video uploads'
+    )
+except ValueError:
+    successful_uploads_counter = REGISTRY._names_to_collectors.get('hopper_successful_uploads_total')
+
+try:
     storage_size_gauge = Gauge(
         'hopper_storage_size_bytes',
         'Storage size in bytes',
@@ -1244,8 +1261,28 @@ def logout(request: Request, response: Response):
     session_id = request.cookies.get("session_id")
     if session_id:
         redis_client.delete_session(session_id)
+        # Also delete CSRF token for this session
+        redis_client.delete(f"csrf:{session_id}")
         response.delete_cookie("session_id")
         logger.info(f"User logged out (session: {session_id[:16]}...)")
+        
+        # Immediately update active users count after logout
+        # Count unique users with active sessions in Redis
+        # Only count sessions that actually exist (not expired)
+        session_keys = redis_client.keys("session:*")
+        active_user_ids = set()
+        for key in session_keys:
+            user_id = redis_client.get(key)
+            if user_id:  # Only count if session exists (not expired)
+                try:
+                    active_user_ids.add(int(user_id))
+                except (ValueError, TypeError):
+                    # Skip invalid user_id values
+                    continue
+        active_users = len(active_user_ids)
+        active_users_gauge.set(active_users)
+        logger.debug(f"Updated active users count after logout: {active_users}")
+    
     return {"message": "Logged out successfully"}
 
 
@@ -4026,6 +4063,9 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
         redis_client.set_upload_progress(user_id, video_id, 100)
         youtube_logger.info(f"Successfully uploaded {video.filename}, YouTube ID: {response['id']}")
         
+        # Increment successful uploads counter
+        successful_uploads_counter.inc()
+        
         # Deduct tokens after successful upload (only if not already deducted)
         if video.file_size_bytes and video.tokens_consumed == 0:
             tokens_required = calculate_tokens_from_bytes(video.file_size_bytes)
@@ -4284,6 +4324,9 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         db_helpers.update_video(video_id, user_id, db=db, status="uploaded", tiktok_publish_id=publish_id, tiktok_id=publish_id)
         redis_client.set_upload_progress(user_id, video_id, 100)
         tiktok_logger.info(f"Success! publish_id: {publish_id}")
+        
+        # Increment successful uploads counter
+        successful_uploads_counter.inc()
         
         # Deduct tokens after successful upload (only if not already deducted)
         if video.file_size_bytes and video.tokens_consumed == 0:
@@ -4556,6 +4599,9 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             db_helpers.update_video(video_id, user_id, db=db, status="completed", instagram_id=media_id)
             redis_client.set_upload_progress(user_id, video_id, 100)
             
+            # Increment successful uploads counter
+            successful_uploads_counter.inc()
+            
             # Deduct tokens after successful upload (only if not already deducted)
             if video.file_size_bytes and video.tokens_consumed == 0:
                 tokens_required = calculate_tokens_from_bytes(video.file_size_bytes)
@@ -4700,18 +4746,34 @@ async def update_metrics_task():
             try:
                 # Active users: count unique users with active sessions in Redis
                 # Sessions are stored as "session:{session_id}" with user_id as value
+                # Only count sessions that actually exist (not expired)
                 session_keys = redis_module.redis_client.keys("session:*")
                 active_user_ids = set()
                 for key in session_keys:
                     user_id = redis_module.redis_client.get(key)
-                    if user_id:
-                        active_user_ids.add(int(user_id))
+                    if user_id:  # Only count if session exists (not expired)
+                        try:
+                            active_user_ids.add(int(user_id))
+                        except (ValueError, TypeError):
+                            # Skip invalid user_id values
+                            continue
                 active_users = len(active_user_ids)
                 active_users_gauge.set(active_users)
                 
-                # Current uploads: videos with status "uploading"
-                current_uploads = db.query(Video).filter(Video.status == "uploading").count()
-                current_uploads_gauge.set(current_uploads)
+                # Active subscriptions by plan type
+                subscriptions = db.query(Subscription).filter(Subscription.status == 'active').all()
+                # Reset all plan types to 0 first
+                for plan_type in ['free', 'medium', 'pro', 'unlimited']:
+                    active_subscriptions_gauge.labels(plan_type=plan_type).set(0)
+                # Set current counts
+                plan_counts = {}
+                for sub in subscriptions:
+                    plan_type = sub.plan_type or 'free'
+                    plan_counts[plan_type] = plan_counts.get(plan_type, 0) + 1
+                for plan_type, count in plan_counts.items():
+                    active_subscriptions_gauge.labels(plan_type=plan_type).set(count)
+                
+                # Note: current_uploads_gauge removed - replaced with successful_uploads_counter
                 
                 # Queued uploads: videos with status "pending"
                 queued_uploads = db.query(Video).filter(Video.status == "pending").count()
@@ -4871,6 +4933,9 @@ async def scheduler_task():
                                 # Update final status - use shared session
                                 if success_count == len(enabled_destinations):
                                     db_helpers.update_video(video_id, user_id, db=db, status="uploaded")
+                                    
+                                    # Increment successful uploads counter
+                                    successful_uploads_counter.inc()
                                     
                                     # Cleanup: Delete video file after successful upload to all destinations
                                     # Keep database record for history
@@ -5054,6 +5119,9 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
                 if len(succeeded_destinations) == len(enabled_destinations):
                     update_data['status'] = 'uploaded'
                     update_data['error'] = None
+                    
+                    # Increment successful uploads counter
+                    successful_uploads_counter.inc()
                     
                     # Cleanup: Delete video file after successful upload to all destinations
                     # Keep database record for history
