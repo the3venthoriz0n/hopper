@@ -3770,22 +3770,31 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 
                 if not db_subscription:
                     # Subscription doesn't exist yet - this can happen if checkout.session.completed fires before customer.subscription.created
-                    # Log a warning but don't fail - the subscription event will create it
+                    # Log a warning but don't fail - the subscription event will create it and reset tokens
                     logger.warning(f"Subscription {subscription_id} not found in database for checkout.session.completed. It will be created by customer.subscription.created event.")
                     # Return success - the subscription will be handled by the subscription events
                     return {"status": "success", "message": "Subscription will be created by customer.subscription.created event"}
                 
-                # Reset tokens for new subscription
-                plan_type = db_subscription.plan_type
-                logger.info(f"Resetting tokens for user {user_id}, plan {plan_type}")
-                reset_tokens_for_subscription(
-                    user_id,
-                    plan_type,
-                    db_subscription.current_period_start,
-                    db_subscription.current_period_end,
-                    db
-                )
-                logger.info(f"Successfully processed checkout.session.completed for user {user_id}, plan {plan_type}")
+                # Check if tokens need to be reset (only if period doesn't match - tokens may have already been reset by customer.subscription.created)
+                from token_helpers import get_or_create_token_balance
+                token_balance = get_or_create_token_balance(user_id, db)
+                
+                # Only reset if token balance period doesn't match subscription period (tokens haven't been reset yet)
+                if (token_balance.period_start != db_subscription.current_period_start or 
+                    token_balance.period_end != db_subscription.current_period_end):
+                    plan_type = db_subscription.plan_type
+                    logger.info(f"Resetting tokens for user {user_id}, plan {plan_type} (period mismatch)")
+                    reset_tokens_for_subscription(
+                        user_id,
+                        plan_type,
+                        db_subscription.current_period_start,
+                        db_subscription.current_period_end,
+                        db
+                    )
+                else:
+                    logger.info(f"Tokens already reset for user {user_id}, subscription {subscription_id}")
+                
+                logger.info(f"Successfully processed checkout.session.completed for user {user_id}")
         
         elif event["type"] == "customer.subscription.created":
             subscription_data = event["data"]["object"]
@@ -3806,7 +3815,25 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                         user_id = user.id
                         logger.info(f"Got user_id {user_id} from customer lookup")
             
-            update_subscription_from_stripe(subscription, db, user_id=user_id)
+            # Check if subscription already exists (idempotency)
+            existing_subscription = db.query(Subscription).filter(
+                Subscription.stripe_subscription_id == subscription.id
+            ).first()
+            
+            # Update or create subscription
+            updated_subscription = update_subscription_from_stripe(subscription, db, user_id=user_id)
+            
+            # Reset tokens for new subscription (only if it's actually new)
+            if updated_subscription and not existing_subscription:
+                plan_type = updated_subscription.plan_type
+                logger.info(f"Resetting tokens for new subscription: user {user_id}, plan {plan_type}")
+                reset_tokens_for_subscription(
+                    user_id,
+                    plan_type,
+                    datetime.fromtimestamp(subscription.current_period_start, tz=timezone.utc),
+                    datetime.fromtimestamp(subscription.current_period_end, tz=timezone.utc),
+                    db
+                )
             
         elif event["type"] == "customer.subscription.updated":
             subscription_data = event["data"]["object"]
