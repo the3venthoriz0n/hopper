@@ -465,6 +465,27 @@ function Home() {
     }
   }, [API]);
 
+  // Calculate tokens required for a file (1 token = 10MB)
+  const calculateTokens = (fileSizeBytes) => {
+    if (!fileSizeBytes) return 0;
+    const sizeMB = fileSizeBytes / (1024 * 1024);
+    const tokens = Math.ceil(sizeMB / 10);
+    return Math.max(1, tokens); // Minimum 1 token
+  };
+
+  // Format file size for display
+  const formatFileSize = (bytes) => {
+    if (!bytes) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex++;
+    }
+    return `${size.toFixed(2)} ${units[unitIndex]}`;
+  };
+
   // Unified account loading logic for all platforms
   // Only updates account if new data is complete (has required identifier fields)
   const loadPlatformAccount = useCallback(async (platform, setState, identifierKeys) => {
@@ -873,6 +894,9 @@ function Home() {
   };
 
   const addVideo = async (file) => {
+    // Calculate tokens required for this file (for display purposes)
+    const tokensRequired = calculateTokens(file.size);
+    
     const form = new FormData();
     form.append('file', file);
     
@@ -888,7 +912,9 @@ function Home() {
       id: tempId,
       filename: file.name,
       status: 'uploading',
-      progress: 0
+      progress: 0,
+      file_size_bytes: file.size,
+      tokens_consumed: 0  // Tokens not consumed yet - only on successful upload to platforms
     };
     setVideos(prev => [...prev, tempVideo]);
     
@@ -908,7 +934,8 @@ function Home() {
           const withoutTemp = prev.filter(v => v.id !== tempId);
           return [...withoutTemp, res.data];
         });
-        setMessage(`✅ Added ${file.name}`);
+        
+        setMessage(`✅ Added ${file.name} to queue (will cost ${tokensRequired} ${tokensRequired === 1 ? 'token' : 'tokens'} on upload)`);
       } catch (err) {
         setVideos(prev => prev.filter(v => v.id !== tempId));
         let errorMsg = err.response?.data?.detail || err.message || 'Error adding video';
@@ -919,8 +946,13 @@ function Home() {
           const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
           const maxSizeDisplay = maxFileSize?.max_file_size_display || '10 GB';
           errorMsg = `File too large: ${file.name} is ${fileSizeMB} MB. Maximum file size is ${maxSizeDisplay}.`;
-        } else if (err.response?.status === 403 && errorMsg.includes('CSRF')) {
-          errorMsg = 'CSRF token error. Please refresh the page and try again.';
+        } else if (err.response?.status === 402 || err.response?.status === 403) {
+          // Payment required or forbidden - token-related errors
+          if (errorMsg.includes('token') || errorMsg.includes('Insufficient')) {
+            errorMsg = `${errorMsg}`;
+          } else if (errorMsg.includes('CSRF')) {
+            errorMsg = 'CSRF token error. Please refresh the page and try again.';
+          }
         } else if (err.response?.status === 401) {
           errorMsg = 'Session expired. Please refresh the page.';
         } else if (!err.response) {
@@ -2008,6 +2040,27 @@ function Home() {
                       {v.title_too_long && (
                         <span className="title-warning" title={`Title truncated from ${v.title_original_length} to 100 characters`}>
                           ⚠️ {v.title_original_length}
+                        </span>
+                      )}
+                      {v.file_size_bytes && (
+                        <span 
+                          style={{ 
+                            marginLeft: '8px',
+                            padding: '2px 8px',
+                            background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%)',
+                            border: '1px solid rgba(99, 102, 241, 0.3)',
+                            borderRadius: '12px',
+                            fontSize: '0.75rem',
+                            fontWeight: '600',
+                            color: '#818cf8',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                          title={`File size: ${formatFileSize(v.file_size_bytes)}\nTokens: ${v.tokens_consumed || calculateTokens(v.file_size_bytes)}`}
+                        >
+                          <span>🪙</span>
+                          <span>{v.tokens_consumed || calculateTokens(v.file_size_bytes)}</span>
                         </span>
                       )}
                     </div>

@@ -3247,28 +3247,8 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
     # Calculate tokens required for this upload (1 token = 10MB)
     tokens_required = calculate_tokens_from_bytes(file_size)
     
-    # Check if user has enough tokens (before adding to database)
-    if not check_tokens_available(user_id, tokens_required, db):
-        # Clean up uploaded file
-        try:
-            if path.exists():
-                path.unlink()
-        except:
-            pass
-        
-        # Get current balance for error message
-        balance_info = get_token_balance(user_id, db)
-        if balance_info and balance_info.get('unlimited'):
-            # This shouldn't happen, but handle it gracefully
-            tokens_remaining = "unlimited"
-        else:
-            tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
-        
-        size_mb = file_size / (1024 * 1024)
-        raise HTTPException(
-            402,  # Payment Required
-            f"Insufficient tokens. File requires {tokens_required} tokens ({size_mb:.2f} MB), but you have {tokens_remaining} tokens remaining. Please upgrade your plan or purchase more tokens."
-        )
+    # NOTE: We don't check tokens here - tokens are deducted when video is successfully uploaded to platforms
+    # This allows users to queue videos and manage their uploads without immediately consuming tokens
     
     # Generate YouTube title
     filename_no_ext = file.filename.rsplit('.', 1)[0]
@@ -3281,31 +3261,25 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
     
     # Add to database with file size and tokens
     # ROOT CAUSE FIX: Store absolute path to prevent path resolution issues
+    # 
+    # TOKEN DEDUCTION STRATEGY:
+    # Tokens are NOT deducted when adding to queue - only when successfully uploaded to platforms.
+    # This allows users to queue videos, reorder, edit, and remove without losing tokens.
+    # When a video is uploaded to multiple platforms (YouTube + TikTok + Instagram), tokens are
+    # only charged ONCE (on first successful platform upload). The video.tokens_consumed field
+    # tracks this to prevent double-charging across multiple platforms.
+    # NOTE: Tokens are NOT deducted here - they're deducted when video is successfully uploaded to platforms
     video = db_helpers.add_user_video(
         user_id=user_id,
         filename=file.filename,
         path=str(path.resolve()),  # Ensure absolute path
         generated_title=youtube_title,
         file_size_bytes=file_size,
-        tokens_consumed=tokens_required,
+        tokens_consumed=0,  # Don't consume tokens yet - only on successful upload
         db=db
     )
     
-    # Deduct tokens after successful database entry
-    deduct_tokens(
-        user_id=user_id,
-        tokens=tokens_required,
-        transaction_type='upload',
-        video_id=video.id,
-        metadata={
-            'filename': file.filename,
-            'file_size_bytes': file_size,
-            'file_size_mb': round(file_size / (1024 * 1024), 2)
-        },
-        db=db
-    )
-    
-    upload_logger.info(f"Video added for user {user_id}: {file.filename} ({file_size / (1024*1024):.2f} MB, {tokens_required} tokens)")
+    upload_logger.info(f"Video added to queue for user {user_id}: {file.filename} ({file_size / (1024*1024):.2f} MB, will cost {tokens_required} tokens on upload)")
     
     # Return the same format as GET /api/videos for consistency
     # Get settings and tokens to compute titles (batch load to prevent N+1)
@@ -4023,6 +3997,29 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
         db_helpers.update_video(video_id, user_id, db=db, status="uploaded", youtube_id=response['id'])
         redis_client.set_upload_progress(user_id, video_id, 100)
         youtube_logger.info(f"Successfully uploaded {video.filename}, YouTube ID: {response['id']}")
+        
+        # Deduct tokens after successful upload (only if not already deducted)
+        if video.file_size_bytes and video.tokens_consumed == 0:
+            tokens_required = calculate_tokens_from_bytes(video.file_size_bytes)
+            deduct_tokens(
+                user_id=user_id,
+                tokens=tokens_required,
+                transaction_type='upload',
+                video_id=video.id,
+                metadata={
+                    'filename': video.filename,
+                    'platform': 'youtube',
+                    'youtube_id': response['id'],
+                    'file_size_bytes': video.file_size_bytes,
+                    'file_size_mb': round(video.file_size_bytes / (1024 * 1024), 2)
+                },
+                db=db
+            )
+            # Update tokens_consumed in video record to prevent double-charging
+            db_helpers.update_video(video_id, user_id, db=db, tokens_consumed=tokens_required)
+            youtube_logger.info(f"Deducted {tokens_required} tokens for user {user_id} (first platform upload)")
+        else:
+            youtube_logger.info(f"Tokens already deducted for this video (tokens_consumed={video.tokens_consumed}), skipping")
     
     except Exception as e:
         db_helpers.update_video(video_id, user_id, db=db, status="failed", error=str(e))
@@ -4248,6 +4245,29 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         db_helpers.update_video(video_id, user_id, db=db, status="uploaded", tiktok_publish_id=publish_id, tiktok_id=publish_id)
         redis_client.set_upload_progress(user_id, video_id, 100)
         tiktok_logger.info(f"Success! publish_id: {publish_id}")
+        
+        # Deduct tokens after successful upload (only if not already deducted)
+        if video.file_size_bytes and video.tokens_consumed == 0:
+            tokens_required = calculate_tokens_from_bytes(video.file_size_bytes)
+            deduct_tokens(
+                user_id=user_id,
+                tokens=tokens_required,
+                transaction_type='upload',
+                video_id=video.id,
+                metadata={
+                    'filename': video.filename,
+                    'platform': 'tiktok',
+                    'tiktok_publish_id': publish_id,
+                    'file_size_bytes': video.file_size_bytes,
+                    'file_size_mb': round(video.file_size_bytes / (1024 * 1024), 2)
+                },
+                db=db
+            )
+            # Update tokens_consumed in video record to prevent double-charging
+            db_helpers.update_video(video_id, user_id, db=db, tokens_consumed=tokens_required)
+            tiktok_logger.info(f"Deducted {tokens_required} tokens for user {user_id} (first platform upload)")
+        else:
+            tiktok_logger.info(f"Tokens already deducted for this video (tokens_consumed={video.tokens_consumed}), skipping")
         
     except Exception as e:
         db_helpers.update_video(video_id, user_id, db=db, status="failed", error=f'TikTok upload failed: {str(e)}')
@@ -4485,6 +4505,29 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             # Update video in database with success
             db_helpers.update_video(video_id, user_id, db=db, status="completed", instagram_id=media_id)
             redis_client.set_upload_progress(user_id, video_id, 100)
+            
+            # Deduct tokens after successful upload (only if not already deducted)
+            if video.file_size_bytes and video.tokens_consumed == 0:
+                tokens_required = calculate_tokens_from_bytes(video.file_size_bytes)
+                deduct_tokens(
+                    user_id=user_id,
+                    tokens=tokens_required,
+                    transaction_type='upload',
+                    video_id=video.id,
+                    metadata={
+                        'filename': video.filename,
+                        'platform': 'instagram',
+                        'instagram_id': media_id,
+                        'file_size_bytes': video.file_size_bytes,
+                        'file_size_mb': round(video.file_size_bytes / (1024 * 1024), 2)
+                    },
+                    db=db
+                )
+                # Update tokens_consumed in video record to prevent double-charging
+                db_helpers.update_video(video_id, user_id, db=db, tokens_consumed=tokens_required)
+                instagram_logger.info(f"Deducted {tokens_required} tokens for user {user_id} (first platform upload)")
+            else:
+                instagram_logger.info(f"Tokens already deducted for this video (tokens_consumed={video.tokens_consumed}), skipping")
             
             # Clean up progress after a delay
             await asyncio.sleep(2)
