@@ -563,7 +563,18 @@ function Home() {
       }
     } catch (err) {
       console.error('Error creating checkout session:', err);
-      setMessage('❌ Failed to start checkout. Please try again.');
+      
+      // Check if user already has an active subscription
+      if (err.response?.status === 400 && err.response?.data?.portal_url) {
+        // User already has subscription - redirect to customer portal
+        setMessage('ℹ️ You already have an active subscription. Opening subscription management...');
+        window.location.href = err.response.data.portal_url;
+      } else if (err.response?.status === 400 && err.response?.data?.message) {
+        // Show the error message from backend
+        setMessage(`ℹ️ ${err.response.data.message}`);
+      } else {
+        setMessage('❌ Failed to start checkout. Please try again.');
+      }
     } finally {
       setLoadingSubscription(false);
     }

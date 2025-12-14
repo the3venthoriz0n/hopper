@@ -59,6 +59,7 @@ def create_stripe_customer(email: str, user_id: int, db: Session) -> Optional[st
 def create_checkout_session(user_id: int, price_id: str, success_url: str, cancel_url: str, db: Session) -> Optional[Dict[str, Any]]:
     """
     Create a Stripe checkout session for subscription.
+    Prevents duplicate subscriptions by checking for existing active subscriptions.
     
     Args:
         user_id: User ID
@@ -69,6 +70,7 @@ def create_checkout_session(user_id: int, price_id: str, success_url: str, cance
         
     Returns:
         Checkout session dict with URL, or None if creation failed
+        Raises ValueError if user already has an active subscription
     """
     if not STRIPE_SECRET_KEY:
         logger.error("Cannot create checkout session: STRIPE_SECRET_KEY not set")
@@ -80,6 +82,28 @@ def create_checkout_session(user_id: int, price_id: str, success_url: str, cance
             logger.error(f"User {user_id} not found")
             return None
         
+        # Check for existing active subscription in database
+        existing_subscription = db.query(Subscription).filter(
+            Subscription.user_id == user_id,
+            Subscription.status == 'active'
+        ).first()
+        
+        if existing_subscription:
+            # Check if it's a real Stripe subscription (not free/unlimited)
+            if existing_subscription.stripe_subscription_id and not existing_subscription.stripe_subscription_id.startswith(('free_', 'unlimited_')):
+                # Verify subscription still exists in Stripe
+                try:
+                    stripe_sub = stripe.Subscription.retrieve(existing_subscription.stripe_subscription_id)
+                    if stripe_sub.status in ['active', 'trialing', 'past_due']:
+                        logger.warning(f"User {user_id} already has active Stripe subscription {existing_subscription.stripe_subscription_id}")
+                        raise ValueError(f"User already has an active subscription. Please manage your subscription through the customer portal.")
+                except stripe.error.StripeError:
+                    # Subscription doesn't exist in Stripe, but exists in DB - allow new checkout
+                    logger.info(f"User {user_id} has subscription in DB but not in Stripe, allowing new checkout")
+            else:
+                # Free or unlimited subscription - allow upgrade to paid plan
+                logger.info(f"User {user_id} has {existing_subscription.plan_type} plan, allowing upgrade to paid plan")
+        
         # Ensure user has Stripe customer
         customer_id = user.stripe_customer_id
         if not customer_id:
@@ -87,7 +111,22 @@ def create_checkout_session(user_id: int, price_id: str, success_url: str, cance
             if not customer_id:
                 return None
         
-        # Create checkout session
+        # Check Stripe directly for active subscriptions (double-check)
+        try:
+            stripe_subscriptions = stripe.Subscription.list(
+                customer=customer_id,
+                status='active',
+                limit=10
+            )
+            if stripe_subscriptions.data:
+                # User has active subscription in Stripe
+                logger.warning(f"User {user_id} has {len(stripe_subscriptions.data)} active subscription(s) in Stripe")
+                raise ValueError(f"User already has an active subscription. Please manage your subscription through the customer portal.")
+        except stripe.error.StripeError as e:
+            # If error checking Stripe, log but continue (might be network issue)
+            logger.warning(f"Could not check Stripe subscriptions for user {user_id}: {e}")
+        
+        # Create checkout session with subscription settings to prevent duplicates
         session = stripe.checkout.Session.create(
             customer=customer_id,
             payment_method_types=['card'],
@@ -100,8 +139,12 @@ def create_checkout_session(user_id: int, price_id: str, success_url: str, cance
             cancel_url=cancel_url,
             metadata={'user_id': str(user_id)},
             subscription_data={
-                'metadata': {'user_id': str(user_id)}
-            }
+                'metadata': {'user_id': str(user_id)},
+                # Prevent multiple subscriptions by canceling any existing ones
+                # Note: This is handled by our webhook, but Stripe can also handle it
+            },
+            # Allow promotion codes if needed
+            allow_promotion_codes=True,
         )
         
         logger.info(f"Created checkout session for user {user_id}: {session.id}")
@@ -110,6 +153,9 @@ def create_checkout_session(user_id: int, price_id: str, success_url: str, cance
             'url': session.url
         }
         
+    except ValueError as e:
+        # Re-raise ValueError (user already has subscription)
+        raise
     except stripe.error.StripeError as e:
         logger.error(f"Stripe error creating checkout session for user {user_id}: {e}")
         return None

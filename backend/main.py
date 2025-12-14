@@ -3501,17 +3501,51 @@ def create_subscription_checkout(
     if not plan.get("stripe_price_id"):
         raise HTTPException(400, f"Plan {plan_key} is not configured with a Stripe price")
     
+    # Check if user already has an active paid subscription
+    existing_subscription = db.query(Subscription).filter(
+        Subscription.user_id == user_id,
+        Subscription.status == 'active'
+    ).first()
+    
+    if existing_subscription:
+        # If user has a paid subscription (not free/unlimited), redirect to customer portal
+        if existing_subscription.stripe_subscription_id and not existing_subscription.stripe_subscription_id.startswith(('free_', 'unlimited_')):
+            # User has paid subscription - they should use customer portal to change plans
+            frontend_url = os.getenv("FRONTEND_URL", str(request.base_url).rstrip("/"))
+            portal_url = get_customer_portal_url(user_id, f"{frontend_url}/subscription", db)
+            if portal_url:
+                raise HTTPException(400, {
+                    "error": "User already has an active subscription",
+                    "message": "Please manage your subscription through the customer portal",
+                    "portal_url": portal_url
+                })
+            else:
+                raise HTTPException(400, "User already has an active subscription. Please contact support to change your plan.")
+    
     # Get frontend URL from environment or request
     frontend_url = os.getenv("FRONTEND_URL", str(request.base_url).rstrip("/"))
     success_url = f"{frontend_url}/subscription/success?session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{frontend_url}/subscription"
     
-    session_data = create_checkout_session(user_id, plan["stripe_price_id"], success_url, cancel_url, db)
-    
-    if not session_data:
-        raise HTTPException(500, "Failed to create checkout session")
-    
-    return session_data
+    try:
+        session_data = create_checkout_session(user_id, plan["stripe_price_id"], success_url, cancel_url, db)
+        
+        if not session_data:
+            raise HTTPException(500, "Failed to create checkout session")
+        
+        return session_data
+    except ValueError as e:
+        # User already has subscription (caught by create_checkout_session)
+        frontend_url = os.getenv("FRONTEND_URL", str(request.base_url).rstrip("/"))
+        portal_url = get_customer_portal_url(user_id, f"{frontend_url}/subscription", db)
+        if portal_url:
+            raise HTTPException(400, {
+                "error": "User already has an active subscription",
+                "message": str(e),
+                "portal_url": portal_url
+            })
+        else:
+            raise HTTPException(400, str(e))
 
 
 @app.get("/api/subscription/checkout-status")
@@ -3696,6 +3730,32 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 if not user_id:
                     logger.error(f"Could not determine user_id for checkout session {session['id']}")
                     raise HTTPException(500, "Could not determine user_id from checkout session")
+                
+                # Check for existing active subscriptions for this user
+                existing_subscriptions = db.query(Subscription).filter(
+                    Subscription.user_id == user_id,
+                    Subscription.status == 'active',
+                    Subscription.stripe_subscription_id != subscription_id  # Exclude the new one
+                ).all()
+                
+                # Cancel any existing Stripe subscriptions (prevent duplicates)
+                for existing_sub in existing_subscriptions:
+                    if existing_sub.stripe_subscription_id and not existing_sub.stripe_subscription_id.startswith(('free_', 'unlimited_')):
+                        try:
+                            # Cancel the old subscription in Stripe
+                            stripe.Subscription.modify(
+                                existing_sub.stripe_subscription_id,
+                                cancel_at_period_end=False  # Cancel immediately
+                            )
+                            stripe.Subscription.delete(existing_sub.stripe_subscription_id)
+                            logger.info(f"Cancelled existing subscription {existing_sub.stripe_subscription_id} for user {user_id}")
+                            
+                            # Mark as canceled in database
+                            existing_sub.status = 'canceled'
+                            db.commit()
+                        except stripe.error.StripeError as e:
+                            logger.warning(f"Failed to cancel existing Stripe subscription {existing_sub.stripe_subscription_id}: {e}")
+                            # Continue anyway - we'll update the new subscription
                 
                 # Update subscription in database
                 updated_subscription = update_subscription_from_stripe(subscription, db)
