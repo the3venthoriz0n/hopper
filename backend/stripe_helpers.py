@@ -3,6 +3,7 @@ import stripe
 import logging
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from datetime import datetime, timezone, timedelta
 
 from models import User, Subscription, StripeEvent
@@ -454,7 +455,22 @@ def update_subscription_from_stripe(stripe_subscription: stripe.Subscription, db
             return None
         
         # Determine plan type from price ID
-        price_id = stripe_subscription.items.data[0].price.id
+        # Ensure items.data is accessible
+        if not hasattr(stripe_subscription, 'items') or not stripe_subscription.items:
+            logger.error(f"Subscription {stripe_subscription.id} has no items property")
+            return None
+        
+        items_data = stripe_subscription.items.data if hasattr(stripe_subscription.items, 'data') else []
+        if not items_data or len(items_data) == 0:
+            logger.error(f"Subscription {stripe_subscription.id} has no items in data")
+            return None
+        
+        price = items_data[0].price if hasattr(items_data[0], 'price') else None
+        if not price or not hasattr(price, 'id'):
+            logger.error(f"Subscription {stripe_subscription.id} has no price in first item")
+            return None
+        
+        price_id = price.id
         plan_type = 'free'  # Default
         for plan_key, plan_config in get_plans().items():
             if plan_config.get('stripe_price_id') == price_id:
@@ -473,12 +489,48 @@ def update_subscription_from_stripe(stripe_subscription: stripe.Subscription, db
         }
         status = status_map.get(stripe_subscription.status, 'active')
         
+        # First, try to find by stripe_subscription_id
         subscription = db.query(Subscription).filter(
             Subscription.stripe_subscription_id == stripe_subscription.id
         ).first()
         
+        # If found by stripe_subscription_id, verify it belongs to the correct user
         if subscription:
-            # Update existing
+            if subscription.user_id != user_id:
+                # This stripe_subscription_id belongs to a different user
+                # This shouldn't happen, but if it does, we'll update it to the correct user
+                logger.warning(f"Stripe subscription {stripe_subscription.id} found but belongs to user {subscription.user_id}, updating to user {user_id}")
+                subscription.user_id = user_id
+        
+        # If not found by stripe_subscription_id, check if user already has a subscription
+        if not subscription:
+            subscription = db.query(Subscription).filter(
+                Subscription.user_id == user_id
+            ).first()
+            
+            if subscription:
+                # User has an existing subscription with different stripe_subscription_id
+                # Check if the new stripe_subscription_id already exists (orphaned record)
+                conflicting_sub = db.query(Subscription).filter(
+                    Subscription.stripe_subscription_id == stripe_subscription.id
+                ).first()
+                
+                if conflicting_sub:
+                    # The new stripe_subscription_id already exists in the database
+                    # This is likely an orphaned record from a previous failed webhook
+                    # Delete it and update the user's subscription to use the new ID
+                    logger.info(f"Found conflicting subscription {conflicting_sub.id} with stripe_subscription_id {stripe_subscription.id}, deleting it")
+                    db.delete(conflicting_sub)
+                    db.flush()  # Flush to ensure deletion is processed
+                
+                # Update existing subscription to use the new stripe_subscription_id
+                logger.info(f"Updating existing subscription {subscription.id} for user {user_id} to use new Stripe subscription {stripe_subscription.id}")
+        
+        if subscription:
+            # Update existing subscription
+            subscription.user_id = user_id  # Ensure user_id is correct
+            subscription.stripe_subscription_id = stripe_subscription.id
+            subscription.stripe_customer_id = stripe_subscription.customer
             subscription.plan_type = plan_type
             subscription.status = status
             subscription.current_period_start = datetime.fromtimestamp(
@@ -490,7 +542,7 @@ def update_subscription_from_stripe(stripe_subscription: stripe.Subscription, db
             subscription.cancel_at_period_end = stripe_subscription.cancel_at_period_end
             subscription.updated_at = datetime.now(timezone.utc)
         else:
-            # Create new
+            # Create new subscription (user has no existing subscription)
             subscription = Subscription(
                 user_id=user_id,
                 stripe_subscription_id=stripe_subscription.id,
@@ -513,8 +565,14 @@ def update_subscription_from_stripe(stripe_subscription: stripe.Subscription, db
         logger.info(f"Updated subscription {subscription.id} for user {user_id}: {plan_type} plan, {status} status")
         return subscription
         
+    except IntegrityError as e:
+        # Handle database constraint violations (unique constraints)
+        db.rollback()
+        error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
+        logger.error(f"Database constraint violation updating subscription from Stripe (subscription_id: {stripe_subscription.id if hasattr(stripe_subscription, 'id') else 'unknown'}, user_id: {user_id}): {error_msg}", exc_info=True)
+        return None
     except Exception as e:
-        logger.error(f"Error updating subscription from Stripe (subscription_id: {stripe_subscription.id if hasattr(stripe_subscription, 'id') else 'unknown'}, user_id from metadata: {stripe_subscription.metadata.get('user_id') if hasattr(stripe_subscription, 'metadata') else 'N/A'}): {e}", exc_info=True)
+        logger.error(f"Error updating subscription from Stripe (subscription_id: {stripe_subscription.id if hasattr(stripe_subscription, 'id') else 'unknown'}, user_id: {user_id}): {e}", exc_info=True)
         db.rollback()
         return None
 
