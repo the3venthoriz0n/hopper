@@ -556,17 +556,55 @@ function Home() {
 
   // Handle subscription upgrade
   const handleUpgrade = async (planKey) => {
+    // Check if user has an active subscription that will be canceled
+    if (subscription && subscription.status === 'active' && subscription.plan_type !== 'free' && subscription.plan_type !== 'unlimited') {
+      // Show confirmation dialog
+      const planName = availablePlans.find(p => p.key === planKey)?.name || planKey;
+      const currentPlanName = availablePlans.find(p => p.key === subscription.plan_type)?.name || subscription.plan_type;
+      
+      const newPlan = availablePlans.find(p => p.key === planKey);
+      const newPlanPrice = newPlan?.price?.formatted || 'the new plan';
+      const currentPlan = availablePlans.find(p => p.key === subscription.plan_type);
+      const currentPlanPrice = currentPlan?.price?.formatted || currentPlanName;
+      
+      setConfirmDialog({
+        title: 'Upgrade Subscription?',
+        message: `You currently have an active ${currentPlanName} subscription${currentPlanPrice && currentPlanPrice !== 'Free' ? ` (${currentPlanPrice})` : ''}. Upgrading to ${planName}${newPlanPrice && newPlanPrice !== 'Free' ? ` (${newPlanPrice})` : ''} will cancel your current subscription and replace it with the new plan. Your current token balance will be preserved.`,
+        onConfirm: async () => {
+          setConfirmDialog(null);
+          await proceedWithUpgrade(planKey);
+        },
+        onCancel: () => {
+          setConfirmDialog(null);
+        }
+      });
+    } else {
+      // No active subscription, proceed directly
+      await proceedWithUpgrade(planKey);
+    }
+  };
+
+  const proceedWithUpgrade = async (planKey) => {
     setLoadingPlanKey(planKey); // Set which specific plan is loading
     setLoadingSubscription(true);
     try {
       const res = await axios.post(`${API}/subscription/create-checkout`, { plan_key: planKey });
       if (res.data.url) {
+        // If a subscription was canceled, show info message
+        if (res.data.canceled_subscription) {
+          setNotification({
+            type: 'info',
+            title: 'Subscription Upgraded',
+            message: `Your ${res.data.canceled_subscription.plan_type} subscription has been canceled. You'll be redirected to complete your ${planKey} subscription.`
+          });
+          setTimeout(() => setNotification(null), 5000);
+        }
         window.location.href = res.data.url;
       }
     } catch (err) {
       console.error('Error creating checkout session:', err);
       
-      // Check if user already has an active subscription
+      // Check if user already has an active subscription (shouldn't happen with our new logic, but handle it)
       if (err.response?.status === 400 && err.response?.data?.portal_url) {
         // User already has subscription - show popup and redirect to customer portal
         setNotification({
@@ -3219,12 +3257,23 @@ function Home() {
                     {/* Current Plan */}
                     <div style={{ marginBottom: '1rem' }}>
                       <div style={{ fontSize: '0.85rem', color: '#999', marginBottom: '0.25rem' }}>Current Plan</div>
-                      <div style={{ fontSize: '1.1rem', fontWeight: '600', color: 'white', textTransform: 'capitalize' }}>
-                        {subscription.plan_type}
+                      <div style={{ fontSize: '1.1rem', fontWeight: '600', color: 'white', textTransform: 'capitalize', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <span>{subscription.plan_type}</span>
+                        {(() => {
+                          const currentPlan = availablePlans.find(p => p.key === subscription.plan_type);
+                          return currentPlan?.price && (
+                            <span style={{ 
+                              fontSize: '0.9rem', 
+                              fontWeight: '500', 
+                              color: '#818cf8'
+                            }}>
+                              {currentPlan.price.formatted}
+                            </span>
+                          );
+                        })()}
                         {subscription.status !== 'active' && (
                           <span style={{ 
                             fontSize: '0.75rem', 
-                            marginLeft: '0.5rem', 
                             padding: '0.25rem 0.5rem',
                             background: 'rgba(239, 68, 68, 0.2)',
                             color: '#ef4444',
@@ -3311,9 +3360,21 @@ function Home() {
                                     fontSize: '0.95rem', 
                                     fontWeight: '600', 
                                     color: 'white',
-                                    textTransform: 'capitalize'
+                                    textTransform: 'capitalize',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem'
                                   }}>
-                                    {plan.key}
+                                    <span>{plan.key}</span>
+                                    {plan.price && (
+                                      <span style={{ 
+                                        fontSize: '0.85rem', 
+                                        fontWeight: '500', 
+                                        color: '#818cf8'
+                                      }}>
+                                        {plan.price.formatted}
+                                      </span>
+                                    )}
                                   </div>
                                   <div style={{ fontSize: '0.75rem', color: '#999' }}>
                                     {plan.monthly_tokens} tokens/month

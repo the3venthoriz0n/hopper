@@ -209,6 +209,52 @@ def get_plan_price_id(plan_type: str) -> Optional[str]:
     return None
 
 
+def get_price_info(price_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get price information from Stripe.
+    
+    Args:
+        price_id: Stripe price ID
+        
+    Returns:
+        Dict with 'amount' (in cents), 'currency', 'formatted' (e.g., '$9.99/month'), or None if not found
+    """
+    if not STRIPE_SECRET_KEY or not price_id:
+        return None
+    
+    try:
+        price = stripe.Price.retrieve(price_id)
+        
+        amount = price.unit_amount
+        currency = price.currency.upper() if hasattr(price, 'currency') else 'USD'
+        
+        if amount is None:
+            return None
+        
+        # Format price (amount is in cents)
+        amount_dollars = amount / 100
+        formatted = f"${amount_dollars:.2f}"
+        if currency != 'USD':
+            formatted = f"{currency} {amount_dollars:.2f}"
+        
+        # Add /month if it's a recurring price
+        if hasattr(price, 'recurring') and price.recurring:
+            formatted += "/month"
+        
+        return {
+            'amount': amount,  # In cents
+            'amount_dollars': amount_dollars,
+            'currency': currency,
+            'formatted': formatted
+        }
+    except stripe.error.StripeError as e:
+        logger.warning(f"Error retrieving price {price_id}: {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"Unexpected error retrieving price {price_id}: {e}")
+        return None
+
+
 def ensure_stripe_products():
     """
     Create Stripe products and prices if they don't exist.

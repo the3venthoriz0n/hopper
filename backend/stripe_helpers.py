@@ -171,11 +171,12 @@ def create_checkout_session(
     price_id: str, 
     success_url: str, 
     cancel_url: str, 
-    db: Session
+    db: Session,
+    cancel_existing: bool = False
 ) -> Optional[Dict[str, Any]]:
     """
     Create a Stripe checkout session for subscription.
-    Prevents duplicate paid subscriptions.
+    Can cancel existing subscriptions if cancel_existing is True.
     
     Args:
         user_id: User ID
@@ -183,12 +184,13 @@ def create_checkout_session(
         success_url: URL to redirect on success
         cancel_url: URL to redirect on cancel
         db: Database session
+        cancel_existing: If True, cancel existing subscriptions before creating checkout
         
     Returns:
-        Checkout session dict with URL, or None if creation failed
+        Checkout session dict with URL and canceled_subscription info, or None if creation failed
         
     Raises:
-        ValueError: If user already has an active paid subscription
+        ValueError: If user already has an active paid subscription and cancel_existing is False
     """
     if not STRIPE_SECRET_KEY:
         logger.error("Cannot create checkout session: STRIPE_SECRET_KEY not set")
@@ -211,6 +213,8 @@ def create_checkout_session(
             Subscription.status == 'active'
         ).first()
         
+        canceled_subscription_info = None
+        
         if existing_subscription:
             # Check if it's a real paid Stripe subscription
             if (existing_subscription.stripe_subscription_id and 
@@ -219,21 +223,46 @@ def create_checkout_session(
                 try:
                     stripe_sub = stripe.Subscription.retrieve(existing_subscription.stripe_subscription_id)
                     if stripe_sub.status in ['active', 'trialing', 'past_due']:
-                        logger.warning(f"User {user_id} already has active Stripe subscription")
-                        raise ValueError(
-                            "You already have an active subscription. "
-                            "Please manage your subscription through the customer portal."
-                        )
+                        if cancel_existing:
+                            # Cancel the existing subscription
+                            logger.info(f"User {user_id} has active subscription {existing_subscription.stripe_subscription_id}, canceling it for upgrade")
+                            stripe.Subscription.delete(existing_subscription.stripe_subscription_id)
+                            existing_subscription.status = 'canceled'
+                            db.commit()
+                            canceled_subscription_info = {
+                                'plan_type': existing_subscription.plan_type,
+                                'subscription_id': existing_subscription.stripe_subscription_id
+                            }
+                            logger.info(f"Canceled existing subscription {existing_subscription.stripe_subscription_id} for user {user_id}")
+                        else:
+                            logger.warning(f"User {user_id} already has active Stripe subscription")
+                            raise ValueError(
+                                "You already have an active subscription. "
+                                "Please manage your subscription through the customer portal."
+                            )
                 except stripe.error.InvalidRequestError:
                     logger.info(f"Subscription {existing_subscription.stripe_subscription_id} not found in Stripe")
         
         # Double-check Stripe for any active paid subscriptions
         if _has_active_paid_subscription(customer_id):
-            logger.warning(f"User {user_id} has active paid subscription in Stripe")
-            raise ValueError(
-                "You already have an active subscription. "
-                "Please manage your subscription through the customer portal."
-            )
+            if cancel_existing:
+                # Try to find and cancel any remaining active subscriptions
+                try:
+                    stripe_subs = stripe.Subscription.list(customer=customer_id, status='active', limit=10)
+                    for sub in stripe_subs.data:
+                        try:
+                            stripe.Subscription.delete(sub.id)
+                            logger.info(f"Canceled active Stripe subscription {sub.id} for user {user_id}")
+                        except Exception as e:
+                            logger.warning(f"Failed to cancel subscription {sub.id}: {e}")
+                except Exception as e:
+                    logger.warning(f"Error checking/canceling Stripe subscriptions: {e}")
+            else:
+                logger.warning(f"User {user_id} has active paid subscription in Stripe")
+                raise ValueError(
+                    "You already have an active subscription. "
+                    "Please manage your subscription through the customer portal."
+                )
         
         # Create checkout session
         session = stripe.checkout.Session.create(
@@ -254,10 +283,13 @@ def create_checkout_session(
         )
         
         logger.info(f"Created checkout session for user {user_id}: {session.id}")
-        return {
+        result = {
             'session_id': session.id,
             'url': session.url
         }
+        if canceled_subscription_info:
+            result['canceled_subscription'] = canceled_subscription_info
+        return result
         
     except ValueError:
         raise

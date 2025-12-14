@@ -3457,18 +3457,51 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
 @app.get("/api/subscription/plans")
 def get_subscription_plans():
     """Get available subscription plans (excludes hidden/dev-only plans)"""
-    return {
-        "plans": [
-            {
-                "key": plan_key,
-                "name": plan_config["name"],
-                "monthly_tokens": plan_config["monthly_tokens"],
-                "stripe_price_id": plan_config.get("stripe_price_id"),
+    from stripe_config import get_price_info
+    
+    plans_list = []
+    for plan_key, plan_config in PLANS.items():
+        if plan_config.get("hidden", False):
+            continue
+        
+        plan_data = {
+            "key": plan_key,
+            "name": plan_config["name"],
+            "monthly_tokens": plan_config["monthly_tokens"],
+            "stripe_price_id": plan_config.get("stripe_price_id"),
+        }
+        
+        # Get price information from Stripe if price_id exists
+        price_id = plan_config.get("stripe_price_id")
+        if price_id:
+            price_info = get_price_info(price_id)
+            if price_info:
+                plan_data["price"] = price_info
+            else:
+                # If we can't get price info, set to free for free plan, or None for others
+                if plan_key == 'free':
+                    plan_data["price"] = {
+                        "amount": 0,
+                        "amount_dollars": 0,
+                        "currency": "USD",
+                        "formatted": "Free"
+                    }
+                else:
+                    plan_data["price"] = None
+        elif plan_key == 'free':
+            # Free plan doesn't have a Stripe price
+            plan_data["price"] = {
+                "amount": 0,
+                "amount_dollars": 0,
+                "currency": "USD",
+                "formatted": "Free"
             }
-            for plan_key, plan_config in PLANS.items()
-            if not plan_config.get("hidden", False)  # Exclude hidden plans
-        ]
-    }
+        else:
+            plan_data["price"] = None
+        
+        plans_list.append(plan_data)
+    
+    return {"plans": plans_list}
 
 
 @app.get("/api/subscription/current")
@@ -3527,23 +3560,18 @@ def create_subscription_checkout(
         Subscription.status == 'active'
     ).first()
     
+    # Determine if we should cancel existing subscription (upgrade/change scenario)
+    cancel_existing = False
     if existing_subscription:
-        # If user has a paid subscription (not free/unlimited), redirect to customer portal
+        # If user has a paid subscription (not free/unlimited), allow upgrade/change by canceling existing
         if existing_subscription.stripe_subscription_id and not existing_subscription.stripe_subscription_id.startswith(('free_', 'unlimited_')):
-            # User has paid subscription - they should use customer portal to change plans
-            frontend_url = os.getenv("FRONTEND_URL", str(request.base_url).rstrip("/"))
-            portal_url = get_customer_portal_url(user_id, f"{frontend_url}/subscription", db)
-            if portal_url:
-                return JSONResponse(
-                    status_code=400,
-                    content={
-                        "error": "User already has an active subscription",
-                        "message": "Please manage your subscription through the customer portal",
-                        "portal_url": portal_url
-                    }
-                )
-            else:
-                raise HTTPException(400, "User already has an active subscription. Please contact support to change your plan.")
+            # Always allow changing plans - cancel existing and create new
+            cancel_existing = True
+            current_plan = plans.get(existing_subscription.plan_type, {})
+            new_plan = plan
+            current_tokens = current_plan.get('monthly_tokens', 0)
+            new_tokens = new_plan.get('monthly_tokens', 0)
+            logger.info(f"User {user_id} changing from {existing_subscription.plan_type} ({current_tokens} tokens) to {plan_key} ({new_tokens} tokens)")
     
     # Get frontend URL from environment or request
     frontend_url = os.getenv("FRONTEND_URL", str(request.base_url).rstrip("/"))
@@ -3551,7 +3579,7 @@ def create_subscription_checkout(
     cancel_url = f"{frontend_url}/subscription"
     
     try:
-        session_data = create_checkout_session(user_id, plan["stripe_price_id"], success_url, cancel_url, db)
+        session_data = create_checkout_session(user_id, plan["stripe_price_id"], success_url, cancel_url, db, cancel_existing=cancel_existing)
         
         if not session_data:
             raise HTTPException(500, "Failed to create checkout session")
