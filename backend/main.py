@@ -1262,17 +1262,17 @@ def logout(request: Request, response: Response):
     if session_id:
         redis_client.delete_session(session_id)
         # Also delete CSRF token for this session
-        redis_client.delete(f"csrf:{session_id}")
+        redis_client.redis_client.delete(f"csrf:{session_id}")
         response.delete_cookie("session_id")
         logger.info(f"User logged out (session: {session_id[:16]}...)")
         
         # Immediately update active users count after logout
         # Count unique users with active sessions in Redis
         # Only count sessions that actually exist (not expired)
-        session_keys = redis_client.keys("session:*")
+        session_keys = redis_client.redis_client.keys("session:*")
         active_user_ids = set()
         for key in session_keys:
-            user_id = redis_client.get(key)
+            user_id = redis_client.redis_client.get(key)
             if user_id:  # Only count if session exists (not expired)
                 try:
                     active_user_ids.add(int(user_id))
@@ -1331,7 +1331,7 @@ def delete_account(request: Request, response: Response, user_id: int = Depends(
         session_id = request.cookies.get("session_id")
         if session_id:
             redis_client.delete_session(session_id)
-            redis_client.delete(f"csrf:{session_id}")
+            redis_client.redis_client.delete(f"csrf:{session_id}")
         
         # Clear session cookie
         response.delete_cookie("session_id")
@@ -3231,17 +3231,10 @@ MAX_FILE_SIZE = 10 * 1024 * 1024 * 1024  # 10GB in bytes
 @app.post("/api/videos")
 async def add_video(file: UploadFile = File(...), user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Add video to user's queue"""
-    # ROOT CAUSE FIX: Validate file size before processing
-    
-    # Check file size if Content-Length header is available
-    content_length = file.size if hasattr(file, 'size') and file.size else None
-    if content_length and content_length > MAX_FILE_SIZE:
-        size_mb = content_length / (1024 * 1024)
-        max_mb = MAX_FILE_SIZE / (1024 * 1024)
-        raise HTTPException(
-            413, 
-            f"File too large: {file.filename} is {size_mb:.2f} MB. Maximum file size is {max_mb:.0f} MB (10 GB)."
-        )
+    # ROOT CAUSE FIX: Validate file size during streaming
+    # Note: For multipart/form-data uploads, we cannot reliably get file size before reading
+    # because Content-Length includes the entire request (boundaries, field names, etc.), not just the file.
+    # FastAPI's UploadFile.size may also not be set. We validate during streaming instead.
     
     # Get user settings
     global_settings = db_helpers.get_user_settings(user_id, "global", db=db)
@@ -3276,10 +3269,12 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
                     except:
                         pass
                     size_mb = file_size / (1024 * 1024)
+                    size_gb = file_size / (1024 * 1024 * 1024)
                     max_mb = MAX_FILE_SIZE / (1024 * 1024)
+                    max_gb = MAX_FILE_SIZE / (1024 * 1024 * 1024)
                     raise HTTPException(
                         413,
-                        f"File too large: {file.filename} is {size_mb:.2f} MB. Maximum file size is {max_mb:.0f} MB (10 GB)."
+                        f"File too large: {file.filename} is {size_mb:.2f} MB ({size_gb:.2f} GB). Maximum file size is {max_mb:.0f} MB ({max_gb:.0f} GB)."
                     )
                 
                 f.write(chunk)

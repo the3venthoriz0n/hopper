@@ -938,6 +938,26 @@ function Home() {
   };
 
   const addVideo = async (file) => {
+    // Client-side file size validation (before upload)
+    const maxSizeBytes = maxFileSize?.max_file_size_bytes || 10 * 1024 * 1024 * 1024; // Default 10GB
+    if (file.size > maxSizeBytes) {
+      const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+      const fileSizeGB = (file.size / (1024 * 1024 * 1024)).toFixed(2);
+      const maxSizeDisplay = maxFileSize?.max_file_size_display || '10 GB';
+      const errorMsg = `File too large: ${file.name} is ${fileSizeMB} MB (${fileSizeGB} GB). Maximum file size is ${maxSizeDisplay}.`;
+      
+      // Show popup notification immediately
+      setNotification({
+        type: 'error',
+        title: 'File Too Large',
+        message: errorMsg,
+        videoFilename: file.name
+      });
+      setTimeout(() => setNotification(null), 10000);
+      setMessage(`❌ ${errorMsg}`);
+      return;
+    }
+    
     // Calculate tokens required for this file (for display purposes)
     const tokensRequired = calculateTokens(file.size);
     
@@ -984,12 +1004,27 @@ function Home() {
         setVideos(prev => prev.filter(v => v.id !== tempId));
         let errorMsg = err.response?.data?.detail || err.message || 'Error adding video';
         
-        // Provide more helpful error messages
-        if (err.response?.status === 413) {
-          // File too large - ensure error message includes size limit
+        // Check if error is due to file size (either 413 status or connection closed during large upload)
+        const isFileSizeError = err.response?.status === 413 || 
+                                (!err.response && file.size > maxSizeBytes) ||
+                                (err.message && (err.message.includes('413') || err.message.includes('Payload Too Large')));
+        
+        if (isFileSizeError) {
+          // File too large - show popup notification
           const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+          const fileSizeGB = (file.size / (1024 * 1024 * 1024)).toFixed(2);
           const maxSizeDisplay = maxFileSize?.max_file_size_display || '10 GB';
-          errorMsg = `File too large: ${file.name} is ${fileSizeMB} MB. Maximum file size is ${maxSizeDisplay}.`;
+          errorMsg = err.response?.data?.detail || `File too large: ${file.name} is ${fileSizeMB} MB (${fileSizeGB} GB). Maximum file size is ${maxSizeDisplay}.`;
+          
+          // Show popup notification for file size error
+          setNotification({
+            type: 'error',
+            title: 'File Too Large',
+            message: errorMsg,
+            videoFilename: file.name
+          });
+          // Auto-dismiss after 10 seconds
+          setTimeout(() => setNotification(null), 10000);
         } else if (err.response?.status === 402 || err.response?.status === 403) {
           // Payment required or forbidden - token-related errors
           if (errorMsg.includes('token') || errorMsg.includes('Insufficient')) {
@@ -2267,25 +2302,46 @@ function Home() {
                         </span>
                       )}
                       {v.file_size_bytes && (
-                        <span 
-                          style={{ 
-                            marginLeft: '8px',
-                            padding: '2px 8px',
-                            background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%)',
-                            border: '1px solid rgba(99, 102, 241, 0.3)',
-                            borderRadius: '12px',
-                            fontSize: '0.75rem',
-                            fontWeight: '600',
-                            color: '#818cf8',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px'
-                          }}
-                          title={`File size: ${formatFileSize(v.file_size_bytes)}\nTokens: ${v.tokens_consumed || calculateTokens(v.file_size_bytes)}`}
-                        >
-                          <span>🪙</span>
-                          <span>{v.tokens_consumed || calculateTokens(v.file_size_bytes)}</span>
-                        </span>
+                        <>
+                          <span 
+                            style={{ 
+                              marginLeft: '8px',
+                              padding: '2px 8px',
+                              background: 'rgba(156, 163, 175, 0.15)',
+                              border: '1px solid rgba(156, 163, 175, 0.3)',
+                              borderRadius: '12px',
+                              fontSize: '0.75rem',
+                              fontWeight: '500',
+                              color: '#9ca3af',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                            title={`File size: ${formatFileSize(v.file_size_bytes)}`}
+                          >
+                            <span>📦</span>
+                            <span>{formatFileSize(v.file_size_bytes)}</span>
+                          </span>
+                          <span 
+                            style={{ 
+                              marginLeft: '8px',
+                              padding: '2px 8px',
+                              background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%)',
+                              border: '1px solid rgba(99, 102, 241, 0.3)',
+                              borderRadius: '12px',
+                              fontSize: '0.75rem',
+                              fontWeight: '600',
+                              color: '#818cf8',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                            title={`Tokens: ${v.tokens_consumed || calculateTokens(v.file_size_bytes)}`}
+                          >
+                            <span>🪙</span>
+                            <span>{v.tokens_consumed || calculateTokens(v.file_size_bytes)}</span>
+                          </span>
+                        </>
                       )}
                     </div>
                     <div className="filename">File: {v.filename}</div>
