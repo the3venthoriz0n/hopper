@@ -97,26 +97,27 @@ def create_or_update_products(mode: str) -> Dict[str, Dict[str, Any]]:
         price = None
         for p in price_map.get(product.id, []):
             if p.unit_amount == config['price_cents'] and p.currency == 'usd':
-                if config['price_cents'] == 0 and not p.recurring:
-                    price = p
-                    break
+                # For $0 prices, look for recurring monthly prices (Stripe supports $0/month subscriptions)
+                if config['price_cents'] == 0:
+                    if p.recurring and p.recurring.interval == 'month':
+                        price = p
+                        break
+                # For paid prices, look for recurring monthly prices
                 elif config['price_cents'] > 0 and p.recurring and p.recurring.interval == 'month':
                     price = p
                     break
         
         if price:
-            print(f"  ✓ Found price: {price.id}")
+            print(f"  ✓ Found price: {price.id} ({'recurring monthly' if price.recurring else 'one-time'})")
         else:
-            if config['price_cents'] == 0:
-                price = stripe.Price.create(product=product.id, unit_amount=0, currency='usd')
-            else:
-                price = stripe.Price.create(
-                    product=product.id,
-                    unit_amount=config['price_cents'],
-                    currency='usd',
-                    recurring={'interval': 'month'}
-                )
-            print(f"  ✓ Created price: {price.id}")
+            # Create recurring monthly price for all plans (including $0/month)
+            price = stripe.Price.create(
+                product=product.id,
+                unit_amount=config['price_cents'],
+                currency='usd',
+                recurring={'interval': 'month'}
+            )
+            print(f"  ✓ Created price: {price.id} (recurring monthly)")
         
         results[key] = {
             'name': config['name'],

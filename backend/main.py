@@ -1,7 +1,7 @@
 from urllib.parse import urlencode, unquote, quote
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Response, Cookie, Depends, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from pathlib import Path
 import uvicorn
 import os
@@ -3514,11 +3514,14 @@ def create_subscription_checkout(
             frontend_url = os.getenv("FRONTEND_URL", str(request.base_url).rstrip("/"))
             portal_url = get_customer_portal_url(user_id, f"{frontend_url}/subscription", db)
             if portal_url:
-                raise HTTPException(400, {
-                    "error": "User already has an active subscription",
-                    "message": "Please manage your subscription through the customer portal",
-                    "portal_url": portal_url
-                })
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "error": "User already has an active subscription",
+                        "message": "Please manage your subscription through the customer portal",
+                        "portal_url": portal_url
+                    }
+                )
             else:
                 raise HTTPException(400, "User already has an active subscription. Please contact support to change your plan.")
     
@@ -3539,11 +3542,14 @@ def create_subscription_checkout(
         frontend_url = os.getenv("FRONTEND_URL", str(request.base_url).rstrip("/"))
         portal_url = get_customer_portal_url(user_id, f"{frontend_url}/subscription", db)
         if portal_url:
-            raise HTTPException(400, {
-                "error": "User already has an active subscription",
-                "message": str(e),
-                "portal_url": portal_url
-            })
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "error": "User already has an active subscription",
+                    "message": str(e),
+                    "portal_url": portal_url
+                }
+            )
         else:
             raise HTTPException(400, str(e))
 
@@ -3758,10 +3764,26 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                             # Continue anyway - we'll update the new subscription
                 
                 # Update subscription in database
-                updated_subscription = update_subscription_from_stripe(subscription, db)
+                # Ensure subscription has user_id in metadata for update_subscription_from_stripe
+                if not subscription.metadata.get('user_id'):
+                    # Update subscription metadata in Stripe first
+                    try:
+                        stripe.Subscription.modify(
+                            subscription_id,
+                            metadata={'user_id': str(user_id)}
+                        )
+                        logger.info(f"Added user_id to subscription metadata: {subscription_id}")
+                        # Retrieve updated subscription to get fresh metadata
+                        subscription = stripe.Subscription.retrieve(subscription_id)
+                    except Exception as e:
+                        logger.warning(f"Failed to update subscription metadata: {e}")
+                        # Continue anyway - we'll pass user_id as override
+                
+                # Pass user_id as override in case metadata update failed or hasn't propagated
+                updated_subscription = update_subscription_from_stripe(subscription, db, user_id_override=user_id)
                 if not updated_subscription:
-                    logger.error(f"Failed to update subscription {subscription_id} for user {user_id}")
-                    raise HTTPException(500, "Failed to update subscription")
+                    logger.error(f"Failed to update subscription {subscription_id} for user {user_id}. Check logs for details.")
+                    raise HTTPException(500, f"Failed to update subscription {subscription_id}. Check if subscription metadata has user_id.")
                 
                 # Reset tokens for new subscription
                 plan_type = updated_subscription.plan_type
@@ -3832,10 +3854,14 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         logger.info(f"Processed Stripe event: {event['type']} ({event['id']})")
         return {"status": "success"}
         
+    except HTTPException:
+        # Re-raise HTTPExceptions (they're already properly formatted)
+        raise
     except Exception as e:
-        logger.error(f"Error processing Stripe webhook event {event['id']}: {e}", exc_info=True)
-        mark_stripe_event_processed(event["id"], db, error_message=str(e))
-        raise HTTPException(500, "Error processing webhook")
+        error_msg = str(e)
+        logger.error(f"Error processing Stripe webhook event {event['id']} (type: {event.get('type')}): {error_msg}", exc_info=True)
+        mark_stripe_event_processed(event["id"], db, error_message=error_msg)
+        raise HTTPException(500, f"Error processing webhook: {error_msg}")
 
 
 # ============================================================================

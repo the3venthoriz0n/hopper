@@ -133,6 +133,7 @@ function Home() {
   const [tokenBalance, setTokenBalance] = useState(null);
   const [availablePlans, setAvailablePlans] = useState([]);
   const [loadingSubscription, setLoadingSubscription] = useState(false);
+  const [loadingPlanKey, setLoadingPlanKey] = useState(null); // Track which specific plan is loading
   const [notification, setNotification] = useState(null); // For popup notifications
   const [confirmDialog, setConfirmDialog] = useState(null); // For confirmation dialogs
 
@@ -555,6 +556,7 @@ function Home() {
 
   // Handle subscription upgrade
   const handleUpgrade = async (planKey) => {
+    setLoadingPlanKey(planKey); // Set which specific plan is loading
     setLoadingSubscription(true);
     try {
       const res = await axios.post(`${API}/subscription/create-checkout`, { plan_key: planKey });
@@ -566,16 +568,35 @@ function Home() {
       
       // Check if user already has an active subscription
       if (err.response?.status === 400 && err.response?.data?.portal_url) {
-        // User already has subscription - redirect to customer portal
-        setMessage('ℹ️ You already have an active subscription. Opening subscription management...');
-        window.location.href = err.response.data.portal_url;
+        // User already has subscription - show popup and redirect to customer portal
+        setNotification({
+          type: 'error',
+          title: 'Active Subscription Found',
+          message: 'You already have an active subscription. Opening subscription management...'
+        });
+        setTimeout(() => {
+          setNotification(null);
+          window.location.href = err.response.data.portal_url;
+        }, 2000);
       } else if (err.response?.status === 400 && err.response?.data?.message) {
-        // Show the error message from backend
-        setMessage(`ℹ️ ${err.response.data.message}`);
+        // Show the error message from backend as popup
+        setNotification({
+          type: 'error',
+          title: 'Checkout Error',
+          message: err.response.data.message || 'Failed to start checkout. Please try again.'
+        });
+        setTimeout(() => setNotification(null), 8000);
       } else {
-        setMessage('❌ Failed to start checkout. Please try again.');
+        // Generic error popup
+        setNotification({
+          type: 'error',
+          title: 'Checkout Failed',
+          message: err.response?.data?.detail || err.response?.data?.message || 'Failed to start checkout. Please try again.'
+        });
+        setTimeout(() => setNotification(null), 8000);
       }
     } finally {
+      setLoadingPlanKey(null); // Clear loading state
       setLoadingSubscription(false);
     }
   };
@@ -3167,10 +3188,11 @@ function Home() {
                           {availablePlans.map(plan => {
                             const isCurrent = subscription.plan_type === plan.key;
                             const canUpgrade = !isCurrent && plan.key !== 'free' && plan.stripe_price_id;
+                            const isThisPlanLoading = loadingPlanKey === plan.key; // Only this specific plan is loading
                             return (
                               <div 
                                 key={plan.key}
-                                onClick={canUpgrade ? () => handleUpgrade(plan.key) : undefined}
+                                onClick={canUpgrade && !isThisPlanLoading ? () => handleUpgrade(plan.key) : undefined}
                                 style={{
                                   padding: '0.75rem',
                                   background: isCurrent ? 'rgba(99, 102, 241, 0.2)' : 'rgba(255, 255, 255, 0.05)',
@@ -3179,12 +3201,12 @@ function Home() {
                                   display: 'flex',
                                   justifyContent: 'space-between',
                                   alignItems: 'center',
-                                  cursor: canUpgrade ? 'pointer' : 'default',
+                                  cursor: canUpgrade && !isThisPlanLoading ? 'pointer' : 'default',
                                   transition: canUpgrade ? 'all 0.2s ease' : 'none',
-                                  opacity: loadingSubscription && canUpgrade ? 0.6 : 1
+                                  opacity: isThisPlanLoading ? 0.6 : 1
                                 }}
                                 onMouseEnter={(e) => {
-                                  if (canUpgrade && !loadingSubscription) {
+                                  if (canUpgrade && !isThisPlanLoading) {
                                     e.currentTarget.style.background = 'rgba(99, 102, 241, 0.15)';
                                     e.currentTarget.style.border = '1px solid rgba(99, 102, 241, 0.6)';
                                     e.currentTarget.style.transform = 'translateY(-2px)';
@@ -3233,7 +3255,7 @@ function Home() {
                                     borderRadius: '4px',
                                     fontWeight: '600'
                                   }}>
-                                    {loadingSubscription ? '⏳' : '⬆️ Upgrade'}
+                                    {isThisPlanLoading ? '⏳' : '⬆️ Upgrade'}
                                   </span>
                                 ) : null}
                               </div>

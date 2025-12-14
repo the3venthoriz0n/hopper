@@ -111,16 +111,33 @@ def create_checkout_session(user_id: int, price_id: str, success_url: str, cance
             if not customer_id:
                 return None
         
-        # Check Stripe directly for active subscriptions (double-check)
+        # Check Stripe directly for active PAID subscriptions (double-check)
+        # Allow free $0/month subscriptions - users can upgrade from free to paid
         try:
             stripe_subscriptions = stripe.Subscription.list(
                 customer=customer_id,
                 status='active',
                 limit=10
             )
-            if stripe_subscriptions.data:
-                # User has active subscription in Stripe
-                logger.warning(f"User {user_id} has {len(stripe_subscriptions.data)} active subscription(s) in Stripe")
+            # Filter out $0 subscriptions (free plans) - only block paid subscriptions
+            # When listing subscriptions, items might not be fully loaded, so retrieve each one
+            paid_subscriptions = []
+            for sub in stripe_subscriptions.data:
+                try:
+                    # Retrieve full subscription to ensure items are loaded
+                    full_sub = stripe.Subscription.retrieve(sub.id)
+                    # Access items property (it's a ListObject with .data attribute)
+                    if hasattr(full_sub, 'items') and full_sub.items and hasattr(full_sub.items, 'data') and full_sub.items.data:
+                        if len(full_sub.items.data) > 0:
+                            price = full_sub.items.data[0].price
+                            if price and hasattr(price, 'unit_amount') and price.unit_amount and price.unit_amount > 0:
+                                paid_subscriptions.append(full_sub)
+                except (AttributeError, IndexError, TypeError, stripe.error.StripeError) as e:
+                    logger.warning(f"Error checking subscription {sub.id if hasattr(sub, 'id') else 'unknown'} for paid status: {e}")
+                    continue
+            if paid_subscriptions:
+                # User has active PAID subscription in Stripe
+                logger.warning(f"User {user_id} has {len(paid_subscriptions)} active paid subscription(s) in Stripe")
                 raise ValueError(f"User already has an active subscription. Please manage your subscription through the customer portal.")
         except stripe.error.StripeError as e:
             # If error checking Stripe, log but continue (might be network issue)
@@ -415,21 +432,26 @@ def create_stripe_subscription(user_id: int, price_id: str, db: Session) -> Opti
         return None
 
 
-def update_subscription_from_stripe(stripe_subscription: stripe.Subscription, db: Session) -> Optional[Subscription]:
+def update_subscription_from_stripe(stripe_subscription: stripe.Subscription, db: Session, user_id_override: Optional[int] = None) -> Optional[Subscription]:
     """
     Update or create subscription record from Stripe subscription object.
     
     Args:
         stripe_subscription: Stripe subscription object
         db: Database session
+        user_id_override: Optional user_id to use if metadata doesn't have it
         
     Returns:
         Subscription model instance or None if update failed
     """
     try:
-        user_id = int(stripe_subscription.metadata.get('user_id', 0))
+        # Try to get user_id from metadata, or use override
+        user_id = user_id_override
         if not user_id:
-            logger.error(f"No user_id in subscription metadata: {stripe_subscription.id}")
+            user_id = int(stripe_subscription.metadata.get('user_id', 0))
+        
+        if not user_id:
+            logger.error(f"No user_id in subscription metadata or override: {stripe_subscription.id}. Metadata: {stripe_subscription.metadata}")
             return None
         
         # Determine plan type from price ID
@@ -493,7 +515,7 @@ def update_subscription_from_stripe(stripe_subscription: stripe.Subscription, db
         return subscription
         
     except Exception as e:
-        logger.error(f"Error updating subscription from Stripe: {e}", exc_info=True)
+        logger.error(f"Error updating subscription from Stripe (subscription_id: {stripe_subscription.id if hasattr(stripe_subscription, 'id') else 'unknown'}, user_id from metadata: {stripe_subscription.metadata.get('user_id') if hasattr(stripe_subscription, 'metadata') else 'N/A'}): {e}", exc_info=True)
         db.rollback()
         return None
 
