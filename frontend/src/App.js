@@ -1155,6 +1155,36 @@ function Home() {
       return;
     }
     
+    // Check token balance before uploading (only if not unlimited)
+    if (tokenBalance && !tokenBalance.unlimited) {
+      // Get pending videos (pending, failed, or uploading status)
+      const pendingVideos = videos.filter(v => 
+        v.status === 'pending' || v.status === 'failed' || v.status === 'uploading'
+      );
+      
+      // Calculate total tokens required for all pending videos
+      // Only count videos that haven't consumed tokens yet (tokens_consumed === 0)
+      const totalTokensRequired = pendingVideos
+        .filter(v => v.tokens_consumed === 0)
+        .reduce((sum, video) => {
+          const tokensForVideo = calculateTokens(video.file_size_bytes);
+          return sum + tokensForVideo;
+        }, 0);
+      
+      // Check if user has enough tokens
+      if (totalTokensRequired > 0 && tokenBalance.tokens_remaining < totalTokensRequired) {
+        const shortfall = totalTokensRequired - tokenBalance.tokens_remaining;
+        setNotification({
+          type: 'error',
+          title: 'Insufficient Tokens',
+          message: `You need ${totalTokensRequired} tokens to upload ${pendingVideos.length} video${pendingVideos.length === 1 ? '' : 's'}, but you only have ${tokenBalance.tokens_remaining} tokens remaining. You need ${shortfall} more token${shortfall === 1 ? '' : 's'}. Please upgrade your plan or wait for your token balance to reset.`,
+        });
+        // Auto-dismiss after 10 seconds
+        setTimeout(() => setNotification(null), 10000);
+        return;
+      }
+    }
+    
     setIsUploading(true);
     const isScheduling = !globalSettings.upload_immediately;
     setMessage(isScheduling ? '⏳ Scheduling videos...' : '⏳ Uploading...');
@@ -1191,7 +1221,18 @@ function Home() {
       if (pollInterval) clearInterval(pollInterval);
       const errorMsg = err.response?.data?.detail || err.response?.data?.message || err.message || 'Unknown error';
       console.error('Upload error:', err);
-      setMessage(`❌ Upload failed: ${errorMsg}`);
+      
+      // Check if error is token-related and show popup
+      if (errorMsg.toLowerCase().includes('insufficient') || errorMsg.toLowerCase().includes('token')) {
+        setNotification({
+          type: 'error',
+          title: 'Insufficient Tokens',
+          message: errorMsg,
+        });
+        setTimeout(() => setNotification(null), 10000);
+      } else {
+        setMessage(`❌ Upload failed: ${errorMsg}`);
+      }
       
       // Refresh to get real status
       const videosRes = await axios.get(`${API}/videos`);

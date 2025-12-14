@@ -5,10 +5,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY main.py models.py auth.py redis_client.py db_helpers.py encryption.py test_main.py test_security.py ./
+# Copy all Python source files (excluding tests in production, but keeping for now)
+COPY *.py ./
+
+# Copy scripts directory (utility scripts like setup_stripe.py)
+COPY scripts/ ./scripts/
 
 # Note: client_secrets.json is mounted as a volume in docker-compose.yml
 # This allows it to be gitignored and provided at runtime
+# .dockerignore excludes: __pycache__, venv/, uploads/, etc.
 
 EXPOSE 8000
 
