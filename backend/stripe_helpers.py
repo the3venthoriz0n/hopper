@@ -432,26 +432,25 @@ def create_stripe_subscription(user_id: int, price_id: str, db: Session) -> Opti
         return None
 
 
-def update_subscription_from_stripe(stripe_subscription: stripe.Subscription, db: Session, user_id_override: Optional[int] = None) -> Optional[Subscription]:
+def update_subscription_from_stripe(stripe_subscription: stripe.Subscription, db: Session, user_id: Optional[int] = None) -> Optional[Subscription]:
     """
     Update or create subscription record from Stripe subscription object.
     
     Args:
         stripe_subscription: Stripe subscription object
         db: Database session
-        user_id_override: Optional user_id to use if metadata doesn't have it
+        user_id: User ID (required). Falls back to metadata if not provided.
         
     Returns:
         Subscription model instance or None if update failed
     """
     try:
-        # Try to get user_id from metadata, or use override
-        user_id = user_id_override
+        # Use provided user_id, or fall back to metadata
         if not user_id:
             user_id = int(stripe_subscription.metadata.get('user_id', 0))
         
         if not user_id:
-            logger.error(f"No user_id in subscription metadata or override: {stripe_subscription.id}. Metadata: {stripe_subscription.metadata}")
+            logger.error(f"No user_id provided or in subscription metadata: {stripe_subscription.id}. Metadata: {stripe_subscription.metadata}")
             return None
         
         # Determine plan type from price ID

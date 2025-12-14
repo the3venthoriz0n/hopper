@@ -3764,26 +3764,11 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                             # Continue anyway - we'll update the new subscription
                 
                 # Update subscription in database
-                # Ensure subscription has user_id in metadata for update_subscription_from_stripe
-                if not subscription.metadata.get('user_id'):
-                    # Update subscription metadata in Stripe first
-                    try:
-                        stripe.Subscription.modify(
-                            subscription_id,
-                            metadata={'user_id': str(user_id)}
-                        )
-                        logger.info(f"Added user_id to subscription metadata: {subscription_id}")
-                        # Retrieve updated subscription to get fresh metadata
-                        subscription = stripe.Subscription.retrieve(subscription_id)
-                    except Exception as e:
-                        logger.warning(f"Failed to update subscription metadata: {e}")
-                        # Continue anyway - we'll pass user_id as override
-                
-                # Pass user_id as override in case metadata update failed or hasn't propagated
-                updated_subscription = update_subscription_from_stripe(subscription, db, user_id_override=user_id)
+                # Pass user_id directly - we already have it from the checkout session
+                updated_subscription = update_subscription_from_stripe(subscription, db, user_id=user_id)
                 if not updated_subscription:
                     logger.error(f"Failed to update subscription {subscription_id} for user {user_id}. Check logs for details.")
-                    raise HTTPException(500, f"Failed to update subscription {subscription_id}. Check if subscription metadata has user_id.")
+                    raise HTTPException(500, f"Failed to update subscription {subscription_id}.")
                 
                 # Reset tokens for new subscription
                 plan_type = updated_subscription.plan_type
