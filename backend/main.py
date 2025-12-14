@@ -34,7 +34,7 @@ import db_helpers
 from encryption import encrypt, decrypt
 from token_helpers import (
     check_tokens_available, deduct_tokens, add_tokens, get_token_balance, 
-    get_token_transactions, reset_tokens_for_subscription
+    get_token_transactions, reset_tokens_for_subscription, ensure_tokens_synced_for_subscription
 )
 from stripe_config import calculate_tokens_from_bytes, PLANS, ensure_stripe_products, get_plans, get_plan_price_id
 from stripe_helpers import (
@@ -3596,6 +3596,8 @@ def check_checkout_status(
             }
         
         # If subscription mode, check if subscription exists
+        # Note: We do NOT create/update subscriptions here - that's handled by webhook events
+        # This endpoint only checks status and resets tokens if subscription exists and period doesn't match
         subscription_created = False
         subscription_id = None
         if session.mode == "subscription" and session.subscription:
@@ -3604,7 +3606,15 @@ def check_checkout_status(
             sub = db.query(Subscription).filter(
                 Subscription.stripe_subscription_id == subscription_id
             ).first()
-            subscription_created = sub is not None
+            
+            if sub:
+                subscription_created = True
+                # Ensure tokens are synced for this subscription (idempotent)
+                # This handles cases where tokens weren't reset by webhook
+                ensure_tokens_synced_for_subscription(user_id, subscription_id, db)
+            else:
+                # Subscription doesn't exist yet - webhook should create it
+                logger.warning(f"Subscription {subscription_id} not found in database. Webhook may not have fired yet or failed.")
         
         return {
             "status": "completed" if session.payment_status == "paid" else "pending",
@@ -3722,7 +3732,6 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 user_id = None
                 if session.get("metadata") and session["metadata"].get("user_id"):
                     user_id = int(session["metadata"]["user_id"])
-                    logger.info(f"Got user_id {user_id} from checkout session metadata")
                 else:
                     # Fallback: get user_id from customer
                     customer_id = session.get("customer")
@@ -3730,11 +3739,10 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                         user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
                         if user:
                             user_id = user.id
-                            logger.info(f"Got user_id {user_id} from customer lookup")
                 
                 if not user_id:
                     logger.error(f"Could not determine user_id for checkout session {session['id']}")
-                    raise HTTPException(500, "Could not determine user_id from checkout session")
+                    return {"status": "error", "message": "Could not determine user_id"}
                 
                 # Check for existing active subscriptions for this user
                 existing_subscriptions = db.query(Subscription).filter(
@@ -3753,7 +3761,6 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                                 cancel_at_period_end=False  # Cancel immediately
                             )
                             stripe.Subscription.delete(existing_sub.stripe_subscription_id)
-                            logger.info(f"Cancelled existing subscription {existing_sub.stripe_subscription_id} for user {user_id}")
                             
                             # Mark as canceled in database
                             existing_sub.status = 'canceled'
@@ -3771,30 +3778,12 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 if not db_subscription:
                     # Subscription doesn't exist yet - this can happen if checkout.session.completed fires before customer.subscription.created
                     # Log a warning but don't fail - the subscription event will create it and reset tokens
-                    logger.warning(f"Subscription {subscription_id} not found in database for checkout.session.completed. It will be created by customer.subscription.created event.")
-                    # Return success - the subscription will be handled by the subscription events
+                    # Subscription doesn't exist yet - will be created by customer.subscription.created event
                     return {"status": "success", "message": "Subscription will be created by customer.subscription.created event"}
                 
-                # Check if tokens need to be reset (only if period doesn't match - tokens may have already been reset by customer.subscription.created)
-                from token_helpers import get_or_create_token_balance
-                token_balance = get_or_create_token_balance(user_id, db)
-                
-                # Only reset if token balance period doesn't match subscription period (tokens haven't been reset yet)
-                if (token_balance.period_start != db_subscription.current_period_start or 
-                    token_balance.period_end != db_subscription.current_period_end):
-                    plan_type = db_subscription.plan_type
-                    logger.info(f"Resetting tokens for user {user_id}, plan {plan_type} (period mismatch)")
-                    reset_tokens_for_subscription(
-                        user_id,
-                        plan_type,
-                        db_subscription.current_period_start,
-                        db_subscription.current_period_end,
-                        db
-                    )
-                else:
-                    logger.info(f"Tokens already reset for user {user_id}, subscription {subscription_id}")
-                
-                logger.info(f"Successfully processed checkout.session.completed for user {user_id}")
+                # Ensure tokens are synced for this subscription (idempotent)
+                # This handles cases where customer.subscription.created hasn't fired yet or tokens weren't reset
+                ensure_tokens_synced_for_subscription(user_id, subscription_id, db)
         
         elif event["type"] == "customer.subscription.created":
             subscription_data = event["data"]["object"]
@@ -3803,9 +3792,8 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             
             # Get user_id from subscription metadata, or fallback to customer lookup
             user_id = None
-            if subscription.metadata.get("user_id"):
+            if subscription.metadata and subscription.metadata.get("user_id"):
                 user_id = int(subscription.metadata["user_id"])
-                logger.info(f"Got user_id {user_id} from subscription metadata")
             else:
                 # Fallback: get user_id from customer
                 customer_id = subscription.customer
@@ -3813,7 +3801,11 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                     user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
                     if user:
                         user_id = user.id
-                        logger.info(f"Got user_id {user_id} from customer lookup")
+            
+            if not user_id:
+                logger.error(f"Could not determine user_id for subscription {subscription.id}. Metadata: {subscription.metadata}, Customer: {subscription.customer}")
+                # Don't raise - log error and return success to prevent Stripe retries
+                return {"status": "error", "message": "Could not determine user_id"}
             
             # Check if subscription already exists (idempotency)
             existing_subscription = db.query(Subscription).filter(
@@ -3823,10 +3815,14 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             # Update or create subscription
             updated_subscription = update_subscription_from_stripe(subscription, db, user_id=user_id)
             
+            if not updated_subscription:
+                logger.error(f"Failed to create/update subscription {subscription.id} for user {user_id}")
+                # Don't raise - log error and return success to prevent Stripe retries
+                return {"status": "error", "message": "Failed to create/update subscription"}
+            
             # Reset tokens for new subscription (only if it's actually new)
-            if updated_subscription and not existing_subscription:
+            if not existing_subscription:
                 plan_type = updated_subscription.plan_type
-                logger.info(f"Resetting tokens for new subscription: user {user_id}, plan {plan_type}")
                 reset_tokens_for_subscription(
                     user_id,
                     plan_type,
@@ -3842,9 +3838,8 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             
             # Get user_id from subscription metadata, or fallback to customer lookup
             user_id = None
-            if subscription.metadata.get("user_id"):
+            if subscription.metadata and subscription.metadata.get("user_id"):
                 user_id = int(subscription.metadata["user_id"])
-                logger.info(f"Got user_id {user_id} from subscription metadata")
             else:
                 # Fallback: get user_id from customer
                 customer_id = subscription.customer
@@ -3852,12 +3847,21 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                     user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
                     if user:
                         user_id = user.id
-                        logger.info(f"Got user_id {user_id} from customer lookup")
+            
+            if not user_id:
+                logger.error(f"Could not determine user_id for subscription {subscription.id}. Metadata: {subscription.metadata}, Customer: {subscription.customer}")
+                # Don't raise - log error and return success to prevent Stripe retries
+                return {"status": "error", "message": "Could not determine user_id"}
             
             updated_sub = update_subscription_from_stripe(subscription, db, user_id=user_id)
             
+            if not updated_sub:
+                logger.error(f"Failed to update subscription {subscription.id} for user {user_id}")
+                # Don't raise - log error and return success to prevent Stripe retries
+                return {"status": "error", "message": "Failed to update subscription"}
+            
             # If subscription renewed, reset tokens
-            if updated_sub and updated_sub.status == "active":
+            if updated_sub.status == "active":
                 # Check if this is a renewal (period_end is in the future and different from stored)
                 stored_sub = db.query(Subscription).filter(
                     Subscription.stripe_subscription_id == subscription.id
@@ -3902,7 +3906,6 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         # Mark event as processed
         mark_stripe_event_processed(event["id"], db)
         
-        logger.info(f"Processed Stripe event: {event['type']} ({event['id']})")
         return {"status": "success"}
         
     except HTTPException:
@@ -4147,6 +4150,39 @@ def grant_tokens(
     
     logger.info(f"Admin {admin_user.id} granted {request_data.amount} tokens to user {user_id}")
     return {"message": f"Granted {request_data.amount} tokens to user {user_id}"}
+
+
+@app.get("/api/admin/webhooks/events")
+def get_webhook_events(
+    limit: int = Query(50, ge=1, le=200),
+    event_type: Optional[str] = None,
+    admin_user: User = Depends(require_admin_get),
+    db: Session = Depends(get_db)
+):
+    """Get recent Stripe webhook events for debugging"""
+    from models import StripeEvent
+    from sqlalchemy import desc
+    
+    query = db.query(StripeEvent)
+    
+    if event_type:
+        query = query.filter(StripeEvent.event_type == event_type)
+    
+    events = query.order_by(desc(StripeEvent.id)).limit(limit).all()
+    
+    return {
+        "events": [
+            {
+                "id": e.id,
+                "stripe_event_id": e.stripe_event_id,
+                "event_type": e.event_type,
+                "processed": e.processed,
+                "error_message": e.error_message,
+            }
+            for e in events
+        ],
+        "total": len(events)
+    }
 
 
 @app.get("/api/admin/users/{user_id}/transactions")

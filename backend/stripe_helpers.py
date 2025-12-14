@@ -448,7 +448,8 @@ def update_subscription_from_stripe(stripe_subscription: stripe.Subscription, db
     try:
         # Use provided user_id, or fall back to metadata
         if not user_id:
-            user_id = int(stripe_subscription.metadata.get('user_id', 0))
+            if stripe_subscription.metadata and stripe_subscription.metadata.get('user_id'):
+                user_id = int(stripe_subscription.metadata.get('user_id'))
         
         if not user_id:
             logger.error(f"No user_id provided or in subscription metadata: {stripe_subscription.id}. Metadata: {stripe_subscription.metadata}")

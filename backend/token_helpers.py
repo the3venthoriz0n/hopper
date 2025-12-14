@@ -332,6 +332,57 @@ def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: da
         return False
 
 
+def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db: Session) -> bool:
+    """
+    Ensure tokens are properly synced for a subscription.
+    This is idempotent and safe to call multiple times.
+    
+    Checks if token balance period matches subscription period, and resets if needed.
+    This handles cases where webhooks haven't fired yet or tokens weren't reset.
+    
+    Args:
+        user_id: User ID
+        subscription_id: Stripe subscription ID
+        db: Database session
+        
+    Returns:
+        True if tokens are synced (or were already synced), False if subscription not found
+    """
+    try:
+        from models import Subscription
+        
+        # Get subscription from database
+        subscription = db.query(Subscription).filter(
+            Subscription.stripe_subscription_id == subscription_id
+        ).first()
+        
+        if not subscription:
+            logger.debug(f"Subscription {subscription_id} not found in database for user {user_id}")
+            return False
+        
+        # Check if token balance period matches subscription period
+        token_balance = get_or_create_token_balance(user_id, db)
+        
+        # Reset tokens if period doesn't match (idempotent check)
+        if (token_balance.period_start != subscription.current_period_start or 
+            token_balance.period_end != subscription.current_period_end):
+            logger.info(f"Token period mismatch for user {user_id}, subscription {subscription_id}. Resetting tokens.")
+            return reset_tokens_for_subscription(
+                user_id,
+                subscription.plan_type,
+                subscription.current_period_start,
+                subscription.current_period_end,
+                db
+            )
+        else:
+            logger.debug(f"Tokens already synced for user {user_id}, subscription {subscription_id}")
+            return True
+            
+    except Exception as e:
+        logger.error(f"Error ensuring tokens synced for user {user_id}, subscription {subscription_id}: {e}", exc_info=True)
+        return False
+
+
 def get_token_transactions(user_id: int, limit: int = 50, db: Session = None) -> List[Dict[str, Any]]:
     """Get token transaction history for a user"""
     if db is None:
