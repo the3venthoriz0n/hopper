@@ -474,6 +474,52 @@ def get_oauth_token(user_id: int, platform: str, db: Session = None) -> Optional
             db.close()
 
 
+def check_token_expiration(token: Optional[OAuthToken]) -> Dict[str, Any]:
+    """Check if an OAuth token is expired or about to expire
+    
+    Returns:
+        Dict with:
+            - expired: bool - True if token is expired
+            - expires_soon: bool - True if token expires within 24 hours
+            - expires_at: Optional[datetime] - Expiration time
+            - status: str - 'valid', 'expires_soon', or 'expired'
+    """
+    if not token:
+        return {
+            "expired": True,
+            "expires_soon": False,
+            "expires_at": None,
+            "status": "expired"
+        }
+    
+    now = datetime.now(timezone.utc)
+    
+    # If no expiration time, assume it's valid (some tokens don't expire)
+    if not token.expires_at:
+        return {
+            "expired": False,
+            "expires_soon": False,
+            "expires_at": None,
+            "status": "valid"
+        }
+    
+    # Check if expired
+    is_expired = token.expires_at < now
+    
+    # Check if expires within 24 hours
+    time_until_expiry = token.expires_at - now
+    expires_soon = not is_expired and time_until_expiry.total_seconds() < 86400  # 24 hours
+    
+    status = "expired" if is_expired else ("expires_soon" if expires_soon else "valid")
+    
+    return {
+        "expired": is_expired,
+        "expires_soon": expires_soon,
+        "expires_at": token.expires_at,
+        "status": status
+    }
+
+
 def get_all_oauth_tokens(user_id: int, db: Session = None) -> Dict[str, Optional[OAuthToken]]:
     """Get all OAuth tokens for a user in a single query - optimized to prevent N+1
     

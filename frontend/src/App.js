@@ -68,9 +68,9 @@ function Home() {
   const [authLoading, setAuthLoading] = useState(true);
   
   // All state hooks must be declared before any conditional returns (Rules of Hooks)
-  const [youtube, setYoutube] = useState({ connected: false, enabled: false, account: null });
-  const [tiktok, setTiktok] = useState({ connected: false, enabled: false, account: null });
-  const [instagram, setInstagram] = useState({ connected: false, enabled: false, account: null });
+  const [youtube, setYoutube] = useState({ connected: false, enabled: false, account: null, token_status: 'valid' });
+  const [tiktok, setTiktok] = useState({ connected: false, enabled: false, account: null, token_status: 'valid' });
+  const [instagram, setInstagram] = useState({ connected: false, enabled: false, account: null, token_status: 'valid' });
   const [videos, setVideos] = useState([]);
   const [message, setMessage] = useState('');
   const [globalSettings, setGlobalSettings] = useState({
@@ -586,7 +586,10 @@ function Home() {
         setState(prev => ({
           connected: platformData.connected,
           enabled: platformData.enabled,
-          account: platformData.connected ? prev.account : null
+          account: platformData.connected ? prev.account : null,
+          token_status: platformData.token_status || 'valid',
+          token_expired: platformData.token_expired || false,
+          token_expires_soon: platformData.token_expires_soon || false
         }));
       };
       
@@ -1692,7 +1695,9 @@ function Home() {
               width: '10px', 
               height: '10px', 
               borderRadius: '50%', 
-              backgroundColor: youtube.connected ? '#22c55e' : '#ef4444',
+              backgroundColor: youtube.connected 
+                ? (youtube.token_expired ? '#ef4444' : (youtube.token_expires_soon ? '#f59e0b' : '#22c55e'))
+                : '#ef4444',
               flexShrink: 0
             }}></div>
             {youtube.connected && (
@@ -1704,6 +1709,16 @@ function Home() {
                 ) : (
                   'Loading account...'
                 )}
+              </span>
+            )}
+            {youtube.connected && youtube.token_expired && (
+              <span style={{ fontSize: '0.85em', color: '#ef4444', marginLeft: '8px', fontWeight: '500' }}>
+                ⚠️ Token expired - reconnect required
+              </span>
+            )}
+            {youtube.connected && !youtube.token_expired && youtube.token_expires_soon && (
+              <span style={{ fontSize: '0.85em', color: '#f59e0b', marginLeft: '8px', fontWeight: '500' }}>
+                ⚠️ Token expires soon
               </span>
             )}
           </div>
@@ -1853,7 +1868,9 @@ function Home() {
               width: '10px', 
               height: '10px', 
               borderRadius: '50%', 
-              backgroundColor: tiktok.connected ? '#22c55e' : '#ef4444',
+              backgroundColor: tiktok.connected 
+                ? (tiktok.token_expired ? '#ef4444' : (tiktok.token_expires_soon ? '#f59e0b' : '#22c55e'))
+                : '#ef4444',
               flexShrink: 0
             }}></div>
             {tiktok.connected && (
@@ -1865,6 +1882,16 @@ function Home() {
                 ) : (
                   'Loading account...'
                 )}
+              </span>
+            )}
+            {tiktok.connected && tiktok.token_expired && (
+              <span style={{ fontSize: '0.85em', color: '#ef4444', marginLeft: '8px', fontWeight: '500' }}>
+                ⚠️ Token expired - reconnect required
+              </span>
+            )}
+            {tiktok.connected && !tiktok.token_expired && tiktok.token_expires_soon && (
+              <span style={{ fontSize: '0.85em', color: '#f59e0b', marginLeft: '8px', fontWeight: '500' }}>
+                ⚠️ Token expires soon
               </span>
             )}
           </div>
@@ -2021,7 +2048,9 @@ function Home() {
               width: '10px', 
               height: '10px', 
               borderRadius: '50%', 
-              backgroundColor: instagram.connected ? '#22c55e' : '#ef4444',
+              backgroundColor: instagram.connected 
+                ? (instagram.token_expired ? '#ef4444' : (instagram.token_expires_soon ? '#f59e0b' : '#22c55e'))
+                : '#ef4444',
               flexShrink: 0
             }}></div>
             {instagram.connected && (
@@ -2034,6 +2063,16 @@ function Home() {
                 ) : (
                   'Loading account...'
                 )}
+              </span>
+            )}
+            {instagram.connected && instagram.token_expired && (
+              <span style={{ fontSize: '0.85em', color: '#ef4444', marginLeft: '8px', fontWeight: '500' }}>
+                ⚠️ Token expired - reconnect required
+              </span>
+            )}
+            {instagram.connected && !instagram.token_expired && instagram.token_expires_soon && (
+              <span style={{ fontSize: '0.85em', color: '#f59e0b', marginLeft: '8px', fontWeight: '500' }}>
+                ⚠️ Token expires soon
               </span>
             )}
           </div>
@@ -2553,7 +2592,34 @@ function Home() {
                 border: '1px solid rgba(255, 255, 255, 0.1)'
               }}>
                 <div style={{ fontSize: '0.85rem', color: '#999', marginBottom: '0.25rem' }}>Logged in as</div>
-                <div style={{ fontSize: '1rem', fontWeight: '500', color: 'white' }}>{user.email}</div>
+                <div style={{ fontSize: '1rem', fontWeight: '500', color: 'white', marginBottom: '1rem' }}>{user.email}</div>
+                <button 
+                  onClick={handleLogout}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem',
+                    background: 'transparent',
+                    border: '1px solid #666',
+                    borderRadius: '6px',
+                    color: '#999',
+                    cursor: 'pointer',
+                    fontSize: '1rem',
+                    fontWeight: '500',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.target.style.background = 'rgba(255, 255, 255, 0.05)';
+                    e.target.style.borderColor = '#999';
+                    e.target.style.color = 'white';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.target.style.background = 'transparent';
+                    e.target.style.borderColor = '#666';
+                    e.target.style.color = '#999';
+                  }}
+                >
+                  🚪 Logout
+                </button>
               </div>
 
               {/* Subscription & Token Balance */}
@@ -2705,37 +2771,6 @@ function Home() {
                     Loading subscription info...
                   </div>
                 )}
-              </div>
-
-              {/* Logout Button */}
-              <div className="form-group">
-                <button 
-                  onClick={handleLogout}
-                  style={{
-                    width: '100%',
-                    padding: '0.75rem',
-                    background: 'transparent',
-                    border: '1px solid #666',
-                    borderRadius: '6px',
-                    color: '#999',
-                    cursor: 'pointer',
-                    fontSize: '1rem',
-                    fontWeight: '500',
-                    transition: 'all 0.2s'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.target.style.background = 'rgba(255, 255, 255, 0.05)';
-                    e.target.style.borderColor = '#999';
-                    e.target.style.color = 'white';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.target.style.background = 'transparent';
-                    e.target.style.borderColor = '#666';
-                    e.target.style.color = '#999';
-                  }}
-                >
-                  🚪 Logout
-                </button>
               </div>
 
               {/* Danger Zone */}
