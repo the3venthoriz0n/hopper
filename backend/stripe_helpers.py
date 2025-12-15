@@ -121,6 +121,87 @@ def ensure_stripe_customer_exists(user_id: int, db: Session) -> Optional[str]:
     return customer_id
 
 
+def cancel_all_user_subscriptions(user_id: int, db: Session) -> bool:
+    """
+    Cancel all active subscriptions for a user in both Stripe and the database.
+    This ensures a user can only have one subscription at a time.
+    
+    Args:
+        user_id: User ID
+        db: Database session
+        
+    Returns:
+        True if all subscriptions were canceled successfully, False otherwise
+    """
+    if not STRIPE_SECRET_KEY:
+        logger.warning("Cannot cancel subscriptions: STRIPE_SECRET_KEY not set")
+        return False
+    
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            logger.error(f"User {user_id} not found")
+            return False
+        
+        customer_id = user.stripe_customer_id
+        if not customer_id:
+            # No customer ID means no Stripe subscriptions
+            # Still check database for any orphaned subscriptions
+            db_subscriptions = db.query(Subscription).filter(Subscription.user_id == user_id).all()
+            for sub in db_subscriptions:
+                db.delete(sub)
+            if db_subscriptions:
+                db.commit()
+                logger.info(f"Deleted {len(db_subscriptions)} orphaned subscription(s) from database for user {user_id}")
+            return True
+        
+        # Cancel all active subscriptions in Stripe
+        try:
+            stripe_subscriptions = stripe.Subscription.list(
+                customer=customer_id,
+                status='all',  # Get all subscriptions (active, canceled, etc.)
+                limit=100
+            )
+            
+            canceled_count = 0
+            for stripe_sub in stripe_subscriptions.data:
+                # Only cancel active/trialing subscriptions
+                if stripe_sub.status in ('active', 'trialing', 'past_due'):
+                    try:
+                        stripe.Subscription.delete(stripe_sub.id)
+                        canceled_count += 1
+                        logger.info(f"Canceled Stripe subscription {stripe_sub.id} for user {user_id}")
+                    except stripe.error.InvalidRequestError as e:
+                        if 'No such subscription' not in str(e):
+                            logger.warning(f"Failed to cancel Stripe subscription {stripe_sub.id}: {e}")
+                    except Exception as e:
+                        logger.warning(f"Error canceling Stripe subscription {stripe_sub.id}: {e}")
+            
+            if canceled_count > 0:
+                logger.info(f"Canceled {canceled_count} Stripe subscription(s) for user {user_id}")
+        except stripe.error.StripeError as e:
+            logger.warning(f"Error listing Stripe subscriptions for customer {customer_id}: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error canceling Stripe subscriptions for user {user_id}: {e}", exc_info=True)
+        
+        # Delete all subscriptions from database (cascade will handle related records)
+        db_subscriptions = db.query(Subscription).filter(Subscription.user_id == user_id).all()
+        deleted_count = len(db_subscriptions)
+        for sub in db_subscriptions:
+            db.delete(sub)
+        
+        if deleted_count > 0:
+            db.commit()
+            logger.info(f"Deleted {deleted_count} subscription(s) from database for user {user_id}")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error canceling all subscriptions for user {user_id}: {e}", exc_info=True)
+        db.rollback()
+        return False
+
+
 def delete_stripe_customer(customer_id: str, user_id: Optional[int] = None) -> bool:
     """
     Delete a Stripe customer. This automatically cancels all subscriptions.
@@ -470,6 +551,7 @@ def get_customer_portal_url(user_id: int, return_url: str, db: Session) -> Optio
 def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription]:
     """
     Create a free subscription for a new user via Stripe.
+    Cancels all existing subscriptions first to ensure only one subscription exists.
     
     Args:
         user_id: User ID
@@ -483,10 +565,8 @@ def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription
         return None
     
     try:
-        existing = db.query(Subscription).filter(Subscription.user_id == user_id).first()
-        if existing:
-            logger.info(f"User {user_id} already has a subscription")
-            return existing
+        # Cancel all existing subscriptions first to ensure only one subscription exists
+        cancel_all_user_subscriptions(user_id, db)
         
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
@@ -556,6 +636,7 @@ def create_unlimited_subscription(
 ) -> Optional[Subscription]:
     """
     Create an unlimited subscription via Stripe (admin feature).
+    Cancels all existing subscriptions first to ensure only one subscription exists.
     
     Args:
         user_id: User ID
@@ -588,17 +669,8 @@ def create_unlimited_subscription(
             logger.error("Unlimited plan price ID not configured")
             return None
         
-        # Cancel any existing subscriptions first
-        existing = db.query(Subscription).filter(Subscription.user_id == user_id).first()
-        if existing:
-            # Cancel existing Stripe subscription if it's a real one
-            if (existing.stripe_subscription_id and 
-                not existing.stripe_subscription_id.startswith(('free_', 'unlimited_'))):
-                try:
-                    stripe.Subscription.delete(existing.stripe_subscription_id)
-                    logger.info(f"Canceled existing subscription {existing.stripe_subscription_id} for user {user_id}")
-                except stripe.error.StripeError as e:
-                    logger.warning(f"Failed to cancel existing subscription: {e}")
+        # Cancel all existing subscriptions first to ensure only one subscription exists
+        cancel_all_user_subscriptions(user_id, db)
         
         # Create Stripe subscription for unlimited plan
         stripe_subscription = stripe.Subscription.create(

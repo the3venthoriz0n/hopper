@@ -4309,33 +4309,26 @@ def enroll_unlimited_plan(
     admin_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
-    """Enroll a user in the unlimited plan via Stripe (admin only)."""
-    import stripe
+    """Enroll a user in the unlimited plan via Stripe (admin only).
+    Cancels all existing subscriptions first to ensure only one subscription exists."""
+    from stripe_helpers import cancel_all_user_subscriptions
     
     target_user = db.query(User).filter(User.id == target_user_id).first()
     if not target_user:
         raise HTTPException(404, "User not found")
     
-    # Check if user already has a subscription
+    # Check if user already has unlimited plan
     existing_subscription = db.query(Subscription).filter(Subscription.user_id == target_user_id).first()
+    if existing_subscription and existing_subscription.plan_type == 'unlimited':
+        return {"message": f"User {target_user_id} already has unlimited plan"}
     
-    if existing_subscription:
-        # If user already has unlimited plan, return success
-        if existing_subscription.plan_type == 'unlimited':
-            return {"message": f"User {target_user_id} already has unlimited plan"}
-        
-        # Cancel existing subscription in Stripe (all subscriptions are now Stripe subscriptions)
-        if existing_subscription.stripe_subscription_id:
-            try:
-                stripe.Subscription.delete(existing_subscription.stripe_subscription_id)
-                logger.info(f"Cancelled existing subscription {existing_subscription.stripe_subscription_id} for user {target_user_id}")
-            except Exception as e:
-                logger.warning(f"Failed to cancel existing Stripe subscription: {e}")
-    
-    # Preserve current token balance before enrolling in unlimited
+    # Preserve current token balance before canceling subscriptions and enrolling in unlimited
     from token_helpers import get_or_create_token_balance
     token_balance = get_or_create_token_balance(target_user_id, db)
     preserved_tokens = token_balance.tokens_remaining
+    
+    # Cancel all existing subscriptions first to ensure only one subscription exists
+    cancel_all_user_subscriptions(target_user_id, db)
     
     # Create unlimited subscription via Stripe
     subscription = create_unlimited_subscription(target_user_id, preserved_tokens, db)
