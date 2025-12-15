@@ -730,7 +730,7 @@ def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription
                         logger.error(f"Final attempt failed to cancel subscription {sub.id}: {e}")
                 return None
         
-        user = db.query(User).filter(User.id == user_id).first()
+        # At this point we should still have a valid user from the previous lookup
         if not user:
             logger.error(f"User {user_id} not found")
             return None
