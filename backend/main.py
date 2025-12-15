@@ -4571,7 +4571,10 @@ def delete_user_admin(
     admin_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
-    """Delete a user (admin only)"""
+    """Delete a user (admin only). Deletes Stripe customer (which automatically cancels all subscriptions) before deletion."""
+    import stripe
+    from stripe_config import STRIPE_SECRET_KEY
+    
     # Prevent admin from deleting themselves
     if target_user_id == admin_user.id:
         raise HTTPException(400, "Cannot delete your own account")
@@ -4583,7 +4586,52 @@ def delete_user_admin(
     user_email = target_user.email
     
     try:
-        # Delete user (cascade will handle related records)
+        # Delete Stripe customer if it exists
+        # Note: Deleting a Stripe customer automatically cancels all their subscriptions
+        if target_user.stripe_customer_id and STRIPE_SECRET_KEY:
+            try:
+                # Verify it's a valid Stripe customer ID (starts with 'cus_')
+                if target_user.stripe_customer_id.startswith('cus_'):
+                    # Delete the customer in Stripe
+                    # This automatically cancels all subscriptions for this customer
+                    stripe.Customer.delete(target_user.stripe_customer_id)
+                    logger.info(
+                        f"✅ Deleted Stripe customer {target_user.stripe_customer_id} for user {target_user_id} "
+                        f"(subscriptions automatically canceled by Stripe)"
+                    )
+                else:
+                    logger.warning(
+                        f"⚠️  Customer ID {target_user.stripe_customer_id} for user {target_user_id} "
+                        f"doesn't appear to be a Stripe customer (doesn't start with 'cus_'). "
+                        f"Skipping Stripe customer deletion."
+                    )
+            except stripe.error.InvalidRequestError as e:
+                # Customer might already be deleted or not exist in Stripe
+                error_str = str(e)
+                if 'No such customer' in error_str:
+                    logger.info(
+                        f"ℹ️  Customer {target_user.stripe_customer_id} not found in Stripe "
+                        f"(may already be deleted). Continuing with user deletion."
+                    )
+                else:
+                    logger.warning(
+                        f"⚠️  Failed to delete Stripe customer {target_user.stripe_customer_id} "
+                        f"for user {target_user_id}: {e}. Continuing with user deletion."
+                    )
+            except stripe.error.StripeError as e:
+                logger.warning(
+                    f"⚠️  Stripe error deleting customer {target_user.stripe_customer_id} "
+                    f"for user {target_user_id}: {e}. Continuing with user deletion."
+                )
+            except Exception as e:
+                logger.error(
+                    f"❌ Unexpected error deleting Stripe customer for user {target_user_id}: {e}",
+                    exc_info=True
+                )
+                # Continue with deletion even if Stripe customer deletion fails
+                # This ensures user deletion isn't blocked by Stripe issues
+        
+        # Delete user (cascade will handle related records including subscription)
         db.delete(target_user)
         db.commit()
         
