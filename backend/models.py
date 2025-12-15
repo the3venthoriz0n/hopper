@@ -27,6 +27,7 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     stripe_customer_id = Column(String(255), nullable=True, index=True)  # Stripe customer ID
     is_admin = Column(Boolean, default=False, nullable=False)  # Admin role flag
+    is_email_verified = Column(Boolean, default=False, nullable=False)  # Email verification status
     
     # Relationships
     videos = relationship("Video", back_populates="user", cascade="all, delete-orphan")

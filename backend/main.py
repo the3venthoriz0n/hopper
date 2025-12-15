@@ -65,16 +65,24 @@ from encryption import decrypt, encrypt
 
 # Local imports - Token & Stripe
 from stripe_config import (
-    PLANS, calculate_tokens_from_bytes, ensure_stripe_products,
-    get_plan_price_id, get_plans
+    PLANS,
+    calculate_tokens_from_bytes,
+    ensure_stripe_products,
+    get_plan_price_id,
+    get_plans,
 )
 from stripe_helpers import (
-    create_checkout_session, create_free_subscription,
-    create_stripe_customer, create_unlimited_subscription,
-    get_customer_portal_url, get_subscription_info,
-    log_stripe_event, mark_stripe_event_processed,
-    update_subscription_from_stripe
+    create_checkout_session,
+    create_free_subscription,
+    create_stripe_customer,
+    create_unlimited_subscription,
+    get_customer_portal_url,
+    get_subscription_info,
+    log_stripe_event,
+    mark_stripe_event_processed,
+    update_subscription_from_stripe,
 )
+from email_utils import send_verification_email
 from token_helpers import (
     add_tokens, check_tokens_available, deduct_tokens,
     ensure_tokens_synced_for_subscription, get_token_balance,
@@ -354,6 +362,48 @@ HTTPXClientInstrumentor().instrument()
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
+
+
+class VerifyEmailRequest(BaseModel):
+    email: EmailStr
+    code: str
+
+
+@app.post("/api/auth/verify-email")
+def verify_email(request_data: VerifyEmailRequest):
+    """Verify a user's email address using a one-time code."""
+    email = request_data.email
+    code = request_data.code.strip()
+
+    # Look up expected code in Redis
+    expected_code = redis_client.get_email_verification_code(email)
+    if not expected_code or expected_code != code:
+        raise HTTPException(400, "Invalid or expired verification code")
+
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            raise HTTPException(404, "User not found")
+
+        # Mark email as verified
+        user.is_email_verified = True
+        db.commit()
+
+        # Remove used code
+        redis_client.delete_email_verification_code(email)
+
+        return {
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "created_at": user.created_at.isoformat(),
+                "is_admin": user.is_admin,
+                "is_email_verified": True,
+            }
+        }
+    finally:
+        db.close()
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -1231,7 +1281,7 @@ def register(request_data: RegisterRequest, request: Request, response: Response
         if len(request_data.password) < 8:
             raise HTTPException(400, "Password must be at least 8 characters long")
         
-        # Create user
+        # Create user (unverified email by default)
         user = create_user(request_data.email, request_data.password)
         
         # Create Stripe customer and free subscription (non-blocking, log errors but don't fail registration)
@@ -1248,29 +1298,31 @@ def register(request_data: RegisterRequest, request: Request, response: Response
         except Exception as e:
             logger.warning(f"Error creating Stripe customer/subscription during registration: {e}")
         
-        # Create session
-        session_id = secrets.token_urlsafe(32)
-        redis_client.set_session(session_id, user.id)
-        
-        # Set session cookie with proper domain handling
-        set_auth_cookie(response, session_id, request)
+        # Generate and store email verification code
+        verification_code = secrets.token_urlsafe(4).replace("_", "").replace("-", "")[:6]
+        redis_client.set_email_verification_code(user.email, verification_code)
 
-        # Update active users gauge immediately after successful registration/login
+        # Send verification email (best-effort, but do not fail registration on email issues)
         try:
-            active_users = update_active_users_gauge_from_sessions()
-            logger.debug(f"Updated active users count after register: {active_users}")
+            send_verification_email(user.email, verification_code)
         except Exception:
-            logger.debug("Failed to update active users gauge after register", exc_info=True)
-        
-        logger.info(f"User registered: {user.email} (ID: {user.id})")
-        
+            logger.warning(
+                f"Failed to send verification email to {user.email}",
+                exc_info=True,
+            )
+
+        logger.info(f"User registered (verification required): {user.email} (ID: {user.id})")
+
+        # Do not create a session until email is verified
         return {
             "user": {
                 "id": user.id,
                 "email": user.email,
                 "created_at": user.created_at.isoformat(),
-                "is_admin": user.is_admin
-            }
+                "is_admin": user.is_admin,
+                "is_email_verified": getattr(user, "is_email_verified", False),
+            },
+            "requires_email_verification": True,
         }
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -1289,7 +1341,11 @@ def login(request_data: LoginRequest, request: Request, response: Response):
             # Track failed login attempt
             login_attempts_counter.labels(status="failure", method="email").inc()
             raise HTTPException(401, "Invalid email or password")
-        
+
+        # Require email verification before allowing login
+        if not getattr(user, "is_email_verified", False):
+            raise HTTPException(403, "Email address not verified")
+
         # Create session
         session_id = secrets.token_urlsafe(32)
         redis_client.set_session(session_id, user.id)

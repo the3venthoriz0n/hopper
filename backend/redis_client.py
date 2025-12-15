@@ -91,6 +91,7 @@ def get_rate_limit_count(identifier: str) -> int:
 # Cache TTLs
 SETTINGS_CACHE_TTL = 5 * 60  # 5 minutes
 OAUTH_TOKEN_CACHE_TTL = 60  # 1 minute
+EMAIL_VERIFICATION_TTL = 10 * 60  # 10 minutes
 
 
 def get_cached_settings(user_id: int, category: str) -> Optional[Dict]:
@@ -211,3 +212,21 @@ def invalidate_all_user_caches(user_id: int) -> int:
     # Sessions will expire naturally or can be deleted individually if known
     
     return deleted_count
+
+
+def set_email_verification_code(email: str, code: str) -> None:
+    """Store email verification code in Redis with a short TTL."""
+    key = f"email_verification:{email}"
+    redis_client.setex(key, EMAIL_VERIFICATION_TTL, code)
+
+
+def get_email_verification_code(email: str) -> Optional[str]:
+    """Retrieve stored email verification code for an email."""
+    key = f"email_verification:{email}"
+    return redis_client.get(key)
+
+
+def delete_email_verification_code(email: str) -> None:
+    """Delete email verification code for an email."""
+    key = f"email_verification:{email}"
+    redis_client.delete(key)
