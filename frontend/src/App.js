@@ -184,20 +184,6 @@ function PublicLanding() {
             >
               Log in / Sign up
             </Link>
-            <a
-              href="mailto:andrewkpln+hopper@gmail.com"
-              style={{
-                padding: '0.75rem 1.4rem',
-                borderRadius: '999px',
-                border: '1px solid rgba(148, 163, 184, 0.6)',
-                color: '#e5e7eb',
-                textDecoration: 'none',
-                fontSize: '0.95rem',
-                background: 'rgba(15, 23, 42, 0.7)',
-              }}
-            >
-              Contact support
-            </a>
           </div>
         </div>
       </main>
@@ -293,6 +279,8 @@ function Home() {
   const [newWord, setNewWord] = useState('');
   const [wordbankExpanded, setWordbankExpanded] = useState(false);
   const [maxFileSize, setMaxFileSize] = useState(null);
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [showDangerZone, setShowDangerZone] = useState(false);
   
   // Subscription & token state
   const [subscription, setSubscription] = useState(null);
@@ -3346,7 +3334,7 @@ function Home() {
             </div>
             
             <div className="modal-body">
-              {/* Account Info */}
+              {/* Account Info + inline Change Password */}
               <div className="form-group" style={{ 
                 padding: '1rem', 
                 background: 'rgba(255, 255, 255, 0.05)', 
@@ -3354,7 +3342,102 @@ function Home() {
                 border: '1px solid rgba(255, 255, 255, 0.1)'
               }}>
                 <div style={{ fontSize: '0.85rem', color: '#999', marginBottom: '0.25rem' }}>Logged in as</div>
-                <div style={{ fontSize: '1rem', fontWeight: '500', color: 'white', marginBottom: '1rem' }}>{user.email}</div>
+                <div style={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'center',
+                  marginBottom: '0.75rem'
+                }}>
+                  <div style={{ fontSize: '1rem', fontWeight: '500', color: 'white' }}>{user.email}</div>
+                  <button
+                    type="button"
+                    onClick={() => setShowChangePassword(!showChangePassword)}
+                    style={{
+                      padding: '0.3rem 0.6rem',
+                      background: 'transparent',
+                      borderRadius: '999px',
+                      border: '1px solid rgba(255,255,255,0.25)',
+                      color: '#e5e7eb',
+                      cursor: 'pointer',
+                      fontSize: '0.8rem'
+                    }}
+                  >
+                    {showChangePassword ? 'Hide password form' : 'Change password'}
+                  </button>
+                </div>
+                {showChangePassword && (
+                  <div style={{ marginBottom: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <p style={{ color: '#999', fontSize: '0.85rem', marginBottom: '0.25rem' }}>
+                      Set or update your password for email-based login.
+                    </p>
+                    <input
+                      type="password"
+                      placeholder="Current password"
+                      onChange={(e) => {
+                        window.__hopperCurrentPassword = e.target.value;
+                      }}
+                      style={{
+                        padding: '0.6rem',
+                        background: 'rgba(0,0,0,0.3)',
+                        borderRadius: '6px',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        color: '#fff',
+                        fontSize: '0.9rem'
+                      }}
+                    />
+                    <input
+                      type="password"
+                      placeholder="New password (min 8 characters)"
+                      onChange={(e) => {
+                        window.__hopperNewPassword = e.target.value;
+                      }}
+                      minLength={8}
+                      style={{
+                        padding: '0.6rem',
+                        background: 'rgba(0,0,0,0.3)',
+                        borderRadius: '6px',
+                        border: '1px solid rgba(255,255,255,0.15)',
+                        color: '#fff',
+                        fontSize: '0.9rem'
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const current = window.__hopperCurrentPassword || '';
+                        const next = window.__hopperNewPassword || '';
+                        if (!next || next.length < 8) {
+                          setMessage('❌ New password must be at least 8 characters long');
+                          return;
+                        }
+                        try {
+                          const payload = { current_password: current, new_password: next };
+                          await axios.post(`${API}/auth/change-password`, payload);
+                          setMessage('✅ Password changed successfully');
+                          window.__hopperCurrentPassword = '';
+                          window.__hopperNewPassword = '';
+                          setShowChangePassword(false);
+                        } catch (err) {
+                          const errorMsg = err.response?.data?.detail || err.message || 'Failed to change password';
+                          setMessage(`❌ ${errorMsg}`);
+                        }
+                      }}
+                      style={{
+                        marginTop: '0.25rem',
+                        padding: '0.6rem',
+                        background: 'rgba(34, 197, 94, 0.4)',
+                        borderRadius: '6px',
+                        border: '1px solid rgba(34,197,94,0.7)',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        fontSize: '0.9rem',
+                        fontWeight: 500
+                      }}
+                    >
+                      Update Password
+                    </button>
+                  </div>
+                )}
                 <button 
                   onClick={handleLogout}
                   style={{
@@ -3661,7 +3744,7 @@ function Home() {
                 )}
               </div>
 
-              {/* Danger Zone */}
+              {/* Danger Zone (collapsed by default) */}
               <div style={{ 
                 marginTop: '1rem', 
                 padding: '1.5rem', 
@@ -3669,43 +3752,64 @@ function Home() {
                 border: '1px solid rgba(239, 68, 68, 0.3)',
                 borderRadius: '8px' 
               }}>
-                <h3 style={{ color: '#ef4444', marginBottom: '0.75rem', fontSize: '1.1rem', marginTop: 0 }}>
-                  ⚠️ Danger Zone
-                </h3>
-                <p style={{ color: '#999', marginBottom: '1rem', fontSize: '0.9rem', lineHeight: '1.5' }}>
-                  Once you delete your account, there is no going back. This will permanently delete:
-                </p>
-                <ul style={{ color: '#999', marginBottom: '1rem', fontSize: '0.85rem', paddingLeft: '1.25rem', lineHeight: '1.6' }}>
-                  <li>Your account and login credentials</li>
-                  <li>All uploaded videos and files</li>
-                  <li>All settings and preferences</li>
-                  <li>All connected accounts (YouTube, TikTok, Instagram)</li>
-                </ul>
-                <button 
-                  onClick={() => setShowDeleteConfirm(true)}
+                <button
+                  type="button"
+                  onClick={() => setShowDangerZone(!showDangerZone)}
                   style={{
                     width: '100%',
-                    padding: '0.75rem',
-                    background: '#ef4444',
-                    color: 'white',
-                    border: 'none',
+                    padding: '0.6rem 0.75rem',
+                    background: 'transparent',
+                    border: '1px solid rgba(239,68,68,0.6)',
                     borderRadius: '6px',
+                    color: '#ef4444',
                     cursor: 'pointer',
-                    fontSize: '0.95rem',
-                    fontWeight: '600',
-                    transition: 'all 0.2s'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.target.style.background = '#dc2626';
-                    e.target.style.transform = 'translateY(-2px)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.target.style.background = '#ef4444';
-                    e.target.style.transform = 'translateY(0)';
+                    fontSize: '0.9rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between'
                   }}
                 >
-                  Delete My Account
+                  <span>⚠️ Delete My Account</span>
+                  <span style={{ opacity: 0.7 }}>{showDangerZone ? '▴' : '▾'}</span>
                 </button>
+                {showDangerZone && (
+                  <>
+                    <p style={{ color: '#999', marginTop: '1rem', marginBottom: '1rem', fontSize: '0.9rem', lineHeight: '1.5' }}>
+                      Once you delete your account, there is no going back. This will permanently delete:
+                    </p>
+                    <ul style={{ color: '#999', marginBottom: '1rem', fontSize: '0.85rem', paddingLeft: '1.25rem', lineHeight: '1.6' }}>
+                      <li>Your account and login credentials</li>
+                      <li>All uploaded videos and files</li>
+                      <li>All settings and preferences</li>
+                      <li>All connected accounts (YouTube, TikTok, Instagram)</li>
+                    </ul>
+                    <button 
+                      onClick={() => setShowDeleteConfirm(true)}
+                      style={{
+                        width: '100%',
+                        padding: '0.75rem',
+                        background: '#ef4444',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '0.95rem',
+                        fontWeight: '600',
+                        transition: 'all 0.2s'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.target.style.background = '#dc2626';
+                        e.target.style.transform = 'translateY(-2px)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.background = '#ef4444';
+                        e.target.style.transform = 'translateY(0)';
+                      }}
+                    >
+                      Delete My Account
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>

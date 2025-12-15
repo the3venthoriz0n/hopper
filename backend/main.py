@@ -363,6 +363,11 @@ class SetPasswordRequest(BaseModel):
     password: str
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
 class CheckoutRequest(BaseModel):
     plan_key: str
 
@@ -1420,6 +1425,37 @@ def set_password(request_data: SetPasswordRequest, user_id: int = Depends(requir
     except Exception as e:
         logger.error(f"Set password error: {e}", exc_info=True)
         raise HTTPException(500, "Failed to set password")
+
+
+@app.post("/api/auth/change-password")
+def change_password(request_data: ChangePasswordRequest, user_id: int = Depends(require_auth)):
+    """
+    Change password for the currently authenticated user.
+
+    Requires the current password and a new password (min 8 chars).
+    """
+    try:
+        if len(request_data.new_password) < 8:
+            raise HTTPException(400, "New password must be at least 8 characters long")
+
+        user = get_user_by_id(user_id)
+        if not user or not user.password_hash:
+            raise HTTPException(400, "Password login is not enabled for this account")
+
+        if not verify_password(request_data.current_password, user.password_hash):
+            raise HTTPException(401, "Current password is incorrect")
+
+        success = set_user_password(user_id, request_data.new_password)
+        if not success:
+            raise HTTPException(404, "User not found")
+
+        logger.info(f"User {user_id} changed password successfully")
+        return {"message": "Password changed successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Change password error: {e}", exc_info=True)
+        raise HTTPException(500, "Failed to change password")
 
 
 @app.get("/api/auth/me")
@@ -4497,6 +4533,31 @@ def get_user_details(
             "status": subscription.status if subscription else None
         } if subscription else None
     }
+
+
+@app.post("/api/admin/users/{target_user_id}/reset-password")
+def admin_reset_user_password(
+    target_user_id: int,
+    request_data: SetPasswordRequest,
+    admin_user: User = Depends(require_admin),
+):
+    """
+    Reset a user's password (admin only).
+
+    This uses the same password validation as the self-service set-password endpoint
+    and allows admins (including resetting their own password) to help users regain access
+    without exposing existing hashes.
+    """
+    # Basic password validation
+    if len(request_data.password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters long")
+
+    success = set_user_password(target_user_id, request_data.password)
+    if not success:
+        raise HTTPException(404, "User not found")
+
+    logger.info(f"Admin {admin_user.id} reset password for user {target_user_id}")
+    return {"message": "Password reset successfully"}
 
 
 @app.post("/api/admin/users/{user_id}/grant-tokens")

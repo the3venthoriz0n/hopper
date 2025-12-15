@@ -64,6 +64,7 @@ function AdminDashboard() {
   const [newUserIsAdmin, setNewUserIsAdmin] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [userToDelete, setUserToDelete] = useState(null);
+  const [resetPassword, setResetPassword] = useState('');
 
   // Fetch CSRF token on mount
   useEffect(() => {
@@ -279,6 +280,31 @@ function AdminDashboard() {
     loadUsers();
   };
 
+  const handleResetPassword = async (userId) => {
+    if (!resetPassword || resetPassword.length < 8) {
+      setMessage('❌ New password must be at least 8 characters long');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await axios.post(
+        `${API}/admin/users/${userId}/reset-password`,
+        { password: resetPassword },
+        { 
+          headers: { 'X-CSRF-Token': csrfToken },
+          withCredentials: true
+        }
+      );
+      setMessage('✅ Password reset successfully');
+      setResetPassword('');
+    } catch (err) {
+      setMessage(`❌ Error resetting password: ${err.response?.data?.detail || err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div style={{
       minHeight: '100vh',
@@ -296,7 +322,7 @@ function AdminDashboard() {
         }}>
           <h1 style={{ color: '#fff', margin: 0, fontSize: '2rem' }}>🔐 Admin Dashboard</h1>
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate('/app')}
             style={{
               padding: '0.5rem 1rem',
               background: 'rgba(255, 255, 255, 0.1)',
@@ -681,6 +707,45 @@ function AdminDashboard() {
                           }}
                         >
                           Grant Tokens
+                        </button>
+                      </div>
+                    </div>
+
+                    <div style={{ marginBottom: '1.5rem' }}>
+                      <h3 style={{ color: '#fff', fontSize: '1rem', marginBottom: '0.75rem' }}>Reset User Password</h3>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        <input
+                          type="password"
+                          value={resetPassword}
+                          onChange={(e) => setResetPassword(e.target.value)}
+                          placeholder="New password (min 8 characters)"
+                          minLength={8}
+                          style={{
+                            padding: '0.5rem',
+                            background: 'rgba(0, 0, 0, 0.3)',
+                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            borderRadius: '4px',
+                            color: '#fff',
+                            fontSize: '0.9rem'
+                          }}
+                        />
+                        <button
+                          onClick={() => handleResetPassword(selectedUser.id)}
+                          disabled={loading || !resetPassword || resetPassword.length < 8}
+                          style={{
+                            padding: '0.75rem',
+                            background: loading || !resetPassword || resetPassword.length < 8
+                              ? 'rgba(255, 255, 255, 0.05)'
+                              : 'rgba(239, 68, 68, 0.4)',
+                            border: '1px solid rgba(239, 68, 68, 0.7)',
+                            borderRadius: '4px',
+                            color: '#fff',
+                            cursor: loading || !resetPassword || resetPassword.length < 8 ? 'not-allowed' : 'pointer',
+                            fontSize: '0.9rem',
+                            fontWeight: '500'
+                          }}
+                        >
+                          Reset Password
                         </button>
                       </div>
                     </div>
