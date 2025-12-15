@@ -4362,31 +4362,16 @@ def unenroll_unlimited_plan(
     if subscription.plan_type != 'unlimited':
         raise HTTPException(400, f"User is not on unlimited plan (current: {subscription.plan_type})")
     
-    # Get preserved token balance before deleting subscription
+    # Get preserved token balance before canceling subscriptions
     preserved_tokens = subscription.preserved_tokens_balance if subscription.preserved_tokens_balance is not None else 0
-    
-    # Cancel Stripe subscription (all subscriptions are now Stripe subscriptions)
-    if subscription.stripe_subscription_id:
-        try:
-            stripe.Subscription.delete(subscription.stripe_subscription_id)
-            logger.info(f"Cancelled Stripe subscription {subscription.stripe_subscription_id} for user {target_user_id}")
-        except stripe.error.StripeError as e:
-            logger.warning(f"Failed to cancel Stripe subscription: {e}")
-            # Continue anyway - we'll still update the database
-    
-    # Delete subscription from database before creating free subscription
-    # This prevents create_free_subscription from trying to cancel it again
-    old_subscription_id = subscription.stripe_subscription_id
-    db.delete(subscription)
-    db.commit()
     
     # Get free plan monthly tokens before creating subscription
     from stripe_config import get_plan_monthly_tokens
     free_plan_monthly_tokens = get_plan_monthly_tokens('free')
     
-    # Create free subscription to replace it
-    # Note: create_free_subscription will call cancel_all_user_subscriptions and reset_tokens_for_subscription
-    # which will ADD free plan tokens to the current balance. We need to account for this.
+    # Cancel all existing subscriptions and create free subscription
+    # create_free_subscription will handle canceling all subscriptions (including this one)
+    # and ensure only one subscription exists
     free_subscription = create_free_subscription(target_user_id, db)
     if not free_subscription:
         raise HTTPException(500, "Failed to create free subscription")
