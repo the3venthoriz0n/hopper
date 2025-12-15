@@ -259,19 +259,19 @@ def delete_pending_registration(email: str) -> None:
     redis_client.delete(key)
 
 
-def set_password_reset_code(email: str, code: str) -> None:
-    """Store password reset code for an email."""
-    key = f"password_reset:{email}"
-    redis_client.setex(key, PASSWORD_RESET_TTL, code)
+def set_password_reset_token(token: str, email: str) -> None:
+    """Store password reset token with associated email."""
+    key = f"password_reset_token:{token}"
+    redis_client.setex(key, PASSWORD_RESET_TTL, email)
 
 
-def get_password_reset_code(email: str) -> Optional[str]:
-    """Retrieve password reset code for an email."""
-    key = f"password_reset:{email}"
+def get_password_reset_email(token: str) -> Optional[str]:
+    """Retrieve email associated with a password reset token."""
+    key = f"password_reset_token:{token}"
     return redis_client.get(key)
 
 
-def delete_password_reset_code(email: str) -> None:
-    """Delete password reset code for an email."""
-    key = f"password_reset:{email}"
+def delete_password_reset_token(token: str) -> None:
+    """Delete password reset token."""
+    key = f"password_reset_token:{token}"
     redis_client.delete(key)

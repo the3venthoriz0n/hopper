@@ -30,7 +30,7 @@ function Login({ onLoginSuccess }) {
   const [verificationCode, setVerificationCode] = useState('');
   const [resending, setResending] = useState(false);
   const [showPasswordReset, setShowPasswordReset] = useState(false);
-  const [resetCode, setResetCode] = useState('');
+  const [resetToken, setResetToken] = useState('');
   const [sendingReset, setSendingReset] = useState(false);
   const [resettingPassword, setResettingPassword] = useState(false);
   
@@ -56,10 +56,10 @@ function Login({ onLoginSuccess }) {
       window.history.replaceState({}, '', window.location.pathname);
     }
 
-    // If arriving from a password reset link, open the reset UI and prefill values
-    if (resetEmail && resetCodeParam) {
-      setEmail(resetEmail);
-      setResetCode(resetCodeParam.toUpperCase().slice(0, 6));
+    // If arriving from a password reset link, open the reset UI
+    const resetTokenParam = urlParams.get('reset_token');
+    if (resetTokenParam) {
+      setResetToken(resetTokenParam);
       setShowPasswordReset(true);
       setShowVerification(false);
       setMessage('Enter a new password to complete your reset.');
@@ -109,7 +109,8 @@ function Login({ onLoginSuccess }) {
         }
       }, 500);
     } catch (err) {
-      const errorMsg = err.response?.data?.detail || err.message || 'Authentication failed';
+      // Extract error message from FastAPI response (detail field) or fallback to generic message
+      const errorMsg = err.response?.data?.detail || err.response?.data?.message || err.message || 'Authentication failed';
       setMessage(`❌ ${errorMsg}`);
     } finally {
       setLoading(false);
@@ -377,100 +378,111 @@ function Login({ onLoginSuccess }) {
             </button>
           </form>
         ) : showPasswordReset ? (
-          <form
-            onSubmit={async (e) => {
-              e.preventDefault();
-              setMessage('');
-              setResettingPassword(true);
-              try {
-                await axios.post(`${API}/auth/reset-password`, {
-                  email,
-                  code: resetCode,
-                  new_password: password,
-                });
-                setMessage('✅ Password has been reset. You can now log in.');
-                setShowPasswordReset(false);
-                setResetCode('');
-                setPassword('');
-              } catch (err) {
-                const errorMsg = err.response?.data?.detail || err.message || 'Password reset failed';
-                setMessage(`❌ ${errorMsg}`);
-              } finally {
-                setResettingPassword(false);
-              }
-            }}
-          >
-            <div style={{ marginBottom: '1rem' }}>
-              <input
-                type="email"
-                placeholder="Email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  background: '#1a1a2e',
-                  border: '1px solid #0f3460',
-                  borderRadius: '4px',
-                  color: 'white',
-                  fontSize: '1rem'
-                }}
-              />
-            </div>
+          // Show different UI based on whether we have a reset token (from email link)
+          resetToken ? (
+            // Reset password form (user clicked link from email)
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setMessage('');
+                setResettingPassword(true);
+                try {
+                  await axios.post(`${API}/auth/reset-password`, {
+                    token: resetToken,
+                    new_password: password,
+                  });
+                  setMessage('✅ Password has been reset. You can now log in.');
+                  setShowPasswordReset(false);
+                  setResetToken('');
+                  setPassword('');
+                  setIsLogin(true);
+                } catch (err) {
+                  const errorMsg = err.response?.data?.detail || err.message || 'Password reset failed';
+                  setMessage(`❌ ${errorMsg}`);
+                } finally {
+                  setResettingPassword(false);
+                }
+              }}
+            >
+              <div style={{ marginBottom: '1rem', textAlign: 'center' }}>
+                <p style={{ color: '#999', marginBottom: '1rem' }}>
+                  Enter a new password to complete your reset.
+                </p>
+              </div>
 
-            <div style={{ marginBottom: '1rem' }}>
-              <input
-                type="password"
-                placeholder="New password (min 8 characters)"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                minLength={8}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  background: '#1a1a2e',
-                  border: '1px solid #0f3460',
-                  borderRadius: '4px',
-                  color: 'white',
-                  fontSize: '1rem'
-                }}
-              />
-            </div>
+              <div style={{ marginBottom: '1.5rem' }}>
+                <input
+                  type="password"
+                  placeholder="New password (min 8 characters)"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  minLength={8}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem',
+                    background: '#1a1a2e',
+                    border: '1px solid #0f3460',
+                    borderRadius: '4px',
+                    color: 'white',
+                    fontSize: '1rem'
+                  }}
+                />
+              </div>
 
-            <div style={{ marginBottom: '1.5rem' }}>
-              <input
-                type="text"
-                placeholder="Reset code"
-                value={resetCode}
-                onChange={(e) => setResetCode(e.target.value.toUpperCase().slice(0, 6))}
-                required
-                maxLength={6}
+              <button
+                type="submit"
+                disabled={resettingPassword || password.length < 8}
                 style={{
                   width: '100%',
                   padding: '0.75rem',
-                  background: '#1a1a2e',
-                  border: '1px solid #0f3460',
+                  background: '#e94560',
+                  border: 'none',
                   borderRadius: '4px',
                   color: 'white',
                   fontSize: '1rem',
-                  textAlign: 'center',
-                  letterSpacing: '0.3rem',
-                  fontFamily: 'monospace'
+                  fontWeight: 'bold',
+                  cursor: (resettingPassword || password.length < 8) ? 'not-allowed' : 'pointer',
+                  opacity: (resettingPassword || password.length < 8) ? 0.6 : 1
                 }}
-              />
-            </div>
+              >
+                {resettingPassword ? 'Resetting...' : 'Reset Password'}
+              </button>
 
-            <button
-              type="button"
-              disabled={sendingReset || !email}
-              onClick={async () => {
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPasswordReset(false);
+                  setResetToken('');
+                  setPassword('');
+                  setMessage('');
+                  setIsLogin(true);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  marginTop: '0.5rem',
+                  background: 'transparent',
+                  border: '1px solid #0f3460',
+                  borderRadius: '4px',
+                  color: '#999',
+                  fontSize: '0.875rem',
+                  cursor: 'pointer'
+                }}
+              >
+                Back to Login
+              </button>
+            </form>
+          ) : (
+            // Request password reset form (initial "Forgot password?" step)
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
                 setMessage('');
                 setSendingReset(true);
                 try {
                   await axios.post(`${API}/auth/forgot-password`, { email });
-                  setMessage('✅ If this email is registered, a password reset email has been sent.');
+                  setMessage('✅ If this email is registered, a password reset email has been sent. Check your inbox for the reset link.');
                 } catch (err) {
                   const errorMsg = err.response?.data?.detail || err.message || 'Failed to send reset email';
                   setMessage(`❌ ${errorMsg}`);
@@ -478,63 +490,75 @@ function Login({ onLoginSuccess }) {
                   setSendingReset(false);
                 }
               }}
-              style={{
-                width: '100%',
-                padding: '0.5rem',
-                marginBottom: '0.5rem',
-                background: 'transparent',
-                border: '1px solid #0f3460',
-                borderRadius: '4px',
-                color: '#999',
-                fontSize: '0.9rem',
-                cursor: sendingReset || !email ? 'not-allowed' : 'pointer'
-              }}
             >
-              {sendingReset ? 'Sending reset email...' : 'Send reset email'}
-            </button>
+              <div style={{ marginBottom: '1rem', textAlign: 'center' }}>
+                <p style={{ color: '#999', marginBottom: '1rem' }}>
+                  Enter your email address and we'll send you a link to reset your password.
+                </p>
+              </div>
 
-            <button
-              type="submit"
-              disabled={resettingPassword}
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                background: '#e94560',
-                border: 'none',
-                borderRadius: '4px',
-                color: 'white',
-                fontSize: '1rem',
-                fontWeight: 'bold',
-                cursor: resettingPassword ? 'not-allowed' : 'pointer',
-                opacity: resettingPassword ? 0.6 : 1
-              }}
-            >
-              {resettingPassword ? 'Resetting...' : 'Reset Password'}
-            </button>
+              <div style={{ marginBottom: '1.5rem' }}>
+                <input
+                  type="email"
+                  placeholder="Email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem',
+                    background: '#1a1a2e',
+                    border: '1px solid #0f3460',
+                    borderRadius: '4px',
+                    color: 'white',
+                    fontSize: '1rem'
+                  }}
+                />
+              </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                setShowPasswordReset(false);
-                setResetCode('');
-                setPassword('');
-                setMessage('');
-              }}
-              style={{
-                width: '100%',
-                padding: '0.5rem',
-                marginTop: '0.5rem',
-                background: 'transparent',
-                border: '1px solid #0f3460',
-                borderRadius: '4px',
-                color: '#999',
-                fontSize: '0.875rem',
-                cursor: 'pointer'
-              }}
-            >
-              Back to Login
-            </button>
-          </form>
+              <button
+                type="submit"
+                disabled={sendingReset || !email}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  background: '#e94560',
+                  border: 'none',
+                  borderRadius: '4px',
+                  color: 'white',
+                  fontSize: '1rem',
+                  fontWeight: 'bold',
+                  cursor: (sendingReset || !email) ? 'not-allowed' : 'pointer',
+                  opacity: (sendingReset || !email) ? 0.6 : 1
+                }}
+              >
+                {sendingReset ? 'Sending...' : 'Send Reset Email'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPasswordReset(false);
+                  setEmail('');
+                  setMessage('');
+                  setIsLogin(true);
+                }}
+                style={{
+                  width: '100%',
+                  padding: '0.5rem',
+                  marginTop: '0.5rem',
+                  background: 'transparent',
+                  border: '1px solid #0f3460',
+                  borderRadius: '4px',
+                  color: '#999',
+                  fontSize: '0.875rem',
+                  cursor: 'pointer'
+                }}
+              >
+                Back to Login
+              </button>
+            </form>
+          )
         ) : (
           <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: '1rem' }}>
@@ -583,7 +607,7 @@ function Login({ onLoginSuccess }) {
                 onClick={() => {
                   setShowPasswordReset(true);
                   setShowVerification(false);
-                  setResetCode('');
+                  setResetToken('');
                   setMessage('');
                 }}
                 style={{

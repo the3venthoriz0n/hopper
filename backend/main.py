@@ -384,8 +384,7 @@ class ForgotPasswordRequest(BaseModel):
 
 
 class ResetPasswordRequest(BaseModel):
-    email: EmailStr
-    code: str
+    token: str
     new_password: str
 
 
@@ -497,21 +496,21 @@ def resend_verification(request_data: ResendVerificationRequest):
 @app.post("/api/auth/forgot-password")
 def forgot_password(request_data: ForgotPasswordRequest):
     """
-    Initiate password reset by sending a reset code to the user's email.
+    Initiate password reset by sending a reset link to the user's email.
 
     Always returns a generic success message to avoid leaking whether the email exists.
     """
     email = request_data.email
 
     user = get_user_by_email(email)
-    # Only send reset codes for existing, verified users; but don't reveal this to the caller
+    # Only send reset tokens for existing, verified users; but don't reveal this to the caller
     if user and getattr(user, "is_email_verified", False):
-        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-        reset_code = "".join(secrets.choice(alphabet) for _ in range(6))
-        redis_client.set_password_reset_code(email, reset_code)
+        # Generate a secure token (32 bytes, URL-safe)
+        reset_token = secrets.token_urlsafe(32)
+        redis_client.set_password_reset_token(reset_token, email)
 
         try:
-            send_password_reset_email(email, reset_code)
+            send_password_reset_email(email, reset_token)
         except Exception:
             logger.warning(
                 f"Failed to send password reset email to {email}",
@@ -524,35 +523,31 @@ def forgot_password(request_data: ForgotPasswordRequest):
 @app.post("/api/auth/reset-password")
 def reset_password(request_data: ResetPasswordRequest):
     """
-    Complete password reset using the emailed code.
+    Complete password reset using the token from the emailed link.
     """
-    email = request_data.email
+    token = request_data.token
     new_password = request_data.new_password
 
     # Basic password policy (reuse registration rule)
     if len(new_password) < 8:
         raise HTTPException(400, "Password must be at least 8 characters long")
 
-    # Normalize provided code
-    code = request_data.code.strip().upper()
-
-    # Look up expected reset code
-    expected_code = redis_client.get_password_reset_code(email)
-    normalized_expected = expected_code.upper() if expected_code else None
-    if not normalized_expected or normalized_expected != code:
-        raise HTTPException(400, "Invalid or expired reset code")
+    # Look up email associated with token
+    email = redis_client.get_password_reset_email(token)
+    if not email:
+        raise HTTPException(400, "Invalid or expired reset link")
 
     user = get_user_by_email(email)
     if not user:
-        # Do not reveal whether the email exists; act as if the code is invalid
-        raise HTTPException(400, "Invalid or expired reset code")
+        # Do not reveal whether the email exists; act as if the token is invalid
+        raise HTTPException(400, "Invalid or expired reset link")
 
     # Update password
     if not set_user_password(user.id, new_password):
         raise HTTPException(500, "Failed to reset password")
 
-    # Clear used reset code
-    redis_client.delete_password_reset_code(email)
+    # Clear used reset token
+    redis_client.delete_password_reset_token(token)
 
     return {"message": "Password has been reset successfully."}
 
@@ -1476,6 +1471,9 @@ def register(request_data: RegisterRequest, request: Request, response: Response
             },
             "requires_email_verification": True,
         }
+    except HTTPException:
+        # Re-raise HTTPException so it propagates with the correct error message
+        raise
     except ValueError as e:
         raise HTTPException(400, str(e))
     except Exception as e:
