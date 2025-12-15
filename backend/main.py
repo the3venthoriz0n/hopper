@@ -1301,8 +1301,9 @@ def register(request_data: RegisterRequest, request: Request, response: Response
         except Exception as e:
             logger.warning(f"Error creating Stripe customer/subscription during registration: {e}")
         
-        # Generate and store email verification code
-        verification_code = secrets.token_urlsafe(4).replace("_", "").replace("-", "")[:6]
+        # Generate and store email verification code (6-character, uppercase A-Z/0-9)
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        verification_code = "".join(secrets.choice(alphabet) for _ in range(6))
         redis_client.set_email_verification_code(user.email, verification_code)
 
         # Send verification email (best-effort, but do not fail registration on email issues)
