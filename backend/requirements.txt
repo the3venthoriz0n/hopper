@@ -19,17 +19,15 @@ alembic==1.13.1
 redis==5.0.1
 # Password hashing
 bcrypt==4.1.2
-# OpenTelemetry (updated to latest versions to fix pkg_resources deprecation warning)
-# Latest versions use importlib.metadata instead of deprecated pkg_resources
-opentelemetry-api==1.39.0
-opentelemetry-sdk==1.39.0
-opentelemetry-semantic-conventions==0.48b0
-opentelemetry-instrumentation-fastapi==0.58b0
-opentelemetry-instrumentation-sqlalchemy==0.48b0
-opentelemetry-instrumentation-httpx==0.48b0
-opentelemetry-exporter-otlp-proto-grpc==1.39.0
+# OpenTelemetry - newer versions without pkg_resources deprecation
+opentelemetry-api==1.28.2
+opentelemetry-sdk==1.28.2
+opentelemetry-semantic-conventions==0.49b2
+opentelemetry-instrumentation-fastapi==0.49b2
+opentelemetry-instrumentation-sqlalchemy==0.49b2
+opentelemetry-instrumentation-httpx==0.49b2
+opentelemetry-exporter-otlp-proto-grpc==1.28.2
 prometheus-client==0.19.0
 # Stripe
 stripe==10.0.0
 python-dotenv==1.0.0
-
