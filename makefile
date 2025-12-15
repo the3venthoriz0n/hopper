@@ -112,8 +112,13 @@ clean:
 	@docker volume prune -f
 	@echo "✅ Cleanup complete!"
 
-setup-stripe: sync
-	@echo "⚙️  Running Stripe setup for ENV=$(ENV) ..."
-	@echo "   - Uses .env.$(ENV) to load STRIPE_SECRET_KEY and BACKEND_URL"
-	@$(COMPOSE) run --rm backend python /app/scripts/setup_stripe.py --env-file $(ENV)
-	@echo "✅ Stripe setup script completed."
+setup-stripe:
+	@echo "⚙️  Running Stripe setup locally for ENV=$(ENV) ..."
+	@if [ ! -d "backend/venv" ]; then \
+		echo "❌ Virtual environment not found. Run: cd backend && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt"; \
+		exit 1; \
+	fi
+	@cd backend/scripts && ../venv/bin/python setup_stripe.py --env-file $(ENV)
+	@echo "🔄 Syncing to remote..."
+	@$(MAKE) sync
+	@echo "✅ Stripe setup completed and synced."

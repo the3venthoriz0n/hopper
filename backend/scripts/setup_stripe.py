@@ -1,27 +1,52 @@
 #!/usr/bin/env python3
 """
 Stripe setup script - creates products, prices, and webhooks.
+Writes configuration to stripe_plans.json for runtime use.
 
 Usage:
     python setup_stripe.py --env-file dev
     python setup_stripe.py --env-file prod
-    python setup_stripe.py --mode test --api-key sk_test_KEY [--webhook-url URL]
+    python setup_stripe.py --mode test --api-key sk_test_KEY
 """
 
 import argparse
+import json
 import os
-import re
 import sys
 import stripe
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
 # Product definitions
-# All plans now use Stripe subscriptions (including free and unlimited)
 PRODUCTS = {
-    'free': {'name': 'Free', 'description': '10 tokens per month', 'monthly_tokens': 10, 'price_cents': 0, 'overage_price_cents': None},
-    'starter': {'name': 'Starter', 'description': '100 tokens per month', 'monthly_tokens': 100, 'price_cents': 999, 'overage_price_cents': 29},  # $0.29 per token
-    'creator': {'name': 'Creator', 'description': '500 tokens per month', 'monthly_tokens': 500, 'price_cents': 2999, 'overage_price_cents': 20},  # $0.20 per token
-    'unlimited': {'name': 'Unlimited', 'description': 'Unlimited tokens', 'monthly_tokens': -1, 'price_cents': 0, 'overage_price_cents': None, 'hidden': True}
+    'free': {
+        'name': 'Free',
+        'description': '10 tokens per month',
+        'monthly_tokens': 10,
+        'price_cents': 0,
+        'overage_price_cents': None  # Hard limit, no overages
+    },
+    'starter': {
+        'name': 'Starter',
+        'description': '100 tokens per month',
+        'monthly_tokens': 100,
+        'price_cents': 999,  # $9.99/month
+        'overage_price_cents': 29  # $0.29 per token
+    },
+    'creator': {
+        'name': 'Creator',
+        'description': '500 tokens per month',
+        'monthly_tokens': 500,
+        'price_cents': 2999,  # $29.99/month
+        'overage_price_cents': 20  # $0.20 per token
+    },
+    'unlimited': {
+        'name': 'Unlimited',
+        'description': 'Unlimited tokens',
+        'monthly_tokens': -1,
+        'price_cents': 0,
+        'overage_price_cents': None,
+        'hidden': True
+    }
 }
 
 WEBHOOK_EVENTS = [
@@ -39,228 +64,155 @@ def load_env_file(env_file: str) -> bool:
     try:
         from dotenv import load_dotenv
         
+        # Look for .env file in multiple locations
+        # 1. Project root (../../.env.{env_file} from scripts/)
+        # 2. Current directory
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        backend_dir = os.path.dirname(script_dir)
+        project_root = os.path.dirname(backend_dir)
+        
         paths = [
-            f'/app/.env.{env_file}',
-            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), f'.env.{env_file}'),
+            os.path.join(project_root, f'.env.{env_file}'),
             f'.env.{env_file}',
         ]
         
         for path in paths:
             if os.path.exists(path):
                 load_dotenv(path, override=True)
-                
-                # Manual parsing for ${VAR} substitution
-                with open(path) as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith('#') and '=' in line:
-                            key, value = line.split('=', 1)
-                            value = value.strip().strip('"').strip("'")
-                            value = re.sub(r'\$\{(\w+)\}', lambda m: os.getenv(m.group(1), ''), value)
-                            if key and value:
-                                os.environ[key.strip()] = value
-                
-                print(f"✓ Loaded {os.path.basename(path)}")
+                print(f"✓ Loaded {path}")
                 return True
         
-        print(f"⚠️  .env.{env_file} not found, using existing env vars")
+        print(f"⚠️  .env.{env_file} not found")
         return False
-        
     except ImportError:
         print("❌ python-dotenv not installed: pip install python-dotenv")
         return False
 
 
-def create_or_update_products(mode: str) -> Dict[str, Dict[str, Any]]:
+def find_or_create_price(product_id: str, config: Dict[str, Any], 
+                         existing_prices: List[Any], is_metered: bool = False) -> Any:
+    """Find existing price or create new one."""
+    amount = config['overage_price_cents'] if is_metered else config['price_cents']
+    
+    # Search for existing price
+    for price in existing_prices:
+        if price.product != product_id or price.unit_amount != amount:
+            continue
+        
+        if is_metered:
+            if (price.recurring and 
+                hasattr(price.recurring, 'usage_type') and 
+                price.recurring.usage_type == 'metered'):
+                return price
+        else:
+            if price.recurring and price.recurring.interval == 'month':
+                return price
+    
+    # Create new price
+    price_params = {
+        'product': product_id,
+        'unit_amount': amount,
+        'currency': 'usd',
+        'recurring': {'interval': 'month'}
+    }
+    
+    if is_metered:
+        price_params['recurring'].update({
+            'usage_type': 'metered',
+            'aggregate_usage': 'sum'
+        })
+        price_params['billing_scheme'] = 'per_unit'
+    
+    return stripe.Price.create(**price_params)
+
+
+def create_or_update_products() -> Dict[str, Dict[str, Any]]:
     """Create or update Stripe products and prices."""
-    print(f"\n{'='*60}\nProducts and Prices ({mode.upper()})\n{'='*60}\n")
+    print(f"\n{'='*60}\nProducts and Prices\n{'='*60}\n")
     
     results = {}
     existing_products = {p.name: p for p in stripe.Product.list(limit=100).data}
-    existing_prices = stripe.Price.list(limit=100, active=True)
-    price_map = {}
-    for price in existing_prices.data:
-        price_map.setdefault(price.product, []).append(price)
+    existing_prices = stripe.Price.list(limit=100, active=True).data
     
     for key, config in PRODUCTS.items():
         print(f"{config['name']} (key: {key})")
         
-        # Create or find product
+        # Find or create product
         product = existing_products.get(config['name'])
         if product:
-            print(f"  ✓ Found product: {product.id}")
+            print(f"  ✓ Product: {product.id}")
         else:
-            product = stripe.Product.create(name=config['name'], description=config['description'])
+            product = stripe.Product.create(
+                name=config['name'],
+                description=config['description']
+            )
             print(f"  ✓ Created product: {product.id}")
         
-        # Find or create price
-        price = None
-        for p in price_map.get(product.id, []):
-            if p.unit_amount == config['price_cents'] and p.currency == 'usd':
-                # For $0 prices, look for recurring monthly prices (Stripe supports $0/month subscriptions)
-                if config['price_cents'] == 0:
-                    if p.recurring and p.recurring.interval == 'month':
-                        price = p
-                        break
-                # For paid prices, look for recurring monthly prices
-                elif config['price_cents'] > 0 and p.recurring and p.recurring.interval == 'month':
-                    price = p
-                    break
+        # Find or create base price
+        price = find_or_create_price(product.id, config, existing_prices)
+        print(f"  ✓ Price: {price.id} (${config['price_cents']/100:.2f}/month)")
         
-        if price:
-            print(f"  ✓ Found price: {price.id} ({'recurring monthly' if price.recurring else 'one-time'})")
-        else:
-            # Create recurring monthly price for all plans (including $0/month)
-            price = stripe.Price.create(
-                product=product.id,
-                unit_amount=config['price_cents'],
-                currency='usd',
-                recurring={'interval': 'month'}
-            )
-            print(f"  ✓ Created price: {price.id} (recurring monthly)")
-        
-        results[key] = {
+        # Build plan config
+        plan_config = {
             'name': config['name'],
-            'product_id': product.id,
-            'price_id': price.id,
             'monthly_tokens': config['monthly_tokens'],
-            'price_cents': config['price_cents'],
-            'overage_price_id': None,
-            'overage_price_cents': config.get('overage_price_cents'),
+            'stripe_product_id': product.id,
+            'stripe_price_id': price.id,
+            'stripe_overage_price_id': None
         }
         
-        # Create metered price for overage (if configured)
-        if config.get('overage_price_cents') is not None:
-            overage_price = None
-            # Look for existing metered price
-            for p in price_map.get(product.id, []):
-                if (p.unit_amount == config['overage_price_cents'] and 
-                    p.currency == 'usd' and 
-                    p.recurring and 
-                    p.recurring.interval == 'month' and
-                    p.billing_scheme == 'per_unit' and
-                    p.recurring.usage_type == 'metered'):
-                    overage_price = p
-                    break
-            
-            if overage_price:
-                print(f"  ✓ Found overage price: {overage_price.id} (metered, ${config['overage_price_cents']/100:.2f} per token)")
-            else:
-                # Create metered price for overage tokens
-                overage_price = stripe.Price.create(
-                    product=product.id,
-                    unit_amount=config['overage_price_cents'],
-                    currency='usd',
-                    recurring={
-                        'interval': 'month',
-                        'usage_type': 'metered',
-                        'aggregate_usage': 'sum'
-                    },
-                    billing_scheme='per_unit'
-                )
-                print(f"  ✓ Created overage price: {overage_price.id} (metered, ${config['overage_price_cents']/100:.2f} per token)")
-            
-            results[key]['overage_price_id'] = overage_price.id
+        # Add hidden flag if present
+        if config.get('hidden'):
+            plan_config['hidden'] = True
         
+        # Create metered overage price if configured
+        if config.get('overage_price_cents') is not None:
+            overage_price = find_or_create_price(product.id, config, existing_prices, is_metered=True)
+            plan_config['stripe_overage_price_id'] = overage_price.id
+            print(f"  ✓ Overage: {overage_price.id} (${config['overage_price_cents']/100:.2f}/token)")
+        
+        results[key] = plan_config
         print()
     
     return results
 
 
-def update_config_file(products: Dict[str, Dict[str, Any]], mode: str) -> bool:
-    """Update stripe_config.py with product and price IDs."""
-    config_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'stripe_config.py')
+def save_config(plans: Dict[str, Dict[str, Any]], mode: str) -> bool:
+    """Save plans configuration to JSON file."""
+    # Write to backend/ directory (one level up from scripts/)
+    # This will be: /mnt/y/Misc/_DevRemote/hopper_sync/backend/stripe_plans_{mode}.json
+    config_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    config_file = os.path.join(config_dir, f'stripe_plans_{mode}.json')
     
-    if not os.path.exists(config_file):
-        print(f"⚠️  {config_file} not found")
-        return False
+    print(f"\n{'='*60}\nSaving Configuration\n{'='*60}")
+    print(f"File: {config_file}\n")
     
-    with open(config_file) as f:
-        lines = f.readlines()
-    
-    plans_dict = 'PLANS_TEST' if mode == 'test' else 'PLANS_LIVE'
-    in_target_dict = False
-    in_plan = None
-    new_lines = []
-    updated_plans = set()
-    
-    for line in lines:
-        # Check if entering target dictionary
-        if f'{plans_dict} = {{' in line:
-            in_target_dict = True
-            new_lines.append(line)
-            continue
-        
-        # Check if exiting target dictionary (closing brace at start of line)
-        if in_target_dict and line.lstrip().startswith('}'):
-            in_target_dict = False
-            new_lines.append(line)
-            continue
-        
-        if in_target_dict:
-            # Check if entering a plan (e.g., 'unlimited': {)
-            plan_match = re.match(r"\s+'(\w+)':\s+\{", line)
-            if plan_match:
-                in_plan = plan_match.group(1)
-                new_lines.append(line)
-                continue
-            
-            # Check if exiting a plan (line starts with }, or } followed by comment)
-            if in_plan and line.lstrip().startswith('},'):
-                in_plan = None
-                new_lines.append(line)
-                continue
-            
-            # Update stripe IDs if we're in a plan that we have data for
-            if in_plan and in_plan in products:
-                product_info = products[in_plan]
-                indent = len(line) - len(line.lstrip())
-                
-                if "'stripe_price_id':" in line or '"stripe_price_id":' in line:
-                    # Preserve comment if present
-                    comment = f"  # {line.split('#', 1)[1].strip()}" if '#' in line else ""
-                    line = f"{' ' * indent}'stripe_price_id': \"{product_info['price_id']}\",{comment}\n"
-                    updated_plans.add(in_plan)
-                    print(f"  → Updating {in_plan} price_id: {product_info['price_id']}")
-                elif "'stripe_product_id':" in line or '"stripe_product_id":' in line:
-                    # Preserve comment if present
-                    comment = f"  # {line.split('#', 1)[1].strip()}" if '#' in line else ""
-                    line = f"{' ' * indent}'stripe_product_id': \"{product_info['product_id']}\",{comment}\n"
-                    updated_plans.add(in_plan)
-                    print(f"  → Updating {in_plan} product_id: {product_info['product_id']}")
-                elif "'stripe_overage_price_id':" in line or '"stripe_overage_price_id":' in line:
-                    # Preserve comment if present
-                    comment = f"  # {line.split('#', 1)[1].strip()}" if '#' in line else ""
-                    overage_id = product_info.get('overage_price_id') or 'None'
-                    if overage_id != 'None':
-                        line = f"{' ' * indent}'stripe_overage_price_id': \"{overage_id}\",{comment}\n"
-                    else:
-                        line = f"{' ' * indent}'stripe_overage_price_id': None,{comment}\n"
-                    updated_plans.add(in_plan)
-                    print(f"  → Updating {in_plan} overage_price_id: {overage_id}")
-        
-        new_lines.append(line)
-    
-    if updated_plans:
+    try:
         with open(config_file, 'w') as f:
-            f.writelines(new_lines)
-        print(f"\n✓ Updated stripe_config.py: {', '.join(sorted(updated_plans))}")
+            json.dump(plans, f, indent=2)
         
-        # Check for missing plans
-        missing = set(products.keys()) - updated_plans
-        if missing:
-            print(f"⚠️  Could not update: {', '.join(sorted(missing))}")
+        print(f"✓ Saved configuration for {len(plans)} plans")
+        print(f"✓ Mode: {mode}")
         
-        return True
-    
-    print("⚠️  No plans updated in stripe_config.py")
-    print(f"   Expected plans: {', '.join(products.keys())}")
-    return False
+        # Verify
+        with open(config_file) as f:
+            loaded = json.load(f)
+        
+        if loaded == plans:
+            print(f"✓ Verified file write successful")
+            return True
+        else:
+            print(f"❌ Verification failed")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Error saving config: {e}")
+        return False
 
 
-def create_or_update_webhook(webhook_url: str, mode: str) -> Dict[str, Any]:
+def create_or_update_webhook(webhook_url: str) -> Optional[Dict[str, Any]]:
     """Create or update Stripe webhook endpoint."""
-    print(f"\n{'='*60}\nWebhook ({mode.upper()})\n{'='*60}\n")
+    print(f"\n{'='*60}\nWebhook\n{'='*60}\n")
     print(f"URL: {webhook_url}\n")
     
     existing = stripe.WebhookEndpoint.list(limit=100)
@@ -268,59 +220,31 @@ def create_or_update_webhook(webhook_url: str, mode: str) -> Dict[str, Any]:
     
     if matching:
         print(f"✓ Found webhook: {matching.id}")
-        
-        current_events = set(matching.enabled_events)
-        if current_events != set(WEBHOOK_EVENTS):
-            webhook = stripe.WebhookEndpoint.modify(matching.id, enabled_events=WEBHOOK_EVENTS)
+        if set(matching.enabled_events) != set(WEBHOOK_EVENTS):
+            stripe.WebhookEndpoint.modify(matching.id, enabled_events=WEBHOOK_EVENTS)
             print("✓ Updated events")
-        else:
-            webhook = matching
-            print("✓ Events already correct")
-        
-        print(f"\n⚠️  Get signing secret from Stripe Dashboard:")
-        print(f"   https://dashboard.stripe.com/{'test/' if mode == 'test' else ''}webhooks")
-        return {'id': webhook.id, 'url': webhook.url, 'secret': None}
+        return {'id': matching.id, 'secret': None}
     
     webhook = stripe.WebhookEndpoint.create(
         url=webhook_url,
-        enabled_events=WEBHOOK_EVENTS,
-        description=f"Hopper webhook ({mode})"
+        enabled_events=WEBHOOK_EVENTS
     )
     print(f"✓ Created webhook: {webhook.id}")
     
-    secret = getattr(webhook, 'secret', None)
-    if secret:
-        print(f"\n🔑 Signing Secret: {secret}")
-        print(f"   Add to .env: STRIPE_WEBHOOK_SECRET={secret}")
+    if hasattr(webhook, 'secret'):
+        print(f"\n🔑 Secret: {webhook.secret}")
+        print(f"   Add to .env: STRIPE_WEBHOOK_SECRET={webhook.secret}")
+        return {'id': webhook.id, 'secret': webhook.secret}
     
-    return {'id': webhook.id, 'url': webhook.url, 'secret': secret}
-
-
-def print_summary(mode: str, products: Dict, webhook: Dict = None, config_updated: bool = False):
-    """Print summary."""
-    print(f"\n{'='*60}\n✅ Setup Complete ({mode.upper()})\n{'='*60}\n")
-    
-    print("Products:")
-    for key, info in products.items():
-        print(f"  {key}: {info['product_id']} / {info['price_id']}")
-    
-    if webhook:
-        print(f"\nWebhook: {webhook['id']}")
-    
-    print(f"\n{'='*60}")
-    if not config_updated:
-        print("⚠️  Manually update stripe_config.py with IDs above")
-    if webhook and not webhook.get('secret'):
-        print("⚠️  Get webhook secret from Stripe Dashboard")
-    print(f"{'='*60}\n")
+    return {'id': webhook.id, 'secret': None}
 
 
 def main():
     parser = argparse.ArgumentParser(description='Setup Stripe products, prices, and webhooks')
-    parser.add_argument('--env-file', choices=['dev', 'prod'], help='Load from .env.dev or .env.prod')
+    parser.add_argument('--env-file', choices=['dev', 'prod'], help='Load from .env file')
     parser.add_argument('--mode', choices=['test', 'live'], help='Stripe mode')
     parser.add_argument('--api-key', help='Stripe API key')
-    parser.add_argument('--webhook-url', help='Webhook URL')
+    parser.add_argument('--webhook-url', help='Webhook URL (optional)')
     args = parser.parse_args()
     
     # Load env file
@@ -334,48 +258,39 @@ def main():
         sys.exit(1)
     
     # Detect mode
-    mode = args.mode
-    if not mode:
-        mode = 'test' if api_key.startswith('sk_test_') else 'live'
-        print(f"✓ Detected {mode.upper()} mode")
+    mode = args.mode or ('test' if api_key.startswith('sk_test_') else 'live')
     
-    # Validate API key
-    if mode == 'test' and not api_key.startswith('sk_test_'):
-        print("❌ Test mode requires sk_test_ key")
+    # Validate API key matches mode
+    if (mode == 'test' and not api_key.startswith('sk_test_')) or \
+       (mode == 'live' and not api_key.startswith('sk_live_')):
+        print(f"❌ API key doesn't match {mode} mode")
         sys.exit(1)
-    if mode == 'live' and not api_key.startswith('sk_live_'):
-        print("❌ Live mode requires sk_live_ key")
-        sys.exit(1)
-    
-    # Get webhook URL
-    webhook_url = args.webhook_url
-    if not webhook_url and args.env_file:
-        backend_url = os.getenv('BACKEND_URL')
-        if backend_url:
-            webhook_url = f"{backend_url.rstrip('/')}/api/stripe/webhook"
-            print(f"✓ Using webhook: {webhook_url}")
-    
-    # Setup Stripe
-    stripe.api_key = api_key
-    stripe.api_version = "2024-11-20.acacia"
     
     print(f"\nStripe Setup - {mode.upper()}")
     
-    # Create products
-    products = create_or_update_products(mode)
+    # Initialize Stripe
+    stripe.api_key = api_key
+    stripe.api_version = "2024-11-20.acacia"
     
-    # Update config
-    config_updated = update_config_file(products, mode)
+    # Create products and prices
+    plans = create_or_update_products()
     
-    # Create webhook
+    # Save config to JSON
+    config_saved = save_config(plans, mode)
+    
+    # Create webhook (optional)
     webhook = None
-    if webhook_url:
-        webhook = create_or_update_webhook(webhook_url, mode)
-    else:
-        print("\n⚠️  No webhook URL provided")
+    webhook_url = args.webhook_url or os.getenv('BACKEND_URL', '').rstrip('/') + '/api/stripe/webhook'
+    if webhook_url and not webhook_url.startswith('/api'):
+        webhook = create_or_update_webhook(webhook_url)
     
     # Summary
-    print_summary(mode, products, webhook, config_updated)
+    print(f"\n{'='*60}\n✅ Setup Complete\n{'='*60}\n")
+    if not config_saved:
+        print("⚠️  Config file not saved")
+    if webhook and not webhook.get('secret'):
+        print("⚠️  Get webhook secret from Stripe Dashboard")
+    print(f"{'='*60}\n")
 
 
 if __name__ == '__main__':

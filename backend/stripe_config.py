@@ -1,5 +1,6 @@
 """Stripe configuration and plan definitions"""
 import os
+import json
 import logging
 import stripe
 from typing import Dict, Any, Optional
@@ -49,111 +50,75 @@ def get_stripe_mode() -> str:
     return detect_stripe_mode(STRIPE_SECRET_KEY)
 
 
-# Plan definitions for TEST mode (sandbox)
-# Product/Price IDs are auto-updated by setup_stripe.py
-PLANS_TEST = {
-    'free': {
-        'name': 'Free',
-        'monthly_tokens': 10,
-        'stripe_price_id': "price_1SejN1AJugrwwGJAOEdJeaIw",
-        'stripe_product_id': "prod_TbxHlGihnNIHVP",
-        'stripe_overage_price_id': None,  # Free plan has no overage (hard limit)
-    },
-    'starter': {
-        'name': 'Starter',
-        'monthly_tokens': 100,
-        'stripe_price_id': "price_1SejN1AJugrwwGJAyKhZnbPS",
-        'stripe_product_id': "prod_TbxHg5Va4ATcVo",
-        'stripe_overage_price_id': None,  # Will be set by setup_stripe.py
-    },
-    'creator': {
-        'name': 'Creator',
-        'monthly_tokens': 500,
-        'stripe_price_id': "price_1SejN2AJugrwwGJA094UYijQ",
-        'stripe_product_id': "prod_TbxHtZ0YGFJaBZ",
-        'stripe_overage_price_id': None,  # Will be set by setup_stripe.py
-    },
-    'unlimited': {
-        'name': 'Hopper Unlimited',
-        'monthly_tokens': -1,  # -1 indicates unlimited
-        'stripe_price_id': "price_1SejN2AJugrwwGJA979CsaKS",  # Auto-updated by setup_stripe.py
-        'stripe_product_id': "prod_TbxHLbYi9ilKdQ",  # Auto-updated by setup_stripe.py
-        'stripe_overage_price_id': None,  # Unlimited plan has no overage
-        'hidden': True,  # Hidden from public plans list (dev/admin only)
+def load_plans(mode: str = None) -> Dict[str, Dict[str, Any]]:
+    """
+    Load plan configuration from JSON file.
+    
+    Args:
+        mode: 'test' or 'live' (auto-detected if not provided)
+        
+    Returns:
+        Dict of plans keyed by plan type
+    """
+    if mode is None:
+        mode = get_stripe_mode()
+    
+    if mode not in ['test', 'live']:
+        logger.warning(f"Unknown Stripe mode '{mode}', defaulting to test")
+        mode = 'test'
+    
+    # Read from backend/ directory (same directory as this file)
+    backend_dir = os.path.dirname(os.path.abspath(__file__))
+    config_file = os.path.join(backend_dir, f'stripe_plans_{mode}.json')
+    
+    try:
+        with open(config_file) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.error(f"Plan config file not found: {config_file}")
+        logger.error("Run setup_stripe.py to generate configuration")
+        return _get_fallback_plans()
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in {config_file}: {e}")
+        return _get_fallback_plans()
+
+
+def _get_fallback_plans() -> Dict[str, Dict[str, Any]]:
+    """Fallback plans if JSON config is missing."""
+    return {
+        'free': {
+            'name': 'Free',
+            'monthly_tokens': 10,
+            'stripe_price_id': None,
+            'stripe_product_id': None,
+            'stripe_overage_price_id': None,
+        }
     }
-}
 
-# Plan definitions for LIVE mode (production)
-# Product/Price IDs are auto-updated by setup_stripe.py
-PLANS_LIVE = {
-    'free': {
-        'name': 'Free',
-        'monthly_tokens': 10,
-        'stripe_price_id': "price_1SdxH7AizedXSXdvzLcftaqi",  # Auto-updated by setup_stripe.py
-        'stripe_product_id': "prod_Tb9acbATXP0258",  # Auto-updated by setup_stripe.py
-        'stripe_overage_price_id': None,  # Free plan has no overage (hard limit)
-    },
-    'starter': {
-        'name': 'Starter',
-        'monthly_tokens': 100,
-        'stripe_price_id': "price_1SdxH7AizedXSXdvVp0yPXnd",  # Auto-updated by setup_stripe.py
-        'stripe_product_id': "prod_Tb9a57n5L7GcuK",  # Auto-updated by setup_stripe.py
-        'stripe_overage_price_id': None,  # Will be set by setup_stripe.py
-    },
-    'creator': {
-        'name': 'Creator',
-        'monthly_tokens': 500,
-        'stripe_price_id': "price_1SdxH7AizedXSXdv1dIUYgby",  # Auto-updated by setup_stripe.py
-        'stripe_product_id': "prod_Tb9aHluyY1RIVH",  # Auto-updated by setup_stripe.py
-        'stripe_overage_price_id': None,  # Will be set by setup_stripe.py
-    },
-    'unlimited': {
-        'name': 'Hopper Unlimited',
-        'monthly_tokens': -1,  # -1 indicates unlimited
-        'stripe_price_id': "price_1Seh38AizedXSXdv9v8x0nMm",  # Auto-updated by setup_stripe.py
-        'stripe_product_id': "prod_Tbusrpl0qNLTq3",  # Auto-updated by setup_stripe.py
-        'stripe_overage_price_id': None,  # Unlimited plan has no overage
-        'hidden': True,  # Hidden from public plans list (dev/admin only)
-    }
-}
 
-# Legacy PLANS dict for backward compatibility - will be set dynamically
-PLANS: Dict[str, Dict[str, Any]] = {}
-
+# Load plans on module import
+_PLANS_CACHE = None
 
 def get_plans() -> Dict[str, Dict[str, Any]]:
     """
     Get the appropriate PLANS dictionary based on current Stripe mode.
-    Also updates the global PLANS dict for backward compatibility.
+    Cached after first load.
     
     Returns:
         PLANS dict for current mode (test or live)
     """
-    mode = get_stripe_mode()
-    if mode == 'live':
-        plans = PLANS_LIVE
-    elif mode == 'test':
-        plans = PLANS_TEST
-    else:
-        # Default to test if unknown
-        logger.warning(f"Unknown Stripe mode, defaulting to test. API key: {STRIPE_SECRET_KEY[:10] if STRIPE_SECRET_KEY else 'None'}...")
-        plans = PLANS_TEST
-    
-    # Update global PLANS for backward compatibility
-    global PLANS
-    PLANS = plans.copy()
-    
-    return plans
+    global _PLANS_CACHE
+    if _PLANS_CACHE is None:
+        _PLANS_CACHE = load_plans()
+    return _PLANS_CACHE
 
 
-# Initialize PLANS based on current mode
-def _init_plans():
-    """Initialize PLANS dict based on current Stripe mode"""
-    get_plans()  # This will update PLANS
+def reload_plans():
+    """Force reload of plans from JSON (useful after running setup)."""
+    global _PLANS_CACHE
+    _PLANS_CACHE = load_plans()
+    return _PLANS_CACHE
 
-
-# Initialize on import
-_init_plans()
 
 # Token calculation: 1 token = 10MB
 TOKEN_CALCULATION_MB_PER_TOKEN = 10
@@ -196,7 +161,7 @@ def get_plan_monthly_tokens(plan_type: str) -> int:
     plan = plans.get(plan_type)
     if plan:
         return plan['monthly_tokens']  # -1 for unlimited, otherwise token count
-    return plans['free']['monthly_tokens']  # Default to free
+    return plans.get('free', {}).get('monthly_tokens', 10)  # Default to free
 
 
 def get_plan_price_id(plan_type: str) -> Optional[str]:
@@ -275,103 +240,3 @@ def get_price_info(price_id: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.warning(f"Unexpected error retrieving price {price_id}: {e}")
         return None
-
-
-def ensure_stripe_products():
-    """
-    Create Stripe products and prices if they don't exist.
-    This is idempotent - it checks for existing products before creating.
-    
-    Returns:
-        dict: Updated PLANS dict with Stripe IDs for current mode
-    """
-    if not STRIPE_SECRET_KEY:
-        logger.error("Cannot create Stripe products: STRIPE_SECRET_KEY not set")
-        return get_plans()
-    
-    mode = get_stripe_mode()
-    if mode == 'unknown':
-        logger.error("Cannot detect Stripe mode from API key")
-        return get_plans()
-    
-    current_plans = get_plans()
-    
-    try:
-        # Get existing products
-        existing_products = stripe.Product.list(limit=100)
-        product_map = {p.name: p for p in existing_products.data}
-        
-        # Get existing prices
-        existing_prices = stripe.Price.list(limit=100, active=True)
-        price_map = {}  # Map product_id -> price
-        
-        for price in existing_prices.data:
-            if price.product not in price_map:
-                price_map[price.product] = price
-        
-        updated_plans = {}
-        
-        for plan_key, plan_config in current_plans.items():
-            plan_name = plan_config['name']
-            
-            # Check if product exists
-            if plan_name in product_map:
-                product = product_map[plan_name]
-                logger.info(f"Found existing Stripe product ({mode}): {plan_name} ({product.id})")
-            else:
-                # Create product
-                product = stripe.Product.create(
-                    name=plan_name,
-                    description=f"{plan_name} plan - {plan_config['monthly_tokens']} tokens per month"
-                )
-                logger.info(f"Created Stripe product ({mode}): {plan_name} ({product.id})")
-            
-            # Check if price exists for this product
-            if product.id in price_map:
-                price = price_map[product.id]
-                logger.info(f"Found existing Stripe price ({mode}) for {plan_name}: {price.id}")
-            else:
-                # Create price (monthly recurring)
-                # Note: Set actual price amounts in Stripe dashboard or via API
-                # For now, using placeholder amounts - UPDATE THESE with real prices
-                price_amounts = {
-                    'free': 0,      # Free plan
-                    'starter': 999,  # $9.99/month - UPDATE THIS
-                    'creator': 2999,    # $29.99/month - UPDATE THIS
-                }
-                
-                price = stripe.Price.create(
-                    product=product.id,
-                    unit_amount=price_amounts.get(plan_key, 0),  # Amount in cents
-                    currency='usd',
-                    recurring={'interval': 'month'},
-                )
-                logger.info(f"Created Stripe price ({mode}) for {plan_name}: {price.id} (${price_amounts.get(plan_key, 0)/100:.2f}/month)")
-            
-            updated_plans[plan_key] = {
-                **plan_config,
-                'stripe_product_id': product.id,
-                'stripe_price_id': price.id,
-            }
-        
-        # Update the global PLANS dict
-        global PLANS
-        PLANS = updated_plans
-        
-        # Also update the mode-specific dict
-        if mode == 'test':
-            for key in updated_plans:
-                PLANS_TEST[key].update(updated_plans[key])
-        elif mode == 'live':
-            for key in updated_plans:
-                PLANS_LIVE[key].update(updated_plans[key])
-        
-        return updated_plans
-        
-    except stripe.error.StripeError as e:
-        logger.error(f"Error creating Stripe products ({mode}): {e}")
-        return current_plans
-    except Exception as e:
-        logger.error(f"Unexpected error in ensure_stripe_products ({mode}): {e}", exc_info=True)
-        return current_plans
-
