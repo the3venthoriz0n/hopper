@@ -55,29 +55,29 @@ PLANS_TEST = {
     'free': {
         'name': 'Free',
         'monthly_tokens': 10,
-        'stripe_price_id': "price_1Se2XZAJugrwwGJAIGrRqT92",
-        'stripe_product_id': "prod_TbF1UTDoRuGhOy",
+        'stripe_price_id': "price_1SejN1AJugrwwGJAOEdJeaIw",
+        'stripe_product_id': "prod_TbxHlGihnNIHVP",
         'stripe_overage_price_id': None,  # Free plan has no overage (hard limit)
     },
     'starter': {
         'name': 'Starter',
         'monthly_tokens': 100,
-        'stripe_price_id': "price_1Se2XZAJugrwwGJA6zdgFohu",
-        'stripe_product_id': "prod_TbF1KSxCYnqVzT",
+        'stripe_price_id': "price_1SejN1AJugrwwGJAyKhZnbPS",
+        'stripe_product_id': "prod_TbxHg5Va4ATcVo",
         'stripe_overage_price_id': None,  # Will be set by setup_stripe.py
     },
     'creator': {
         'name': 'Creator',
         'monthly_tokens': 500,
-        'stripe_price_id': "price_1Se2XaAJugrwwGJAzeUZsFiy",
-        'stripe_product_id': "prod_TbF1urcgxdTYYv",
+        'stripe_price_id': "price_1SejN2AJugrwwGJA094UYijQ",
+        'stripe_product_id': "prod_TbxHtZ0YGFJaBZ",
         'stripe_overage_price_id': None,  # Will be set by setup_stripe.py
     },
     'unlimited': {
         'name': 'Hopper Unlimited',
         'monthly_tokens': -1,  # -1 indicates unlimited
-        'stripe_price_id': "price_1Se6W7AJugrwwGJAnlJ3Gqh0",  # Auto-updated by setup_stripe.py
-        'stripe_product_id': "prod_TbIU2tjHI5Tx6r",  # Auto-updated by setup_stripe.py
+        'stripe_price_id': "price_1SejN2AJugrwwGJA979CsaKS",  # Auto-updated by setup_stripe.py
+        'stripe_product_id': "prod_TbxHLbYi9ilKdQ",  # Auto-updated by setup_stripe.py
         'stripe_overage_price_id': None,  # Unlimited plan has no overage
         'hidden': True,  # Hidden from public plans list (dev/admin only)
     }

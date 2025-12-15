@@ -112,7 +112,7 @@ clean:
 	@docker volume prune -f
 	@echo "✅ Cleanup complete!"
 
-setup-stripe:
+setup-stripe: sync
 	@echo "⚙️  Running Stripe setup for ENV=$(ENV) ..."
 	@echo "   - Uses .env.$(ENV) to load STRIPE_SECRET_KEY and BACKEND_URL"
 	@$(COMPOSE) run --rm backend python /app/scripts/setup_stripe.py --env-file $(ENV)

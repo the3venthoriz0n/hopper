@@ -3779,6 +3779,25 @@ def get_subscription_plans():
         else:
             plan_data["price"] = None
         
+        # Get overage price information if overage_price_id exists
+        from stripe_config import get_plan_overage_price_id
+        overage_price_id = plan_config.get("stripe_overage_price_id")
+        if overage_price_id:
+            overage_price_info = get_price_info(overage_price_id)
+            if overage_price_info:
+                # Format as per-token price (remove /month suffix, add /token)
+                overage_amount_dollars = overage_price_info["amount_dollars"]
+                plan_data["overage_price"] = {
+                    "amount": overage_price_info["amount"],
+                    "amount_dollars": overage_amount_dollars,
+                    "currency": overage_price_info["currency"],
+                    "formatted": f"${overage_amount_dollars:.2f}/token"
+                }
+            else:
+                plan_data["overage_price"] = None
+        else:
+            plan_data["overage_price"] = None
+        
         plans_list.append(plan_data)
     
     return {"plans": plans_list}

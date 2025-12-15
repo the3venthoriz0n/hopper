@@ -3632,7 +3632,12 @@ function Home() {
                                     )}
                                   </div>
                                   <div style={{ fontSize: '0.75rem', color: '#999' }}>
-                                    {plan.monthly_tokens} tokens/month
+                                    {plan.monthly_tokens === -1 ? 'Unlimited tokens' : `${plan.monthly_tokens} tokens/month`}
+                                    {plan.overage_price && (
+                                      <span style={{ marginLeft: '0.5rem', color: '#818cf8' }}>
+                                        • {plan.overage_price.formatted} overage
+                                      </span>
+                                    )}
                                   </div>
                                 </div>
                                 {isCurrent ? (
