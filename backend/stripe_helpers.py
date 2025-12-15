@@ -121,6 +121,76 @@ def ensure_stripe_customer_exists(user_id: int, db: Session) -> Optional[str]:
     return customer_id
 
 
+def delete_stripe_customer(customer_id: str, user_id: Optional[int] = None) -> bool:
+    """
+    Delete a Stripe customer. This automatically cancels all subscriptions.
+    
+    Args:
+        customer_id: Stripe customer ID to delete
+        user_id: Optional user ID for logging purposes
+        
+    Returns:
+        True if customer was deleted successfully or didn't exist, False on error
+    """
+    if not STRIPE_SECRET_KEY:
+        logger.warning("Cannot delete Stripe customer: STRIPE_SECRET_KEY not set")
+        return False
+    
+    if not customer_id:
+        return True  # No customer ID to delete
+    
+    # Verify it's a valid Stripe customer ID (starts with 'cus_')
+    if not customer_id.startswith('cus_'):
+        logger.warning(
+            f"Customer ID {customer_id} for user {user_id or 'unknown'} "
+            f"doesn't appear to be a Stripe customer (doesn't start with 'cus_'). "
+            f"Skipping Stripe customer deletion."
+        )
+        return True  # Not a valid customer ID, but not an error
+    
+    try:
+        # Delete the customer in Stripe
+        # This automatically cancels all subscriptions for this customer
+        stripe.Customer.delete(customer_id)
+        user_info = f" for user {user_id}" if user_id else ""
+        logger.info(
+            f"✅ Deleted Stripe customer {customer_id}{user_info} "
+            f"(subscriptions automatically canceled by Stripe)"
+        )
+        return True
+    except stripe.error.InvalidRequestError as e:
+        # Customer might already be deleted or not exist in Stripe
+        error_str = str(e)
+        if 'No such customer' in error_str:
+            user_info = f" for user {user_id}" if user_id else ""
+            logger.info(
+                f"ℹ️  Customer {customer_id}{user_info} not found in Stripe "
+                f"(may already be deleted). Continuing."
+            )
+            return True  # Customer doesn't exist, which is fine
+        else:
+            user_info = f" for user {user_id}" if user_id else ""
+            logger.warning(
+                f"⚠️  Failed to delete Stripe customer {customer_id}{user_info}: {e}. "
+                f"Continuing."
+            )
+            return False  # Some other error
+    except stripe.error.StripeError as e:
+        user_info = f" for user {user_id}" if user_id else ""
+        logger.warning(
+            f"⚠️  Stripe error deleting customer {customer_id}{user_info}: {e}. "
+            f"Continuing."
+        )
+        return False
+    except Exception as e:
+        user_info = f" for user {user_id}" if user_id else ""
+        logger.error(
+            f"❌ Unexpected error deleting Stripe customer {customer_id}{user_info}: {e}",
+            exc_info=True
+        )
+        return False
+
+
 def _has_active_paid_subscription(customer_id: str, exclude_subscription_id: Optional[str] = None) -> bool:
     """
     Check if customer has any active paid subscriptions in Stripe.

@@ -762,6 +762,7 @@ def delete_user_account(user_id: int, db: Session = None) -> Dict[str, Any]:
     """Delete user account and all associated data
     
     This function performs a complete data deletion:
+    - Deletes Stripe customer (which automatically cancels all subscriptions)
     - Deletes all OAuth tokens
     - Deletes all settings
     - Deletes all videos (database records only, files handled separately)
@@ -781,7 +782,7 @@ def delete_user_account(user_id: int, db: Session = None) -> Dict[str, Any]:
         should_close = True
     
     try:
-        # Get user first to verify it exists
+        # Get user first to verify it exists and get Stripe customer ID
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
             return {
@@ -789,6 +790,9 @@ def delete_user_account(user_id: int, db: Session = None) -> Dict[str, Any]:
                 "error": "User not found",
                 "stats": {}
             }
+        
+        # Store Stripe customer ID before deletion
+        stripe_customer_id = user.stripe_customer_id
         
         # Collect statistics
         stats = {
@@ -809,6 +813,11 @@ def delete_user_account(user_id: int, db: Session = None) -> Dict[str, Any]:
         
         oauth_tokens = db.query(OAuthToken).filter(OAuthToken.user_id == user_id).all()
         stats["oauth_tokens_deleted"] = len(oauth_tokens)
+        
+        # Delete Stripe customer if it exists (this automatically cancels all subscriptions)
+        if stripe_customer_id:
+            from stripe_helpers import delete_stripe_customer
+            delete_stripe_customer(stripe_customer_id, user_id=user_id)
         
         # Delete user (cascade will handle related records due to foreign key constraints)
         db.delete(user)
