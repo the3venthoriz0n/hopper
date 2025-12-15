@@ -58,8 +58,14 @@ from models import (
 import db_helpers
 import redis_client
 from auth import (
-    authenticate_user, create_user, get_or_create_oauth_user,
-    get_user_by_id, hash_password, set_user_password, verify_password
+    authenticate_user,
+    create_user,
+    get_or_create_oauth_user,
+    get_user_by_id,
+    get_user_by_email,
+    hash_password,
+    set_user_password,
+    verify_password,
 )
 from encryption import decrypt, encrypt
 
@@ -82,7 +88,7 @@ from stripe_helpers import (
     mark_stripe_event_processed,
     update_subscription_from_stripe,
 )
-from email_utils import send_verification_email
+from email_utils import send_verification_email, send_password_reset_email
 from token_helpers import (
     add_tokens, check_tokens_available, deduct_tokens,
     ensure_tokens_synced_for_subscription, get_token_balance,
@@ -369,6 +375,20 @@ class VerifyEmailRequest(BaseModel):
     code: str
 
 
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    code: str
+    new_password: str
+
+
 @app.post("/api/auth/verify-email")
 def verify_email(request_data: VerifyEmailRequest):
     """Verify a user's email address using a one-time code."""
@@ -383,30 +403,158 @@ def verify_email(request_data: VerifyEmailRequest):
     if not normalized_expected or normalized_expected != code:
         raise HTTPException(400, "Invalid or expired verification code")
 
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.email == email).first()
+    # At this point, the code is valid. Either:
+    # - A pending registration exists (no user yet), or
+    # - A user already exists but is not yet verified.
+
+    # First, check for a pending registration (no user created yet)
+    pending = redis_client.get_pending_registration(email)
+
+    if pending and pending.get("password_hash"):
+        # Create the user using the stored password hash
+        try:
+            user = create_user(email, password=None, password_hash=pending["password_hash"])
+        except ValueError as e:
+            # If user somehow exists now, fall through to existing-user path
+            user = get_user_by_email(email)
+            if not user:
+                raise HTTPException(400, str(e))
+    else:
+        # No pending registration; fall back to existing user
+        user = get_user_by_email(email)
         if not user:
             raise HTTPException(404, "User not found")
 
-        # Mark email as verified
-        user.is_email_verified = True
+    # Mark email as verified and ensure Stripe customer/subscription exists
+    db = SessionLocal()
+    try:
+        db_user = db.query(User).filter(User.email == email).first()
+        if not db_user:
+            raise HTTPException(404, "User not found")
+
+        db_user.is_email_verified = True
+
+        # Ensure Stripe customer and free subscription exist for this user
+        try:
+            create_stripe_customer(db_user.email, db_user.id, db)
+            create_free_subscription(db_user.id, db)
+        except Exception as e:
+            logger.warning(f"Failed to create Stripe customer/subscription for user {db_user.id}: {e}")
+
         db.commit()
 
-        # Remove used code
+        # Remove used code and pending registration data
         redis_client.delete_email_verification_code(email)
+        redis_client.delete_pending_registration(email)
 
         return {
             "user": {
-                "id": user.id,
-                "email": user.email,
-                "created_at": user.created_at.isoformat(),
-                "is_admin": user.is_admin,
+                "id": db_user.id,
+                "email": db_user.email,
+                "created_at": db_user.created_at.isoformat(),
+                "is_admin": db_user.is_admin,
                 "is_email_verified": True,
             }
         }
     finally:
         db.close()
+
+
+@app.post("/api/auth/resend-verification")
+def resend_verification(request_data: ResendVerificationRequest):
+    """
+    Resend an email verification code.
+
+    This is safe to call even if the email does not exist; we always return 200
+    to avoid revealing which emails are registered.
+    """
+    email = request_data.email
+
+    # If user exists and is already verified, do nothing but return success
+    user = get_user_by_email(email)
+    if user and getattr(user, "is_email_verified", False):
+        return {"message": "If this email is registered, a verification email has been sent."}
+
+    # (Re)generate verification code
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    verification_code = "".join(secrets.choice(alphabet) for _ in range(6))
+    redis_client.set_email_verification_code(email, verification_code)
+
+    # If no pending registration and no user, we don't have a password hash cached;
+    # still send a code so we don't leak whether the email is known.
+
+    try:
+        send_verification_email(email, verification_code)
+    except Exception:
+        logger.warning(
+            f"Failed to send verification email (resend) to {email}",
+            exc_info=True,
+        )
+
+    return {"message": "If this email is registered, a verification email has been sent."}
+
+
+@app.post("/api/auth/forgot-password")
+def forgot_password(request_data: ForgotPasswordRequest):
+    """
+    Initiate password reset by sending a reset code to the user's email.
+
+    Always returns a generic success message to avoid leaking whether the email exists.
+    """
+    email = request_data.email
+
+    user = get_user_by_email(email)
+    # Only send reset codes for existing, verified users; but don't reveal this to the caller
+    if user and getattr(user, "is_email_verified", False):
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        reset_code = "".join(secrets.choice(alphabet) for _ in range(6))
+        redis_client.set_password_reset_code(email, reset_code)
+
+        try:
+            send_password_reset_email(email, reset_code)
+        except Exception:
+            logger.warning(
+                f"Failed to send password reset email to {email}",
+                exc_info=True,
+            )
+
+    return {"message": "If this email is registered, a password reset email has been sent."}
+
+
+@app.post("/api/auth/reset-password")
+def reset_password(request_data: ResetPasswordRequest):
+    """
+    Complete password reset using the emailed code.
+    """
+    email = request_data.email
+    new_password = request_data.new_password
+
+    # Basic password policy (reuse registration rule)
+    if len(new_password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters long")
+
+    # Normalize provided code
+    code = request_data.code.strip().upper()
+
+    # Look up expected reset code
+    expected_code = redis_client.get_password_reset_code(email)
+    normalized_expected = expected_code.upper() if expected_code else None
+    if not normalized_expected or normalized_expected != code:
+        raise HTTPException(400, "Invalid or expired reset code")
+
+    user = get_user_by_email(email)
+    if not user:
+        # Do not reveal whether the email exists; act as if the code is invalid
+        raise HTTPException(400, "Invalid or expired reset code")
+
+    # Update password
+    if not set_user_password(user.id, new_password):
+        raise HTTPException(500, "Failed to reset password")
+
+    # Clear used reset code
+    redis_client.delete_password_reset_code(email)
+
+    return {"message": "Password has been reset successfully."}
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -1278,53 +1426,53 @@ def update_active_users_gauge_from_sessions() -> int:
 
 @app.post("/api/auth/register")
 def register(request_data: RegisterRequest, request: Request, response: Response):
-    """Register a new user"""
+    """Begin registration by sending a verification email (user is created after verification).
+
+    This avoids creating persistent user records for unverified emails.
+    """
     try:
         # Validate password strength (minimum 8 characters)
         if len(request_data.password) < 8:
             raise HTTPException(400, "Password must be at least 8 characters long")
-        
-        # Create user (unverified email by default)
-        user = create_user(request_data.email, request_data.password)
-        
-        # Create Stripe customer and free subscription (non-blocking, log errors but don't fail registration)
-        try:
-            db = SessionLocal()
-            try:
-                create_stripe_customer(user.email, user.id, db)
-                # Create free subscription automatically
-                create_free_subscription(user.id, db)
-            except Exception as e:
-                logger.warning(f"Failed to create Stripe customer/subscription for user {user.id}: {e}")
-            finally:
-                db.close()
-        except Exception as e:
-            logger.warning(f"Error creating Stripe customer/subscription during registration: {e}")
-        
+
+        # Check if a user already exists for this email (verified or not)
+        existing_user = get_user_by_email(request_data.email)
+        if existing_user:
+            # Never start a new registration for an email that already has an account.
+            # Users should log in or use "Forgot password" / "Resend verification" instead.
+            raise HTTPException(
+                400,
+                "Email already registered. Please log in, reset your password, or resend the verification email.",
+            )
+
+        # Hash password and store in pending registration (no user row yet)
+        password_hash = hash_password(request_data.password)
+        redis_client.set_pending_registration(request_data.email, password_hash)
+
         # Generate and store email verification code (6-character, uppercase A-Z/0-9)
         alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
         verification_code = "".join(secrets.choice(alphabet) for _ in range(6))
-        redis_client.set_email_verification_code(user.email, verification_code)
+        redis_client.set_email_verification_code(request_data.email, verification_code)
 
         # Send verification email (best-effort, but do not fail registration on email issues)
         try:
-            send_verification_email(user.email, verification_code)
+            send_verification_email(request_data.email, verification_code)
         except Exception:
             logger.warning(
-                f"Failed to send verification email to {user.email}",
+                f"Failed to send verification email to {request_data.email}",
                 exc_info=True,
             )
 
-        logger.info(f"User registered (verification required): {user.email} (ID: {user.id})")
+        logger.info(f"Registration initiated (verification required) for: {request_data.email}")
 
-        # Do not create a session until email is verified
+        # Do not create a session until email is verified and user is created
         return {
             "user": {
-                "id": user.id,
-                "email": user.email,
-                "created_at": user.created_at.isoformat(),
-                "is_admin": user.is_admin,
-                "is_email_verified": getattr(user, "is_email_verified", False),
+                "id": None,
+                "email": request_data.email,
+                "created_at": None,
+                "is_admin": False,
+                "is_email_verified": False,
             },
             "requires_email_verification": True,
         }

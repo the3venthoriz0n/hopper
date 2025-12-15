@@ -19,17 +19,26 @@ def verify_password(password: str, password_hash: str) -> bool:
     return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
 
 
-def create_user(email: str, password: str = None) -> User:
-    """Create a new user (password optional for OAuth users)"""
+def create_user(email: str, password: str = None, password_hash: str = None) -> User:
+    """Create a new user.
+
+    Args:
+        email: User email (must be unique).
+        password: Raw password for the user (optional for OAuth users).
+        password_hash: Pre-hashed password (if provided, `password` must be None).
+    """
     db = SessionLocal()
     try:
         # Check if user already exists
         existing_user = db.query(User).filter(User.email == email).first()
         if existing_user:
             raise ValueError("Email already registered")
-        
+
         # Create user
-        password_hash = hash_password(password) if password else None
+        if password_hash and password:
+            raise ValueError("Provide either password or password_hash, not both")
+        if not password_hash and password:
+            password_hash = hash_password(password)
         user = User(email=email, password_hash=password_hash)
         db.add(user)
         db.commit()

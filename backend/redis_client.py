@@ -92,6 +92,8 @@ def get_rate_limit_count(identifier: str) -> int:
 SETTINGS_CACHE_TTL = 5 * 60  # 5 minutes
 OAUTH_TOKEN_CACHE_TTL = 60  # 1 minute
 EMAIL_VERIFICATION_TTL = 10 * 60  # 10 minutes
+PENDING_REGISTRATION_TTL = 30 * 60  # 30 minutes for pending sign-ups
+PASSWORD_RESET_TTL = 15 * 60  # 15 minutes for password reset codes
 
 
 def get_cached_settings(user_id: int, category: str) -> Optional[Dict]:
@@ -229,4 +231,47 @@ def get_email_verification_code(email: str) -> Optional[str]:
 def delete_email_verification_code(email: str) -> None:
     """Delete email verification code for an email."""
     key = f"email_verification:{email}"
+    redis_client.delete(key)
+
+
+def set_pending_registration(email: str, password_hash: str) -> None:
+    """Store pending registration data (hashed password) for an email."""
+    key = f"pending_registration:{email}"
+    data = {"password_hash": password_hash}
+    redis_client.setex(key, PENDING_REGISTRATION_TTL, json.dumps(data))
+
+
+def get_pending_registration(email: str) -> Optional[Dict]:
+    """Get pending registration data for an email."""
+    key = f"pending_registration:{email}"
+    raw = redis_client.get(key)
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        return None
+
+
+def delete_pending_registration(email: str) -> None:
+    """Delete pending registration data for an email."""
+    key = f"pending_registration:{email}"
+    redis_client.delete(key)
+
+
+def set_password_reset_code(email: str, code: str) -> None:
+    """Store password reset code for an email."""
+    key = f"password_reset:{email}"
+    redis_client.setex(key, PASSWORD_RESET_TTL, code)
+
+
+def get_password_reset_code(email: str) -> Optional[str]:
+    """Retrieve password reset code for an email."""
+    key = f"password_reset:{email}"
+    return redis_client.get(key)
+
+
+def delete_password_reset_code(email: str) -> None:
+    """Delete password reset code for an email."""
+    key = f"password_reset:{email}"
     redis_client.delete(key)
