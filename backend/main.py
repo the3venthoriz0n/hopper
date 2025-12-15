@@ -577,22 +577,12 @@ def build_video_response(video: Video, all_settings: Dict[str, Dict], all_tokens
     
     filename_no_ext = video.filename.rsplit('.', 1)[0] if '.' in video.filename else video.filename
     
-    # Compute YouTube title - Priority: custom > template (YouTube/global) > generated_title > filename
+    # Compute YouTube title for display - Priority: custom > generated_title > filename
     custom_settings = video.custom_settings or {}
     if 'title' in custom_settings:
         youtube_title = custom_settings['title']
     else:
-        title_template = youtube_settings.get('title_template', '') or global_settings.get('title_template', '{filename}')
-        if title_template:
-            youtube_title = replace_template_placeholders(
-                title_template,
-                filename_no_ext,
-                global_settings.get('wordbank', [])
-            )
-        elif video.generated_title:
-            youtube_title = video.generated_title
-        else:
-            youtube_title = filename_no_ext
+        youtube_title = video.generated_title or filename_no_ext
     
     # Enforce YouTube's 100 character limit
     video_dict['youtube_title'] = youtube_title[:100] if len(youtube_title) > 100 else youtube_title
@@ -628,20 +618,12 @@ def build_video_response(video: Video, all_settings: Dict[str, Dict], all_tokens
                 tags_template, filename_no_ext, global_settings.get('wordbank', [])
             ) if tags_template else ''
     
-    # TikTok properties - Priority: custom > template (TikTok/global) > generated_title > filename
+    # TikTok properties for display - Priority: custom > generated_title > filename
     if dest_settings.get("tiktok_enabled") and tiktok_token:
         if 'title' in custom_settings:
             tiktok_title = custom_settings['title']
         else:
-            title_template = tiktok_settings.get('title_template', '') or global_settings.get('title_template', '{filename}')
-            if title_template:
-                tiktok_title = replace_template_placeholders(
-                    title_template, filename_no_ext, global_settings.get('wordbank', [])
-                )
-            elif video.generated_title:
-                tiktok_title = video.generated_title
-            else:
-                tiktok_title = filename_no_ext
+            tiktok_title = video.generated_title or filename_no_ext
         
         upload_props['tiktok'] = {
             'title': tiktok_title[:2200] if len(tiktok_title) > 2200 else tiktok_title,
@@ -654,21 +636,13 @@ def build_video_response(video: Video, all_settings: Dict[str, Dict], all_tokens
     else:
         video_dict['tiktok_title'] = None
     
-    # Instagram properties - Priority: custom > template (Instagram/global) > generated_title > filename
+    # Instagram properties for display - Priority: custom > generated_title > filename
     if dest_settings.get("instagram_enabled") and instagram_token:
         # Caption
         if 'title' in custom_settings:
             caption = custom_settings['title']
         else:
-            caption_template = instagram_settings.get('caption_template', '') or global_settings.get('title_template', '{filename}')
-            if caption_template:
-                caption = replace_template_placeholders(
-                    caption_template, filename_no_ext, global_settings.get('wordbank', [])
-                )
-            elif video.generated_title:
-                caption = video.generated_title
-            else:
-                caption = filename_no_ext
+            caption = video.generated_title or filename_no_ext
         
         upload_props['instagram'] = {
             'caption': caption[:2200] if len(caption) > 2200 else caption,
