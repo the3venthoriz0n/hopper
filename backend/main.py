@@ -370,6 +370,11 @@ class GrantTokensRequest(BaseModel):
     amount: int
     reason: Optional[str] = None
 
+class CreateUserRequest(BaseModel):
+    email: EmailStr
+    password: str
+    is_admin: bool = False
+
 class UserResponse(BaseModel):
     id: int
     email: str
@@ -4449,12 +4454,12 @@ def get_user_details(
     # Get subscription info
     subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
     
-    # Calculate total tokens used (sum of all positive token transactions)
+    # Calculate total tokens used (sum of all negative token transactions, which are deductions)
     from sqlalchemy import func
     from models import TokenTransaction
-    total_tokens_used = db.query(func.sum(TokenTransaction.tokens)).filter(
+    total_tokens_used = db.query(func.sum(func.abs(TokenTransaction.tokens))).filter(
         TokenTransaction.user_id == user_id,
-        TokenTransaction.tokens > 0
+        TokenTransaction.tokens < 0  # Negative tokens represent usage/deductions
     ).scalar() or 0
     
     return {
@@ -4506,6 +4511,89 @@ def grant_tokens(
     
     logger.info(f"Admin {admin_user.id} granted {request_data.amount} tokens to user {user_id}")
     return {"message": f"Granted {request_data.amount} tokens to user {user_id}"}
+
+
+@app.post("/api/admin/users")
+def create_user_admin(
+    request_data: CreateUserRequest,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Create a new user (admin only)"""
+    # Validate password strength
+    if len(request_data.password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters long")
+    
+    # Check if user already exists
+    existing_user = db.query(User).filter(User.email == request_data.email).first()
+    if existing_user:
+        raise HTTPException(400, f"User with email {request_data.email} already exists")
+    
+    try:
+        # Create user
+        user = create_user(request_data.email, request_data.password)
+        
+        # Set admin status if requested
+        if request_data.is_admin:
+            user.is_admin = True
+            db.commit()
+            db.refresh(user)
+        
+        # Create Stripe customer and free subscription
+        try:
+            create_stripe_customer(user.email, user.id, db)
+            create_free_subscription(user.id, db)
+        except Exception as e:
+            logger.warning(f"Failed to create Stripe customer/subscription for user {user.id}: {e}")
+        
+        logger.info(f"Admin {admin_user.id} created user: {user.email} (ID: {user.id}, is_admin: {user.is_admin})")
+        
+        return {
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "created_at": user.created_at.isoformat(),
+                "is_admin": user.is_admin
+            },
+            "message": f"User {user.email} created successfully"
+        }
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        logger.error(f"Error creating user: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(500, "Failed to create user")
+
+
+@app.delete("/api/admin/users/{target_user_id}")
+def delete_user_admin(
+    target_user_id: int,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Delete a user (admin only)"""
+    # Prevent admin from deleting themselves
+    if target_user_id == admin_user.id:
+        raise HTTPException(400, "Cannot delete your own account")
+    
+    target_user = db.query(User).filter(User.id == target_user_id).first()
+    if not target_user:
+        raise HTTPException(404, "User not found")
+    
+    user_email = target_user.email
+    
+    try:
+        # Delete user (cascade will handle related records)
+        db.delete(target_user)
+        db.commit()
+        
+        logger.info(f"Admin {admin_user.id} deleted user: {user_email} (ID: {target_user_id})")
+        
+        return {"message": f"User {user_email} deleted successfully"}
+    except Exception as e:
+        logger.error(f"Error deleting user {target_user_id}: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(500, "Failed to delete user")
 
 
 @app.get("/api/admin/webhooks/events")

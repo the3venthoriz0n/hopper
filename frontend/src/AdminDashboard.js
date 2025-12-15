@@ -58,6 +58,12 @@ function AdminDashboard() {
   const [limit] = useState(50);
   const [transactions, setTransactions] = useState([]);
   const [showTransactions, setShowTransactions] = useState(false);
+  const [showCreateUser, setShowCreateUser] = useState(false);
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [newUserIsAdmin, setNewUserIsAdmin] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [userToDelete, setUserToDelete] = useState(null);
 
   // Fetch CSRF token on mount
   useEffect(() => {
@@ -199,6 +205,74 @@ function AdminDashboard() {
     }
   };
 
+  const handleCreateUser = async (e) => {
+    e.preventDefault();
+    if (!newUserEmail || !newUserPassword) {
+      setMessage('❌ Please fill in all required fields');
+      return;
+    }
+    if (newUserPassword.length < 8) {
+      setMessage('❌ Password must be at least 8 characters long');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await axios.post(
+        `${API}/admin/users`,
+        {
+          email: newUserEmail,
+          password: newUserPassword,
+          is_admin: newUserIsAdmin
+        },
+        { 
+          headers: { 'X-CSRF-Token': csrfToken },
+          withCredentials: true
+        }
+      );
+      setMessage(`✅ User ${newUserEmail} created successfully`);
+      setNewUserEmail('');
+      setNewUserPassword('');
+      setNewUserIsAdmin(false);
+      setShowCreateUser(false);
+      loadUsers();
+    } catch (err) {
+      setMessage(`❌ Error: ${err.response?.data?.detail || err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+    
+    setLoading(true);
+    try {
+      await axios.delete(
+        `${API}/admin/users/${userToDelete.id}`,
+        { 
+          headers: { 'X-CSRF-Token': csrfToken },
+          withCredentials: true
+        }
+      );
+      setMessage(`✅ User ${userToDelete.email} deleted successfully`);
+      setShowDeleteConfirm(false);
+      setUserToDelete(null);
+      setSelectedUser(null);
+      setUserDetails(null);
+      loadUsers();
+    } catch (err) {
+      setMessage(`❌ Error: ${err.response?.data?.detail || err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmDelete = (user) => {
+    setUserToDelete(user);
+    setShowDeleteConfirm(true);
+  };
+
   const handleSearch = (e) => {
     e.preventDefault();
     setPage(1);
@@ -247,6 +321,162 @@ function AdminDashboard() {
             color: message.includes('✅') ? '#4ade80' : '#ef4444'
           }}>
             {message}
+          </div>
+        )}
+
+        {/* Create User Section */}
+        <div style={{
+          background: 'rgba(255, 255, 255, 0.05)',
+          borderRadius: '8px',
+          padding: '1.5rem',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+          marginBottom: '2rem'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <h2 style={{ color: '#fff', margin: 0 }}>Create User</h2>
+            <button
+              onClick={() => setShowCreateUser(!showCreateUser)}
+              style={{
+                padding: '0.5rem 1rem',
+                background: showCreateUser ? 'rgba(239, 68, 68, 0.3)' : 'rgba(99, 102, 241, 0.3)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                borderRadius: '4px',
+                color: '#fff',
+                cursor: 'pointer',
+                fontSize: '0.9rem'
+              }}
+            >
+              {showCreateUser ? 'Cancel' : '+ Create User'}
+            </button>
+          </div>
+
+          {showCreateUser && (
+            <form onSubmit={handleCreateUser} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              <input
+                type="email"
+                value={newUserEmail}
+                onChange={(e) => setNewUserEmail(e.target.value)}
+                placeholder="Email address"
+                required
+                style={{
+                  padding: '0.75rem',
+                  background: 'rgba(0, 0, 0, 0.3)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  borderRadius: '4px',
+                  color: '#fff',
+                  fontSize: '0.9rem'
+                }}
+              />
+              <input
+                type="password"
+                value={newUserPassword}
+                onChange={(e) => setNewUserPassword(e.target.value)}
+                placeholder="Password (min 8 characters)"
+                required
+                minLength={8}
+                style={{
+                  padding: '0.75rem',
+                  background: 'rgba(0, 0, 0, 0.3)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  borderRadius: '4px',
+                  color: '#fff',
+                  fontSize: '0.9rem'
+                }}
+              />
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={newUserIsAdmin}
+                  onChange={(e) => setNewUserIsAdmin(e.target.checked)}
+                  style={{ cursor: 'pointer' }}
+                />
+                <span style={{ fontSize: '0.9rem' }}>Make this user an admin</span>
+              </label>
+              <button
+                type="submit"
+                disabled={loading || !newUserEmail || !newUserPassword}
+                style={{
+                  padding: '0.75rem',
+                  background: loading || !newUserEmail || !newUserPassword ? 'rgba(255, 255, 255, 0.05)' : 'rgba(34, 197, 94, 0.5)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  borderRadius: '4px',
+                  color: '#fff',
+                  cursor: loading || !newUserEmail || !newUserPassword ? 'not-allowed' : 'pointer',
+                  fontSize: '0.9rem',
+                  fontWeight: '500'
+                }}
+              >
+                {loading ? 'Creating...' : 'Create User'}
+              </button>
+            </form>
+          )}
+        </div>
+
+        {/* Delete Confirmation Dialog */}
+        {showDeleteConfirm && userToDelete && (
+          <div style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0, 0, 0, 0.7)',
+            display: 'flex',
+            justifyContent: 'center',
+            alignItems: 'center',
+            zIndex: 1000
+          }}>
+            <div style={{
+              background: 'rgba(30, 30, 46, 0.95)',
+              borderRadius: '8px',
+              padding: '2rem',
+              border: '1px solid rgba(255, 255, 255, 0.2)',
+              maxWidth: '400px',
+              width: '90%'
+            }}>
+              <h3 style={{ color: '#fff', marginTop: 0, marginBottom: '1rem' }}>Confirm Delete</h3>
+              <p style={{ color: '#e0e0e0', marginBottom: '1.5rem' }}>
+                Are you sure you want to delete user <strong style={{ color: '#fff' }}>{userToDelete.email}</strong>?
+                <br />
+                <span style={{ color: '#ef4444', fontSize: '0.85rem' }}>This action cannot be undone.</span>
+              </p>
+              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => {
+                    setShowDeleteConfirm(false);
+                    setUserToDelete(null);
+                  }}
+                  disabled={loading}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    background: 'rgba(255, 255, 255, 0.1)',
+                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                    borderRadius: '4px',
+                    color: '#fff',
+                    cursor: loading ? 'not-allowed' : 'pointer',
+                    fontSize: '0.9rem'
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteUser}
+                  disabled={loading}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    background: 'rgba(239, 68, 68, 0.5)',
+                    border: '1px solid rgba(239, 68, 68, 0.7)',
+                    borderRadius: '4px',
+                    color: '#fff',
+                    cursor: loading ? 'not-allowed' : 'pointer',
+                    fontSize: '0.9rem',
+                    fontWeight: '500'
+                  }}
+                >
+                  {loading ? 'Deleting...' : 'Delete User'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
@@ -492,22 +722,38 @@ function AdminDashboard() {
                     </div>
 
                     <div>
-                      <button
-                        onClick={() => loadTransactions(selectedUser.id)}
-                        disabled={loading}
-                        style={{
-                          padding: '0.5rem 1rem',
-                          background: 'rgba(99, 102, 241, 0.3)',
-                          border: '1px solid rgba(255, 255, 255, 0.2)',
-                          borderRadius: '4px',
-                          color: '#fff',
-                          cursor: loading ? 'not-allowed' : 'pointer',
-                          fontSize: '0.9rem',
-                          marginBottom: '1rem'
-                        }}
-                      >
-                        View Transactions
-                      </button>
+                      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                        <button
+                          onClick={() => loadTransactions(selectedUser.id)}
+                          disabled={loading}
+                          style={{
+                            padding: '0.5rem 1rem',
+                            background: 'rgba(99, 102, 241, 0.3)',
+                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            borderRadius: '4px',
+                            color: '#fff',
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            fontSize: '0.9rem'
+                          }}
+                        >
+                          View Transactions
+                        </button>
+                        <button
+                          onClick={() => confirmDelete(selectedUser)}
+                          disabled={loading}
+                          style={{
+                            padding: '0.5rem 1rem',
+                            background: 'rgba(239, 68, 68, 0.3)',
+                            border: '1px solid rgba(239, 68, 68, 0.5)',
+                            borderRadius: '4px',
+                            color: '#fff',
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            fontSize: '0.9rem'
+                          }}
+                        >
+                          Delete User
+                        </button>
+                      </div>
 
                       {showTransactions && transactions.length > 0 && (
                         <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
