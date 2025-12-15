@@ -781,11 +781,9 @@ def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription
         
         return subscription
         
-    except stripe.error.StripeError as e:
-        logger.error(f"Stripe error creating free subscription for user {user_id}: {e}")
-        db.rollback()
-        return None
     except Exception as e:
+        # Catch all exceptions (including Stripe errors). Note: in tests, `stripe` is patched
+        # with a MagicMock, so we can't safely catch `stripe.error.StripeError` directly.
         logger.error(f"Error creating free subscription for user {user_id}: {e}", exc_info=True)
         db.rollback()
         return None
