@@ -4365,28 +4365,55 @@ def unenroll_unlimited_plan(
     # Get preserved token balance before canceling subscriptions
     preserved_tokens = subscription.preserved_tokens_balance if subscription.preserved_tokens_balance is not None else 0
     
-    # Get free plan monthly tokens before creating subscription
-    from stripe_config import get_plan_monthly_tokens
-    free_plan_monthly_tokens = get_plan_monthly_tokens('free')
+    # Set balance to preserved_tokens before creating free subscription
+    # This ensures that when create_free_subscription adds free plan tokens,
+    # we can then set it back to just preserved_tokens (without the free plan tokens)
+    from token_helpers import get_or_create_token_balance
+    token_balance = get_or_create_token_balance(target_user_id, db)
+    token_balance.tokens_remaining = preserved_tokens
+    db.commit()
     
     # Cancel all existing subscriptions and create free subscription
     # create_free_subscription will handle canceling all subscriptions (including this one)
     # and ensure only one subscription exists
-    free_subscription = create_free_subscription(target_user_id, db)
-    if not free_subscription:
-        raise HTTPException(500, "Failed to create free subscription")
+    try:
+        free_subscription = create_free_subscription(target_user_id, db)
+        if not free_subscription:
+            # Check if there are still active subscriptions preventing creation
+            if target_user.stripe_customer_id:
+                try:
+                    remaining_active = stripe.Subscription.list(
+                        customer=target_user.stripe_customer_id,
+                        status='active',
+                        limit=100
+                    )
+                    if len(remaining_active.data) > 0:
+                        raise HTTPException(
+                            400, 
+                            f"Cannot unenroll: User still has {len(remaining_active.data)} active subscription(s) "
+                            f"that could not be canceled. Subscription IDs: {[s.id for s in remaining_active.data]}. "
+                            f"Please try again or contact support."
+                        )
+                except Exception as e:
+                    logger.error(f"Error checking remaining subscriptions: {e}")
+            
+            raise HTTPException(500, "Failed to create free subscription. Please try again or contact support.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error unenrolling user {target_user_id} from unlimited plan: {e}", exc_info=True)
+        raise HTTPException(500, f"Failed to unenroll from unlimited plan: {str(e)}")
     
     # After create_free_subscription, the balance has been increased by free_plan_monthly_tokens
-    # We want the final balance to be: preserved_tokens + free_plan_monthly_tokens
-    # So we need to SET it to that value (not ADD)
-    from token_helpers import get_or_create_token_balance
+    # We want the final balance to be just preserved_tokens (not preserved_tokens + free_plan_monthly_tokens)
+    # So we set it back to preserved_tokens, effectively removing the free plan tokens that were added
     token_balance = get_or_create_token_balance(target_user_id, db)
-    token_balance.tokens_remaining = preserved_tokens + free_plan_monthly_tokens
+    token_balance.tokens_remaining = preserved_tokens
     db.commit()
     
     logger.info(
         f"Admin {admin_user.id} unenrolled user {target_user_id} from unlimited plan "
-        f"(restored {preserved_tokens} preserved tokens + {free_plan_monthly_tokens} free plan tokens = {preserved_tokens + free_plan_monthly_tokens} total)"
+        f"(restored {preserved_tokens} preserved tokens, moved to free plan without adding free plan tokens)"
     )
     
     return {"message": f"User {target_user_id} unenrolled from unlimited plan"}

@@ -156,17 +156,13 @@ def cancel_all_user_subscriptions(user_id: int, db: Session, verify_cancellation
                 logger.info(f"Deleted {len(db_subscriptions)} orphaned subscription(s) from database for user {user_id}")
             return True
         
-        # Delete all subscriptions from database first (to prevent race conditions)
+        # ROOT CAUSE FIX: Cancel subscriptions in Stripe FIRST, then delete from database
+        # This ensures we have the subscription IDs available if cancellation fails
+        # and prevents orphaned active subscriptions in Stripe
+        
+        # Get subscriptions from database to know what we're canceling
         db_subscriptions = db.query(Subscription).filter(Subscription.user_id == user_id).all()
-        deleted_count = len(db_subscriptions)
-        subscription_ids_to_cancel = [sub.stripe_subscription_id for sub in db_subscriptions if sub.stripe_subscription_id]
-        
-        for sub in db_subscriptions:
-            db.delete(sub)
-        
-        if deleted_count > 0:
-            db.commit()
-            logger.info(f"Deleted {deleted_count} subscription(s) from database for user {user_id}")
+        db_subscription_ids = {sub.stripe_subscription_id for sub in db_subscriptions if sub.stripe_subscription_id}
         
         # Cancel all active subscriptions in Stripe
         try:
@@ -186,20 +182,38 @@ def cancel_all_user_subscriptions(user_id: int, db: Session, verify_cancellation
             
             # Cancel all subscriptions that need canceling
             for sub_id in subscriptions_to_cancel:
-                try:
-                    stripe.Subscription.delete(sub_id)
-                    canceled_count += 1
-                    logger.info(f"Canceled Stripe subscription {sub_id} for user {user_id}")
-                except stripe.error.InvalidRequestError as e:
-                    error_str = str(e)
-                    if 'No such subscription' in error_str or 'already been canceled' in error_str.lower():
-                        # Subscription already canceled or doesn't exist - that's fine
+                max_cancel_attempts = 3
+                canceled_this_sub = False
+                
+                for cancel_attempt in range(max_cancel_attempts):
+                    try:
+                        stripe.Subscription.delete(sub_id)
                         canceled_count += 1
-                        logger.debug(f"Stripe subscription {sub_id} already canceled or doesn't exist")
-                    else:
-                        logger.warning(f"Failed to cancel Stripe subscription {sub_id}: {e}")
-                except Exception as e:
-                    logger.warning(f"Error canceling Stripe subscription {sub_id}: {e}")
+                        canceled_this_sub = True
+                        logger.info(f"Canceled Stripe subscription {sub_id} for user {user_id} (attempt {cancel_attempt + 1})")
+                        break
+                    except stripe.error.InvalidRequestError as e:
+                        error_str = str(e)
+                        if 'No such subscription' in error_str or 'already been canceled' in error_str.lower():
+                            # Subscription already canceled or doesn't exist - that's fine
+                            canceled_count += 1
+                            canceled_this_sub = True
+                            logger.debug(f"Stripe subscription {sub_id} already canceled or doesn't exist")
+                            break
+                        else:
+                            if cancel_attempt < max_cancel_attempts - 1:
+                                logger.warning(f"Failed to cancel Stripe subscription {sub_id} (attempt {cancel_attempt + 1}): {e}, retrying...")
+                                import time
+                                time.sleep(0.5)
+                            else:
+                                logger.error(f"Failed to cancel Stripe subscription {sub_id} after {max_cancel_attempts} attempts: {e}")
+                    except Exception as e:
+                        if cancel_attempt < max_cancel_attempts - 1:
+                            logger.warning(f"Error canceling Stripe subscription {sub_id} (attempt {cancel_attempt + 1}): {e}, retrying...")
+                            import time
+                            time.sleep(0.5)
+                        else:
+                            logger.error(f"Error canceling Stripe subscription {sub_id} after {max_cancel_attempts} attempts: {e}")
             
             if canceled_count > 0:
                 logger.info(f"Canceled {canceled_count} Stripe subscription(s) for user {user_id}")
@@ -234,18 +248,80 @@ def cancel_all_user_subscriptions(user_id: int, db: Session, verify_cancellation
                             f"after {max_retries} attempts. Subscription IDs: "
                             f"{[s.id for s in remaining_active.data]}"
                         )
-                        # Force cancel any remaining active subscriptions
+                        # Force cancel any remaining active subscriptions with multiple attempts
+                        all_force_canceled = True
                         for remaining_sub in remaining_active.data:
-                            try:
-                                stripe.Subscription.delete(remaining_sub.id)
-                                logger.warning(f"Force canceled remaining subscription {remaining_sub.id} for user {user_id}")
-                            except Exception as e:
-                                logger.error(f"Failed to force cancel subscription {remaining_sub.id}: {e}")
+                            force_canceled = False
+                            for force_attempt in range(5):  # More attempts for force cancel
+                                try:
+                                    # Check subscription status first
+                                    sub_details = stripe.Subscription.retrieve(remaining_sub.id)
+                                    if sub_details.status in ('canceled', 'incomplete_expired'):
+                                        logger.info(f"Subscription {remaining_sub.id} is already {sub_details.status}")
+                                        force_canceled = True
+                                        break
+                                    
+                                    stripe.Subscription.delete(remaining_sub.id)
+                                    logger.warning(f"Force canceled remaining subscription {remaining_sub.id} for user {user_id} (attempt {force_attempt + 1})")
+                                    force_canceled = True
+                                    # Wait a bit for Stripe to process
+                                    time.sleep(0.5)
+                                    break
+                                except stripe.error.InvalidRequestError as e:
+                                    error_str = str(e)
+                                    if 'No such subscription' in error_str or 'already been canceled' in error_str.lower():
+                                        logger.info(f"Subscription {remaining_sub.id} already canceled")
+                                        force_canceled = True
+                                        break
+                                    elif force_attempt < 4:
+                                        logger.warning(f"Failed to force cancel {remaining_sub.id} (attempt {force_attempt + 1}): {e}, retrying...")
+                                        time.sleep(1.0 * (force_attempt + 1))  # Exponential backoff
+                                    else:
+                                        logger.error(f"Failed to force cancel subscription {remaining_sub.id} after 5 attempts: {e}")
+                                except Exception as e:
+                                    if force_attempt < 4:
+                                        logger.warning(f"Error force canceling {remaining_sub.id} (attempt {force_attempt + 1}): {e}, retrying...")
+                                        time.sleep(1.0 * (force_attempt + 1))
+                                    else:
+                                        logger.error(f"Error force canceling subscription {remaining_sub.id} after 5 attempts: {e}")
+                            
+                            if not force_canceled:
+                                logger.error(f"CRITICAL: Could not cancel subscription {remaining_sub.id} for user {user_id} - this may cause issues")
+                                all_force_canceled = False
+                        
+                        # If we still have active subscriptions after force cancel, return False
+                        if not all_force_canceled:
+                            # Final check
+                            final_check = stripe.Subscription.list(
+                                customer=customer_id,
+                                status='active',
+                                limit=100
+                            )
+                            if len(final_check.data) > 0:
+                                logger.error(f"VERIFICATION FAILED: User {user_id} still has {len(final_check.data)} active subscription(s) after all cancellation attempts")
+                                return False
                         
         except stripe.error.StripeError as e:
             logger.warning(f"Error listing Stripe subscriptions for customer {customer_id}: {e}")
         except Exception as e:
             logger.error(f"Unexpected error canceling Stripe subscriptions for user {user_id}: {e}", exc_info=True)
+        
+        # SECOND: Delete all subscriptions from database (only after Stripe cancellation is verified)
+        db_subscriptions = db.query(Subscription).filter(Subscription.user_id == user_id).all()
+        deleted_count = len(db_subscriptions)
+        
+        for sub in db_subscriptions:
+            db.delete(sub)
+        
+        if deleted_count > 0:
+            db.commit()
+            logger.info(f"Deleted {deleted_count} subscription(s) from database for user {user_id}")
+        for sub in db_subscriptions:
+            db.delete(sub)
+        
+        if deleted_count > 0:
+            db.commit()
+            logger.info(f"Deleted {deleted_count} subscription(s) from database for user {user_id}")
         
         return True
         
@@ -619,7 +695,37 @@ def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription
     
     try:
         # Cancel all existing subscriptions first to ensure only one subscription exists
-        cancel_all_user_subscriptions(user_id, db)
+        # Use verify_cancellation=True to ensure all subscriptions are actually canceled
+        cancellation_success = cancel_all_user_subscriptions(user_id, db, verify_cancellation=True)
+        
+        if not cancellation_success:
+            logger.error(f"Failed to cancel all subscriptions for user {user_id}, cannot create free subscription")
+            return None
+        
+        # Double-check that no active subscriptions remain before creating new one
+        user = db.query(User).filter(User.id == user_id).first()
+        if user and user.stripe_customer_id:
+            import time
+            time.sleep(0.5)  # Brief delay to ensure Stripe has processed cancellations
+            remaining_active = stripe.Subscription.list(
+                customer=user.stripe_customer_id,
+                status='active',
+                limit=100
+            )
+            if len(remaining_active.data) > 0:
+                logger.error(
+                    f"Cannot create free subscription for user {user_id}: "
+                    f"still has {len(remaining_active.data)} active subscription(s): "
+                    f"{[s.id for s in remaining_active.data]}"
+                )
+                # Try one more time to cancel
+                for sub in remaining_active.data:
+                    try:
+                        stripe.Subscription.delete(sub.id)
+                        logger.warning(f"Final attempt: canceled subscription {sub.id} for user {user_id}")
+                    except Exception as e:
+                        logger.error(f"Final attempt failed to cancel subscription {sub.id}: {e}")
+                return None
         
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
@@ -723,7 +829,27 @@ def create_unlimited_subscription(
             return None
         
         # Cancel all existing subscriptions first to ensure only one subscription exists
-        cancel_all_user_subscriptions(user_id, db)
+        # Verify cancellation succeeded before creating new subscription
+        cancellation_success = cancel_all_user_subscriptions(user_id, db, verify_cancellation=True)
+        if not cancellation_success:
+            logger.error(f"Failed to cancel all subscriptions for user {user_id}, cannot create unlimited subscription")
+            return None
+        
+        # Double-check no active subscriptions remain before creating
+        import time
+        time.sleep(0.5)  # Brief delay for Stripe to process cancellations
+        remaining_active = stripe.Subscription.list(
+            customer=customer_id,
+            status='active',
+            limit=100
+        )
+        if len(remaining_active.data) > 0:
+            logger.error(
+                f"Cannot create unlimited subscription for user {user_id}: "
+                f"still has {len(remaining_active.data)} active subscription(s): "
+                f"{[s.id for s in remaining_active.data]}"
+            )
+            return None
         
         # Create Stripe subscription for unlimited plan
         stripe_subscription = stripe.Subscription.create(
