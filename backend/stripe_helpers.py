@@ -447,10 +447,23 @@ def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription
         subscription = update_subscription_from_stripe(stripe_subscription, db, user_id=user_id)
         
         if subscription:
-            # Initialize token balance (webhook will also handle this, but ensure it's set)
-            from token_helpers import ensure_tokens_synced_for_subscription
-            ensure_tokens_synced_for_subscription(user_id, stripe_subscription.id, db)
-            logger.info(f"Created free Stripe subscription for user {user_id}: {stripe_subscription.id}")
+            # Explicitly initialize tokens for new subscription
+            # Use reset_tokens_for_subscription with is_renewal=False to add monthly tokens
+            from token_helpers import reset_tokens_for_subscription
+            from stripe_config import get_plan_monthly_tokens
+            token_initialized = reset_tokens_for_subscription(
+                user_id,
+                subscription.plan_type,
+                subscription.current_period_start,
+                subscription.current_period_end,
+                db,
+                is_renewal=False  # False = new subscription, adds tokens to balance
+            )
+            if token_initialized:
+                monthly_tokens = get_plan_monthly_tokens('free')
+                logger.info(f"Created free Stripe subscription for user {user_id}: {stripe_subscription.id} and initialized {monthly_tokens} tokens")
+            else:
+                logger.warning(f"Created free Stripe subscription for user {user_id}: {stripe_subscription.id} but token initialization failed")
         else:
             logger.error(f"Failed to create subscription record for user {user_id}")
         
@@ -536,9 +549,14 @@ def create_unlimited_subscription(
             db.commit()
             db.refresh(subscription)
             
-            # Initialize token balance (webhook will also handle this, but ensure it's set)
-            from token_helpers import ensure_tokens_synced_for_subscription
-            ensure_tokens_synced_for_subscription(user_id, stripe_subscription.id, db)
+            # Unlimited plans don't need token initialization (they bypass token checks)
+            # But we should still update the period for consistency
+            from token_helpers import get_or_create_token_balance
+            token_balance = get_or_create_token_balance(user_id, db)
+            token_balance.period_start = subscription.current_period_start
+            token_balance.period_end = subscription.current_period_end
+            token_balance.updated_at = datetime.now(timezone.utc)
+            db.commit()
             logger.info(f"Created unlimited Stripe subscription for user {user_id}: {stripe_subscription.id} (preserved {preserved_tokens} tokens)")
         else:
             logger.error(f"Failed to create subscription record for user {user_id}")
