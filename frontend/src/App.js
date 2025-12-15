@@ -311,14 +311,14 @@ function Home() {
     
     if (googleLogin === 'success') {
       setMessage('✅ Successfully logged in with Google!');
-      window.history.replaceState({}, '', '/');
+      window.history.replaceState({}, '', '/app');
       // Close popup if this is a popup window
       if (window.opener) {
         window.close();
       }
     } else if (googleLogin === 'error') {
       setMessage('❌ Google login failed. Please try again.');
-      window.history.replaceState({}, '', '/');
+      window.history.replaceState({}, '', '/app');
       // Close popup if this is a popup window
       if (window.opener) {
         window.close();
@@ -1130,7 +1130,7 @@ function Home() {
     return () => clearInterval(pollInterval);
   }, [user, loadDestinations, loadGlobalSettings, loadYoutubeSettings, loadTiktokSettings, loadInstagramSettings, loadVideos, loadYoutubeAccount, loadTiktokAccount, loadInstagramAccount, applyOAuthStatus, loadUploadLimits]);
   
-  // Show login page if not authenticated (AFTER all hooks are declared)
+  // Show loading state while checking auth
   if (authLoading) {
     return (
       <div style={{
@@ -1146,9 +1146,9 @@ function Home() {
     );
   }
   
+  // Redirect unauthenticated users to login when accessing the app shell
   if (!user) {
-    // Public landing page for unauthenticated visitors
-    return <PublicLanding />;
+    return <Navigate to="/login" replace />;
   }
 
   const updateGlobalSettings = async (key, value) => {
@@ -3827,23 +3827,20 @@ function Home() {
 function App() {
   return (
     <Routes>
-      <Route path="/" element={<Home />} />
-      <Route
-        path="/login"
-        element={
-          <Login
-            onLoginSuccess={() => {
-              window.location.href = '/';
-            }}
-          />
-        }
-      />
+      {/* Public marketing/landing page */}
+      <Route path="/" element={<PublicLanding />} />
+
+      {/* Authenticated app shell */}
+      <Route path="/app" element={<Home />} />
+      <Route path="/subscription" element={<Home />} />
+      <Route path="/subscription/success" element={<Home />} />
+
+      {/* Other routes */}
+      <Route path="/login" element={<Login />} />
       <Route path="/admin" element={<AdminDashboard />} />
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/delete-your-data" element={<DeleteYourData />} />
-      <Route path="/subscription" element={<Home />} />
-      <Route path="/subscription/success" element={<Home />} />
     </Routes>
   );
 }

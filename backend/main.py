@@ -1535,7 +1535,7 @@ def auth_google_login_callback(code: str, state: str, request: Request, response
         # Track failed login attempt (invalid state)
         login_attempts_counter.labels(status="failure", method="google").inc()
         # Redirect to frontend with error instead of showing HTML
-        frontend_redirect = f"{FRONTEND_URL}/?google_login=error&reason=invalid_state"
+        frontend_redirect = f"{FRONTEND_URL}/app?google_login=error&reason=invalid_state"
         return RedirectResponse(url=frontend_redirect)
     
     # Delete state after verification
@@ -1594,8 +1594,8 @@ def auth_google_login_callback(code: str, state: str, request: Request, response
         session_id = secrets.token_urlsafe(32)
         redis_client.set_session(session_id, user.id)
         
-        # Create redirect response
-        frontend_redirect = f"{FRONTEND_URL}/?google_login=success"
+        # Create redirect response (send user to the main app shell)
+        frontend_redirect = f"{FRONTEND_URL}/app?google_login=success"
         redirect_response = RedirectResponse(url=frontend_redirect)
         
         # Set session cookie on the redirect response
@@ -1616,7 +1616,7 @@ def auth_google_login_callback(code: str, state: str, request: Request, response
         login_attempts_counter.labels(status="failure", method="google").inc()
         logger.error(f"Google login error: {e}", exc_info=True)
         # Redirect to frontend with error
-        frontend_redirect = f"{FRONTEND_URL}/?google_login=error"
+        frontend_redirect = f"{FRONTEND_URL}/app?google_login=error"
         return RedirectResponse(url=frontend_redirect)
 
 
@@ -1765,13 +1765,13 @@ def auth_callback(code: str, state: str, request: Request, response: Response):
     youtube_status = {"connected": True, "enabled": True}
     status_param = quote(json.dumps(youtube_status))
     
-    # Redirect to frontend with status
+    # Redirect to frontend app shell with status
     if FRONTEND_URL:
-        frontend_url = f"{FRONTEND_URL}?connected=youtube&status={status_param}"
+        frontend_url = f"{FRONTEND_URL}/app?connected=youtube&status={status_param}"
     else:
         host = request.headers.get("host", "localhost:8000")
         protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" else "http"
-        frontend_url = f"{protocol}://{host.replace(':8000', ':3000')}?connected=youtube&status={status_param}"
+        frontend_url = f"{protocol}://{host.replace(':8000', ':3000')}/app?connected=youtube&status={status_param}"
     
     return RedirectResponse(frontend_url)
 
@@ -2246,12 +2246,12 @@ async def auth_tiktok_callback(
             tiktok_status = {"connected": True, "enabled": True}
             status_param = quote(json.dumps(tiktok_status))
             
-            # Redirect to frontend with status
-            return RedirectResponse(f"{FRONTEND_URL}?connected=tiktok&status={status_param}")
+            # Redirect to frontend app shell with status
+            return RedirectResponse(f"{FRONTEND_URL}/app?connected=tiktok&status={status_param}")
             
     except Exception as e:
         tiktok_logger.error(f"Callback exception: {e}", exc_info=True)
-        return RedirectResponse(f"{FRONTEND_URL}?error=tiktok_auth_failed")
+        return RedirectResponse(f"{FRONTEND_URL}/app?error=tiktok_auth_failed")
 
 
 @app.get("/api/auth/tiktok/account")
@@ -2526,17 +2526,17 @@ async def auth_instagram_callback(
                         // ROOT CAUSE FIX: Pass connection status from authoritative source via URL
                         // This eliminates race conditions - no need for separate API call
                         const status = data.instagram ? encodeURIComponent(JSON.stringify(data.instagram)) : '';
-                        window.location.href = '{FRONTEND_URL}?connected=instagram' + (status ? '&status=' + status : '');
+                        window.location.href = '{FRONTEND_URL}/app?connected=instagram' + (status ? '&status=' + status : '');
                     }} else {{
                         window.location.href = '{FRONTEND_URL}?error=instagram_auth_failed&detail=' + encodeURIComponent(data.error || 'Unknown error');
                     }}
                 }})
                 .catch(err => {{
                     console.error('Error completing auth:', err);
-                    window.location.href = '{FRONTEND_URL}?error=instagram_auth_failed';
+                    window.location.href = '{FRONTEND_URL}/app?error=instagram_auth_failed';
                 }});
             }} else {{
-                window.location.href = '{FRONTEND_URL}?error=instagram_auth_failed&reason=missing_tokens';
+                window.location.href = '{FRONTEND_URL}/app?error=instagram_auth_failed&reason=missing_tokens';
             }}
         </script>
     </body>

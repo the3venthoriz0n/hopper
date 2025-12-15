@@ -55,19 +55,30 @@ function Login({ onLoginSuccess }) {
 
     try {
       const endpoint = isLogin ? '/auth/login' : '/auth/register';
-      const response = await axios.post(`${API}${endpoint}`, {
-        email,
-        password
-      }, { withCredentials: true });
+      const response = await axios.post(
+        `${API}${endpoint}`,
+        {
+          email,
+          password,
+        },
+        { withCredentials: true }
+      );
 
       setMessage(`✅ ${isLogin ? 'Login' : 'Registration'} successful!`);
+
+      // Allow parent components to react to successful login if they passed a handler
       if (onLoginSuccess) {
         onLoginSuccess(response.data.user);
       }
-      // Redirect admins to admin dashboard
-      if (response.data.user?.is_admin) {
-        setTimeout(() => navigate('/admin'), 500);
-      }
+
+      // Redirect after successful login/registration into the app shell
+      setTimeout(() => {
+        if (response.data.user?.is_admin) {
+          navigate('/admin');
+        } else {
+          navigate('/app');
+        }
+      }, 500);
     } catch (err) {
       const errorMsg = err.response?.data?.detail || err.message || 'Authentication failed';
       setMessage(`❌ ${errorMsg}`);
@@ -85,7 +96,7 @@ function Login({ onLoginSuccess }) {
       const response = await axios.get(`${API}/auth/google/login`);
       const authUrl = response.data.url;
       
-      // Open OAuth flow in popup
+      // Open OAuth flow in popup (so main app stays on screen)
       const width = 500;
       const height = 600;
       const left = window.screen.width / 2 - width / 2;
@@ -101,10 +112,11 @@ function Login({ onLoginSuccess }) {
       const checkPopup = setInterval(() => {
         if (!popup || popup.closed) {
           clearInterval(checkPopup);
-          // Popup closed, check auth status
+          // Popup closed, stop loading state
           setLoading(false);
-          // Trigger auth check which will log user in if session exists
-          window.location.reload();
+          // After OAuth flow completes, session cookie is set on the domain.
+          // Send the main window into the app shell where auth check will pick up the session.
+          window.location.href = '/app';
         }
       }, 500);
       

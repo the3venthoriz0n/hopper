@@ -13,6 +13,9 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, password_hash: str) -> bool:
     """Verify a password against its hash"""
+    # If the user has no password hash (e.g. OAuth-only account), immediately fail
+    if not password_hash or not password:
+        return False
     return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
 
 
