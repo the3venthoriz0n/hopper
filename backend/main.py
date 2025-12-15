@@ -1187,6 +1187,42 @@ def replace_template_placeholders(template: str, filename: str, wordbank: list) 
 # AUTHENTICATION ENDPOINTS
 # ============================================================================
 
+
+def update_active_users_gauge_from_sessions() -> int:
+    """
+    Recalculate and update the active users gauge based on Redis sessions.
+
+    Sessions are stored as "session:{session_id}" with user_id as the value.
+    We count unique user_ids for all existing (non-expired) sessions.
+    """
+    try:
+        # Import here to avoid circular imports in some environments
+        import redis_client as redis_module  # type: ignore
+    except Exception:
+        # Fallback to already imported module (used in most code paths)
+        redis_module = redis_client  # type: ignore
+
+    session_keys = redis_module.redis_client.keys("session:*")
+    active_user_ids = set()
+    for key in session_keys:
+        user_id = redis_module.redis_client.get(key)
+        if not user_id:
+            continue
+        try:
+            active_user_ids.add(int(user_id))
+        except (ValueError, TypeError):
+            # Skip invalid user_id values
+            continue
+
+    active_users = len(active_user_ids)
+    try:
+        active_users_gauge.set(active_users)
+    except Exception:
+        # Never let metric updates break auth flow
+        pass
+
+    return active_users
+
 @app.post("/api/auth/register")
 def register(request_data: RegisterRequest, request: Request, response: Response):
     """Register a new user"""
@@ -1218,6 +1254,13 @@ def register(request_data: RegisterRequest, request: Request, response: Response
         
         # Set session cookie with proper domain handling
         set_auth_cookie(response, session_id, request)
+
+        # Update active users gauge immediately after successful registration/login
+        try:
+            active_users = update_active_users_gauge_from_sessions()
+            logger.debug(f"Updated active users count after register: {active_users}")
+        except Exception:
+            logger.debug("Failed to update active users gauge after register", exc_info=True)
         
         logger.info(f"User registered: {user.email} (ID: {user.id})")
         
@@ -1256,6 +1299,13 @@ def login(request_data: LoginRequest, request: Request, response: Response):
         
         # Track successful login attempt
         login_attempts_counter.labels(status="success", method="email").inc()
+
+        # Update active users gauge immediately after successful login
+        try:
+            active_users = update_active_users_gauge_from_sessions()
+            logger.debug(f"Updated active users count after login: {active_users}")
+        except Exception:
+            logger.debug("Failed to update active users gauge after login", exc_info=True)
         
         logger.info(f"User logged in: {user.email} (ID: {user.id})")
         
@@ -5849,26 +5899,22 @@ async def update_metrics_task():
     while True:
         try:
             await asyncio.sleep(30)  # Update every 30 seconds
-            
+
             from models import SessionLocal, User, Video
-            import redis_client as redis_module
             db = SessionLocal()
             try:
                 # Active users: count unique users with active sessions in Redis
-                # Sessions are stored as "session:{session_id}" with user_id as value
-                # Only count sessions that actually exist (not expired)
-                session_keys = redis_module.redis_client.keys("session:*")
-                active_user_ids = set()
-                for key in session_keys:
-                    user_id = redis_module.redis_client.get(key)
-                    if user_id:  # Only count if session exists (not expired)
-                        try:
-                            active_user_ids.add(int(user_id))
-                        except (ValueError, TypeError):
-                            # Skip invalid user_id values
-                            continue
-                active_users = len(active_user_ids)
-                active_users_gauge.set(active_users)
+                # Use shared helper so login/logout and background task stay consistent
+                try:
+                    active_users = update_active_users_gauge_from_sessions()
+                    cleanup_logger.debug(
+                        f"Updated active users gauge from background task: {active_users}"
+                    )
+                except Exception:
+                    cleanup_logger.debug(
+                        "Failed to update active users gauge from background task",
+                        exc_info=True,
+                    )
                 
                 # Active subscriptions by plan type
                 subscriptions = db.query(Subscription).filter(Subscription.status == 'active').all()
