@@ -62,6 +62,7 @@ def load_plans(mode: str = None) -> Dict[str, Dict[str, Any]]:
     """
     if mode is None:
         mode = get_stripe_mode()
+        logger.debug(f"Auto-detected Stripe mode: {mode}")
     
     if mode not in ['test', 'live']:
         logger.warning(f"Unknown Stripe mode '{mode}', defaulting to test")
@@ -71,15 +72,27 @@ def load_plans(mode: str = None) -> Dict[str, Dict[str, Any]]:
     backend_dir = os.path.dirname(os.path.abspath(__file__))
     config_file = os.path.join(backend_dir, f'stripe_plans_{mode}.json')
     
+    logger.debug(f"Loading plans from: {config_file}")
+    
     try:
         with open(config_file) as f:
-            return json.load(f)
+            plans = json.load(f)
+            logger.info(f"Loaded {len(plans)} plans from {config_file}")
+            # Only log price IDs at DEBUG level to reduce noise
+            if logger.isEnabledFor(logging.DEBUG):
+                for plan_key, plan_data in plans.items():
+                    price_id = plan_data.get('stripe_price_id')
+                    overage_price_id = plan_data.get('stripe_overage_price_id')
+                    logger.debug(f"  {plan_key}: price_id={price_id}, overage_price_id={overage_price_id}")
+            return plans
     except FileNotFoundError:
         logger.error(f"Plan config file not found: {config_file}")
         logger.error("Run setup_stripe.py to generate configuration")
+        logger.warning("Using fallback plans (free plan only)")
         return _get_fallback_plans()
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in {config_file}: {e}")
+        logger.warning("Using fallback plans (free plan only)")
         return _get_fallback_plans()
 
 
@@ -116,7 +129,9 @@ def get_plans() -> Dict[str, Dict[str, Any]]:
 def reload_plans():
     """Force reload of plans from JSON (useful after running setup)."""
     global _PLANS_CACHE
+    logger.info("Reloading plans from file (clearing cache)")
     _PLANS_CACHE = load_plans()
+    logger.info(f"Plans reloaded: {len(_PLANS_CACHE)} plans")
     return _PLANS_CACHE
 
 
@@ -177,6 +192,7 @@ def get_plan_price_id(plan_type: str) -> Optional[str]:
     plan = plans.get(plan_type)
     if plan:
         return plan.get('stripe_price_id')
+    logger.warning(f"Plan type '{plan_type}' not found in plans. Available plans: {list(plans.keys())}")
     return None
 
 
@@ -193,6 +209,7 @@ def get_plan_overage_price_id(plan_type: str) -> Optional[str]:
     plan = plans.get(plan_type)
     if plan:
         return plan.get('stripe_overage_price_id')
+    logger.warning(f"Plan type '{plan_type}' not found in plans. Available plans: {list(plans.keys())}")
     return None
 
 

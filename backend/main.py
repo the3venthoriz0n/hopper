@@ -638,6 +638,12 @@ logging.basicConfig(
     force=True
 )
 
+# Silence noisy third-party libraries
+logging.getLogger("stripe").setLevel(logging.WARNING)  # Reduce Stripe library noise
+logging.getLogger("urllib3").setLevel(logging.WARNING)  # Reduce urllib3 connection pool noise
+logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)  # Reduce httpx noise
+
 # Create logger instance (OTEL handler will be added during app startup if configured)
 logger = logging.getLogger(__name__)
 

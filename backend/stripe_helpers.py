@@ -1066,6 +1066,18 @@ def update_subscription_from_stripe(
         # Note: Even in legacy format, subscription.plan.id is actually a price ID (starts with price_)
         price_id = None
         
+        # Always retrieve subscription fresh from Stripe to ensure we have the latest data
+        # This is important because webhook payloads might be incomplete
+        try:
+            logger.debug(f"Retrieving subscription {stripe_subscription.id} fresh from Stripe with expanded items")
+            stripe_subscription = stripe.Subscription.retrieve(
+                stripe_subscription.id,
+                expand=['items.data.price']
+            )
+        except stripe.error.StripeError as e:
+            logger.error(f"Failed to retrieve subscription {stripe_subscription.id} from Stripe: {e}")
+            return None
+        
         # First, check for legacy format: subscription.plan.id (this is actually a price ID)
         # Handle both dict and object formats
         if hasattr(stripe_subscription, 'plan') and stripe_subscription.plan:
@@ -1085,47 +1097,61 @@ def update_subscription_from_stripe(
             if hasattr(stripe_subscription, 'items') and stripe_subscription.items:
                 items_data = stripe_subscription.items.data if hasattr(stripe_subscription.items, 'data') else []
             
-            # Check if we need to expand items
-            needs_expansion = (
-                not items_data or
-                (items_data and len(items_data) > 0 and (
-                    not hasattr(items_data[0], 'price') or
-                    not items_data[0].price or
-                    not hasattr(items_data[0].price, 'id')
-                ))
+            # Log detailed information about items for debugging
+            logger.debug(
+                f"Subscription {stripe_subscription.id} items check: "
+                f"has_items={hasattr(stripe_subscription, 'items')}, "
+                f"items={stripe_subscription.items if hasattr(stripe_subscription, 'items') else None}, "
+                f"items_data_length={len(items_data) if items_data else 0}"
             )
             
-            if needs_expansion:
-                # Retrieve subscription with expanded items
-                logger.debug(f"Retrieving subscription {stripe_subscription.id} with expanded items")
-                stripe_subscription = stripe.Subscription.retrieve(
-                    stripe_subscription.id,
-                    expand=['items.data.price']
-                )
-                # Re-check legacy format after expansion (in case it wasn't present before)
-                if not price_id and hasattr(stripe_subscription, 'plan') and stripe_subscription.plan:
-                    plan_id = None
-                    if isinstance(stripe_subscription.plan, dict):
-                        plan_id = stripe_subscription.plan.get('id')
-                    elif hasattr(stripe_subscription.plan, 'id'):
-                        plan_id = stripe_subscription.plan.id
-                    
-                    if plan_id:
-                        price_id = plan_id
-                        logger.info(f"Found legacy plan format after expansion for subscription {stripe_subscription.id}: {price_id}")
-                
-                if hasattr(stripe_subscription, 'items') and stripe_subscription.items:
-                    items_data = stripe_subscription.items.data if hasattr(stripe_subscription.items, 'data') else []
-            
             # Try to get price from items (modern format)
-            if not price_id and items_data and len(items_data) > 0:
-                first_item = items_data[0]
-                if hasattr(first_item, 'price') and first_item.price and hasattr(first_item.price, 'id'):
-                    price_id = first_item.price.id
-                    logger.info(f"Found modern items format for subscription {stripe_subscription.id}: {price_id}")
+            if items_data and len(items_data) > 0:
+                # Check all items, not just the first one (in case first item is metered/overage)
+                for item in items_data:
+                    if hasattr(item, 'price') and item.price:
+                        item_price_id = None
+                        if isinstance(item.price, dict):
+                            item_price_id = item.price.get('id')
+                        elif hasattr(item.price, 'id'):
+                            item_price_id = item.price.id
+                        
+                        if item_price_id:
+                            # Skip metered/overage prices (they start with price_ but aren't the base plan)
+                            # We want the first non-metered price, or if all are metered, use the first one
+                            from stripe_config import get_plan_overage_price_id
+                            is_overage = False
+                            for plan_key, plan_config in get_plans().items():
+                                if plan_config.get('stripe_overage_price_id') == item_price_id:
+                                    is_overage = True
+                                    break
+                            
+                            if not is_overage:
+                                price_id = item_price_id
+                                logger.info(f"Found modern items format for subscription {stripe_subscription.id}: {price_id} (from item {item.id})")
+                                break
+                            elif not price_id:
+                                # Fallback to overage price if no base price found (shouldn't happen, but be safe)
+                                price_id = item_price_id
+                                logger.warning(f"Using overage price {price_id} as fallback for subscription {stripe_subscription.id}")
+            else:
+                logger.warning(
+                    f"Subscription {stripe_subscription.id} has no items in items.data array. "
+                    f"Subscription status: {stripe_subscription.status if hasattr(stripe_subscription, 'status') else 'unknown'}"
+                )
         
         if not price_id:
-            logger.error(f"Subscription {stripe_subscription.id} has no price/plan data (checked both legacy plan and modern items formats)")
+            # Log comprehensive diagnostic information
+            logger.error(
+                f"Subscription {stripe_subscription.id} has no price/plan data (checked both legacy plan and modern items formats). "
+                f"Status: {stripe_subscription.status if hasattr(stripe_subscription, 'status') else 'unknown'}, "
+                f"Has plan attr: {hasattr(stripe_subscription, 'plan')}, "
+                f"Plan value: {stripe_subscription.plan if hasattr(stripe_subscription, 'plan') else None}, "
+                f"Has items attr: {hasattr(stripe_subscription, 'items')}, "
+                f"Items data length: {len(stripe_subscription.items.data) if (hasattr(stripe_subscription, 'items') and stripe_subscription.items and hasattr(stripe_subscription.items, 'data')) else 0}"
+            )
+            # This subscription is invalid - it has no pricing information
+            # Don't create/update the subscription record as it's unusable
             return None
         
         plan_type = _get_plan_type_from_price(price_id)
