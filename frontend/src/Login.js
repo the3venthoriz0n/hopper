@@ -243,27 +243,63 @@ function Login({ onLoginSuccess }) {
                 We sent a verification code to <strong>{email}</strong>
               </p>
             </div>
-            <div style={{ marginBottom: '1.5rem' }}>
+            <div
+              style={{
+                marginBottom: '1.5rem',
+                display: 'flex',
+                justifyContent: 'center',
+                gap: '0.5rem',
+                position: 'relative'
+              }}
+              onClick={() => {
+                const input = document.getElementById('verification-code-input');
+                if (input) {
+                  input.focus();
+                }
+              }}
+            >
+              {/* Hidden actual input to support typing and paste */}
               <input
+                id="verification-code-input"
                 type="text"
-                placeholder="Enter 6-digit code"
+                inputMode="text"
+                autoComplete="one-time-code"
                 value={verificationCode}
-                onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                required
-                maxLength={6}
+                onChange={(e) =>
+                  setVerificationCode(
+                    e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 6).toUpperCase()
+                  )
+                }
                 style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  background: '#1a1a2e',
-                  border: '1px solid #0f3460',
-                  borderRadius: '4px',
-                  color: 'white',
-                  fontSize: '1.5rem',
-                  textAlign: 'center',
-                  letterSpacing: '0.5rem',
-                  fontFamily: 'monospace'
+                  position: 'absolute',
+                  inset: 0,
+                  opacity: 0,
+                  border: 'none',
+                  background: 'transparent',
+                  color: 'transparent',
+                  caretColor: 'transparent'
                 }}
               />
+              {Array.from({ length: 6 }).map((_, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    width: '2.2rem',
+                    height: '2.8rem',
+                    borderRadius: '4px',
+                    border: '1px solid #0f3460',
+                    background: '#1a1a2e',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '1.5rem',
+                    fontFamily: 'monospace',
+                    color: 'white'
+                  }}
+                >
+                  {verificationCode[idx] || ''}
+                </div>
+              ))}
             </div>
             <button
               type="submit"

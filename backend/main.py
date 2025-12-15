@@ -373,11 +373,14 @@ class VerifyEmailRequest(BaseModel):
 def verify_email(request_data: VerifyEmailRequest):
     """Verify a user's email address using a one-time code."""
     email = request_data.email
-    code = request_data.code.strip()
+    # Normalize user-provided code (trim and uppercase to be case-insensitive)
+    code = request_data.code.strip().upper()
 
     # Look up expected code in Redis
     expected_code = redis_client.get_email_verification_code(email)
-    if not expected_code or expected_code != code:
+    # Normalize stored code as well to ensure case-insensitive comparison
+    normalized_expected = expected_code.upper() if expected_code else None
+    if not normalized_expected or normalized_expected != code:
         raise HTTPException(400, "Invalid or expired verification code")
 
     db = SessionLocal()
