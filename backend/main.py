@@ -4374,24 +4374,35 @@ def unenroll_unlimited_plan(
             logger.warning(f"Failed to cancel Stripe subscription: {e}")
             # Continue anyway - we'll still update the database
     
-    # Create free subscription to replace it
+    # Delete subscription from database before creating free subscription
+    # This prevents create_free_subscription from trying to cancel it again
     old_subscription_id = subscription.stripe_subscription_id
     db.delete(subscription)
     db.commit()
     
+    # Get free plan monthly tokens before creating subscription
+    from stripe_config import get_plan_monthly_tokens
+    free_plan_monthly_tokens = get_plan_monthly_tokens('free')
+    
+    # Create free subscription to replace it
+    # Note: create_free_subscription will call cancel_all_user_subscriptions and reset_tokens_for_subscription
+    # which will ADD free plan tokens to the current balance. We need to account for this.
     free_subscription = create_free_subscription(target_user_id, db)
     if not free_subscription:
         raise HTTPException(500, "Failed to create free subscription")
     
-    # Restore preserved token balance by ADDING to current balance
-    # This ensures any tokens granted while on unlimited are preserved
+    # After create_free_subscription, the balance has been increased by free_plan_monthly_tokens
+    # We want the final balance to be: preserved_tokens + free_plan_monthly_tokens
+    # So we need to SET it to that value (not ADD)
     from token_helpers import get_or_create_token_balance
     token_balance = get_or_create_token_balance(target_user_id, db)
-    current_balance = token_balance.tokens_remaining
-    token_balance.tokens_remaining = current_balance + preserved_tokens  # ADD, don't replace
+    token_balance.tokens_remaining = preserved_tokens + free_plan_monthly_tokens
     db.commit()
     
-    logger.info(f"Admin {admin_user.id} unenrolled user {target_user_id} from unlimited plan (restored {preserved_tokens} tokens)")
+    logger.info(
+        f"Admin {admin_user.id} unenrolled user {target_user_id} from unlimited plan "
+        f"(restored {preserved_tokens} preserved tokens + {free_plan_monthly_tokens} free plan tokens = {preserved_tokens + free_plan_monthly_tokens} total)"
+    )
     
     return {"message": f"User {target_user_id} unenrolled from unlimited plan"}
 
