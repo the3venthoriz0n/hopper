@@ -85,26 +85,26 @@ PLANS_LIVE = {
     'free': {
         'name': 'Hopper Free',
         'monthly_tokens': 10,
-        'stripe_price_id': "",  # Auto-updated by setup_stripe.py
-        'stripe_product_id': "",  # Auto-updated by setup_stripe.py
+        'stripe_price_id': "price_1SdxH7AizedXSXdvzLcftaqi",  # Auto-updated by setup_stripe.py
+        'stripe_product_id': "prod_Tb9acbATXP0258",  # Auto-updated by setup_stripe.py
     },
     'medium': {
         'name': 'Hopper Medium',
         'monthly_tokens': 100,
-        'stripe_price_id': "",  # Auto-updated by setup_stripe.py
-        'stripe_product_id': "",  # Auto-updated by setup_stripe.py
+        'stripe_price_id': "price_1SdxH7AizedXSXdvVp0yPXnd",  # Auto-updated by setup_stripe.py
+        'stripe_product_id': "prod_Tb9a57n5L7GcuK",  # Auto-updated by setup_stripe.py
     },
     'pro': {
         'name': 'Hopper Pro',
         'monthly_tokens': 500,
-        'stripe_price_id': "",  # Auto-updated by setup_stripe.py
-        'stripe_product_id': "",  # Auto-updated by setup_stripe.py
+        'stripe_price_id': "price_1SdxH7AizedXSXdv1dIUYgby",  # Auto-updated by setup_stripe.py
+        'stripe_product_id': "prod_Tb9aHluyY1RIVH",  # Auto-updated by setup_stripe.py
     },
     'unlimited': {
         'name': 'Hopper Unlimited',
         'monthly_tokens': -1,  # -1 indicates unlimited
-        'stripe_price_id': "",  # Auto-updated by setup_stripe.py
-        'stripe_product_id': "",  # Auto-updated by setup_stripe.py
+        'stripe_price_id': "price_1Seh38AizedXSXdv9v8x0nMm",  # Auto-updated by setup_stripe.py
+        'stripe_product_id': "prod_Tbusrpl0qNLTq3",  # Auto-updated by setup_stripe.py
         'hidden': True,  # Hidden from public plans list (dev/admin only)
     }
 }

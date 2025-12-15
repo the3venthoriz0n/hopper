@@ -141,8 +141,11 @@ def cancel_all_user_subscriptions(user_id: int, db: Session, verify_cancellation
     try:
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
-            logger.error(f"User {user_id} not found")
-            return False
+            # If the user doesn't exist in the local DB, there are no local subscriptions to cancel.
+            # Let callers handle the "no such user" case separately (e.g. create_free_subscription
+            # will perform its own user lookup and bail if needed).
+            logger.error(f"User {user_id} not found when canceling subscriptions")
+            return True
         
         customer_id = user.stripe_customer_id
         if not customer_id:
