@@ -51,6 +51,172 @@ axios.interceptors.request.use(
   }
 );
 
+// Simple public landing page for unauthenticated visitors
+function PublicLanding() {
+  const isProduction = process.env.REACT_APP_ENVIRONMENT === 'production';
+  const appTitle = isProduction ? '🐸 hopper' : '🐸 DEV hopper';
+
+  return (
+    <div
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        background: 'radial-gradient(circle at top, #1f2937 0, #020617 45%, #000 100%)',
+        color: '#e5e7eb',
+        fontFamily:
+          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif',
+      }}
+    >
+      <header
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '1.25rem 2rem',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            fontWeight: 600,
+            fontSize: '1.1rem',
+          }}
+        >
+          <span style={{ fontSize: '1.4rem' }}>🐸</span>
+          <span>{appTitle.replace('🐸 ', '')}</span>
+        </div>
+        <nav style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <Link
+            to="/privacy"
+            style={{ color: '#9ca3af', textDecoration: 'none', fontSize: '0.9rem' }}
+          >
+            Privacy
+          </Link>
+          <Link
+            to="/terms"
+            style={{ color: '#9ca3af', textDecoration: 'none', fontSize: '0.9rem' }}
+          >
+            Terms
+          </Link>
+          <Link
+            to="/login"
+            style={{
+              padding: '0.45rem 1rem',
+              borderRadius: '999px',
+              border: '1px solid rgba(248, 250, 252, 0.25)',
+              background: 'rgba(15, 23, 42, 0.85)',
+              color: '#f9fafb',
+              textDecoration: 'none',
+              fontSize: '0.9rem',
+              fontWeight: 500,
+            }}
+          >
+            Login
+          </Link>
+        </nav>
+      </header>
+
+      <main
+        style={{
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '2rem',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: '720px',
+            textAlign: 'center',
+          }}
+        >
+          <p
+            style={{
+              textTransform: 'uppercase',
+              letterSpacing: '0.2em',
+              fontSize: '0.75rem',
+              color: '#9ca3af',
+              marginBottom: '0.75rem',
+            }}
+          >
+            Creator upload automation
+          </p>
+          <h1
+            style={{
+              fontSize: '2.4rem',
+              lineHeight: 1.2,
+              fontWeight: 700,
+              marginBottom: '1rem',
+              color: '#f9fafb',
+            }}
+          >
+            Upload once. Hopper handles YouTube, TikTok, and Instagram for you.
+          </h1>
+          <p
+            style={{
+              fontSize: '1rem',
+              color: '#d1d5db',
+              maxWidth: '640px',
+              margin: '0 auto 1.75rem auto',
+            }}
+          >
+            hopper is a small creator tool that automates multi-platform uploads and scheduling.
+            Connect your accounts, drag in videos, and let hopper handle the rest.
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem' }}>
+            <Link
+              to="/login"
+              style={{
+                padding: '0.75rem 1.75rem',
+                borderRadius: '999px',
+                border: 'none',
+                background:
+                  'linear-gradient(135deg, rgba(129, 140, 248, 0.9), rgba(236, 72, 153, 0.9))',
+                color: '#f9fafb',
+                textDecoration: 'none',
+                fontSize: '0.95rem',
+                fontWeight: 600,
+              }}
+            >
+              Log in / Sign up
+            </Link>
+            <a
+              href="mailto:andrewkpln+hopper@gmail.com"
+              style={{
+                padding: '0.75rem 1.4rem',
+                borderRadius: '999px',
+                border: '1px solid rgba(148, 163, 184, 0.6)',
+                color: '#e5e7eb',
+                textDecoration: 'none',
+                fontSize: '0.95rem',
+                background: 'rgba(15, 23, 42, 0.7)',
+              }}
+            >
+              Contact support
+            </a>
+          </div>
+        </div>
+      </main>
+
+      <footer
+        style={{
+          padding: '1.25rem 2rem',
+          fontSize: '0.8rem',
+          color: '#6b7280',
+          textAlign: 'center',
+          borderTop: '1px solid rgba(31, 41, 55, 0.8)',
+        }}
+      >
+        © {new Date().getFullYear()} hopper. All rights reserved.
+      </footer>
+    </div>
+  );
+}
+
 function Home() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -981,10 +1147,8 @@ function Home() {
   }
   
   if (!user) {
-    return <Login onLoginSuccess={(userData) => {
-      setUser(userData);
-      checkAuth();
-    }} />;
+    // Public landing page for unauthenticated visitors
+    return <PublicLanding />;
   }
 
   const updateGlobalSettings = async (key, value) => {
@@ -3664,6 +3828,16 @@ function App() {
   return (
     <Routes>
       <Route path="/" element={<Home />} />
+      <Route
+        path="/login"
+        element={
+          <Login
+            onLoginSuccess={() => {
+              window.location.href = '/';
+            }}
+          />
+        }
+      />
       <Route path="/admin" element={<AdminDashboard />} />
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />

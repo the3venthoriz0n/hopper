@@ -41,6 +41,16 @@ function Privacy() {
       <h2 style={{ color: '#444', marginTop: '2rem' }}>6. Changes to Privacy Policy</h2>
       <p>We may update this Privacy Policy from time to time. We will notify you of any changes by posting the new policy on this page.</p>
       
+      <h2 style={{ color: '#444', marginTop: '2rem' }}>7. Contact</h2>
+      <p>
+        If you have any questions about this Privacy Policy or how your data is handled, you can
+        contact us at{' '}
+        <a href="mailto:andrewkpln+hopper@gmail.com" style={{ color: '#0066cc' }}>
+          andrewkpln+hopper@gmail.com
+        </a>
+        .
+      </p>
+      
       <p style={{ marginTop: '2rem' }}>
         <Link to="/terms" style={{ color: '#0066cc', textDecoration: 'none' }}>Terms of Service</Link> | <Link to="/" style={{ color: '#0066cc', textDecoration: 'none' }}>Home</Link>
       </p>
