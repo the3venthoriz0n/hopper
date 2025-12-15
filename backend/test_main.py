@@ -330,7 +330,7 @@ class TestStripeFunctionality:
         assert result >= 0
         
         # Test with different plan types
-        for plan in ['free', 'medium', 'pro', 'unlimited']:
+        for plan in ['free', 'starter', 'creator', 'unlimited']:
             tokens = get_plan_monthly_tokens(plan)
             assert isinstance(tokens, int)
             if plan == 'unlimited':

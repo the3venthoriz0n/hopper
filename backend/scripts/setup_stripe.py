@@ -18,10 +18,10 @@ from typing import Dict, Any
 # Product definitions
 # All plans now use Stripe subscriptions (including free and unlimited)
 PRODUCTS = {
-    'free': {'name': 'Hopper Free', 'description': '10 tokens per month', 'monthly_tokens': 10, 'price_cents': 0},
-    'medium': {'name': 'Hopper Medium', 'description': '100 tokens per month', 'monthly_tokens': 100, 'price_cents': 999},
-    'pro': {'name': 'Hopper Pro', 'description': '500 tokens per month', 'monthly_tokens': 500, 'price_cents': 2999},
-    'unlimited': {'name': 'Hopper Unlimited', 'description': 'Unlimited tokens', 'monthly_tokens': -1, 'price_cents': 0, 'hidden': True}
+    'free': {'name': 'Free', 'description': '10 tokens per month', 'monthly_tokens': 10, 'price_cents': 0, 'overage_price_cents': None},
+    'starter': {'name': 'Starter', 'description': '100 tokens per month', 'monthly_tokens': 100, 'price_cents': 999, 'overage_price_cents': 29},  # $0.29 per token
+    'creator': {'name': 'Creator', 'description': '500 tokens per month', 'monthly_tokens': 500, 'price_cents': 2999, 'overage_price_cents': 20},  # $0.20 per token
+    'unlimited': {'name': 'Unlimited', 'description': 'Unlimited tokens', 'monthly_tokens': -1, 'price_cents': 0, 'overage_price_cents': None, 'hidden': True}
 }
 
 WEBHOOK_EVENTS = [
@@ -125,7 +125,43 @@ def create_or_update_products(mode: str) -> Dict[str, Dict[str, Any]]:
             'price_id': price.id,
             'monthly_tokens': config['monthly_tokens'],
             'price_cents': config['price_cents'],
+            'overage_price_id': None,
+            'overage_price_cents': config.get('overage_price_cents'),
         }
+        
+        # Create metered price for overage (if configured)
+        if config.get('overage_price_cents') is not None:
+            overage_price = None
+            # Look for existing metered price
+            for p in price_map.get(product.id, []):
+                if (p.unit_amount == config['overage_price_cents'] and 
+                    p.currency == 'usd' and 
+                    p.recurring and 
+                    p.recurring.interval == 'month' and
+                    p.billing_scheme == 'per_unit' and
+                    p.recurring.usage_type == 'metered'):
+                    overage_price = p
+                    break
+            
+            if overage_price:
+                print(f"  ✓ Found overage price: {overage_price.id} (metered, ${config['overage_price_cents']/100:.2f} per token)")
+            else:
+                # Create metered price for overage tokens
+                overage_price = stripe.Price.create(
+                    product=product.id,
+                    unit_amount=config['overage_price_cents'],
+                    currency='usd',
+                    recurring={
+                        'interval': 'month',
+                        'usage_type': 'metered',
+                        'aggregate_usage': 'sum'
+                    },
+                    billing_scheme='per_unit'
+                )
+                print(f"  ✓ Created overage price: {overage_price.id} (metered, ${config['overage_price_cents']/100:.2f} per token)")
+            
+            results[key]['overage_price_id'] = overage_price.id
+        
         print()
     
     return results
@@ -192,6 +228,16 @@ def update_config_file(products: Dict[str, Dict[str, Any]], mode: str) -> bool:
                     line = f"{' ' * indent}'stripe_product_id': \"{product_info['product_id']}\",{comment}\n"
                     updated_plans.add(in_plan)
                     print(f"  → Updating {in_plan} product_id: {product_info['product_id']}")
+                elif "'stripe_overage_price_id':" in line or '"stripe_overage_price_id":' in line:
+                    # Preserve comment if present
+                    comment = f"  # {line.split('#', 1)[1].strip()}" if '#' in line else ""
+                    overage_id = product_info.get('overage_price_id') or 'None'
+                    if overage_id != 'None':
+                        line = f"{' ' * indent}'stripe_overage_price_id': \"{overage_id}\",{comment}\n"
+                    else:
+                        line = f"{' ' * indent}'stripe_overage_price_id': None,{comment}\n"
+                    updated_plans.add(in_plan)
+                    print(f"  → Updating {in_plan} overage_price_id: {overage_id}")
         
         new_lines.append(line)
     

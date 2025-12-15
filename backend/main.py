@@ -261,7 +261,7 @@ try:
     active_subscriptions_gauge = Gauge(
         'hopper_active_subscriptions',
         'Number of active subscriptions by plan type',
-        ['plan_type']  # plan_type: free, medium, pro, unlimited
+        ['plan_type']  # plan_type: free, starter, creator, unlimited
     )
 except ValueError:
     active_subscriptions_gauge = REGISTRY._names_to_collectors.get('hopper_active_subscriptions')
@@ -4440,9 +4440,12 @@ def handle_invoice_payment_succeeded(invoice_data: Dict[str, Any], db: Session):
     This handler only ensures the subscription state is updated. If the subscription
     period has advanced, customer.subscription.updated will have already fired and
     handled the renewal. This is a safety net to ensure subscription state is current.
+    
+    For metered billing: This is where we reset the token usage counter for the new
+    billing cycle, so overage tracking starts fresh.
     """
     import stripe
-    from token_helpers import ensure_tokens_synced_for_subscription
+    from token_helpers import ensure_tokens_synced_for_subscription, get_or_create_token_balance
     
     subscription_id = invoice_data.get("subscription")
     if not subscription_id:
@@ -4466,6 +4469,23 @@ def handle_invoice_payment_succeeded(invoice_data: Dict[str, Any], db: Session):
         logger.error(f"Failed to update subscription {subscription_id} for user {user_id}")
         return
     
+    # Reset token usage counter for new billing cycle (for metered billing)
+    # This ensures overage tracking starts fresh each billing period
+    billing_reason = invoice_data.get("billing_reason", "unknown")
+    if billing_reason == 'subscription_cycle':
+        # This is a renewal - reset tokens_used_this_period to 0 for new billing cycle
+        # The token balance itself is reset by customer.subscription.updated handler
+        # We just need to reset the usage counter for overage tracking
+        balance = get_or_create_token_balance(user_id, db)
+        if balance.tokens_used_this_period > 0:
+            logger.info(
+                f"Resetting token usage counter for user {user_id} on billing cycle renewal "
+                f"(previous period usage: {balance.tokens_used_this_period})"
+            )
+            balance.tokens_used_this_period = 0
+            balance.updated_at = datetime.now(timezone.utc)
+            db.commit()
+    
     # Note: We don't handle token renewal here because:
     # 1. customer.subscription.updated is the canonical event for subscription state changes
     # 2. It fires when the period advances, which is the definitive signal for renewal
@@ -4476,7 +4496,6 @@ def handle_invoice_payment_succeeded(invoice_data: Dict[str, Any], db: Session):
     # This is idempotent and won't double-process renewals
     ensure_tokens_synced_for_subscription(user_id, subscription_id, db)
     
-    billing_reason = invoice_data.get("billing_reason", "unknown")
     logger.info(f"Invoice payment succeeded for subscription {subscription_id} (billing_reason: {billing_reason}), subscription state updated for user {user_id}")
 
 
@@ -6125,7 +6144,7 @@ async def update_metrics_task():
                 # Active subscriptions by plan type
                 subscriptions = db.query(Subscription).filter(Subscription.status == 'active').all()
                 # Reset all plan types to 0 first
-                for plan_type in ['free', 'medium', 'pro', 'unlimited']:
+                for plan_type in ['free', 'starter', 'creator', 'unlimited']:
                     active_subscriptions_gauge.labels(plan_type=plan_type).set(0)
                 # Set current counts
                 plan_counts = {}

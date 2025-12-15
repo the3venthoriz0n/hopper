@@ -545,14 +545,22 @@ def create_checkout_session(
                     "Please manage your subscription through the customer portal."
                 )
         
+        # Get plan type from price_id to determine if we need metered price
+        from stripe_config import get_plan_overage_price_id
+        plan_type = _get_plan_type_from_price(price_id)
+        
+        # Build line items (base price + optional metered price)
+        line_items = [{'price': price_id, 'quantity': 1}]
+        overage_price_id = get_plan_overage_price_id(plan_type)
+        if overage_price_id:
+            # For metered prices, quantity is not needed (Stripe will track usage)
+            line_items.append({'price': overage_price_id})
+        
         # Create checkout session
         session = stripe.checkout.Session.create(
             customer=customer_id,
             payment_method_types=['card'],
-            line_items=[{
-                'price': price_id,
-                'quantity': 1,
-            }],
+            line_items=line_items,
             mode='subscription',
             success_url=success_url,
             cancel_url=cancel_url,
@@ -742,16 +750,22 @@ def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription
             return None
         
         # Get free plan price ID
-        from stripe_config import get_plan_price_id
+        from stripe_config import get_plan_price_id, get_plan_overage_price_id
         price_id = get_plan_price_id('free')
         if not price_id:
             logger.error("Free plan price ID not configured")
             return None
         
+        # Build subscription items (base price + optional metered price)
+        items = [{'price': price_id}]
+        overage_price_id = get_plan_overage_price_id('free')
+        if overage_price_id:
+            items.append({'price': overage_price_id})
+        
         # Create Stripe subscription for free plan ($0/month)
         stripe_subscription = stripe.Subscription.create(
             customer=customer_id,
-            items=[{'price': price_id}],
+            items=items,
             metadata={'user_id': str(user_id)},
         )
         
@@ -823,7 +837,7 @@ def create_unlimited_subscription(
             return None
         
         # Get unlimited plan price ID
-        from stripe_config import get_plan_price_id
+        from stripe_config import get_plan_price_id, get_plan_overage_price_id
         price_id = get_plan_price_id('unlimited')
         if not price_id:
             logger.error("Unlimited plan price ID not configured")
@@ -852,10 +866,16 @@ def create_unlimited_subscription(
             )
             return None
         
+        # Build subscription items (base price + optional metered price)
+        items = [{'price': price_id}]
+        overage_price_id = get_plan_overage_price_id('unlimited')
+        if overage_price_id:
+            items.append({'price': overage_price_id})
+        
         # Create Stripe subscription for unlimited plan
         stripe_subscription = stripe.Subscription.create(
             customer=customer_id,
-            items=[{'price': price_id}],
+            items=items,
             metadata={
                 'user_id': str(user_id),
                 'preserved_tokens': str(preserved_tokens)  # Store preserved tokens in metadata
@@ -922,10 +942,20 @@ def create_stripe_subscription(user_id: int, price_id: str, db: Session) -> Opti
         if not customer_id:
             return None
         
+        # Get plan type from price_id to determine if we need metered price
+        from stripe_config import get_plan_overage_price_id
+        plan_type = _get_plan_type_from_price(price_id)
+        
+        # Build subscription items (base price + optional metered price)
+        items = [{'price': price_id}]
+        overage_price_id = get_plan_overage_price_id(plan_type)
+        if overage_price_id:
+            items.append({'price': overage_price_id})
+        
         # Create subscription in Stripe
         stripe_subscription = stripe.Subscription.create(
             customer=customer_id,
-            items=[{'price': price_id}],
+            items=items,
             metadata={'user_id': str(user_id)},
         )
         
@@ -965,7 +995,32 @@ def _get_plan_type_from_price(price_id: str) -> str:
     for plan_key, plan_config in get_plans().items():
         if plan_config.get('stripe_price_id') == price_id:
             return plan_key
+    # Fallback: return 'free' if price not found
     return 'free'
+
+
+def normalize_plan_type(plan_type: str) -> str:
+    """
+    Normalize plan type to new key names for backward compatibility.
+    Maps old plan keys to new ones.
+    
+    Args:
+        plan_type: Plan type (may be old or new key)
+        
+    Returns:
+        Normalized plan type (new key)
+    """
+    # Map old keys to new keys for backward compatibility
+    plan_type_map = {
+        'medium': 'starter',
+        'pro': 'creator',
+        # New keys map to themselves
+        'free': 'free',
+        'starter': 'starter',
+        'creator': 'creator',
+        'unlimited': 'unlimited',
+    }
+    return plan_type_map.get(plan_type, plan_type)
 
 
 def update_subscription_from_stripe(
@@ -1076,6 +1131,21 @@ def update_subscription_from_stripe(
         plan_type = _get_plan_type_from_price(price_id)
         logger.info(f"Determined plan_type={plan_type} for subscription {stripe_subscription.id} (price_id={price_id})")
         
+        # Extract metered item ID (for overage tracking)
+        metered_item_id = None
+        from stripe_config import get_plan_overage_price_id
+        overage_price_id = get_plan_overage_price_id(plan_type)
+        
+        if overage_price_id and hasattr(stripe_subscription, 'items') and stripe_subscription.items:
+            items_data = stripe_subscription.items.data if hasattr(stripe_subscription.items, 'data') else []
+            for item in items_data:
+                if hasattr(item, 'price') and item.price:
+                    item_price_id = item.price.id if hasattr(item.price, 'id') else None
+                    if item_price_id == overage_price_id:
+                        metered_item_id = item.id
+                        logger.info(f"Found metered item ID {metered_item_id} for subscription {stripe_subscription.id}")
+                        break
+        
         # Map Stripe status
         status_map = {
             'active': 'active',
@@ -1149,6 +1219,8 @@ def update_subscription_from_stripe(
                 stripe_subscription.current_period_end, tz=timezone.utc
             )
             subscription.cancel_at_period_end = stripe_subscription.cancel_at_period_end
+            if metered_item_id:
+                subscription.stripe_metered_item_id = metered_item_id
             subscription.updated_at = datetime.now(timezone.utc)
         else:
             # Create new subscription (user has no existing subscription)
@@ -1166,6 +1238,7 @@ def update_subscription_from_stripe(
                     stripe_subscription.current_period_end, tz=timezone.utc
                 ),
                 cancel_at_period_end=stripe_subscription.cancel_at_period_end,
+                stripe_metered_item_id=metered_item_id,
             )
             db.add(subscription)
             logger.info(f"Added subscription to session for user {user_id}")
@@ -1214,6 +1287,8 @@ def update_subscription_from_stripe(
                         stripe_subscription.current_period_end, tz=timezone.utc
                     )
                     existing.cancel_at_period_end = stripe_subscription.cancel_at_period_end
+                    if metered_item_id:
+                        existing.stripe_metered_item_id = metered_item_id
                     existing.updated_at = datetime.now(timezone.utc)
                     db.commit()
                     db.refresh(existing)
@@ -1275,3 +1350,93 @@ def mark_stripe_event_processed(
         if error_message:
             event.error_message = error_message
         db.commit()
+
+
+def record_token_usage_to_stripe(
+    user_id: int,
+    tokens_used: int,
+    db: Session
+) -> bool:
+    """
+    Record token usage to Stripe for metered billing (overage tokens).
+    
+    This function calculates how many tokens are overage (beyond included tokens)
+    and reports only the NEW overage tokens to Stripe. It uses 'increment' action
+    to add to existing usage for the billing period.
+    
+    Args:
+        user_id: User ID
+        tokens_used: Number of tokens just consumed
+        db: Database session
+        
+    Returns:
+        True if usage was recorded successfully, False otherwise
+    """
+    if not STRIPE_SECRET_KEY:
+        logger.warning("Cannot record token usage: STRIPE_SECRET_KEY not set")
+        return False
+    
+    try:
+        from token_helpers import get_or_create_token_balance
+        from stripe_config import get_plan_monthly_tokens
+        
+        # Get user's subscription
+        subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+        if not subscription:
+            logger.debug(f"No subscription found for user {user_id}, skipping Stripe usage recording")
+            return False
+        
+        # Unlimited and free plans don't have metered usage
+        if subscription.plan_type in ('unlimited', 'free'):
+            return True
+        
+        # Check if subscription has metered item ID
+        if not subscription.stripe_metered_item_id:
+            logger.debug(f"Subscription {subscription.stripe_subscription_id} has no metered item ID, skipping usage recording")
+            return False
+        
+        # Get token balance to calculate overage
+        balance = get_or_create_token_balance(user_id, db)
+        included_tokens = get_plan_monthly_tokens(subscription.plan_type)
+        
+        # Calculate overage
+        # tokens_used_this_period includes the tokens just consumed
+        total_used = balance.tokens_used_this_period
+        current_overage = max(0, total_used - included_tokens)
+        
+        # Calculate previous overage (before this consumption)
+        previous_total_used = total_used - tokens_used
+        previous_overage = max(0, previous_total_used - included_tokens)
+        
+        # Only report NEW overage tokens (incremental)
+        # This ensures we only report the overage portion, not the included tokens
+        new_overage = current_overage - previous_overage
+        
+        if new_overage > 0:
+            try:
+                # Report usage to Stripe using 'increment' action
+                stripe.SubscriptionItem.create_usage_record(
+                    subscription.stripe_metered_item_id,
+                    quantity=new_overage,
+                    action='increment',
+                    timestamp=int(datetime.now(timezone.utc).timestamp())
+                )
+                logger.info(
+                    f"Recorded {new_overage} overage tokens to Stripe for user {user_id} "
+                    f"(total used: {total_used}, included: {included_tokens}, overage: {current_overage})"
+                )
+                return True
+            except stripe.error.StripeError as e:
+                logger.error(f"Stripe error recording usage for user {user_id}: {e}")
+                return False
+        else:
+            # No new overage to report (all tokens were from included allocation)
+            logger.debug(
+                f"No new overage for user {user_id} "
+                f"(total used: {total_used}, included: {included_tokens}, overage: {current_overage})"
+            )
+            return True
+            
+    except Exception as e:
+        logger.error(f"Error recording token usage to Stripe for user {user_id}: {e}", exc_info=True)
+        return False

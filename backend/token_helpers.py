@@ -65,8 +65,12 @@ def check_tokens_available(user_id: int, tokens_required: int, db: Session) -> b
     """
     Check if user has enough tokens available.
     
+    For paid plans (starter, creator): Returns True if user can use tokens (included + overage allowed)
+    For free plan: Returns True only if included tokens are available (hard limit, no overage)
+    For unlimited plan: Always returns True
+    
     Returns:
-        True if tokens are available, False otherwise
+        True if tokens can be used, False otherwise
     """
     from models import Subscription
     
@@ -80,7 +84,14 @@ def check_tokens_available(user_id: int, tokens_required: int, db: Session) -> b
         return True
     
     balance = get_or_create_token_balance(user_id, db)
-    return balance.tokens_remaining >= tokens_required
+    
+    # Free plan has hard limit - must have enough included tokens
+    if subscription and subscription.plan_type == 'free':
+        return balance.tokens_remaining >= tokens_required
+    
+    # Paid plans (starter, creator) allow overage - always return True
+    # The actual overage will be tracked and billed via Stripe metered billing
+    return True
 
 
 def deduct_tokens(
@@ -143,13 +154,24 @@ def deduct_tokens(
         balance = get_or_create_token_balance(user_id, db)
         balance_before = balance.tokens_remaining
         
-        # Check if enough tokens available
-        if balance.tokens_remaining < tokens:
-            logger.warning(f"Insufficient tokens for user {user_id}: {balance.tokens_remaining} < {tokens}")
+        # Calculate how much is from included tokens vs overage
+        # Included tokens are consumed first, then overage
+        included_tokens_used = min(tokens, max(0, balance.tokens_remaining))
+        overage_tokens_used = max(0, tokens - included_tokens_used)
+        
+        # Check if free plan is trying to go over limit (free plan has hard limit, no overage)
+        from stripe_config import get_plan_monthly_tokens
+        plan_monthly_tokens = get_plan_monthly_tokens(subscription.plan_type) if subscription else 0
+        if subscription and subscription.plan_type == 'free' and overage_tokens_used > 0:
+            logger.warning(
+                f"Free plan user {user_id} attempted to use {tokens} tokens but only has {balance.tokens_remaining} remaining. "
+                f"Free plan has hard limit, blocking overage."
+            )
             return False
         
-        # Deduct tokens
-        balance.tokens_remaining -= tokens
+        # Deduct tokens (included tokens first, can go to 0 or negative for overage tracking)
+        balance.tokens_remaining -= included_tokens_used
+        # Note: tokens_remaining can be negative for overage tracking, but we display it as 0 in UI
         balance.tokens_used_this_period += tokens
         balance.updated_at = datetime.now(timezone.utc)
         
@@ -163,12 +185,28 @@ def deduct_tokens(
             tokens=-tokens,  # Negative for deduction
             balance_before=balance_before,
             balance_after=balance_after,
-            transaction_metadata=metadata or {}
+            transaction_metadata={
+                **(metadata or {}),
+                'included_tokens_used': included_tokens_used,
+                'overage_tokens_used': overage_tokens_used
+            }
         )
         db.add(transaction)
         db.commit()
         
-        logger.info(f"Tokens deducted for user {user_id}: {tokens} tokens (balance: {balance_before} -> {balance_after})")
+        # Record usage to Stripe for metered billing (overage tokens only)
+        # This must happen AFTER committing the token deduction so we have accurate usage counts
+        # Only record if there's overage (paid plans allow overage, free plan blocks it)
+        if overage_tokens_used > 0:
+            from stripe_helpers import record_token_usage_to_stripe
+            # Pass total tokens used - function will calculate overage incrementally
+            record_token_usage_to_stripe(user_id, tokens, db)
+        
+        logger.info(
+            f"Tokens deducted for user {user_id}: {tokens} tokens "
+            f"({included_tokens_used} from included, {overage_tokens_used} overage) "
+            f"(balance: {balance_before} -> {balance_after})"
+        )
         return True
         
     except Exception as e:
@@ -277,7 +315,7 @@ def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: da
     
     Args:
         user_id: User ID
-        plan_type: Plan type ('free', 'medium', 'pro')
+        plan_type: Plan type ('free', 'starter', 'creator')
         period_start: Start of the billing period
         period_end: End of the billing period
         db: Database session

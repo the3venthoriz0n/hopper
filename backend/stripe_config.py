@@ -53,28 +53,32 @@ def get_stripe_mode() -> str:
 # Product/Price IDs are auto-updated by setup_stripe.py
 PLANS_TEST = {
     'free': {
-        'name': 'Hopper Free',
+        'name': 'Free',
         'monthly_tokens': 10,
         'stripe_price_id': "price_1Se2XZAJugrwwGJAIGrRqT92",
         'stripe_product_id': "prod_TbF1UTDoRuGhOy",
+        'stripe_overage_price_id': None,  # Free plan has no overage (hard limit)
     },
-    'medium': {
-        'name': 'Hopper Medium',
+    'starter': {
+        'name': 'Starter',
         'monthly_tokens': 100,
         'stripe_price_id': "price_1Se2XZAJugrwwGJA6zdgFohu",
         'stripe_product_id': "prod_TbF1KSxCYnqVzT",
+        'stripe_overage_price_id': None,  # Will be set by setup_stripe.py
     },
-    'pro': {
-        'name': 'Hopper Pro',
+    'creator': {
+        'name': 'Creator',
         'monthly_tokens': 500,
         'stripe_price_id': "price_1Se2XaAJugrwwGJAzeUZsFiy",
         'stripe_product_id': "prod_TbF1urcgxdTYYv",
+        'stripe_overage_price_id': None,  # Will be set by setup_stripe.py
     },
     'unlimited': {
         'name': 'Hopper Unlimited',
         'monthly_tokens': -1,  # -1 indicates unlimited
         'stripe_price_id': "price_1Se6W7AJugrwwGJAnlJ3Gqh0",  # Auto-updated by setup_stripe.py
         'stripe_product_id': "prod_TbIU2tjHI5Tx6r",  # Auto-updated by setup_stripe.py
+        'stripe_overage_price_id': None,  # Unlimited plan has no overage
         'hidden': True,  # Hidden from public plans list (dev/admin only)
     }
 }
@@ -83,28 +87,32 @@ PLANS_TEST = {
 # Product/Price IDs are auto-updated by setup_stripe.py
 PLANS_LIVE = {
     'free': {
-        'name': 'Hopper Free',
+        'name': 'Free',
         'monthly_tokens': 10,
         'stripe_price_id': "price_1SdxH7AizedXSXdvzLcftaqi",  # Auto-updated by setup_stripe.py
         'stripe_product_id': "prod_Tb9acbATXP0258",  # Auto-updated by setup_stripe.py
+        'stripe_overage_price_id': None,  # Free plan has no overage (hard limit)
     },
-    'medium': {
-        'name': 'Hopper Medium',
+    'starter': {
+        'name': 'Starter',
         'monthly_tokens': 100,
         'stripe_price_id': "price_1SdxH7AizedXSXdvVp0yPXnd",  # Auto-updated by setup_stripe.py
         'stripe_product_id': "prod_Tb9a57n5L7GcuK",  # Auto-updated by setup_stripe.py
+        'stripe_overage_price_id': None,  # Will be set by setup_stripe.py
     },
-    'pro': {
-        'name': 'Hopper Pro',
+    'creator': {
+        'name': 'Creator',
         'monthly_tokens': 500,
         'stripe_price_id': "price_1SdxH7AizedXSXdv1dIUYgby",  # Auto-updated by setup_stripe.py
         'stripe_product_id': "prod_Tb9aHluyY1RIVH",  # Auto-updated by setup_stripe.py
+        'stripe_overage_price_id': None,  # Will be set by setup_stripe.py
     },
     'unlimited': {
         'name': 'Hopper Unlimited',
         'monthly_tokens': -1,  # -1 indicates unlimited
         'stripe_price_id': "price_1Seh38AizedXSXdv9v8x0nMm",  # Auto-updated by setup_stripe.py
         'stripe_product_id': "prod_Tbusrpl0qNLTq3",  # Auto-updated by setup_stripe.py
+        'stripe_overage_price_id': None,  # Unlimited plan has no overage
         'hidden': True,  # Hidden from public plans list (dev/admin only)
     }
 }
@@ -195,7 +203,7 @@ def get_plan_price_id(plan_type: str) -> Optional[str]:
     """Get Stripe price ID for a plan type
     
     Args:
-        plan_type: Plan type ('free', 'medium', 'pro', 'unlimited')
+        plan_type: Plan type ('free', 'starter', 'creator', 'unlimited')
         
     Returns:
         Stripe price ID or None if not found/configured
@@ -204,6 +212,22 @@ def get_plan_price_id(plan_type: str) -> Optional[str]:
     plan = plans.get(plan_type)
     if plan:
         return plan.get('stripe_price_id')
+    return None
+
+
+def get_plan_overage_price_id(plan_type: str) -> Optional[str]:
+    """Get Stripe overage price ID for a plan type (metered usage)
+    
+    Args:
+        plan_type: Plan type ('free', 'starter', 'creator', 'unlimited')
+        
+    Returns:
+        Stripe overage price ID or None if not found/configured
+    """
+    plans = get_plans()
+    plan = plans.get(plan_type)
+    if plan:
+        return plan.get('stripe_overage_price_id')
     return None
 
 
@@ -312,8 +336,8 @@ def ensure_stripe_products():
                 # For now, using placeholder amounts - UPDATE THESE with real prices
                 price_amounts = {
                     'free': 0,      # Free plan
-                    'medium': 999,  # $9.99/month - UPDATE THIS
-                    'pro': 2999,    # $29.99/month - UPDATE THIS
+                    'starter': 999,  # $9.99/month - UPDATE THIS
+                    'creator': 2999,    # $29.99/month - UPDATE THIS
                 }
                 
                 price = stripe.Price.create(
