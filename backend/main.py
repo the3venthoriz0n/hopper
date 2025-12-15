@@ -5095,17 +5095,23 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
         
         # Get video metadata
         filename_no_ext = video.filename.rsplit('.', 1)[0] if '.' in video.filename else video.filename
+        custom_settings = video.custom_settings or {}
         
-        # Priority for title: generated_title > destination template > global template
-        if video.generated_title:
-            title = video.generated_title
+        # Priority for title: per-video custom > destination template > global template > generated_title > filename
+        if 'title' in custom_settings:
+            title = custom_settings['title']
         else:
             title_template = youtube_settings.get('title_template', '') or global_settings.get('title_template', '{filename}')
-            title = replace_template_placeholders(
-                title_template, 
-                filename_no_ext,
-                global_settings.get('wordbank', [])
-            )
+            if title_template:
+                title = replace_template_placeholders(
+                    title_template, 
+                    filename_no_ext,
+                    global_settings.get('wordbank', [])
+                )
+            elif video.generated_title:
+                title = video.generated_title
+            else:
+                title = filename_no_ext
         
         # Enforce YouTube's 100 character limit for titles
         if len(title) > 100:
@@ -5345,13 +5351,19 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         
         # Prepare metadata
         filename_no_ext = video.filename.rsplit('.', 1)[0] if '.' in video.filename else video.filename
+        custom_settings = video.custom_settings or {}
         
-        # Get title (priority: generated_title > template > filename)
-        if video.generated_title:
-            title = video.generated_title
+        # Get title (priority: per-video custom > destination template > global template > generated_title > filename)
+        if 'title' in custom_settings:
+            title = custom_settings['title']
         else:
             title_template = tiktok_settings.get('title_template', '') or global_settings.get('title_template', '{filename}')
-            title = replace_template_placeholders(title_template, filename_no_ext, global_settings.get('wordbank', []))
+            if title_template:
+                title = replace_template_placeholders(title_template, filename_no_ext, global_settings.get('wordbank', []))
+            elif video.generated_title:
+                title = video.generated_title
+            else:
+                title = filename_no_ext
         
         title = (title or filename_no_ext)[:2200]  # TikTok limit
         
@@ -5536,17 +5548,23 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         
         # Prepare caption
         filename_no_ext = video.filename.rsplit('.', 1)[0] if '.' in video.filename else video.filename
+        custom_settings = video.custom_settings or {}
         
-        # Get caption (priority: generated_title > template > filename)
-        if video.generated_title:
-            caption = video.generated_title
+        # Get caption (priority: per-video custom > destination template > global template > generated_title > filename)
+        if 'title' in custom_settings:
+            caption = custom_settings['title']
         else:
             caption_template = instagram_settings.get('caption_template', '') or global_settings.get('title_template', '{filename}')
-            caption = replace_template_placeholders(
-                caption_template,
-                filename_no_ext,
-                global_settings.get('wordbank', [])
-            )
+            if caption_template:
+                caption = replace_template_placeholders(
+                    caption_template,
+                    filename_no_ext,
+                    global_settings.get('wordbank', [])
+                )
+            elif video.generated_title:
+                caption = video.generated_title
+            else:
+                caption = filename_no_ext
         
         # Instagram caption limit is 2200 characters
         caption = (caption or filename_no_ext)[:2200]
