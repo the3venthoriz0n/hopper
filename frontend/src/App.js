@@ -2048,9 +2048,8 @@ function Home() {
               <span>Admin</span>
             </Link>
           )}
-          {/* Token Balance Indicator */}
-          {tokenBalance && (
-            <div 
+          {/* Token Balance Indicator - always rendered, shows loading state if not yet loaded */}
+          <div 
               style={{
                 padding: '0.5rem 1rem',
                 background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%)',
@@ -2090,11 +2089,12 @@ function Home() {
                   color: '#818cf8',
                   lineHeight: '1.2'
                 }}>
-                  {tokenBalance.unlimited ? '∞' : tokenBalance.tokens_remaining}
+                  {tokenBalance
+                    ? (tokenBalance.unlimited ? '∞' : tokenBalance.tokens_remaining)
+                    : '…'}
                 </span>
               </div>
-            </div>
-          )}
+          </div>
           
           <span style={{ color: '#999', fontSize: '0.9rem' }}>
             {user.email}

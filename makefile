@@ -1,4 +1,4 @@
-.PHONY: help sync up down rebuild logs shell clean test test-security rebuild-grafana clear-grafana-cache
+.PHONY: help sync up down rebuild logs shell clean test test-security rebuild-grafana clear-grafana-cache setup-stripe
 
 # Default environment (can be overridden: make up ENV=prod)
 ENV ?= dev
@@ -27,6 +27,7 @@ help:
 	@echo "  rebuild       Stop, rebuild from scratch, and start (runs tests first)"
 	@echo "  rebuild-grafana Rebuild Grafana service (clears cache and restarts)"
 	@echo "  clear-grafana-cache Clear Grafana database volume (forces dashboard reload)"
+	@echo "  setup-stripe  Run Stripe product/price/webhook setup (ENV=dev|prod)"
 	@echo "  logs          Follow logs (add LINES=N for tail)"
 	@echo "  shell         Open backend shell"
 	@echo "  clean         Remove stopped containers and unused images"
@@ -110,3 +111,9 @@ clean:
 	@docker image prune -f
 	@docker volume prune -f
 	@echo "✅ Cleanup complete!"
+
+setup-stripe:
+	@echo "⚙️  Running Stripe setup for ENV=$(ENV) ..."
+	@echo "   - Uses .env.$(ENV) to load STRIPE_SECRET_KEY and BACKEND_URL"
+	@$(COMPOSE) run --rm backend python /app/scripts/setup_stripe.py --env-file $(ENV)
+	@echo "✅ Stripe setup script completed."
