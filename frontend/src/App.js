@@ -280,6 +280,8 @@ function Home() {
   const [wordbankExpanded, setWordbankExpanded] = useState(false);
   const [maxFileSize, setMaxFileSize] = useState(null);
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [sendingResetEmail, setSendingResetEmail] = useState(false);
+  const [resetEmailSent, setResetEmailSent] = useState(false);
   const [showDangerZone, setShowDangerZone] = useState(false);
   
   // Subscription & token state
@@ -3362,80 +3364,98 @@ function Home() {
                       fontSize: '0.8rem'
                     }}
                   >
-                    {showChangePassword ? 'Hide password form' : 'Change password'}
+                    {showChangePassword ? 'Hide' : 'Change password'}
                   </button>
                 </div>
                 {showChangePassword && (
                   <div style={{ marginBottom: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                    <p style={{ color: '#999', fontSize: '0.85rem', marginBottom: '0.25rem' }}>
-                      Set or update your password for email-based login.
-                    </p>
-                    <input
-                      type="password"
-                      placeholder="Current password"
-                      onChange={(e) => {
-                        window.__hopperCurrentPassword = e.target.value;
-                      }}
-                      style={{
-                        padding: '0.6rem',
-                        background: 'rgba(0,0,0,0.3)',
-                        borderRadius: '6px',
-                        border: '1px solid rgba(255,255,255,0.15)',
-                        color: '#fff',
-                        fontSize: '0.9rem'
-                      }}
-                    />
-                    <input
-                      type="password"
-                      placeholder="New password (min 8 characters)"
-                      onChange={(e) => {
-                        window.__hopperNewPassword = e.target.value;
-                      }}
-                      minLength={8}
-                      style={{
-                        padding: '0.6rem',
-                        background: 'rgba(0,0,0,0.3)',
-                        borderRadius: '6px',
-                        border: '1px solid rgba(255,255,255,0.15)',
-                        color: '#fff',
-                        fontSize: '0.9rem'
-                      }}
-                    />
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const current = window.__hopperCurrentPassword || '';
-                        const next = window.__hopperNewPassword || '';
-                        if (!next || next.length < 8) {
-                          setMessage('❌ New password must be at least 8 characters long');
-                          return;
-                        }
-                        try {
-                          const payload = { current_password: current, new_password: next };
-                          await axios.post(`${API}/auth/change-password`, payload);
-                          setMessage('✅ Password changed successfully');
-                          window.__hopperCurrentPassword = '';
-                          window.__hopperNewPassword = '';
-                          setShowChangePassword(false);
-                        } catch (err) {
-                          const errorMsg = err.response?.data?.detail || err.message || 'Failed to change password';
-                          setMessage(`❌ ${errorMsg}`);
-                        }
-                      }}
-                      style={{
-                        marginTop: '0.25rem',
-                        padding: '0.6rem',
-                        background: 'rgba(34, 197, 94, 0.4)',
-                        borderRadius: '6px',
-                        border: '1px solid rgba(34,197,94,0.7)',
-                        color: '#fff',
-                        cursor: 'pointer',
-                        fontSize: '0.9rem',
-                        fontWeight: 500
-                      }}
-                    >
-                      Update Password
-                    </button>
+                    {resetEmailSent ? (
+                      <>
+                        <p style={{ color: '#22c55e', fontSize: '0.85rem', marginBottom: '0.25rem' }}>
+                          ✅ Password reset email sent to <strong>{user.email}</strong>
+                        </p>
+                        <p style={{ color: '#999', fontSize: '0.8rem', marginBottom: '0.25rem' }}>
+                          Check your email and click the reset link to set a new password. The link will take you to the login screen.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowChangePassword(false);
+                            setResetEmailSent(false);
+                          }}
+                          style={{
+                            padding: '0.6rem',
+                            background: 'transparent',
+                            borderRadius: '6px',
+                            border: '1px solid rgba(255,255,255,0.25)',
+                            color: '#fff',
+                            cursor: 'pointer',
+                            fontSize: '0.9rem'
+                          }}
+                        >
+                          Close
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <p style={{ color: '#999', fontSize: '0.85rem', marginBottom: '0.25rem' }}>
+                          We'll send a password reset link to <strong>{user.email}</strong>. Click the link in the email to set a new password.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!user?.email) {
+                              setMessage('❌ Email not available');
+                              return;
+                            }
+                            setSendingResetEmail(true);
+                            setMessage('');
+                            try {
+                              await axios.post(`${API}/auth/forgot-password`, { email: user.email });
+                              setResetEmailSent(true);
+                              setMessage('✅ Password reset email sent! Check your inbox.');
+                            } catch (err) {
+                              const errorMsg = err.response?.data?.detail || err.message || 'Failed to send reset email';
+                              setMessage(`❌ ${errorMsg}`);
+                            } finally {
+                              setSendingResetEmail(false);
+                            }
+                          }}
+                          disabled={sendingResetEmail}
+                          style={{
+                            padding: '0.6rem',
+                            background: sendingResetEmail ? 'rgba(34, 197, 94, 0.3)' : 'rgba(34, 197, 94, 0.4)',
+                            borderRadius: '6px',
+                            border: '1px solid rgba(34,197,94,0.7)',
+                            color: '#fff',
+                            cursor: sendingResetEmail ? 'not-allowed' : 'pointer',
+                            fontSize: '0.9rem',
+                            fontWeight: 500,
+                            opacity: sendingResetEmail ? 0.6 : 1
+                          }}
+                        >
+                          {sendingResetEmail ? 'Sending...' : 'Send Password Reset Email'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowChangePassword(false);
+                            setResetEmailSent(false);
+                          }}
+                          style={{
+                            padding: '0.6rem',
+                            background: 'transparent',
+                            borderRadius: '6px',
+                            border: '1px solid rgba(255,255,255,0.25)',
+                            color: '#999',
+                            cursor: 'pointer',
+                            fontSize: '0.9rem'
+                          }}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
                 <button 
