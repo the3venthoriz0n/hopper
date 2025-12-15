@@ -3727,10 +3727,11 @@ def cancel_subscription(
 ):
     """
     Cancel the user's subscription and switch to free plan.
-    Cancels the Stripe subscription immediately and updates the local subscription record.
+    Cancels the Stripe subscription immediately and creates a new free Stripe subscription.
     Preserves the user's current token balance.
     """
     from token_helpers import get_or_create_token_balance
+    from stripe_helpers import create_free_subscription
     
     # Get current subscription
     subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
@@ -3750,67 +3751,27 @@ def cancel_subscription(
     token_balance = get_or_create_token_balance(user_id, db)
     current_tokens = token_balance.tokens_remaining
     
-    # If unlimited plan (admin-created), just switch to free
-    if subscription.stripe_subscription_id and subscription.stripe_subscription_id.startswith('unlimited_'):
-        subscription.plan_type = 'free'
-        subscription.stripe_subscription_id = f"free_{user_id}_{int(datetime.now(timezone.utc).timestamp())}"
-        subscription.status = 'active'
-        subscription.cancel_at_period_end = False
-        
-        # Update period dates but preserve tokens
-        now = datetime.now(timezone.utc)
-        period_end = (now.replace(day=1) + timedelta(days=32)).replace(day=now.day)
-        subscription.current_period_start = now
-        subscription.current_period_end = period_end
-        subscription.updated_at = datetime.now(timezone.utc)
-        
-        # Update token balance period but keep current token amount
-        token_balance.period_start = now
-        token_balance.period_end = period_end
-        token_balance.updated_at = datetime.now(timezone.utc)
-        # tokens_remaining stays the same (preserved)
-        
-        db.commit()
-        
-        logger.info(f"User {user_id} switched from unlimited to free plan, preserved {current_tokens} tokens")
-        return {
-            "status": "success",
-            "message": "Switched to free plan",
-            "plan_type": "free",
-            "tokens_preserved": current_tokens
-        }
-    
-    # Cancel Stripe subscription if it's a real Stripe subscription
-    if subscription.stripe_subscription_id and not subscription.stripe_subscription_id.startswith('free_'):
+    # Cancel existing Stripe subscription (all subscriptions are now Stripe subscriptions)
+    if subscription.stripe_subscription_id:
         try:
             # Cancel immediately (not at period end)
             stripe.Subscription.delete(subscription.stripe_subscription_id)
             logger.info(f"Canceled Stripe subscription {subscription.stripe_subscription_id} for user {user_id}")
         except stripe.error.StripeError as e:
             logger.warning(f"Failed to cancel Stripe subscription {subscription.stripe_subscription_id}: {e}")
-            # Continue anyway - we'll update the local record
+            # Continue anyway - we'll create the free subscription
     
-    # Switch to free plan
-    now = datetime.now(timezone.utc)
-    period_end = (now.replace(day=1) + timedelta(days=32)).replace(day=now.day)
-    
-    subscription.plan_type = 'free'
-    subscription.stripe_subscription_id = f"free_{user_id}_{int(now.timestamp())}"
-    subscription.status = 'active'
-    subscription.current_period_start = now
-    subscription.current_period_end = period_end
-    subscription.cancel_at_period_end = False
-    subscription.updated_at = datetime.now(timezone.utc)
-    
-    # Update token balance period but preserve current token amount
-    token_balance.period_start = now
-    token_balance.period_end = period_end
-    token_balance.updated_at = datetime.now(timezone.utc)
-    # tokens_remaining stays the same (preserved)
-    
+    # Delete old subscription record
+    old_subscription_id = subscription.stripe_subscription_id
+    db.delete(subscription)
     db.commit()
     
-    logger.info(f"User {user_id} canceled subscription and switched to free plan, preserved {current_tokens} tokens")
+    # Create new free Stripe subscription
+    free_subscription = create_free_subscription(user_id, db)
+    if not free_subscription:
+        raise HTTPException(500, "Failed to create free subscription")
+    
+    logger.info(f"User {user_id} canceled subscription {old_subscription_id} and switched to free plan, preserved {current_tokens} tokens")
     return {
         "status": "success",
         "message": "Subscription canceled and switched to free plan",
@@ -4292,7 +4253,7 @@ def _get_user_id_from_subscription(subscription: stripe.Subscription, db: Sessio
 
 
 def _cancel_existing_subscriptions(user_id: int, new_subscription_id: str, db: Session):
-    """Cancel any existing paid Stripe subscriptions for a user."""
+    """Cancel any existing Stripe subscriptions for a user."""
     import stripe
     
     existing_subs = db.query(Subscription).filter(
@@ -4302,10 +4263,8 @@ def _cancel_existing_subscriptions(user_id: int, new_subscription_id: str, db: S
     ).all()
     
     for sub in existing_subs:
-        # Only cancel real Stripe subscriptions (not free/unlimited)
-        if (sub.stripe_subscription_id and 
-            not sub.stripe_subscription_id.startswith(('free_', 'unlimited_'))):
-            
+        # Cancel all Stripe subscriptions (all subscriptions are now Stripe subscriptions)
+        if sub.stripe_subscription_id:
             try:
                 stripe.Subscription.delete(sub.stripe_subscription_id)
                 sub.status = 'canceled'
@@ -4345,7 +4304,7 @@ def enroll_unlimited_plan(
     admin_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
-    """Enroll a user in the unlimited plan (admin only). Works like free plan - no Stripe subscription needed."""
+    """Enroll a user in the unlimited plan via Stripe (admin only)."""
     import stripe
     
     target_user = db.query(User).filter(User.id == target_user_id).first()
@@ -4360,13 +4319,10 @@ def enroll_unlimited_plan(
         if existing_subscription.plan_type == 'unlimited':
             return {"message": f"User {target_user_id} already has unlimited plan"}
         
-        # Cancel existing subscription in Stripe if it's a real Stripe subscription
-        if existing_subscription.stripe_subscription_id and not existing_subscription.stripe_subscription_id.startswith(('free_', 'unlimited_')):
+        # Cancel existing subscription in Stripe (all subscriptions are now Stripe subscriptions)
+        if existing_subscription.stripe_subscription_id:
             try:
-                stripe.Subscription.modify(
-                    existing_subscription.stripe_subscription_id,
-                    cancel_at_period_end=True
-                )
+                stripe.Subscription.delete(existing_subscription.stripe_subscription_id)
                 logger.info(f"Cancelled existing subscription {existing_subscription.stripe_subscription_id} for user {target_user_id}")
             except Exception as e:
                 logger.warning(f"Failed to cancel existing Stripe subscription: {e}")
@@ -4376,7 +4332,7 @@ def enroll_unlimited_plan(
     token_balance = get_or_create_token_balance(target_user_id, db)
     preserved_tokens = token_balance.tokens_remaining
     
-    # Create unlimited subscription (no Stripe subscription needed, like free plan)
+    # Create unlimited subscription via Stripe
     subscription = create_unlimited_subscription(target_user_id, preserved_tokens, db)
     
     if not subscription:
@@ -4411,8 +4367,8 @@ def unenroll_unlimited_plan(
     # Get preserved token balance before deleting subscription
     preserved_tokens = subscription.preserved_tokens_balance if subscription.preserved_tokens_balance is not None else 0
     
-    # Cancel Stripe subscription if it's a real Stripe subscription
-    if subscription.stripe_subscription_id and not subscription.stripe_subscription_id.startswith(('free_', 'unlimited_')):
+    # Cancel Stripe subscription (all subscriptions are now Stripe subscriptions)
+    if subscription.stripe_subscription_id:
         try:
             stripe.Subscription.delete(subscription.stripe_subscription_id)
             logger.info(f"Cancelled Stripe subscription {subscription.stripe_subscription_id} for user {target_user_id}")

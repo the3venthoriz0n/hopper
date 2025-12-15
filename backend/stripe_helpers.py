@@ -216,10 +216,8 @@ def create_checkout_session(
         canceled_subscription_info = None
         
         if existing_subscription:
-            # Check if it's a real paid Stripe subscription
-            if (existing_subscription.stripe_subscription_id and 
-                not existing_subscription.stripe_subscription_id.startswith(('free_', 'unlimited_'))):
-                
+            # Check if it's a real Stripe subscription (all subscriptions are now Stripe subscriptions)
+            if existing_subscription.stripe_subscription_id:
                 try:
                     stripe_sub = stripe.Subscription.retrieve(existing_subscription.stripe_subscription_id)
                     if stripe_sub.status in ['active', 'trialing', 'past_due']:
@@ -401,7 +399,7 @@ def get_customer_portal_url(user_id: int, return_url: str, db: Session) -> Optio
 
 def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription]:
     """
-    Create a free subscription for a new user.
+    Create a free subscription for a new user via Stripe.
     
     Args:
         user_id: User ID
@@ -410,6 +408,10 @@ def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription
     Returns:
         Subscription model instance or None if creation failed
     """
+    if not STRIPE_SECRET_KEY:
+        logger.error("Cannot create free subscription: STRIPE_SECRET_KEY not set")
+        return None
+    
     try:
         existing = db.query(Subscription).filter(Subscription.user_id == user_id).first()
         if existing:
@@ -422,37 +424,42 @@ def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription
             return None
         
         # Ensure user has Stripe customer
-        if not user.stripe_customer_id:
-            customer_id = create_stripe_customer(user.email, user_id, db)
-            if not customer_id:
-                logger.error(f"Failed to create Stripe customer for user {user_id}")
-                return None
+        customer_id = ensure_stripe_customer_exists(user_id, db)
+        if not customer_id:
+            logger.error(f"Failed to create Stripe customer for user {user_id}")
+            return None
         
-        # Create free subscription
-        now = datetime.now(timezone.utc)
-        period_end = (now.replace(day=1) + timedelta(days=32)).replace(day=now.day)
+        # Get free plan price ID
+        from stripe_config import get_plan_price_id
+        price_id = get_plan_price_id('free')
+        if not price_id:
+            logger.error("Free plan price ID not configured")
+            return None
         
-        subscription = Subscription(
-            user_id=user_id,
-            stripe_subscription_id=f"free_{user_id}_{int(now.timestamp())}",
-            stripe_customer_id=user.stripe_customer_id,
-            plan_type='free',
-            status='active',
-            current_period_start=now,
-            current_period_end=period_end,
-            cancel_at_period_end=False,
+        # Create Stripe subscription for free plan ($0/month)
+        stripe_subscription = stripe.Subscription.create(
+            customer=customer_id,
+            items=[{'price': price_id}],
+            metadata={'user_id': str(user_id)},
         )
-        db.add(subscription)
-        db.commit()
-        db.refresh(subscription)
         
-        # Initialize token balance
-        from token_helpers import reset_tokens_for_subscription
-        reset_tokens_for_subscription(user_id, 'free', now, period_end, db)
+        # Update database subscription from Stripe subscription
+        subscription = update_subscription_from_stripe(stripe_subscription, db, user_id=user_id)
         
-        logger.info(f"Created free subscription for user {user_id}")
+        if subscription:
+            # Initialize token balance (webhook will also handle this, but ensure it's set)
+            from token_helpers import ensure_tokens_synced_for_subscription
+            ensure_tokens_synced_for_subscription(user_id, stripe_subscription.id, db)
+            logger.info(f"Created free Stripe subscription for user {user_id}: {stripe_subscription.id}")
+        else:
+            logger.error(f"Failed to create subscription record for user {user_id}")
+        
         return subscription
         
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error creating free subscription for user {user_id}: {e}")
+        db.rollback()
+        return None
     except Exception as e:
         logger.error(f"Error creating free subscription for user {user_id}: {e}", exc_info=True)
         db.rollback()
@@ -465,16 +472,20 @@ def create_unlimited_subscription(
     db: Session
 ) -> Optional[Subscription]:
     """
-    Create an unlimited subscription (admin feature, no Stripe subscription).
+    Create an unlimited subscription via Stripe (admin feature).
     
     Args:
         user_id: User ID
-        preserved_tokens: Token balance to preserve
+        preserved_tokens: Token balance to preserve (stored in subscription metadata)
         db: Database session
         
     Returns:
         Subscription model instance or None if creation failed
     """
+    if not STRIPE_SECRET_KEY:
+        logger.error("Cannot create unlimited subscription: STRIPE_SECRET_KEY not set")
+        return None
+    
     try:
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
@@ -482,57 +493,62 @@ def create_unlimited_subscription(
             return None
         
         # Ensure user has Stripe customer
-        customer_id = user.stripe_customer_id
+        customer_id = ensure_stripe_customer_exists(user_id, db)
         if not customer_id:
-            customer_id = create_stripe_customer(user.email, user_id, db)
-            if not customer_id:
-                customer_id = f"unlimited_customer_{user_id}"
-                user.stripe_customer_id = customer_id
-                db.commit()
+            logger.error(f"Failed to create Stripe customer for user {user_id}")
+            return None
         
-        now = datetime.now(timezone.utc)
-        period_end = (now.replace(day=1) + timedelta(days=32)).replace(day=now.day)
+        # Get unlimited plan price ID
+        from stripe_config import get_plan_price_id
+        price_id = get_plan_price_id('unlimited')
+        if not price_id:
+            logger.error("Unlimited plan price ID not configured")
+            return None
         
+        # Cancel any existing subscriptions first
         existing = db.query(Subscription).filter(Subscription.user_id == user_id).first()
-        
         if existing:
-            # Update existing subscription
-            existing.plan_type = 'unlimited'
-            existing.status = 'active'
-            existing.stripe_customer_id = customer_id
-            existing.preserved_tokens_balance = preserved_tokens
-            
-            if not existing.stripe_subscription_id.startswith('unlimited_'):
-                existing.stripe_subscription_id = f'unlimited_{user_id}_{int(now.timestamp())}'
-            
-            existing.current_period_start = now
-            existing.current_period_end = period_end
-            existing.cancel_at_period_end = False
-            
-            db.commit()
-            db.refresh(existing)
-            logger.info(f"Updated subscription to unlimited for user {user_id}")
-            return existing
+            # Cancel existing Stripe subscription if it's a real one
+            if (existing.stripe_subscription_id and 
+                not existing.stripe_subscription_id.startswith(('free_', 'unlimited_'))):
+                try:
+                    stripe.Subscription.delete(existing.stripe_subscription_id)
+                    logger.info(f"Canceled existing subscription {existing.stripe_subscription_id} for user {user_id}")
+                except stripe.error.StripeError as e:
+                    logger.warning(f"Failed to cancel existing subscription: {e}")
         
-        # Create new unlimited subscription
-        subscription = Subscription(
-            user_id=user_id,
-            stripe_subscription_id=f'unlimited_{user_id}_{int(now.timestamp())}',
-            stripe_customer_id=customer_id,
-            plan_type='unlimited',
-            status='active',
-            current_period_start=now,
-            current_period_end=period_end,
-            cancel_at_period_end=False,
-            preserved_tokens_balance=preserved_tokens,
+        # Create Stripe subscription for unlimited plan
+        stripe_subscription = stripe.Subscription.create(
+            customer=customer_id,
+            items=[{'price': price_id}],
+            metadata={
+                'user_id': str(user_id),
+                'preserved_tokens': str(preserved_tokens)  # Store preserved tokens in metadata
+            },
         )
-        db.add(subscription)
-        db.commit()
-        db.refresh(subscription)
         
-        logger.info(f"Created unlimited subscription for user {user_id}")
+        # Update database subscription from Stripe subscription
+        subscription = update_subscription_from_stripe(stripe_subscription, db, user_id=user_id)
+        
+        if subscription:
+            # Store preserved tokens in subscription record
+            subscription.preserved_tokens_balance = preserved_tokens
+            db.commit()
+            db.refresh(subscription)
+            
+            # Initialize token balance (webhook will also handle this, but ensure it's set)
+            from token_helpers import ensure_tokens_synced_for_subscription
+            ensure_tokens_synced_for_subscription(user_id, stripe_subscription.id, db)
+            logger.info(f"Created unlimited Stripe subscription for user {user_id}: {stripe_subscription.id} (preserved {preserved_tokens} tokens)")
+        else:
+            logger.error(f"Failed to create subscription record for user {user_id}")
+        
         return subscription
         
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error creating unlimited subscription for user {user_id}: {e}")
+        db.rollback()
+        return None
     except Exception as e:
         logger.error(f"Error creating unlimited subscription for user {user_id}: {e}", exc_info=True)
         db.rollback()

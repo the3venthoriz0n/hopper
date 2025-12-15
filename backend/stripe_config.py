@@ -73,10 +73,9 @@ PLANS_TEST = {
     'unlimited': {
         'name': 'Hopper Unlimited',
         'monthly_tokens': -1,  # -1 indicates unlimited
-        'stripe_price_id': "price_1Se6W7AJugrwwGJAnlJ3Gqh0",  # Auto-updated by setup_stripe.py (kept for potential future use)
-        'stripe_product_id': "prod_TbIU2tjHI5Tx6r",  # Auto-updated by setup_stripe.py (kept for potential future use)
+        'stripe_price_id': "price_1Se6W7AJugrwwGJAnlJ3Gqh0",  # Auto-updated by setup_stripe.py
+        'stripe_product_id': "prod_TbIU2tjHI5Tx6r",  # Auto-updated by setup_stripe.py
         'hidden': True,  # Hidden from public plans list (dev/admin only)
-        # Note: Currently unlimited subscriptions are created directly in DB (like free plan), not via Stripe
     }
 }
 
@@ -104,10 +103,9 @@ PLANS_LIVE = {
     'unlimited': {
         'name': 'Hopper Unlimited',
         'monthly_tokens': -1,  # -1 indicates unlimited
-        'stripe_price_id': "",  # Auto-updated by setup_stripe.py (kept for potential future use)
-        'stripe_product_id': "",  # Auto-updated by setup_stripe.py (kept for potential future use)
+        'stripe_price_id': "",  # Auto-updated by setup_stripe.py
+        'stripe_product_id': "",  # Auto-updated by setup_stripe.py
         'hidden': True,  # Hidden from public plans list (dev/admin only)
-        # Note: Currently unlimited subscriptions are created directly in DB (like free plan), not via Stripe
     }
 }
 
