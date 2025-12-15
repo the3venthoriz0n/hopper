@@ -1003,14 +1003,20 @@ function Home() {
       // Unified pattern for all platforms: Update connection/enabled status, preserve account info
       // Only clear account if explicitly disconnected
       const updatePlatformState = (setState, platformData) => {
-        setState(prev => ({
+      setState(prev => {
+        const tokenExpired = platformData.token_expired || false;
+        // Auto-disable destinations with expired tokens so we never upload there
+        const effectiveEnabled = tokenExpired ? false : platformData.enabled;
+
+        return {
           connected: platformData.connected,
-          enabled: platformData.enabled,
+          enabled: effectiveEnabled,
           account: platformData.connected ? prev.account : null,
           token_status: platformData.token_status || 'valid',
-          token_expired: platformData.token_expired || false,
+          token_expired: tokenExpired,
           token_expires_soon: platformData.token_expires_soon || false
-        }));
+        };
+      });
       };
       
       updatePlatformState(setYoutube, res.data.youtube);
@@ -1266,6 +1272,12 @@ function Home() {
 
   // Unified toggle function for all platforms
   const togglePlatform = async (platform, currentState, setState) => {
+    // Prevent enabling a destination if its OAuth token is expired
+    if (currentState.token_expired) {
+      setMessage(`⚠️ Token expired - reconnect your ${platform.charAt(0).toUpperCase() + platform.slice(1)} account before enabling uploads`);
+      return;
+    }
+
     const newEnabled = !currentState.enabled;
     setState({ ...currentState, enabled: newEnabled });
     
@@ -2423,6 +2435,7 @@ function Home() {
                 <input 
                   type="checkbox" 
                   checked={youtube.enabled}
+                  disabled={youtube.token_expired}
                   onChange={toggleYoutube}
                 />
                 <span className="slider"></span>
@@ -2596,6 +2609,7 @@ function Home() {
                 <input 
                   type="checkbox" 
                   checked={tiktok.enabled}
+                  disabled={tiktok.token_expired}
                   onChange={toggleTiktok}
                 />
                 <span className="slider"></span>
@@ -2777,6 +2791,7 @@ function Home() {
                 <input 
                   type="checkbox" 
                   checked={instagram.enabled}
+                  disabled={instagram.token_expired}
                   onChange={toggleInstagram}
                 />
                 <span className="slider"></span>
