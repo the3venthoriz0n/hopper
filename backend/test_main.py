@@ -218,12 +218,25 @@ class TestStripeFunctionality:
     @patch('stripe_helpers.stripe')
     @patch('stripe_helpers.STRIPE_SECRET_KEY', 'sk_test_123')
     @patch('stripe_config.get_plan_price_id')
-    def test_create_free_subscription(self, mock_get_price, mock_stripe, mock_update_sub, mock_ensure_customer, mock_reset_tokens):
+    @patch('stripe_config.get_plans')
+    def test_create_free_subscription(self, mock_get_plans, mock_get_price, mock_stripe, mock_update_sub, mock_ensure_customer, mock_reset_tokens):
         """Test creating a free subscription"""
         from stripe_helpers import create_free_subscription
         from models import User, Subscription
         from sqlalchemy.orm import Session
         from datetime import datetime, timezone
+        
+        # Mock plans data
+        mock_plans = {
+            'free': {
+                'name': 'Free',
+                'monthly_tokens': 10,
+                'stripe_price_id': 'price_free',
+                'stripe_product_id': 'prod_free',
+                'stripe_overage_price_id': None,
+            }
+        }
+        mock_get_plans.return_value = mock_plans
         
         # Mock price ID lookup
         mock_get_price.return_value = 'price_free'
@@ -320,23 +333,122 @@ class TestStripeFunctionality:
         
         assert result is False
     
-    def test_get_plan_monthly_tokens(self):
+    @patch('stripe_config.get_plans')
+    def test_get_plan_monthly_tokens(self, mock_get_plans):
         """Test getting monthly tokens for a plan"""
         from stripe_config import get_plan_monthly_tokens
+        
+        # Mock plans data matching JSON structure
+        mock_plans = {
+            'free': {
+                'name': 'Free',
+                'monthly_tokens': 10,
+                'stripe_price_id': None,
+                'stripe_product_id': None,
+                'stripe_overage_price_id': None,
+            },
+            'starter': {
+                'name': 'Starter',
+                'monthly_tokens': 100,
+                'stripe_price_id': 'price_test_starter',
+                'stripe_product_id': 'prod_test_starter',
+                'stripe_overage_price_id': 'price_test_starter_overage',
+            },
+            'creator': {
+                'name': 'Creator',
+                'monthly_tokens': 500,
+                'stripe_price_id': 'price_test_creator',
+                'stripe_product_id': 'prod_test_creator',
+                'stripe_overage_price_id': 'price_test_creator_overage',
+            },
+            'unlimited': {
+                'name': 'Unlimited',
+                'monthly_tokens': -1,
+                'stripe_price_id': 'price_test_unlimited',
+                'stripe_product_id': 'prod_test_unlimited',
+                'stripe_overage_price_id': None,
+                'hidden': True,
+            }
+        }
+        mock_get_plans.return_value = mock_plans
         
         # Test that function exists and returns a value
         result = get_plan_monthly_tokens('free')
         assert isinstance(result, int)
-        assert result >= 0
+        assert result == 10
         
         # Test with different plan types
-        for plan in ['free', 'starter', 'creator', 'unlimited']:
+        test_cases = [
+            ('free', 10),
+            ('starter', 100),
+            ('creator', 500),
+            ('unlimited', -1),  # Unlimited plan
+        ]
+        
+        for plan, expected_tokens in test_cases:
             tokens = get_plan_monthly_tokens(plan)
             assert isinstance(tokens, int)
-            if plan == 'unlimited':
-                assert tokens == -1  # Unlimited plan
-            else:
-                assert tokens > 0  # Regular plans have positive tokens
+            assert tokens == expected_tokens, f"Plan {plan} should have {expected_tokens} tokens, got {tokens}"
+    
+    @patch('builtins.open', create=True)
+    def test_load_plans_from_json(self, mock_open):
+        """Test loading plans from JSON file"""
+        from stripe_config import load_plans
+        
+        # Mock JSON file content
+        mock_json_data = {
+            'free': {
+                'name': 'Free',
+                'monthly_tokens': 10,
+                'stripe_price_id': 'price_test_free',
+                'stripe_product_id': 'prod_test_free',
+                'stripe_overage_price_id': None,
+            },
+            'starter': {
+                'name': 'Starter',
+                'monthly_tokens': 100,
+                'stripe_price_id': 'price_test_starter',
+                'stripe_product_id': 'prod_test_starter',
+                'stripe_overage_price_id': 'price_test_starter_overage',
+            }
+        }
+        
+        # Mock file opening
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value = mock_file
+        mock_file.__exit__.return_value = None
+        mock_open.return_value = mock_file
+        
+        # Mock json.load
+        with patch('stripe_config.json.load', return_value=mock_json_data):
+            # Clear cache
+            import stripe_config
+            stripe_config._PLANS_CACHE = None
+            
+            result = load_plans('test')
+            
+            assert result == mock_json_data
+            assert 'free' in result
+            assert 'starter' in result
+            assert result['free']['monthly_tokens'] == 10
+            assert result['starter']['monthly_tokens'] == 100
+    
+    @patch('builtins.open', side_effect=FileNotFoundError)
+    def test_load_plans_fallback_when_file_missing(self, mock_open):
+        """Test that fallback plans are used when JSON file is missing"""
+        from stripe_config import load_plans
+        
+        # Clear cache
+        import stripe_config
+        stripe_config._PLANS_CACHE = None
+        
+        result = load_plans('test')
+        
+        # Should return fallback plans (only free plan)
+        assert 'free' in result
+        assert result['free']['monthly_tokens'] == 10
+        # Fallback should not have other plans
+        assert 'starter' not in result
 
 
 if __name__ == "__main__":

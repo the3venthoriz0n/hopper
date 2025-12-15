@@ -71,9 +71,7 @@ from encryption import decrypt, encrypt
 
 # Local imports - Token & Stripe
 from stripe_config import (
-    PLANS,
     calculate_tokens_from_bytes,
-    ensure_stripe_products,
     get_plan_price_id,
     get_plans,
 )
@@ -3740,6 +3738,7 @@ def get_subscription_plans():
     from stripe_config import get_price_info
     
     plans_list = []
+    PLANS = get_plans()  # Get plans from JSON config
     for plan_key, plan_config in PLANS.items():
         if plan_config.get("hidden", False):
             continue
