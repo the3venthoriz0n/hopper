@@ -8,6 +8,112 @@ import DeleteYourData from './DeleteYourData';
 import Login from './Login';
 import AdminDashboard from './AdminDashboard';
 
+// Circular Progress Component for Token Usage
+const CircularTokenProgress = ({ tokensUsed, monthlyTokens, overageTokens, unlimited }) => {
+  if (unlimited) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
+        <div style={{
+          width: '80px',
+          height: '80px',
+          borderRadius: '50%',
+          background: 'conic-gradient(from 0deg, #10b981 0deg 360deg)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          position: 'relative'
+        }}>
+          <div style={{
+            width: '60px',
+            height: '60px',
+            borderRadius: '50%',
+            background: '#0a0a0a',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '1.5rem',
+            fontWeight: '700',
+            color: '#10b981'
+          }}>
+            ∞
+          </div>
+        </div>
+        <div style={{ fontSize: '0.75rem', color: '#999', textAlign: 'center' }}>Unlimited</div>
+      </div>
+    );
+  }
+
+  // Calculate percentage (cap at 100% for included tokens, then show overage separately)
+  const includedUsage = Math.min(tokensUsed, monthlyTokens);
+  const percentage = monthlyTokens > 0 ? (includedUsage / monthlyTokens) * 100 : 0;
+  const hasOverage = overageTokens > 0;
+  
+  // Color based on usage - red when in overage, otherwise green/amber based on percentage
+  let progressColor = '#10b981'; // green
+  if (hasOverage) {
+    progressColor = '#ef4444'; // red when in overage
+  } else if (percentage >= 90) {
+    progressColor = '#f59e0b'; // amber
+  }
+  
+  // Calculate stroke-dasharray for the circle
+  const circumference = 2 * Math.PI * 35; // radius = 35
+  const strokeDashoffset = circumference - (percentage / 100) * circumference;
+  
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
+      <div style={{ position: 'relative', width: '80px', height: '80px' }}>
+        <svg width="80" height="80" style={{ transform: 'rotate(-90deg)' }}>
+          {/* Background circle */}
+          <circle
+            cx="40"
+            cy="40"
+            r="35"
+            fill="none"
+            stroke="rgba(255, 255, 255, 0.1)"
+            strokeWidth="6"
+          />
+          {/* Progress circle */}
+          <circle
+            cx="40"
+            cy="40"
+            r="35"
+            fill="none"
+            stroke={progressColor}
+            strokeWidth="6"
+            strokeDasharray={circumference}
+            strokeDashoffset={strokeDashoffset}
+            strokeLinecap="round"
+            style={{ transition: 'stroke-dashoffset 0.5s ease' }}
+          />
+        </svg>
+        {/* Center text */}
+        <div style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          textAlign: 'center',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '0.1rem'
+        }}>
+          <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#fff', lineHeight: '1' }}>
+            {tokensUsed}
+          </div>
+          <div style={{ fontSize: '0.65rem', color: '#999', lineHeight: '1' }}>
+            / {monthlyTokens}
+          </div>
+        </div>
+      </div>
+      <div style={{ fontSize: '0.75rem', color: '#999', textAlign: 'center' }}>
+        tokens used
+      </div>
+    </div>
+  );
+};
+
 // Configure axios to send cookies with every request
 axios.defaults.withCredentials = true;
 
@@ -590,16 +696,30 @@ function Home() {
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('upgraded') === 'success' && location.pathname === '/subscription') {
-      // Show success message only after we're on the subscription page
-      setMessage('✅ Subscription upgraded successfully! Your new plan is now active.');
-      // Clean up the query parameter after a brief delay to ensure message is shown
-      setTimeout(() => {
-        urlParams.delete('upgraded');
-        const newUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
-        window.history.replaceState({}, '', newUrl);
-      }, 100);
+      // Wait for subscription and token balance to be loaded before showing success message
+      // This ensures tokens are updated before showing the popup
+      const showSuccessMessage = async () => {
+        // Reload subscription and token balance to ensure we have latest data
+        if (user) {
+          await loadSubscription();
+          // Small delay to ensure UI has updated with new token balance
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
+        
+        // Now show success message after everything is updated
+        setMessage('✅ Subscription upgraded successfully! Your new plan is now active.');
+        
+        // Clean up the query parameter after a brief delay to ensure message is shown
+        setTimeout(() => {
+          urlParams.delete('upgraded');
+          const newUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
+          window.history.replaceState({}, '', newUrl);
+        }, 100);
+      };
+      
+      showSuccessMessage();
     }
-  }, [location.pathname, location.search]);
+  }, [location.pathname, location.search, user, loadSubscription]);
 
   // Check for checkout success (from /subscription/success route or query param)
   useEffect(() => {
@@ -633,7 +753,14 @@ function Home() {
           if (status === 'completed' && payment_status === 'paid') {
             // Payment confirmed, now check if subscription was created
             if (subscription_created) {
-              // Subscription is ready, reload subscription data
+              // Subscription is ready, reload subscription data and token balance
+              await loadSubscription();
+              
+              // Wait a bit more to ensure tokens are synced and updated
+              // This ensures the success message shows after everything is ready
+              await new Promise(resolve => setTimeout(resolve, 500));
+              
+              // Reload one more time to ensure we have the latest token balance
               await loadSubscription();
               
               // Navigate to subscription page with success flag - message will be shown by the other useEffect
@@ -1728,8 +1855,9 @@ function Home() {
       return;
     }
     
-    // Check token balance before uploading (only if not unlimited)
-    if (tokenBalance && !tokenBalance.unlimited) {
+    // Check token balance before uploading
+    // Only block free plan users - paid plans (starter/creator) allow overage
+    if (tokenBalance && !tokenBalance.unlimited && subscription && subscription.plan_type === 'free') {
       // Get pending videos (pending, failed, or uploading status)
       const pendingVideos = videos.filter(v => 
         v.status === 'pending' || v.status === 'failed' || v.status === 'uploading'
@@ -1744,7 +1872,8 @@ function Home() {
           return sum + tokensForVideo;
         }, 0);
       
-      // Check if user has enough tokens
+      // Free plan has hard limit - block if not enough tokens
+      // Paid plans (starter/creator) allow overage, so we don't block them here
       if (totalTokensRequired > 0 && tokenBalance.tokens_remaining < totalTokensRequired) {
         const shortfall = totalTokensRequired - tokenBalance.tokens_remaining;
         setNotification({
@@ -2086,28 +2215,19 @@ function Home() {
               }}
               title="Click to manage subscription"
             >
-              <span style={{ fontSize: '1rem' }}>🪙</span>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-                <span style={{ 
-                  fontSize: '0.7rem', 
-                  color: '#999', 
-                  lineHeight: '1',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.5px'
-                }}>
-                  Tokens
-                </span>
-                <span style={{ 
-                  fontSize: '1.1rem', 
-                  fontWeight: '700', 
-                  color: '#818cf8',
-                  lineHeight: '1.2'
-                }}>
-                  {tokenBalance
-                    ? (tokenBalance.unlimited ? '∞' : tokenBalance.tokens_remaining)
-                    : '…'}
-                </span>
-              </div>
+              {tokenBalance ? (
+                <CircularTokenProgress
+                  tokensUsed={tokenBalance.tokens_used_this_period || 0}
+                  monthlyTokens={tokenBalance.monthly_tokens || 0}
+                  overageTokens={tokenBalance.overage_tokens || 0}
+                  unlimited={tokenBalance.unlimited}
+                />
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span style={{ fontSize: '1rem' }}>🪙</span>
+                  <span style={{ fontSize: '1.1rem', fontWeight: '700', color: '#818cf8' }}>…</span>
+                </div>
+              )}
           </div>
           
           <span style={{ color: '#999', fontSize: '0.9rem' }}>
@@ -3555,26 +3675,26 @@ function Home() {
                     
                     {/* Token Balance */}
                     <div style={{ 
-                      padding: '1rem', 
+                      padding: '1.5rem', 
                       background: 'rgba(0, 0, 0, 0.2)', 
-                      borderRadius: '6px',
-                      marginBottom: '1rem'
+                      borderRadius: '8px',
+                      marginBottom: '1rem',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: '1rem'
                     }}>
-                      <div style={{ fontSize: '0.85rem', color: '#999', marginBottom: '0.5rem' }}>Available Tokens</div>
-                      <div style={{ fontSize: '2rem', fontWeight: '700', color: '#818cf8', marginBottom: '0.25rem' }}>
-                        {tokenBalance.unlimited ? '∞' : tokenBalance.tokens_remaining}
-                      </div>
-                      {!tokenBalance.unlimited && (
-                        <>
-                          <div style={{ fontSize: '0.75rem', color: '#666' }}>
-                            Used {tokenBalance.tokens_used_this_period} this period
-                          </div>
-                          {tokenBalance.period_end && (
-                            <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '0.25rem' }}>
-                              Resets: {new Date(tokenBalance.period_end).toLocaleDateString()}
-                            </div>
-                          )}
-                        </>
+                      <div style={{ fontSize: '0.85rem', color: '#999', textAlign: 'center' }}>Token Usage</div>
+                      <CircularTokenProgress
+                        tokensUsed={tokenBalance.tokens_used_this_period || 0}
+                        monthlyTokens={tokenBalance.monthly_tokens || 0}
+                        overageTokens={tokenBalance.overage_tokens || 0}
+                        unlimited={tokenBalance.unlimited}
+                      />
+                      {!tokenBalance.unlimited && tokenBalance.period_end && (
+                        <div style={{ fontSize: '0.75rem', color: '#666', textAlign: 'center' }}>
+                          Resets: {new Date(tokenBalance.period_end).toLocaleDateString()}
+                        </div>
                       )}
                     </div>
 

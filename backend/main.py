@@ -3833,6 +3833,8 @@ def get_current_subscription(user_id: int = Depends(require_auth), db: Session =
                 "token_balance": {
                     "tokens_remaining": 0,
                     "tokens_used_this_period": 0,
+                    "monthly_tokens": 10,  # Default to free plan
+                    "overage_tokens": 0,
                     "unlimited": False,
                     "period_start": None,
                     "period_end": None,

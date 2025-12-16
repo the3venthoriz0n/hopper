@@ -789,33 +789,110 @@ def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription
             logger.error("Free plan price ID not configured")
             return None
         
+        # Validate price exists and is active BEFORE creating subscription
+        # Stripe doesn't throw an error for invalid prices - it just creates empty subscriptions
+        try:
+            price_obj = stripe.Price.retrieve(price_id)
+            if not price_obj.active:
+                logger.error(f"Free plan price {price_id} exists but is not active (archived). Cannot create subscription.")
+                return None
+            if not hasattr(price_obj, 'recurring') or not price_obj.recurring:
+                logger.error(f"Free plan price {price_id} is not a recurring price. Cannot create subscription.")
+                return None
+        except stripe.error.InvalidRequestError as e:
+            logger.error(f"Free plan price {price_id} does not exist in Stripe: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error validating free plan price {price_id}: {e}")
+            return None
+        
         # Build subscription items - free plan only has base price (no overage)
         # Free plan has hard limit, no metered billing
         items = [{'price': price_id, 'quantity': 1}]
         
-        logger.info(f"Creating free subscription for user {user_id} with price {price_id}")
+        logger.info(f"Creating free subscription for user {user_id} with price {price_id} (customer {customer_id})")
         
         # Create Stripe subscription for free plan ($0/month)
-        stripe_subscription = stripe.Subscription.create(
-            customer=customer_id,
-            items=items,
-            metadata={'user_id': str(user_id)},
-        )
+        try:
+            stripe_subscription = stripe.Subscription.create(
+                customer=customer_id,
+                items=items,
+                metadata={'user_id': str(user_id)},
+            )
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe API error creating free subscription for user {user_id} with price {price_id}: {e}")
+            return None
+        
+        # Check items immediately after creation (before retrieving)
+        # If items are missing here, the price_id is definitely invalid
+        if not hasattr(stripe_subscription, 'items') or not stripe_subscription.items:
+            logger.error(f"CRITICAL: Subscription {stripe_subscription.id} created with no items attribute. Price {price_id} is likely invalid.")
+            try:
+                stripe.Subscription.delete(stripe_subscription.id)
+            except Exception:
+                pass
+            return None
+        
+        # Check items.data length
+        items_data = stripe_subscription.items.data if hasattr(stripe_subscription.items, 'data') else []
+        if len(items_data) == 0:
+            logger.error(f"CRITICAL: Subscription {stripe_subscription.id} created with 0 items. Price {price_id} is likely invalid or archived.")
+            try:
+                stripe.Subscription.delete(stripe_subscription.id)
+            except Exception:
+                pass
+            return None
+        
+        # Retrieve subscription fresh from Stripe with expanded items to ensure we have full data
+        try:
+            stripe_subscription = stripe.Subscription.retrieve(
+                stripe_subscription.id,
+                expand=['items.data.price']
+            )
+        except stripe.error.StripeError as e:
+            logger.error(f"Failed to retrieve subscription {stripe_subscription.id} from Stripe: {e}")
+            try:
+                stripe.Subscription.delete(stripe_subscription.id)
+            except Exception:
+                pass
+            return None
         
         # Verify subscription was created with items
         if hasattr(stripe_subscription, 'items') and stripe_subscription.items:
             items_data = stripe_subscription.items.data if hasattr(stripe_subscription.items, 'data') else []
             if len(items_data) == 0:
-                logger.error(f"CRITICAL: Free subscription {stripe_subscription.id} was created with 0 items!")
+                logger.error(
+                    f"CRITICAL: Free subscription {stripe_subscription.id} was created with 0 items! "
+                    f"Price ID used: {price_id}, Customer: {customer_id}, Status: {stripe_subscription.status}. "
+                    f"This indicates the price_id may be invalid or the subscription creation failed silently."
+                )
+                # Log the full subscription object for debugging
+                logger.debug(f"Full subscription object: {stripe_subscription}")
                 # Try to delete the invalid subscription
                 try:
                     stripe.Subscription.delete(stripe_subscription.id)
+                    logger.info(f"Deleted invalid subscription {stripe_subscription.id}")
                 except Exception as e:
                     logger.error(f"Failed to delete invalid subscription {stripe_subscription.id}: {e}")
                 return None
+            # Log details about the items
+            for idx, item in enumerate(items_data):
+                item_price_id = item.price.id if hasattr(item, 'price') and hasattr(item.price, 'id') else 'unknown'
+                logger.debug(f"Subscription item {idx}: price_id={item_price_id}, quantity={item.quantity if hasattr(item, 'quantity') else 'unknown'}")
             logger.info(f"Free subscription {stripe_subscription.id} created with {len(items_data)} item(s)")
         else:
-            logger.error(f"CRITICAL: Free subscription {stripe_subscription.id} has no items attribute!")
+            logger.error(
+                f"CRITICAL: Free subscription {stripe_subscription.id} has no items attribute! "
+                f"Price ID used: {price_id}, Customer: {customer_id}, Status: {stripe_subscription.status}"
+            )
+            # Log the full subscription object for debugging
+            logger.debug(f"Full subscription object: {stripe_subscription}")
+            # Try to delete the invalid subscription
+            try:
+                stripe.Subscription.delete(stripe_subscription.id)
+                logger.info(f"Deleted invalid subscription {stripe_subscription.id}")
+            except Exception as e:
+                logger.error(f"Failed to delete invalid subscription {stripe_subscription.id}: {e}")
             return None
         
         # Update database subscription from Stripe subscription
@@ -931,6 +1008,23 @@ def create_unlimited_subscription(
             },
         )
         
+        # Retrieve subscription fresh from Stripe with expanded items to ensure we have full data
+        # The create() response might not have items expanded
+        try:
+            logger.debug(f"Retrieving unlimited subscription {stripe_subscription.id} fresh from Stripe with expanded items")
+            stripe_subscription = stripe.Subscription.retrieve(
+                stripe_subscription.id,
+                expand=['items.data.price']
+            )
+        except stripe.error.StripeError as e:
+            logger.error(f"Failed to retrieve subscription {stripe_subscription.id} from Stripe: {e}")
+            # Try to delete the subscription we just created
+            try:
+                stripe.Subscription.delete(stripe_subscription.id)
+            except Exception:
+                pass
+            return None
+        
         # Verify subscription was created with items
         if hasattr(stripe_subscription, 'items') and stripe_subscription.items:
             items_data = stripe_subscription.items.data if hasattr(stripe_subscription.items, 'data') else []
@@ -944,6 +1038,11 @@ def create_unlimited_subscription(
             logger.info(f"Unlimited subscription {stripe_subscription.id} created with {len(items_data)} item(s)")
         else:
             logger.error(f"CRITICAL: Unlimited subscription {stripe_subscription.id} has no items attribute!")
+            # Try to delete the invalid subscription
+            try:
+                stripe.Subscription.delete(stripe_subscription.id)
+            except Exception as e:
+                logger.error(f"Failed to delete invalid subscription {stripe_subscription.id}: {e}")
             return None
         
         # Update database subscription from Stripe subscription
@@ -1023,6 +1122,23 @@ def create_stripe_subscription(user_id: int, price_id: str, db: Session) -> Opti
             metadata={'user_id': str(user_id)},
         )
         
+        # Retrieve subscription fresh from Stripe with expanded items to ensure we have full data
+        # The create() response might not have items expanded
+        try:
+            logger.debug(f"Retrieving subscription {stripe_subscription.id} fresh from Stripe with expanded items")
+            stripe_subscription = stripe.Subscription.retrieve(
+                stripe_subscription.id,
+                expand=['items.data.price']
+            )
+        except stripe.error.StripeError as e:
+            logger.error(f"Failed to retrieve subscription {stripe_subscription.id} from Stripe: {e}")
+            # Try to delete the subscription we just created
+            try:
+                stripe.Subscription.delete(stripe_subscription.id)
+            except Exception:
+                pass
+            return None
+        
         # Verify subscription was created with items
         if hasattr(stripe_subscription, 'items') and stripe_subscription.items:
             items_data = stripe_subscription.items.data if hasattr(stripe_subscription.items, 'data') else []
@@ -1036,6 +1152,11 @@ def create_stripe_subscription(user_id: int, price_id: str, db: Session) -> Opti
             logger.info(f"Subscription {stripe_subscription.id} created with {len(items_data)} item(s)")
         else:
             logger.error(f"CRITICAL: Subscription {stripe_subscription.id} has no items attribute!")
+            # Try to delete the invalid subscription
+            try:
+                stripe.Subscription.delete(stripe_subscription.id)
+            except Exception as e:
+                logger.error(f"Failed to delete invalid subscription {stripe_subscription.id}: {e}")
             return None
         
         # Update database subscription from Stripe subscription

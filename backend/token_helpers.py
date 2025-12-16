@@ -52,9 +52,23 @@ def get_token_balance(user_id: int, db: Session) -> Dict[str, Any]:
     
     balance = get_or_create_token_balance(user_id, db)
     
+    # Get monthly token allocation for the plan
+    plan_monthly_tokens = get_plan_monthly_tokens(subscription.plan_type) if subscription else 0
+    
+    # For display purposes, show 0 if tokens_remaining is negative (user is in overage)
+    # The negative value is used internally for tracking, but UI should show 0
+    # Overage tokens are tracked separately and billed via Stripe metered billing
+    display_tokens_remaining = max(0, balance.tokens_remaining)
+    
+    # Calculate overage tokens (tokens used beyond the included amount)
+    # If tokens_used_this_period > monthly_tokens, user is in overage
+    overage_tokens = max(0, balance.tokens_used_this_period - plan_monthly_tokens) if plan_monthly_tokens > 0 else 0
+    
     return {
-        'tokens_remaining': balance.tokens_remaining,
+        'tokens_remaining': display_tokens_remaining,  # Show 0 if negative (in overage)
         'tokens_used_this_period': balance.tokens_used_this_period,
+        'monthly_tokens': plan_monthly_tokens,  # Total tokens included in plan
+        'overage_tokens': overage_tokens,  # Tokens used beyond included amount
         'unlimited': False,
         'period_start': balance.period_start.isoformat() if balance.period_start else None,
         'period_end': balance.period_end.isoformat() if balance.period_end else None,
