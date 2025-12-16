@@ -203,6 +203,7 @@ def cancel_other_user_subscriptions(user_id: int, current_subscription_id: str, 
         return False
 
 def delete_stripe_customer(customer_id: str, user_id: Optional[int] = None) -> bool:
+
     """
     Delete a Stripe customer. This automatically cancels all subscriptions.
     
@@ -270,6 +271,7 @@ def delete_stripe_customer(customer_id: str, user_id: Optional[int] = None) -> b
             exc_info=True
         )
         return False
+
 def _has_active_paid_subscription(customer_id: str, exclude_subscription_id: Optional[str] = None) -> bool:
     """
     Check if customer has any active paid subscriptions in Stripe.
@@ -435,14 +437,35 @@ def create_checkout_session(
         # Build line items - ONLY include the base price in checkout session
         # Metered overage prices should be added AFTER subscription creation (in webhook handler)
         # This is the correct pattern for metered billing that tracks usage and bills at end of period
+        # Check if price is metered - metered prices cannot have quantity set
+        try:
+            price_obj = stripe.Price.retrieve(price_id)
+            is_metered = (
+                hasattr(price_obj, 'recurring') and 
+                price_obj.recurring and 
+                hasattr(price_obj.recurring, 'usage_type') and
+                price_obj.recurring.usage_type == 'metered'
+            )
+        except Exception as e:
+            logger.warning(f"Could not retrieve price {price_id} to check if metered: {e}")
+            is_metered = False
+        
         # Set quantity to plan's base monthly_tokens (NOT including granted tokens)
         # This ensures invoice shows "100 tokens × $0.10 = $10.00" for the base plan
+        # BUT: Only set quantity if price is NOT metered (Stripe doesn't allow quantity on metered prices)
         from stripe_config import get_plan_monthly_tokens
         monthly_tokens = get_plan_monthly_tokens(plan_type)
-        quantity = monthly_tokens if monthly_tokens > 0 else (10 if plan_type == 'free' else 1)
-        line_items = [{'price': price_id, 'quantity': quantity}]
         
-        logger.info(f"Creating checkout session with base price for plan {plan_type} (quantity: {quantity}, metered overage will be added after subscription creation)")
+        if is_metered:
+            # Metered prices cannot have quantity - omit it
+            line_items = [{'price': price_id}]
+            logger.info(f"Creating checkout session with metered price for plan {plan_type} (no quantity - metered pricing)")
+        else:
+            # Non-metered prices can have quantity
+            quantity = monthly_tokens if monthly_tokens > 0 else (10 if plan_type == 'free' else 1)
+            line_items = [{'price': price_id, 'quantity': quantity}]
+            logger.info(f"Creating checkout session with base price for plan {plan_type} (quantity: {quantity}, metered overage will be added after subscription creation)")
+        
         logger.debug(f"Line items: {line_items}")
         
         # Create checkout session
@@ -1071,8 +1094,6 @@ def normalize_plan_type(plan_type: str) -> str:
         'unlimited': 'unlimited',
     }
     return plan_type_map.get(plan_type, plan_type)
-
-
 
 
 def log_stripe_event(

@@ -201,10 +201,14 @@ def find_or_create_price(product_id: str, config: Dict[str, Any],
         if price.product != product_id or price.unit_amount != amount:
             continue
         
+        # Must have recurring configuration
+        if not price.recurring or price.recurring.interval != 'month':
+            continue
+        
         if is_metered:
+            # For metered prices: must be metered and have meter attached
             if (
-                price.recurring
-                and hasattr(price.recurring, "usage_type")
+                hasattr(price.recurring, "usage_type")
                 and price.recurring.usage_type == "metered"
             ):
                 # Check if this price already has the meter attached
@@ -217,7 +221,14 @@ def find_or_create_price(product_id: str, config: Dict[str, Any],
                     print(f"    ✓ Found existing metered price with meter attached: {price.id}")
                     return price
         else:
-            if price.recurring and price.recurring.interval == 'month':
+            # For base prices: must NOT be metered (regular recurring price)
+            is_price_metered = (
+                hasattr(price.recurring, "usage_type")
+                and price.recurring.usage_type == "metered"
+            )
+            if not is_price_metered:
+                # This is a non-metered recurring price - perfect for base price
+                print(f"    ✓ Found existing non-metered base price: {price.id}")
                 return price
     
     # No matching price found - create new one
