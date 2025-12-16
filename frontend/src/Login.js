@@ -42,12 +42,24 @@ function Login({ onLoginSuccess }) {
   // Check for Google OAuth errors in URL parameters
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
-    const googleLogin = urlParams.get('google_login');
+    const error = urlParams.get('error');
     const reason = urlParams.get('reason');
+    const googleLogin = urlParams.get('google_login'); // Legacy support
     const resetEmail = urlParams.get('reset_email');
     const resetCodeParam = urlParams.get('reset_code');
     
-    if (googleLogin === 'error') {
+    // Handle new error parameter format (from backend redirect)
+    if (error === 'google_login_failed') {
+      let errorMessage = '❌ Google login failed. Please try again.';
+      if (reason === 'invalid_state') {
+        errorMessage = '❌ Google login failed: Invalid or expired session. Please try again.';
+      }
+      setMessage(errorMessage);
+      // Clean up URL without triggering page reload
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+    // Legacy support for old format
+    else if (googleLogin === 'error') {
       let errorMessage = '❌ Google login failed';
       if (reason === 'invalid_state') {
         errorMessage = '❌ Google login failed: Invalid or expired session. Please try again.';
@@ -113,6 +125,8 @@ function Login({ onLoginSuccess }) {
       // Extract error message from FastAPI response (detail field) or fallback to generic message
       const errorMsg = err.response?.data?.detail || err.response?.data?.message || err.message || 'Authentication failed';
       setMessage(`❌ ${errorMsg}`);
+      // Ensure we stay on the login page - don't navigate away on error
+      // The error message will be displayed to the user
     } finally {
       setLoading(false);
     }

@@ -137,7 +137,11 @@ axios.interceptors.response.use(
   },
   (error) => {
     // Handle 401 errors globally - force re-authentication
-    if (error.response?.status === 401 && !error.config.url?.includes('/auth/')) {
+    // BUT: Don't reload on auth endpoints (login/register) - let them handle errors themselves
+    // AND: Don't reload if we're already on the login page
+    if (error.response?.status === 401 && 
+        !error.config.url?.includes('/auth/') &&
+        !window.location.pathname.includes('/login')) {
       // Clear user state and let the auth check redirect to login
       window.location.reload();
     }

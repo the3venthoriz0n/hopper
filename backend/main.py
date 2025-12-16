@@ -1811,8 +1811,8 @@ def auth_google_login_callback(code: str, state: str, request: Request, response
     if not state_value:
         # Track failed login attempt (invalid state)
         login_attempts_counter.labels(status="failure", method="google").inc()
-        # Redirect to frontend with error instead of showing HTML
-        frontend_redirect = f"{FRONTEND_URL}/app?google_login=error&reason=invalid_state"
+        # Redirect to login page with error instead of app page
+        frontend_redirect = f"{FRONTEND_URL}/login?error=google_login_failed&reason=invalid_state"
         return RedirectResponse(url=frontend_redirect)
     
     # Delete state after verification
@@ -1892,8 +1892,8 @@ def auth_google_login_callback(code: str, state: str, request: Request, response
         # Track failed login attempt
         login_attempts_counter.labels(status="failure", method="google").inc()
         logger.error(f"Google login error: {e}", exc_info=True)
-        # Redirect to frontend with error
-        frontend_redirect = f"{FRONTEND_URL}/app?google_login=error"
+        # Redirect to login page with error instead of app page
+        frontend_redirect = f"{FRONTEND_URL}/login?error=google_login_failed"
         return RedirectResponse(url=frontend_redirect)
 
 
