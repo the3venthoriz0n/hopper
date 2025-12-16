@@ -4122,38 +4122,42 @@ def cancel_subscription(
             "plan_type": "free"
         }
     
-    # Get current token balance to preserve it
+    # Get current token balance to preserve it (user paid for full period)
     token_balance = get_or_create_token_balance(user_id, db)
     current_tokens = token_balance.tokens_remaining
     
-    # Cancel existing Stripe subscription (all subscriptions are now Stripe subscriptions)
-    if subscription.stripe_subscription_id:
+    # Cancel existing Stripe subscription with final invoice for overage
+    # prorate=False means user keeps tokens they paid for (full period)
+    # Overage is invoiced and doesn't carry over to the new subscription
+    old_subscription_id = subscription.stripe_subscription_id
+    if old_subscription_id:
         try:
-            # Cancel immediately (not at period end)
-            stripe.Subscription.delete(subscription.stripe_subscription_id)
-            logger.info(f"Canceled Stripe subscription {subscription.stripe_subscription_id} for user {user_id}")
-        except stripe.error.StripeError as e:
-            logger.warning(f"Failed to cancel Stripe subscription {subscription.stripe_subscription_id}: {e}")
+            from stripe_helpers import cancel_subscription_with_invoice
+            # Cancel with invoice_now=True to finalize overage charges (no prorating)
+            cancel_subscription_with_invoice(old_subscription_id, invoice_now=True)
+            logger.info(f"Canceled Stripe subscription {old_subscription_id} for user {user_id} (overage invoiced, tokens preserved)")
+        except Exception as e:
+            logger.warning(f"Failed to cancel Stripe subscription {old_subscription_id}: {e}")
             # Continue anyway - we'll create the free subscription
     
     # Delete old subscription record
-    old_subscription_id = subscription.stripe_subscription_id
     db.delete(subscription)
     db.commit()
     
-    # Create new free Stripe subscription (skip token reset - we'll handle it manually)
+    # Create new free Stripe subscription (skip token reset - we'll preserve tokens)
     free_subscription = create_free_subscription(user_id, db, skip_token_reset=True)
     if not free_subscription:
         raise HTTPException(500, "Failed to create free subscription")
     
-    # Handle tokens manually: preserve existing tokens and set monthly_tokens correctly
+    # Preserve tokens that user paid for (they paid for full period, no prorating)
+    # Overage has been invoiced and doesn't carry over
     from stripe_config import get_plan_monthly_tokens
     free_plan_tokens = get_plan_monthly_tokens('free')
     
     # Get the balance after subscription creation
     token_balance = get_or_create_token_balance(user_id, db)
     
-    # Preserve existing tokens (don't add free plan tokens)
+    # Preserve existing tokens (user paid for full period)
     token_balance.tokens_remaining = current_tokens
     
     # Set monthly_tokens to reflect actual starting balance for the new plan
@@ -4169,7 +4173,7 @@ def cancel_subscription(
     token_balance.updated_at = datetime.now(timezone.utc)
     db.commit()
     
-    logger.info(f"User {user_id} canceled subscription {old_subscription_id} and switched to free plan, preserved {current_tokens} tokens (free plan tokens not added)")
+    logger.info(f"User {user_id} canceled subscription {old_subscription_id} and switched to free plan. Overage invoiced, preserved {current_tokens} tokens (user paid for full period)")
     return {
         "status": "success",
         "message": "Subscription canceled and switched to free plan",
@@ -4988,14 +4992,15 @@ def _cancel_existing_subscriptions(user_id: int, new_subscription_id: str, db: S
     ).all()
     
     for sub in existing_subs:
-        # Cancel all Stripe subscriptions (all subscriptions are now Stripe subscriptions)
+        # Cancel all Stripe subscriptions with final invoice for overage
         if sub.stripe_subscription_id:
             try:
-                stripe.Subscription.delete(sub.stripe_subscription_id)
+                from stripe_helpers import cancel_subscription_with_invoice
+                cancel_subscription_with_invoice(sub.stripe_subscription_id, invoice_now=True)
                 sub.status = 'canceled'
                 db.commit()
-                logger.info(f"Canceled old subscription {sub.stripe_subscription_id}")
-            except stripe.error.StripeError as e:
+                logger.info(f"Canceled old subscription {sub.stripe_subscription_id} (overage invoiced)")
+            except Exception as e:
                 logger.warning(
                     f"Failed to cancel subscription {sub.stripe_subscription_id}: {e}"
                 )

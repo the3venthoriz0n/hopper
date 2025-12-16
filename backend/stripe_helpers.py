@@ -70,12 +70,70 @@ def ensure_stripe_customer_exists(user_id: int, db: Session) -> Optional[str]:
     return customer_id
 
 
-def cancel_all_user_subscriptions(user_id: int, db: Session, verify_cancellation: bool = True) -> bool:
+def cancel_subscription_with_invoice(stripe_subscription_id: str, invoice_now: bool = True) -> bool:
+    """
+    Cancel a Stripe subscription, optionally creating a final invoice for overage.
+    
+    When invoice_now=True:
+    - Creates a final invoice for any pending metered usage (overage)
+    - Does NOT prorate the subscription cost (user keeps tokens they paid for)
+    - Then cancels the subscription
+    
+    Args:
+        stripe_subscription_id: Stripe subscription ID to cancel
+        invoice_now: If True, create final invoice before canceling (default: True)
+        
+    Returns:
+        True if canceled successfully, False otherwise
+    """
+    if not STRIPE_SECRET_KEY:
+        logger.warning("Cannot cancel subscription: STRIPE_SECRET_KEY not set")
+        return False
+    
+    try:
+        if invoice_now:
+            # Cancel with invoice_now=True to finalize any pending metered usage (overage)
+            # prorate=False means we don't prorate subscription cost - user keeps tokens they paid for
+            stripe.Subscription.modify(
+                stripe_subscription_id,
+                cancel_at_period_end=False,  # Cancel immediately
+                prorate=False,  # Don't prorate - user paid for full period, keep tokens
+                invoice_now=True  # Create final invoice for overage only
+            )
+            logger.info(f"Canceled subscription {stripe_subscription_id} with final invoice (overage invoiced, tokens preserved)")
+        else:
+            # Cancel immediately without final invoice (legacy behavior)
+            stripe.Subscription.delete(stripe_subscription_id)
+            logger.info(f"Canceled subscription {stripe_subscription_id} without final invoice")
+        
+        return True
+        
+    except stripe.error.InvalidRequestError as e:
+        if 'already been canceled' in str(e).lower():
+            logger.info(f"Subscription {stripe_subscription_id} was already canceled")
+            return True
+        logger.warning(f"Error canceling subscription {stripe_subscription_id}: {e}")
+        return False
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error canceling subscription {stripe_subscription_id}: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Error canceling subscription {stripe_subscription_id}: {e}", exc_info=True)
+        return False
+
+
+def cancel_all_user_subscriptions(user_id: int, db: Session, verify_cancellation: bool = True, invoice_now: bool = True) -> bool:
     """
     Cancel ALL active subscriptions for a user.
     
     Best practice: Call this BEFORE creating a new subscription when you control creation.
     This ensures only one subscription exists at a time.
+    
+    Args:
+        user_id: User ID
+        db: Database session
+        verify_cancellation: Whether to verify cancellation (legacy parameter, kept for compatibility)
+        invoice_now: If True, create final invoice for overage before canceling (default: True)
     """
     if not STRIPE_SECRET_KEY:
         logger.warning("Cannot cancel subscriptions: STRIPE_SECRET_KEY not set")
@@ -97,17 +155,12 @@ def cancel_all_user_subscriptions(user_id: int, db: Session, verify_cancellation
                 logger.info(f"Deleted {len(db_subscriptions)} orphaned subscription(s)")
             return True
         
-        # Cancel in Stripe first
+        # Cancel in Stripe first with invoice_now to finalize overage charges
         try:
             stripe_subscriptions = stripe.Subscription.list(customer=customer_id, status='all', limit=100)
             for stripe_sub in stripe_subscriptions.data:
                 if stripe_sub.status not in ('canceled', 'incomplete_expired'):
-                    try:
-                        stripe.Subscription.delete(stripe_sub.id)
-                        logger.info(f"Canceled Stripe subscription {stripe_sub.id}")
-                    except stripe.error.InvalidRequestError as e:
-                        if 'already been canceled' not in str(e).lower():
-                            logger.warning(f"Error canceling {stripe_sub.id}: {e}")
+                    cancel_subscription_with_invoice(stripe_sub.id, invoice_now=invoice_now)
         except stripe.error.StripeError as e:
             logger.warning(f"Error listing Stripe subscriptions: {e}")
         
@@ -160,7 +213,7 @@ def cancel_other_user_subscriptions(user_id: int, current_subscription_id: str, 
                 logger.info(f"Deleted {len(db_subscriptions)} other orphaned subscription(s)")
             return True
         
-        # Cancel OTHER subscriptions in Stripe
+        # Cancel OTHER subscriptions in Stripe with final invoice for overage
         canceled_count = 0
         try:
             stripe_subscriptions = stripe.Subscription.list(customer=customer_id, status='all', limit=100)
@@ -170,13 +223,9 @@ def cancel_other_user_subscriptions(user_id: int, current_subscription_id: str, 
                     continue
                     
                 if stripe_sub.status not in ('canceled', 'incomplete_expired'):
-                    try:
-                        stripe.Subscription.delete(stripe_sub.id)
-                        logger.info(f"Canceled other Stripe subscription {stripe_sub.id}")
+                    if cancel_subscription_with_invoice(stripe_sub.id, invoice_now=True):
+                        logger.info(f"Canceled other Stripe subscription {stripe_sub.id} (overage invoiced)")
                         canceled_count += 1
-                    except stripe.error.InvalidRequestError as e:
-                        if 'already been canceled' not in str(e).lower():
-                            logger.warning(f"Error canceling {stripe_sub.id}: {e}")
         except stripe.error.StripeError as e:
             logger.warning(f"Error listing Stripe subscriptions: {e}")
         
@@ -373,16 +422,16 @@ def create_checkout_session(
                     stripe_sub = stripe.Subscription.retrieve(existing_subscription.stripe_subscription_id)
                     if stripe_sub.status in ['active', 'trialing', 'past_due']:
                         if cancel_existing:
-                            # Cancel the existing subscription
-                            logger.info(f"User {user_id} has active subscription {existing_subscription.stripe_subscription_id}, canceling it for upgrade")
-                            stripe.Subscription.delete(existing_subscription.stripe_subscription_id)
+                            # Cancel the existing subscription with final invoice for overage
+                            logger.info(f"User {user_id} has active subscription {existing_subscription.stripe_subscription_id}, canceling it for upgrade (with final invoice)")
+                            cancel_subscription_with_invoice(existing_subscription.stripe_subscription_id, invoice_now=True)
                             existing_subscription.status = 'canceled'
                             db.commit()
                             canceled_subscription_info = {
                                 'plan_type': existing_subscription.plan_type,
                                 'subscription_id': existing_subscription.stripe_subscription_id
                             }
-                            logger.info(f"Canceled existing subscription {existing_subscription.stripe_subscription_id} for user {user_id}")
+                            logger.info(f"Canceled existing subscription {existing_subscription.stripe_subscription_id} for user {user_id} (overage invoiced)")
                         else:
                             logger.warning(f"User {user_id} already has active Stripe subscription")
                             raise ValueError(
@@ -399,11 +448,7 @@ def create_checkout_session(
                 try:
                     stripe_subs = stripe.Subscription.list(customer=customer_id, status='active', limit=10)
                     for sub in stripe_subs.data:
-                        try:
-                            stripe.Subscription.delete(sub.id)
-                            logger.info(f"Canceled active Stripe subscription {sub.id} for user {user_id}")
-                        except Exception as e:
-                            logger.warning(f"Failed to cancel subscription {sub.id}: {e}")
+                        cancel_subscription_with_invoice(sub.id, invoice_now=True)
                 except Exception as e:
                     logger.warning(f"Error checking/canceling Stripe subscriptions: {e}")
             else:
