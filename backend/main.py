@@ -4112,7 +4112,26 @@ def cancel_subscription(
     if not free_subscription:
         raise HTTPException(500, "Failed to create free subscription")
     
-    logger.info(f"User {user_id} canceled subscription {old_subscription_id} and switched to free plan, preserved {current_tokens} tokens")
+    # Preserve tokens: restore the original token balance (don't add free plan tokens)
+    # The create_free_subscription adds free plan tokens, but we want to preserve the original balance
+    from stripe_config import get_plan_monthly_tokens
+    free_plan_tokens = get_plan_monthly_tokens('free')
+    
+    # Get the balance again after free subscription creation
+    token_balance = get_or_create_token_balance(user_id, db)
+    # Subtract the free plan tokens that were added, then restore original balance
+    # If create_free_subscription added tokens: balance = current_tokens + free_plan_tokens
+    # We want: balance = current_tokens
+    # So: balance = balance - free_plan_tokens + current_tokens
+    # But we need to be careful - if current_tokens was already preserved, we don't want to double-add
+    # Actually, simpler: just set it to current_tokens directly
+    token_balance.tokens_remaining = current_tokens
+    token_balance.period_start = free_subscription.current_period_start
+    token_balance.period_end = free_subscription.current_period_end
+    token_balance.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    
+    logger.info(f"User {user_id} canceled subscription {old_subscription_id} and switched to free plan, preserved {current_tokens} tokens (free plan tokens not added)")
     return {
         "status": "success",
         "message": "Subscription canceled and switched to free plan",
@@ -4262,30 +4281,57 @@ def handle_checkout_completed(session_data: Dict[str, Any], db: Session):
     # Cancel any existing paid subscriptions (prevent duplicates)
     _cancel_existing_subscriptions(user_id, subscription_id, db)
     
-    # Fix 0-items issue: Check if subscription has items, if not, add them from checkout session
+    # Check if subscription has items using SubscriptionItem.list() (most reliable method)
+    # Don't rely on expand as it may not work reliably
     try:
-        subscription = stripe.Subscription.retrieve(
-            subscription_id,
-            expand=['items.data.price']
+        # Use SubscriptionItem.list() as the primary method to check for items
+        # This is more reliable than relying on expand
+        sub_items = stripe.SubscriptionItem.list(
+            subscription=subscription_id,
+            limit=100
         )
         
-        # Check if subscription has items
-        items_data = subscription.items.data if (hasattr(subscription, 'items') and subscription.items and hasattr(subscription.items, 'data')) else []
-        items_count = len(items_data)
+        has_items = sub_items.data and len(sub_items.data) > 0
+        items_count = len(sub_items.data) if sub_items.data else 0
         
-        if items_count == 0:
+        if has_items:
+            logger.info(f"✅ Subscription {subscription_id} has {items_count} item(s) - no fix needed")
+        else:
+            # Subscription truly has no items - try to fix from checkout session
+            logger.error(f"⚠️  Subscription {subscription_id} has 0 items, attempting to fix from checkout session {session_data['id']}")
             logger.error(f"⚠️  Subscription {subscription_id} has 0 items, attempting to fix from checkout session {session_data['id']}")
             
             # Get line items from checkout session
             try:
                 line_items = stripe.checkout.Session.list_line_items(session_data['id'], limit=100)
                 
+                # Get existing price IDs from subscription to avoid duplicates
+                # Re-check items in case they were added between our check and now
+                existing_price_ids = set()
+                try:
+                    current_items = stripe.SubscriptionItem.list(subscription=subscription_id, limit=100)
+                    if current_items.data:
+                        for existing_item in current_items.data:
+                            if hasattr(existing_item, 'price') and existing_item.price:
+                                existing_price_id = existing_item.price.id if hasattr(existing_item.price, 'id') else None
+                                if existing_price_id:
+                                    existing_price_ids.add(existing_price_id)
+                except Exception as e:
+                    logger.warning(f"Could not re-check subscription items: {e}")
+                
                 items_added = 0
+                items_skipped = 0
                 for item in line_items.data:
                     price_id = item.price.id if (hasattr(item, 'price') and item.price and hasattr(item.price, 'id')) else None
                     quantity = item.quantity if hasattr(item, 'quantity') else 1
                     
                     if price_id:
+                        # Check if this price already exists in the subscription
+                        if price_id in existing_price_ids:
+                            items_skipped += 1
+                            logger.info(f"ℹ️  Item with price {price_id} already exists in subscription {subscription_id}, skipping")
+                            continue
+                        
                         try:
                             # Skip overage prices (they should be added later in subscription.created handler)
                             from stripe_config import get_plans
@@ -4301,9 +4347,18 @@ def handle_checkout_completed(session_data: Dict[str, Any], db: Session):
                                     quantity=quantity
                                 )
                                 items_added += 1
+                                # Add to existing set to avoid duplicates if we need to retry
+                                existing_price_ids.add(price_id)
                                 logger.info(f"✅ Added item {price_id} (quantity: {quantity}) to subscription {subscription_id}")
                         except stripe.error.StripeError as e:
-                            logger.error(f"❌ Failed to add item {price_id} to subscription {subscription_id}: {e}")
+                            error_str = str(e)
+                            # Check if error is because item already exists (race condition)
+                            if 'already using that Price' in error_str or 'already exists' in error_str:
+                                items_skipped += 1
+                                logger.info(f"ℹ️  Item with price {price_id} already exists in subscription {subscription_id} (race condition), skipping")
+                                existing_price_ids.add(price_id)
+                            else:
+                                logger.error(f"❌ Failed to add item {price_id} to subscription {subscription_id}: {e}")
                 
                 if items_added > 0:
                     # Re-retrieve subscription with updated items
@@ -4311,13 +4366,14 @@ def handle_checkout_completed(session_data: Dict[str, Any], db: Session):
                         subscription_id,
                         expand=['items.data.price']
                     )
-                    logger.info(f"✅ Fixed subscription {subscription_id} - added {items_added} item(s)")
+                    logger.info(f"✅ Fixed subscription {subscription_id} - added {items_added} item(s), skipped {items_skipped} duplicate(s)")
+                elif items_skipped > 0:
+                    # Items were skipped because they already exist - subscription is actually fine
+                    logger.info(f"✅ Subscription {subscription_id} already has all required items ({items_skipped} item(s) found) - no fix needed")
                 else:
                     logger.error(f"❌ Could not fix subscription {subscription_id} - no valid items found in checkout session")
             except stripe.error.StripeError as e:
                 logger.error(f"❌ Failed to retrieve line items from checkout session {session_data['id']}: {e}")
-        else:
-            logger.info(f"✅ Subscription {subscription_id} has {items_count} item(s) - no fix needed")
             
     except stripe.error.StripeError as e:
         logger.error(f"❌ Failed to retrieve subscription {subscription_id} in checkout handler: {e}")
@@ -4348,44 +4404,53 @@ def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
         expand=['items.data.price']
     )
     
-    # Verify subscription has items immediately after creation
-    items_data = []
-    if hasattr(subscription, 'items') and subscription.items:
-        items_data = subscription.items.data if hasattr(subscription.items, 'data') else []
-    
-    if len(items_data) == 0:
-        logger.error(
-            f"CRITICAL: Subscription {subscription_id} was created with NO ITEMS! "
-            f"This indicates the checkout session did not properly transfer items to the subscription. "
-            f"Subscription status: {subscription.status}, Customer: {subscription.customer}"
+    # Verify subscription has items using SubscriptionItem.list() (more reliable than expand)
+    # Don't rely on expand as it may not work reliably
+    try:
+        sub_items = stripe.SubscriptionItem.list(
+            subscription=subscription_id,
+            limit=100
         )
+        items_count = len(sub_items.data) if sub_items.data else 0
         
-        # Try to find the checkout session that created this subscription
-        try:
-            customer_id = subscription.customer
-            sessions = stripe.checkout.Session.list(customer=customer_id, limit=10)
-            for session in sessions.data:
-                if session.get('subscription') == subscription_id:
-                    logger.error(f"Found checkout session {session.id} that created subscription {subscription_id}")
-                    # Check what line items were in the session
-                    line_items = stripe.checkout.Session.list_line_items(session.id, limit=100)
-                    if line_items and len(line_items.data) > 0:
-                        logger.error(
-                            f"Checkout session {session.id} had {len(line_items.data)} line item(s) but subscription has 0 items! "
-                            f"This is a Stripe API issue or configuration problem."
-                        )
-                        # Log the line items that should have been transferred
-                        for item in line_items.data:
-                            price_id = item.price.id if hasattr(item, 'price') and item.price else 'unknown'
-                            logger.error(f"  Line item that should be in subscription: price_id={price_id}")
-                    else:
-                        logger.error(f"Checkout session {session.id} also has no line items - this is the root cause!")
-                    break
-        except Exception as e:
-            logger.error(f"Error investigating checkout session for subscription {subscription_id}: {e}")
-        
-        # Don't process this subscription - it's invalid
-        return
+        if items_count == 0:
+            logger.error(
+                f"CRITICAL: Subscription {subscription_id} was created with NO ITEMS! "
+                f"This indicates the checkout session did not properly transfer items to the subscription. "
+                f"Subscription status: {subscription.status}, Customer: {subscription.customer}"
+            )
+            
+            # Try to find the checkout session that created this subscription
+            try:
+                customer_id = subscription.customer
+                sessions = stripe.checkout.Session.list(customer=customer_id, limit=10)
+                for session in sessions.data:
+                    if session.get('subscription') == subscription_id:
+                        logger.error(f"Found checkout session {session.id} that created subscription {subscription_id}")
+                        # Check what line items were in the session
+                        line_items = stripe.checkout.Session.list_line_items(session.id, limit=100)
+                        if line_items and len(line_items.data) > 0:
+                            logger.error(
+                                f"Checkout session {session.id} had {len(line_items.data)} line item(s) but subscription has 0 items! "
+                                f"This is a Stripe API issue or configuration problem."
+                            )
+                            # Log the line items that should have been transferred
+                            for item in line_items.data:
+                                price_id = item.price.id if hasattr(item, 'price') and item.price else 'unknown'
+                                logger.error(f"  Line item that should be in subscription: price_id={price_id}")
+                        else:
+                            logger.error(f"Checkout session {session.id} also has no line items - this is the root cause!")
+                        break
+            except Exception as e:
+                logger.error(f"Error investigating checkout session for subscription {subscription_id}: {e}")
+            
+            # Don't process this subscription - it's invalid
+            return
+        else:
+            logger.info(f"✅ Subscription {subscription_id} has {items_count} item(s) - proceeding with processing")
+    except Exception as e:
+        logger.error(f"Error checking subscription items for {subscription_id}: {e}")
+        # Continue anyway - subscription might still be valid
     
     user_id = _get_user_id_from_subscription(subscription, db)
     if not user_id:

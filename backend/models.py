@@ -139,6 +139,7 @@ class TokenBalance(Base):
     # Token tracking
     tokens_remaining = Column(Integer, default=0, nullable=False)  # Current remaining tokens
     tokens_used_this_period = Column(Integer, default=0, nullable=False)  # Tokens used in current period
+    monthly_tokens = Column(Integer, default=0, nullable=False)  # Starting balance for period (plan + granted tokens)
     
     # Billing period tracking
     period_start = Column(DateTime(timezone=True), nullable=False)

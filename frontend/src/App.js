@@ -9,7 +9,8 @@ import Login from './Login';
 import AdminDashboard from './AdminDashboard';
 
 // Circular Progress Component for Token Usage
-const CircularTokenProgress = ({ tokensUsed, monthlyTokens, overageTokens, unlimited, isLoading }) => {
+// monthlyTokens tracks starting balance (plan allocation + granted tokens)
+const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, overageTokens, unlimited, isLoading }) => {
   if (unlimited) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}>
@@ -43,21 +44,25 @@ const CircularTokenProgress = ({ tokensUsed, monthlyTokens, overageTokens, unlim
     );
   }
 
-  // Calculate percentage (cap at 100% for included tokens, then show overage separately)
-  const includedUsage = Math.min(tokensUsed, monthlyTokens);
-  const percentage = monthlyTokens > 0 ? (includedUsage / monthlyTokens) * 100 : 0;
+  // monthlyTokens = starting balance for period (plan + granted tokens)
+  // This resets at billing and increases when tokens are granted
+  const effectiveMonthlyTokens = monthlyTokens || 0;
+  
+  // Calculate percentage: tokensUsed / monthlyTokens
+  // This shows usage percentage of starting balance
+  const percentage = effectiveMonthlyTokens > 0 ? (tokensUsed / effectiveMonthlyTokens) * 100 : 0;
   const hasOverage = overageTokens > 0;
   
-  // Color based on usage - red when in overage, otherwise green/amber based on percentage
+  // Color based on usage - red when in overage, amber when high usage, green otherwise
   let progressColor = '#10b981'; // green
   if (hasOverage) {
     progressColor = '#ef4444'; // red when in overage
   } else if (percentage >= 90) {
-    progressColor = '#f59e0b'; // amber
+    progressColor = '#f59e0b'; // amber when 90% or more used
   }
   
   // Calculate stroke-dasharray for the circle
-  const radius = 21; // reduced from 27
+  const radius = 21;
   const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (percentage / 100) * circumference;
 
@@ -88,7 +93,7 @@ const CircularTokenProgress = ({ tokensUsed, monthlyTokens, overageTokens, unlim
             style={{ transition: 'stroke-dashoffset 0.5s ease', opacity: isLoading ? 0.5 : 1 }}
           />
         </svg>
-        {/* Center text */}
+        {/* Center text - show usage / monthlyTokens (starting balance) */}
         <div style={{
           position: 'absolute',
           top: '50%',
@@ -104,7 +109,7 @@ const CircularTokenProgress = ({ tokensUsed, monthlyTokens, overageTokens, unlim
             {tokensUsed}
           </div>
           <div style={{ fontSize: '0.5rem', color: isLoading ? '#444' : '#999', lineHeight: '1' }}>
-            / {monthlyTokens}
+            / {effectiveMonthlyTokens}
           </div>
         </div>
       </div>
@@ -697,12 +702,42 @@ function Home() {
       // Wait for subscription and token balance to be loaded before showing success message
       // This ensures tokens are updated before showing the popup
       const showSuccessMessage = async () => {
-        // Reload subscription and token balance to ensure we have latest data
-        if (user) {
+        if (!user) return;
+        
+        // Get initial token balance for comparison
+        const initialTokenBalance = tokenBalance;
+        
+        // Reload subscription and token balance multiple times to ensure we have latest data
+        // This accounts for webhook processing delays
+        let attempts = 0;
+        const maxAttempts = 5;
+        
+        while (attempts < maxAttempts) {
           await loadSubscription();
-          // Small delay to ensure UI has updated with new token balance
-          await new Promise(resolve => setTimeout(resolve, 300));
+          
+          // Wait for token balance to update (webhooks may take a moment)
+          await new Promise(resolve => setTimeout(resolve, 800));
+          
+          // Check if token balance has been updated (new subscription should have different tokens)
+          // If tokenBalance is still null or hasn't changed after multiple attempts, continue anyway
+          if (tokenBalance && tokenBalance.monthly_tokens) {
+            // Token balance has been loaded, we can proceed
+            break;
+          }
+          
+          attempts++;
+          
+          // If we've tried multiple times, proceed anyway (tokens may still be syncing)
+          if (attempts >= maxAttempts) {
+            // One final reload and wait
+            await loadSubscription();
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            break;
+          }
         }
+        
+        // Additional wait to ensure UI has fully updated with new token balance
+        await new Promise(resolve => setTimeout(resolve, 500));
         
         // Now show success message after everything is updated
         setMessage('✅ Subscription upgraded successfully! Your new plan is now active.');
@@ -717,7 +752,7 @@ function Home() {
       
       showSuccessMessage();
     }
-  }, [location.pathname, location.search, user, loadSubscription]);
+  }, [location.pathname, location.search, user, loadSubscription, tokenBalance]);
 
   // Check for checkout success (from /subscription/success route or query param)
   useEffect(() => {
@@ -751,17 +786,23 @@ function Home() {
           if (status === 'completed' && payment_status === 'paid') {
             // Payment confirmed, now check if subscription was created
             if (subscription_created) {
-              // Subscription is ready, reload subscription data and token balance
-              await loadSubscription();
+              // Subscription is ready, reload subscription data and token balance multiple times
+              // This ensures tokens are fully synced before showing success message
               
-              // Wait a bit more to ensure tokens are synced and updated
-              // This ensures the success message shows after everything is ready
+              // First reload
+              await loadSubscription();
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              
+              // Second reload to catch any webhook updates
+              await loadSubscription();
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              
+              // Third reload to ensure tokens are definitely updated
+              await loadSubscription();
               await new Promise(resolve => setTimeout(resolve, 500));
               
-              // Reload one more time to ensure we have the latest token balance
-              await loadSubscription();
-              
               // Navigate to subscription page with success flag - message will be shown by the other useEffect
+              // The upgrade success handler will verify tokens are updated before showing the message
               if (location.pathname === '/subscription/success') {
                 navigate('/subscription?upgraded=success', { replace: true });
               } else {
@@ -2214,6 +2255,7 @@ function Home() {
               title="Click to manage subscription"
             >
               <CircularTokenProgress
+                tokensRemaining={tokenBalance?.tokens_remaining}
                 tokensUsed={tokenBalance?.tokens_used_this_period || 0}
                 monthlyTokens={tokenBalance?.monthly_tokens || 0}
                 overageTokens={tokenBalance?.overage_tokens || 0}
@@ -3675,6 +3717,7 @@ function Home() {
                 }}>
                   <div style={{ fontSize: '0.75rem', color: '#999', textAlign: 'center' }}>Token Usage</div>
                   <CircularTokenProgress
+                    tokensRemaining={tokenBalance?.tokens_remaining}
                     tokensUsed={tokenBalance?.tokens_used_this_period || 0}
                     monthlyTokens={tokenBalance?.monthly_tokens || 0}
                     overageTokens={tokenBalance?.overage_tokens || 0}

@@ -753,8 +753,35 @@ def update_subscription_from_stripe(
                                 logger.info(f"Found price from items: {price_id}")
                                 break
         
+        # Fallback: If expand didn't work, try listing items directly
         if not price_id:
-            logger.error(f"Subscription {stripe_subscription.id} has no price data")
+            logger.warning(f"Could not find price in expanded items for subscription {stripe_subscription.id}, trying direct list")
+            try:
+                items_list = stripe.SubscriptionItem.list(
+                    subscription=stripe_subscription.id,
+                    limit=10,
+                    expand=['data.price']
+                )
+                if items_list.data:
+                    for item in items_list.data:
+                        if hasattr(item, 'price') and item.price:
+                            item_price_id = item.price.id if hasattr(item.price, 'id') else None
+                            if item_price_id:
+                                # Skip overage prices
+                                from stripe_config import get_plans
+                                is_overage = any(
+                                    p.get('stripe_overage_price_id') == item_price_id 
+                                    for p in get_plans().values()
+                                )
+                                if not is_overage:
+                                    price_id = item_price_id
+                                    logger.info(f"Found price via direct SubscriptionItem.list(): {price_id}")
+                                    break
+            except Exception as e:
+                logger.error(f"Failed to list subscription items directly: {e}")
+        
+        if not price_id:
+            logger.error(f"Subscription {stripe_subscription.id} has no price data (tried both expand and direct list)")
             return None
         
         plan_type = _get_plan_type_from_price(price_id)

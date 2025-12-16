@@ -21,6 +21,7 @@ def get_or_create_token_balance(user_id: int, db: Session) -> TokenBalance:
             user_id=user_id,
             tokens_remaining=0,
             tokens_used_this_period=0,
+            monthly_tokens=0,
             period_start=datetime.now(timezone.utc),
             period_end=datetime.now(timezone.utc),
         )
@@ -52,7 +53,7 @@ def get_token_balance(user_id: int, db: Session) -> Dict[str, Any]:
     
     balance = get_or_create_token_balance(user_id, db)
     
-    # Get monthly token allocation for the plan
+    # Get monthly token allocation for the plan (for overage calculation)
     plan_monthly_tokens = get_plan_monthly_tokens(subscription.plan_type) if subscription else 0
     
     # For display purposes, show 0 if tokens_remaining is negative (user is in overage)
@@ -60,14 +61,17 @@ def get_token_balance(user_id: int, db: Session) -> Dict[str, Any]:
     # Overage tokens are tracked separately and billed via Stripe metered billing
     display_tokens_remaining = max(0, balance.tokens_remaining)
     
+    # Use stored monthly_tokens (starting balance for period), fallback to plan_monthly_tokens if not set
+    stored_monthly_tokens = balance.monthly_tokens if balance.monthly_tokens > 0 else plan_monthly_tokens
+    
     # Calculate overage tokens (tokens used beyond the included amount)
-    # If tokens_used_this_period > monthly_tokens, user is in overage
+    # If tokens_used_this_period > plan_monthly_tokens, user is in overage
     overage_tokens = max(0, balance.tokens_used_this_period - plan_monthly_tokens) if plan_monthly_tokens > 0 else 0
     
     return {
         'tokens_remaining': display_tokens_remaining,  # Show 0 if negative (in overage)
         'tokens_used_this_period': balance.tokens_used_this_period,
-        'monthly_tokens': plan_monthly_tokens,  # Total tokens included in plan
+        'monthly_tokens': stored_monthly_tokens,  # Starting balance for period (plan + granted tokens)
         'overage_tokens': overage_tokens,  # Tokens used beyond included amount
         'unlimited': False,
         'period_start': balance.period_start.isoformat() if balance.period_start else None,
@@ -289,8 +293,9 @@ def add_tokens(
         balance = get_or_create_token_balance(user_id, db)
         balance_before = balance.tokens_remaining
         
-        # Add tokens
+        # Add tokens to both remaining and monthly_tokens (monthly_tokens tracks starting balance)
         balance.tokens_remaining += tokens
+        balance.monthly_tokens += tokens  # Increase monthly_tokens when tokens are granted
         balance.updated_at = datetime.now(timezone.utc)
         
         balance_after = balance.tokens_remaining
@@ -363,6 +368,7 @@ def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: da
             # This is the ONLY time tokens should be reset to the plan's initial value
             # Tokens do NOT carry over on renewal - they are reset to the monthly allocation
             balance.tokens_remaining = monthly_tokens
+            balance.monthly_tokens = monthly_tokens  # Reset monthly_tokens to plan allocation
             tokens_change = monthly_tokens - balance_before
             logger.info(
                 f"🔄 RENEWAL: User {user_id} on {plan_type} plan - tokens RESET from {balance_before} to {monthly_tokens} "
@@ -371,6 +377,7 @@ def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: da
         else:
             # NEW SUBSCRIPTION: Add monthly tokens to current balance (preserves granted tokens)
             balance.tokens_remaining = balance_before + monthly_tokens
+            balance.monthly_tokens = balance.tokens_remaining  # Set monthly_tokens to new starting balance
             tokens_change = monthly_tokens
             logger.info(f"New subscription for user {user_id} on {plan_type} plan: {balance_before} + {monthly_tokens} = {balance.tokens_remaining} tokens (preserving existing tokens including granted tokens)")
         
