@@ -4512,7 +4512,8 @@ def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
         return
     
     # Add metered overage item if plan requires it (for pay-as-you-go overage billing)
-    # This should be done AFTER subscription creation, not in checkout session
+    # Best practice: Add at subscription creation to ensure complete structure from the start
+    # This ensures meter events can properly aggregate to the subscription item
     from stripe_config import get_plan_overage_price_id
     overage_price_id = get_plan_overage_price_id(updated_sub.plan_type)
     
@@ -4527,46 +4528,115 @@ def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
             
             # Only add metered item if subscription is active
             if current_subscription.status not in ('active', 'trialing'):
-                logger.info(f"Subscription {subscription.id} is not active (status: {current_subscription.status}), skipping metered item addition")
+                logger.warning(
+                    f"⚠️  Subscription {subscription.id} is not active (status: {current_subscription.status}), "
+                    f"skipping metered item addition. Meter events will not be tracked until subscription is active."
+                )
             else:
                 # Check if metered item already exists
                 items_data = current_subscription.items.data if (hasattr(current_subscription, 'items') and current_subscription.items and hasattr(current_subscription.items, 'data')) else []
                 has_metered_item = False
+                metered_item_id = None
+                
                 for item in items_data:
                     if hasattr(item, 'price') and item.price:
                         item_price_id = item.price.id if hasattr(item.price, 'id') else None
                         if item_price_id == overage_price_id:
                             has_metered_item = True
-                            logger.info(f"Subscription {subscription.id} already has metered overage item")
+                            metered_item_id = item.id
+                            logger.info(f"✅ Subscription {subscription.id} already has metered overage item {item.id}")
                             break
                 
                 if not has_metered_item:
+                    # Verify meter is attached to the overage price before adding
                     try:
+                        overage_price = stripe.Price.retrieve(overage_price_id)
+                        has_meter = (
+                            hasattr(overage_price, 'recurring') and
+                            overage_price.recurring and
+                            hasattr(overage_price.recurring, 'meter') and
+                            overage_price.recurring.meter is not None
+                        )
+                        
+                        if not has_meter:
+                            logger.error(
+                                f"❌ CRITICAL: Overage price {overage_price_id} for plan {updated_sub.plan_type} "
+                                f"does not have meter attached. Meter events will NOT be tracked. "
+                                f"Please run setup_stripe.py to fix this."
+                            )
+                            # Still try to add it - might work in legacy mode
+                        
                         # Add metered item to subscription for overage tracking
                         metered_item = stripe.SubscriptionItem.create(
                             subscription=subscription.id,
                             price=overage_price_id
                         )
-                        logger.info(f"Added metered overage item {metered_item.id} to subscription {subscription.id} for plan {updated_sub.plan_type}")
+                        metered_item_id = metered_item.id
+                        
+                        logger.info(
+                            f"✅ Added metered overage item {metered_item_id} to subscription {subscription.id} "
+                            f"for plan {updated_sub.plan_type} "
+                            f"(meter {'attached' if has_meter else 'NOT attached - will not track usage'})"
+                        )
                         
                         # Update subscription record with metered item ID
-                        updated_sub.stripe_metered_item_id = metered_item.id
+                        updated_sub.stripe_metered_item_id = metered_item_id
                         db.commit()
                         db.refresh(updated_sub)
+                        
                     except stripe.error.StripeError as e:
                         error_str = str(e)
+                        error_code = getattr(e, 'code', None)
+                        user_message = getattr(e, 'user_message', None)
+                        
                         if 'No such subscription' in error_str:
-                            logger.warning(f"Subscription {subscription.id} no longer exists in Stripe, cannot add metered item")
+                            logger.warning(f"⚠️  Subscription {subscription.id} no longer exists in Stripe, cannot add metered item")
+                        elif 'already using that Price' in error_str:
+                            # Item might have been added by another process - check again
+                            logger.warning(f"⚠️  Metered item might already exist for subscription {subscription.id}, checking...")
+                            try:
+                                items_list = stripe.SubscriptionItem.list(subscription=subscription.id, limit=100)
+                                for item in items_list.data:
+                                    if hasattr(item, 'price') and item.price and item.price.id == overage_price_id:
+                                        metered_item_id = item.id
+                                        updated_sub.stripe_metered_item_id = metered_item_id
+                                        db.commit()
+                                        logger.info(f"✅ Found existing metered item {metered_item_id} for subscription {subscription.id}")
+                                        break
+                            except Exception as check_error:
+                                logger.error(f"Error checking for existing metered item: {check_error}")
                         else:
-                            logger.error(f"Failed to add metered item to subscription {subscription.id}: {e}")
-                        # Don't fail the whole process - subscription can work without metered item (just no overage billing)
+                            logger.error(
+                                f"❌ Failed to add metered item to subscription {subscription.id}: "
+                                f"{error_str} (code: {error_code}, message: {user_message})"
+                            )
+                            # Log full error for debugging
+                            logger.error(f"Full Stripe error: {repr(e)}")
+                else:
+                    # Metered item exists - update database record
+                    if metered_item_id and not updated_sub.stripe_metered_item_id:
+                        updated_sub.stripe_metered_item_id = metered_item_id
+                        db.commit()
+                        logger.info(f"Updated subscription record with metered item ID {metered_item_id}")
+                        
         except stripe.error.StripeError as e:
             error_str = str(e)
+            error_code = getattr(e, 'code', None)
             if 'No such subscription' in error_str:
-                logger.warning(f"Subscription {subscription.id} no longer exists in Stripe, skipping metered item addition")
+                logger.warning(f"⚠️  Subscription {subscription.id} no longer exists in Stripe, skipping metered item addition")
             else:
-                logger.error(f"Failed to retrieve subscription {subscription.id} to add metered item: {e}")
+                logger.error(
+                    f"❌ Failed to retrieve subscription {subscription.id} to add metered item: "
+                    f"{error_str} (code: {error_code})"
+                )
             # Don't fail the whole process - subscription can work without metered item (just no overage billing)
+        except Exception as e:
+            logger.error(
+                f"❌ Unexpected error adding metered item to subscription {subscription.id}: {e}",
+                exc_info=True
+            )
+    else:
+        logger.debug(f"Plan {updated_sub.plan_type} does not have overage pricing configured")
     
     # Grant tokens for NEW subscriptions (didn't exist before)
     # If it already existed, it means .updated event already processed it, so don't add tokens again

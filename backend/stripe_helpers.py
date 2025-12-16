@@ -768,7 +768,11 @@ def create_unlimited_subscription(user_id: int, preserved_tokens: int, db: Sessi
 
 
 def create_stripe_subscription(user_id: int, price_id: str, db: Session) -> Optional[Subscription]:
-    """Create a Stripe subscription directly (admin use)."""
+    """Create a Stripe subscription directly (admin use).
+    
+    Best practice: Adds both base price and metered overage price at subscription creation
+    to ensure complete subscription structure from the start.
+    """
     if not STRIPE_SECRET_KEY:
         logger.error("Cannot create Stripe subscription: STRIPE_SECRET_KEY not set")
         return None
@@ -788,8 +792,8 @@ def create_stripe_subscription(user_id: int, price_id: str, db: Session) -> Opti
         
         logger.info(f"Creating subscription for user {user_id} with price {price_id}")
         
-        # Get plan type to determine quantity
-        from stripe_config import get_plans, get_plan_monthly_tokens
+        # Get plan type to determine quantity and overage price
+        from stripe_config import get_plans, get_plan_monthly_tokens, get_plan_overage_price_id
         plans = get_plans()
         plan_type = None
         for pt, plan_data in plans.items():
@@ -797,18 +801,56 @@ def create_stripe_subscription(user_id: int, price_id: str, db: Session) -> Opti
                 plan_type = pt
                 break
         
+        if not plan_type:
+            logger.error(f"Could not determine plan type for price_id {price_id}")
+            return None
+        
         # Set quantity to plan's base monthly_tokens (NOT including granted tokens)
-        if plan_type:
-            monthly_tokens = get_plan_monthly_tokens(plan_type)
-            quantity = monthly_tokens if monthly_tokens > 0 else 1
+        monthly_tokens = get_plan_monthly_tokens(plan_type)
+        quantity = monthly_tokens if monthly_tokens > 0 else 1
+        
+        # Build subscription items - include base price and metered overage price
+        subscription_items = [{'price': price_id, 'quantity': quantity}]
+        
+        # Add metered overage price if plan has one (best practice: add at creation)
+        overage_price_id = get_plan_overage_price_id(plan_type)
+        if overage_price_id:
+            # Verify meter is attached to the overage price before adding
+            try:
+                overage_price = stripe.Price.retrieve(overage_price_id)
+                has_meter = (
+                    hasattr(overage_price, 'recurring') and
+                    overage_price.recurring and
+                    hasattr(overage_price.recurring, 'meter') and
+                    overage_price.recurring.meter is not None
+                )
+                
+                if has_meter:
+                    subscription_items.append({'price': overage_price_id})
+                    logger.info(f"Adding metered overage price {overage_price_id} to subscription for plan {plan_type}")
+                else:
+                    logger.warning(
+                        f"⚠️  Overage price {overage_price_id} for plan {plan_type} does not have meter attached. "
+                        f"Meter events will not be tracked. Please run setup_stripe.py to fix."
+                    )
+                    # Still add it - the price might work without meter (legacy mode)
+                    subscription_items.append({'price': overage_price_id})
+            except stripe.error.StripeError as e:
+                logger.error(f"Failed to verify overage price {overage_price_id}: {e}")
+                # Continue without overage price - subscription will still work for base plan
         else:
-            quantity = 1  # Fallback if plan not found
+            logger.debug(f"Plan {plan_type} does not have overage pricing configured")
         
         stripe_subscription = stripe.Subscription.create(
             customer=customer_id,
-            items=[{'price': price_id, 'quantity': quantity}],
+            items=subscription_items,
             metadata={'user_id': str(user_id)},
             expand=['items.data.price']
+        )
+        
+        logger.info(
+            f"Created subscription {stripe_subscription.id} for user {user_id} "
+            f"with {len(subscription_items)} item(s): base price + {'metered overage' if overage_price_id else 'no overage'}"
         )
         
         subscription = update_subscription_from_stripe(
@@ -818,7 +860,11 @@ def create_stripe_subscription(user_id: int, price_id: str, db: Session) -> Opti
             skip_retrieve=True
         )
         
-        logger.info(f"Created subscription for user {user_id}: {stripe_subscription.id}")
+        if subscription:
+            logger.info(f"✅ Successfully created subscription for user {user_id}: {stripe_subscription.id}")
+        else:
+            logger.error(f"Failed to save subscription to database for user {user_id}")
+        
         return subscription
         
     except Exception as e:
@@ -1257,6 +1303,27 @@ def record_token_usage_to_stripe(
                 # Refresh balance from DB to ensure we have latest data
                 db.refresh(balance)
                 
+                # Validate inputs before calling Stripe API
+                if not customer_id:
+                    logger.error(f"❌ Cannot record meter event: customer_id is None for user {user_id}")
+                    return False
+                
+                if new_overage <= 0:
+                    logger.warning(f"⚠️  new_overage is {new_overage}, skipping meter event (should not happen)")
+                    return True
+                
+                # Ensure identifier is unique and valid (Stripe requires unique identifiers)
+                # Add microseconds to timestamp to ensure uniqueness
+                import time
+                unique_timestamp = int(time.time() * 1000000)  # microseconds for better uniqueness
+                identifier = f"user_{user_id}_{unique_timestamp}_{new_overage}"
+                
+                logger.info(
+                    f"Creating meter event for user {user_id}: "
+                    f"event_name=hopper_tokens, customer={customer_id}, value={new_overage}, "
+                    f"identifier={identifier}"
+                )
+                
                 meter_event = stripe.billing.MeterEvent.create(
                     event_name="hopper_tokens",  # Must match meter's event_name
                     identifier=identifier,  # Unique identifier (must be unique per event)
@@ -1267,25 +1334,47 @@ def record_token_usage_to_stripe(
                     # No timestamp parameter - Stripe will use current time automatically
                 )
                 
+                # Safely access meter_event.id with error handling
+                meter_event_id = 'unknown'
+                if meter_event:
+                    try:
+                        meter_event_id = getattr(meter_event, 'id', None) or str(meter_event.get('id', 'unknown')) if isinstance(meter_event, dict) else 'unknown'
+                    except Exception as attr_error:
+                        logger.warning(f"Could not extract meter_event.id: {attr_error}, type: {type(meter_event)}")
+                        meter_event_id = 'unknown'
+                else:
+                    logger.warning(f"Meter event response is None for user {user_id}")
+                
                 logger.info(
                     f"✅ Successfully recorded {new_overage} overage tokens to Stripe meter for user {user_id} "
-                    f"(meter_event_id={meter_event.id}, customer_id={customer_id}, "
+                    f"(meter_event_id={meter_event_id}, customer_id={customer_id}, "
                     f"total used: {total_used}, included: {included_tokens}, overage: {current_overage})"
                 )
                 
                 # Log the full meter event response for debugging
-                logger.debug(f"Meter event response: {meter_event}")
+                try:
+                    logger.debug(f"Meter event response type: {type(meter_event)}, value: {meter_event}")
+                except Exception as log_error:
+                    logger.debug(f"Could not log meter event response: {log_error}")
+                
                 return True
             except stripe.error.StripeError as e:
+                # Safely extract error information
+                error_msg = str(e) if e else "Unknown Stripe error"
+                error_code = getattr(e, 'code', None)
+                user_message = getattr(e, 'user_message', None)
+                
                 logger.error(
-                    f"❌ Stripe error recording meter event for user {user_id}: {e} "
+                    f"❌ Stripe error recording meter event for user {user_id}: {error_msg} "
                     f"(customer_id={customer_id}, new_overage={new_overage})"
                 )
                 # Log full error details for debugging
-                if hasattr(e, 'user_message'):
-                    logger.error(f"Stripe user message: {e.user_message}")
-                if hasattr(e, 'code'):
-                    logger.error(f"Stripe error code: {e.code}")
+                if user_message:
+                    logger.error(f"Stripe user message: {user_message}")
+                if error_code:
+                    logger.error(f"Stripe error code: {error_code}")
+                # Log the full error object for debugging
+                logger.error(f"Full Stripe error: {repr(e)}")
                 return False
         else:
             # No new overage to report (all tokens were from included allocation)
@@ -1296,7 +1385,16 @@ def record_token_usage_to_stripe(
             return True
             
     except Exception as e:
-        logger.error(f"Error recording token usage to Stripe for user {user_id}: {e}", exc_info=True)
+        # Safely extract error information to avoid AttributeError when converting to string
+        error_type = type(e).__name__
+        error_msg = str(e) if e else "Unknown error"
+        error_repr = repr(e)
+        
+        logger.error(
+            f"Error recording token usage to Stripe for user {user_id}: {error_type}: {error_msg}",
+            exc_info=True
+        )
+        logger.error(f"Full error details: {error_repr}")
         return False
 
     """
