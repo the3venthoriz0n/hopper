@@ -3839,7 +3839,9 @@ def get_current_subscription(user_id: int = Depends(require_auth), db: Session =
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         logger.warning(f"Subscription request for deleted user {user_id}")
-        raise HTTPException(404, "User not found")
+        # Return 401 instead of 404 to trigger logout in frontend
+        # This happens when a user was deleted but their session is still active
+        raise HTTPException(401, "User account no longer exists")
     
     subscription_info = get_subscription_info(user_id, db)
     
@@ -4067,7 +4069,8 @@ def get_subscription_portal(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         logger.warning(f"Subscription portal request for deleted user {user_id}")
-        raise HTTPException(404, "User not found")
+        # Return 401 instead of 404 to trigger logout in frontend
+        raise HTTPException(401, "User account no longer exists")
     
     from stripe_helpers import get_subscription_info
     
@@ -4106,7 +4109,8 @@ def cancel_subscription(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         logger.warning(f"Cancel subscription request for deleted user {user_id}")
-        raise HTTPException(404, "User not found")
+        # Return 401 instead of 404 to trigger logout in frontend
+        raise HTTPException(401, "User account no longer exists")
     
     from token_helpers import get_or_create_token_balance
     from stripe_helpers import create_free_subscription

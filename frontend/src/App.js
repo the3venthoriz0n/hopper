@@ -144,33 +144,35 @@ axios.interceptors.response.use(
       const url = error.config?.url || '';
       const currentPath = window.location.pathname;
       
+      // Check if we're already on the login page - PRIORITY CHECK
+      // This prevents redirects when login fails (wrong password, etc.)
+      const isOnLoginPage = currentPath === '/login' || currentPath === '/login/';
+      
+      // If on login page, NEVER do anything - let login component handle the error
+      if (isOnLoginPage) {
+        return Promise.reject(error);
+      }
+      
       // Extract pathname from URL - handles both full URLs and relative paths
-      // Works for dev (localhost, different ports) and prod (same domain, different domains)
       let pathname = '';
       try {
         if (url.startsWith('http://') || url.startsWith('https://')) {
-          // Full URL - parse it directly
           pathname = new URL(url).pathname;
         } else if (url.startsWith('/')) {
-          // Relative path starting with / - use as-is
           pathname = url;
         } else {
-          // Relative path or just pathname - try to construct full URL
           const baseURL = error.config?.baseURL || window.location.origin;
           try {
             pathname = new URL(url, baseURL).pathname;
           } catch (e) {
-            // If that fails, just use the URL as pathname
             pathname = url.startsWith('/') ? url : '/' + url;
           }
         }
       } catch (e) {
-        // If all parsing fails, use the original URL as fallback
         pathname = url;
       }
       
       // Check if this is an auth endpoint (login, register, verify, etc.)
-      // Check both pathname and original URL to catch all cases
       const isAuthEndpoint = pathname.includes('/auth/login') || 
                             pathname.includes('/auth/register') || 
                             pathname.includes('/auth/verify') ||
@@ -180,15 +182,13 @@ axios.interceptors.response.use(
                             url.includes('/auth/verify') ||
                             url.includes('/auth/');
       
-      // Check if we're already on the login page
-      const isOnLoginPage = currentPath === '/login' || currentPath.includes('/login');
-      
-      // Only reload if it's NOT an auth endpoint AND we're NOT on the login page
-      if (!isAuthEndpoint && !isOnLoginPage) {
-        // Clear user state and let the auth check redirect to login
-        window.location.reload();
+      // If this is an auth endpoint, let it handle its own errors
+      if (isAuthEndpoint) {
+        return Promise.reject(error);
       }
-      // Otherwise, let the auth endpoint handle the error (don't reload, don't redirect)
+      
+      // Otherwise, reload to trigger auth check and redirect to login
+      window.location.reload();
     }
     return Promise.reject(error);
   }

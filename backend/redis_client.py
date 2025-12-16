@@ -178,6 +178,44 @@ def invalidate_oauth_token_cache(user_id: int, platform: Optional[str] = None) -
             redis_client.delete(*keys)
 
 
+def delete_all_user_sessions(user_id: int) -> int:
+    """Delete all sessions for a user by scanning session keys.
+    
+    This scans all session:* keys and deletes those that match the user_id.
+    Also deletes associated CSRF tokens.
+    
+    Args:
+        user_id: User ID to delete sessions for
+        
+    Returns:
+        Number of sessions deleted
+    """
+    deleted_count = 0
+    
+    # Scan all session keys
+    session_keys = redis_client.keys("session:*")
+    for key in session_keys:
+        try:
+            # Get the user_id stored in this session
+            stored_user_id = redis_client.get(key)
+            if stored_user_id and int(stored_user_id) == user_id:
+                # Extract session_id from key format "session:{session_id}"
+                session_id = key.split(":", 1)[1]
+                
+                # Delete the session
+                redis_client.delete(key)
+                deleted_count += 1
+                
+                # Also delete associated CSRF token
+                csrf_key = f"csrf:{session_id}"
+                redis_client.delete(csrf_key)
+        except (ValueError, IndexError, TypeError):
+            # Skip invalid keys or conversion errors
+            continue
+    
+    return deleted_count
+
+
 def invalidate_all_user_caches(user_id: int) -> int:
     """Invalidate all cached data and sessions for a user
     
@@ -213,8 +251,9 @@ def invalidate_all_user_caches(user_id: int) -> int:
         redis_client.delete(*keys)
         deleted_count += len(keys)
     
-    # Note: We can't easily find sessions by user_id since they're keyed by session_id
-    # Sessions will expire naturally or can be deleted individually if known
+    # Delete all sessions for this user
+    sessions_deleted = delete_all_user_sessions(user_id)
+    deleted_count += sessions_deleted
     
     return deleted_count
 
