@@ -4156,6 +4156,11 @@ def cancel_subscription(
     # But we need to be careful - if current_tokens was already preserved, we don't want to double-add
     # Actually, simpler: just set it to current_tokens directly
     token_balance.tokens_remaining = current_tokens
+    # Update monthly_tokens to reflect the actual starting balance for the new plan
+    # Use max of preserved tokens and free plan tokens to ensure counter displays correctly
+    token_balance.monthly_tokens = max(current_tokens, free_plan_tokens)
+    # Reset usage counter for clean start on new plan
+    token_balance.tokens_used_this_period = 0
     token_balance.period_start = free_subscription.current_period_start
     token_balance.period_end = free_subscription.current_period_end
     token_balance.updated_at = datetime.now(timezone.utc)
@@ -4564,13 +4569,34 @@ def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
                 logger.error(f"Failed to retrieve subscription {subscription.id} to add metered item: {e}")
             # Don't fail the whole process - subscription can work without metered item (just no overage billing)
     
-    # Only sync tokens if this is truly a NEW subscription (didn't exist before)
+    # Grant tokens for NEW subscriptions (didn't exist before)
     # If it already existed, it means .updated event already processed it, so don't add tokens again
     if not existing_sub:
-        logger.info(f"New subscription created for user {user_id}: {updated_sub.plan_type} - syncing tokens")
-        ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
+        logger.info(f"New subscription created for user {user_id}: {updated_sub.plan_type} - granting initial tokens")
+        from token_helpers import reset_tokens_for_subscription
+        from stripe_config import get_plan_monthly_tokens
+        
+        monthly_tokens = get_plan_monthly_tokens(updated_sub.plan_type)
+        logger.info(f"Granting {monthly_tokens} tokens to user {user_id} for new {updated_sub.plan_type} subscription")
+        
+        # Explicitly grant tokens for new subscription (is_renewal=False adds tokens to current balance)
+        token_granted = reset_tokens_for_subscription(
+            user_id,
+            updated_sub.plan_type,
+            updated_sub.current_period_start,
+            updated_sub.current_period_end,
+            db,
+            is_renewal=False  # New subscription - adds monthly tokens
+        )
+        
+        if token_granted:
+            logger.info(f"✅ Successfully granted {monthly_tokens} tokens to user {user_id} for {updated_sub.plan_type} subscription")
+        else:
+            logger.error(f"❌ Failed to grant tokens to user {user_id} for {updated_sub.plan_type} subscription")
+            # Fallback: try ensure_tokens_synced_for_subscription as safety net
+            ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
     else:
-        logger.info(f"Subscription {subscription.id} already existed in DB (likely processed by .updated event first) - skipping token sync to avoid double-adding")
+        logger.info(f"Subscription {subscription.id} already existed in DB (likely processed by .updated event first) - skipping token grant to avoid double-adding")
     
     logger.info(f"Subscription created for user {user_id}: {updated_sub.plan_type}")
 
