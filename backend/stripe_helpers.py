@@ -545,16 +545,34 @@ def create_checkout_session(
                     "Please manage your subscription through the customer portal."
                 )
         
-        # Get plan type from price_id to determine if we need metered price
-        from stripe_config import get_plan_overage_price_id
-        plan_type = _get_plan_type_from_price(price_id)
+        # Validate that the price_id exists in our configuration
+        from stripe_config import get_plans
+        plans = get_plans()
+        price_id_found = False
+        plan_type = None
         
-        # Build line items (base price + optional metered price)
+        # Check if price_id is in our plans configuration
+        for plan_key, plan_config in plans.items():
+            if plan_config.get('stripe_price_id') == price_id:
+                price_id_found = True
+                plan_type = plan_key
+                logger.info(f"Validated price_id {price_id} belongs to plan '{plan_type}'")
+                break
+        
+        if not price_id_found:
+            logger.error(
+                f"Price ID {price_id} not found in plans configuration. "
+                f"Available price IDs: {[p.get('stripe_price_id') for p in plans.values() if p.get('stripe_price_id')]}"
+            )
+            raise ValueError(f"Invalid price ID: {price_id} is not configured in plans")
+        
+        # Build line items - ONLY include the base price in checkout session
+        # Metered overage prices should be added AFTER subscription creation (in webhook handler)
+        # This is the correct pattern for metered billing that tracks usage and bills at end of period
         line_items = [{'price': price_id, 'quantity': 1}]
-        overage_price_id = get_plan_overage_price_id(plan_type)
-        if overage_price_id:
-            # For metered prices, quantity is not needed (Stripe will track usage)
-            line_items.append({'price': overage_price_id})
+        
+        logger.info(f"Creating checkout session with base price for plan {plan_type} (metered overage will be added after subscription creation)")
+        logger.debug(f"Line items: {line_items}")
         
         # Create checkout session
         session = stripe.checkout.Session.create(
@@ -570,6 +588,21 @@ def create_checkout_session(
             },
             allow_promotion_codes=True,
         )
+        
+        # Verify the session was created with items
+        if hasattr(session, 'line_items'):
+            # Retrieve full session to verify items
+            full_session = stripe.checkout.Session.retrieve(session.id, expand=['line_items.data.price'])
+            if hasattr(full_session, 'line_items') and full_session.line_items:
+                items_count = len(full_session.line_items.data) if hasattr(full_session.line_items, 'data') else 0
+                logger.info(f"Created checkout session {session.id} for user {user_id} with {items_count} line item(s)")
+                if items_count == 0:
+                    logger.error(f"CRITICAL: Checkout session {session.id} was created with 0 line items! This will cause subscription creation to fail.")
+                    raise ValueError(f"Checkout session created without line items - this is a critical error")
+            else:
+                logger.warning(f"Checkout session {session.id} has no line_items attribute")
+        else:
+            logger.warning(f"Checkout session {session.id} has no line_items attribute")
         
         logger.info(f"Created checkout session for user {user_id}: {session.id}")
         result = {
@@ -992,10 +1025,18 @@ def get_subscription_info(user_id: int, db: Session) -> Optional[Dict[str, Any]]
 
 def _get_plan_type_from_price(price_id: str) -> str:
     """Get plan type from Stripe price ID."""
-    for plan_key, plan_config in get_plans().items():
+    plans = get_plans()
+    for plan_key, plan_config in plans.items():
         if plan_config.get('stripe_price_id') == price_id:
             return plan_key
-    # Fallback: return 'free' if price not found
+    
+    # Log warning if price not found - this should not happen if validation is done upstream
+    logger.warning(
+        f"Price ID {price_id} not found in plans configuration. "
+        f"Available plans: {list(plans.keys())}, "
+        f"Available price IDs: {[p.get('stripe_price_id') for p in plans.values() if p.get('stripe_price_id')]}"
+    )
+    # Fallback: return 'free' if price not found (but this indicates a configuration error)
     return 'free'
 
 
@@ -1150,8 +1191,22 @@ def update_subscription_from_stripe(
                 f"Has items attr: {hasattr(stripe_subscription, 'items')}, "
                 f"Items data length: {len(stripe_subscription.items.data) if (hasattr(stripe_subscription, 'items') and stripe_subscription.items and hasattr(stripe_subscription.items, 'data')) else 0}"
             )
+            
+            # Verify plans are loaded correctly
+            from stripe_config import get_plans, reload_plans
+            plans = get_plans()
+            logger.error(
+                f"Current plans configuration: {list(plans.keys())}, "
+                f"Price IDs in config: {[p.get('stripe_price_id') for p in plans.values() if p.get('stripe_price_id')]}"
+            )
+            
             # This subscription is invalid - it has no pricing information
-            # Don't create/update the subscription record as it's unusable
+            # This should not happen if checkout sessions are created correctly with validated price IDs
+            logger.error(
+                f"CRITICAL: Subscription {stripe_subscription.id} has no items. "
+                f"This indicates the subscription was created incorrectly (likely without items in checkout session). "
+                f"Customer: {stripe_subscription.customer if hasattr(stripe_subscription, 'customer') else 'unknown'}"
+            )
             return None
         
         plan_type = _get_plan_type_from_price(price_id)
@@ -1425,17 +1480,25 @@ def record_token_usage_to_stripe(
         balance = get_or_create_token_balance(user_id, db)
         included_tokens = get_plan_monthly_tokens(subscription.plan_type)
         
-        # Calculate overage
+        # Calculate overage - we ONLY track tokens beyond the included amount
+        # Example: Starter plan gives 100 tokens included
+        #   - If user uses 50 tokens: overage = 0 (all within included)
+        #   - If user uses 150 tokens: overage = 50 (only tokens 101-150 are billed)
         # tokens_used_this_period includes the tokens just consumed
         total_used = balance.tokens_used_this_period
         current_overage = max(0, total_used - included_tokens)
         
         # Calculate previous overage (before this consumption)
+        # This allows us to report only the NEW overage tokens incrementally
         previous_total_used = total_used - tokens_used
         previous_overage = max(0, previous_total_used - included_tokens)
         
         # Only report NEW overage tokens (incremental)
-        # This ensures we only report the overage portion, not the included tokens
+        # This ensures we only report tokens beyond the included amount, not the included tokens
+        # Example: User had used 100 tokens (0 overage), now uses 5 more (105 total)
+        #   - current_overage = 105 - 100 = 5
+        #   - previous_overage = 100 - 100 = 0
+        #   - new_overage = 5 - 0 = 5 (only report the 5 overage tokens to Stripe)
         new_overage = current_overage - previous_overage
         
         if new_overage > 0:

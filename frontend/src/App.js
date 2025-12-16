@@ -586,6 +586,21 @@ function Home() {
     }
   }, [user, loadSubscription]);
 
+  // Check for subscription upgrade success message (from query param after redirect)
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('upgraded') === 'success' && location.pathname === '/subscription') {
+      // Show success message only after we're on the subscription page
+      setMessage('✅ Subscription upgraded successfully! Your new plan is now active.');
+      // Clean up the query parameter after a brief delay to ensure message is shown
+      setTimeout(() => {
+        urlParams.delete('upgraded');
+        const newUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
+        window.history.replaceState({}, '', newUrl);
+      }, 100);
+    }
+  }, [location.pathname, location.search]);
+
   // Check for checkout success (from /subscription/success route or query param)
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -618,18 +633,15 @@ function Home() {
           if (status === 'completed' && payment_status === 'paid') {
             // Payment confirmed, now check if subscription was created
             if (subscription_created) {
-              // Subscription is ready, reload subscription data and show success
+              // Subscription is ready, reload subscription data
               await loadSubscription();
-              setMessage('✅ Subscription upgraded successfully! Your new plan is now active.');
               
-              // Clean up URL and redirect
+              // Navigate to subscription page with success flag - message will be shown by the other useEffect
               if (location.pathname === '/subscription/success') {
-                navigate('/subscription', { replace: true });
+                navigate('/subscription?upgraded=success', { replace: true });
               } else {
-                urlParams.delete('checkout');
-                urlParams.delete('session_id');
-                const newUrl = window.location.pathname + (urlParams.toString() ? '?' + urlParams.toString() : '');
-                window.history.replaceState({}, '', newUrl);
+                // If already on subscription page, navigate to trigger the useEffect
+                navigate('/subscription?upgraded=success', { replace: true });
               }
               return; // Stop polling
             } else if (attempts < maxAttempts) {

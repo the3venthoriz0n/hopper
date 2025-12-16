@@ -75,16 +75,39 @@ def load_plans(mode: str = None) -> Dict[str, Dict[str, Any]]:
     logger.debug(f"Loading plans from: {config_file}")
     
     try:
-        with open(config_file) as f:
+        with open(config_file, 'r', encoding='utf-8') as f:
             plans = json.load(f)
-            logger.info(f"Loaded {len(plans)} plans from {config_file}")
-            # Only log price IDs at DEBUG level to reduce noise
-            if logger.isEnabledFor(logging.DEBUG):
-                for plan_key, plan_data in plans.items():
-                    price_id = plan_data.get('stripe_price_id')
-                    overage_price_id = plan_data.get('stripe_overage_price_id')
-                    logger.debug(f"  {plan_key}: price_id={price_id}, overage_price_id={overage_price_id}")
-            return plans
+            
+            # Validate the loaded plans structure
+            if not isinstance(plans, dict):
+                logger.error(f"Plans file {config_file} does not contain a JSON object")
+                return _get_fallback_plans()
+            
+            # Validate each plan has required fields
+            valid_plans = {}
+            for plan_key, plan_data in plans.items():
+                if not isinstance(plan_data, dict):
+                    logger.warning(f"Skipping invalid plan '{plan_key}': not a dictionary")
+                    continue
+                
+                price_id = plan_data.get('stripe_price_id')
+                if not price_id:
+                    logger.warning(f"Plan '{plan_key}' has no stripe_price_id - this plan will not work for subscriptions")
+                
+                valid_plans[plan_key] = plan_data
+            
+            if len(valid_plans) == 0:
+                logger.error(f"No valid plans found in {config_file}")
+                return _get_fallback_plans()
+            
+            logger.info(f"Loaded {len(valid_plans)} plans from {config_file}")
+            # Log price IDs at INFO level for verification
+            for plan_key, plan_data in valid_plans.items():
+                price_id = plan_data.get('stripe_price_id')
+                overage_price_id = plan_data.get('stripe_overage_price_id')
+                logger.info(f"  {plan_key}: price_id={price_id}, overage_price_id={overage_price_id}")
+            
+            return valid_plans
     except FileNotFoundError:
         logger.error(f"Plan config file not found: {config_file}")
         logger.error("Run setup_stripe.py to generate configuration")

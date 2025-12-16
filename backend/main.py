@@ -3971,8 +3971,43 @@ def check_checkout_status(
                 # This handles cases where tokens weren't reset by webhook
                 ensure_tokens_synced_for_subscription(user_id, subscription_id, db)
             else:
-                # Subscription doesn't exist yet - webhook should create it
-                logger.warning(f"Subscription {subscription_id} not found in database. Webhook may not have fired yet or failed.")
+                # Subscription doesn't exist in database - check if it's invalid in Stripe
+                try:
+                    stripe_sub = stripe.Subscription.retrieve(subscription_id, expand=['items.data.price'])
+                    items_data = []
+                    if hasattr(stripe_sub, 'items') and stripe_sub.items:
+                        items_data = stripe_sub.items.data if hasattr(stripe_sub.items, 'data') else []
+                    
+                    if len(items_data) == 0:
+                        logger.error(
+                            f"Subscription {subscription_id} exists in Stripe but has NO ITEMS. "
+                            f"This subscription is invalid and cannot be processed. "
+                            f"Status: {stripe_sub.status}, Customer: {stripe_sub.customer}"
+                        )
+                        # Try to find the checkout session that created this
+                        try:
+                            sessions = stripe.checkout.Session.list(customer=stripe_sub.customer, limit=10)
+                            for sess in sessions.data:
+                                if sess.get('subscription') == subscription_id:
+                                    line_items = stripe.checkout.Session.list_line_items(sess.id, limit=100)
+                                    if line_items and len(line_items.data) > 0:
+                                        logger.error(
+                                            f"Checkout session {sess.id} had {len(line_items.data)} items but subscription has 0! "
+                                            f"This indicates a Stripe API issue."
+                                        )
+                                    break
+                        except Exception as e:
+                            logger.debug(f"Could not investigate checkout session: {e}")
+                    else:
+                        logger.warning(
+                            f"Subscription {subscription_id} exists in Stripe with {len(items_data)} items but not in database. "
+                            f"Webhook may not have fired yet or failed. Status: {stripe_sub.status}"
+                        )
+                except stripe.error.StripeError as e:
+                    logger.warning(
+                        f"Subscription {subscription_id} not found in database and could not be retrieved from Stripe: {e}. "
+                        f"Webhook may not have fired yet or subscription was deleted."
+                    )
         
         return {
             "status": "completed" if session.payment_status == "paid" else "pending",
@@ -4235,11 +4270,53 @@ def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
     import stripe
     from token_helpers import ensure_tokens_synced_for_subscription
     
+    subscription_id = subscription_data.get("id")
+    logger.info(f"Processing customer.subscription.created event for subscription {subscription_id}")
+    
     # Retrieve full subscription with expanded items
     subscription = stripe.Subscription.retrieve(
-        subscription_data["id"], 
+        subscription_id, 
         expand=['items.data.price']
     )
+    
+    # Verify subscription has items immediately after creation
+    items_data = []
+    if hasattr(subscription, 'items') and subscription.items:
+        items_data = subscription.items.data if hasattr(subscription.items, 'data') else []
+    
+    if len(items_data) == 0:
+        logger.error(
+            f"CRITICAL: Subscription {subscription_id} was created with NO ITEMS! "
+            f"This indicates the checkout session did not properly transfer items to the subscription. "
+            f"Subscription status: {subscription.status}, Customer: {subscription.customer}"
+        )
+        
+        # Try to find the checkout session that created this subscription
+        try:
+            customer_id = subscription.customer
+            sessions = stripe.checkout.Session.list(customer=customer_id, limit=10)
+            for session in sessions.data:
+                if session.get('subscription') == subscription_id:
+                    logger.error(f"Found checkout session {session.id} that created subscription {subscription_id}")
+                    # Check what line items were in the session
+                    line_items = stripe.checkout.Session.list_line_items(session.id, limit=100)
+                    if line_items and len(line_items.data) > 0:
+                        logger.error(
+                            f"Checkout session {session.id} had {len(line_items.data)} line item(s) but subscription has 0 items! "
+                            f"This is a Stripe API issue or configuration problem."
+                        )
+                        # Log the line items that should have been transferred
+                        for item in line_items.data:
+                            price_id = item.price.id if hasattr(item, 'price') and item.price else 'unknown'
+                            logger.error(f"  Line item that should be in subscription: price_id={price_id}")
+                    else:
+                        logger.error(f"Checkout session {session.id} also has no line items - this is the root cause!")
+                    break
+        except Exception as e:
+            logger.error(f"Error investigating checkout session for subscription {subscription_id}: {e}")
+        
+        # Don't process this subscription - it's invalid
+        return
     
     user_id = _get_user_id_from_subscription(subscription, db)
     if not user_id:
@@ -4260,6 +4337,40 @@ def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
             f"Failed to create/update subscription {subscription.id} for user {user_id}"
         )
         return
+    
+    # Add metered overage item if plan requires it (for pay-as-you-go overage billing)
+    # This should be done AFTER subscription creation, not in checkout session
+    from stripe_config import get_plan_overage_price_id
+    overage_price_id = get_plan_overage_price_id(updated_sub.plan_type)
+    
+    if overage_price_id:
+        # Check if metered item already exists
+        items_data = subscription.items.data if (hasattr(subscription, 'items') and subscription.items and hasattr(subscription.items, 'data')) else []
+        has_metered_item = False
+        for item in items_data:
+            if hasattr(item, 'price') and item.price:
+                item_price_id = item.price.id if hasattr(item.price, 'id') else None
+                if item_price_id == overage_price_id:
+                    has_metered_item = True
+                    logger.info(f"Subscription {subscription.id} already has metered overage item")
+                    break
+        
+        if not has_metered_item:
+            try:
+                # Add metered item to subscription for overage tracking
+                metered_item = stripe.SubscriptionItem.create(
+                    subscription=subscription.id,
+                    price=overage_price_id
+                )
+                logger.info(f"Added metered overage item {metered_item.id} to subscription {subscription.id} for plan {updated_sub.plan_type}")
+                
+                # Update subscription record with metered item ID
+                updated_sub.stripe_metered_item_id = metered_item.id
+                db.commit()
+                db.refresh(updated_sub)
+            except stripe.error.StripeError as e:
+                logger.error(f"Failed to add metered item to subscription {subscription.id}: {e}")
+                # Don't fail the whole process - subscription can work without metered item (just no overage billing)
     
     # Only sync tokens if this is truly a NEW subscription (didn't exist before)
     # If it already existed, it means .updated event already processed it, so don't add tokens again
