@@ -108,9 +108,6 @@ const CircularTokenProgress = ({ tokensUsed, monthlyTokens, overageTokens, unlim
           </div>
         </div>
       </div>
-      <div style={{ fontSize: '0.6rem', color: '#999', textAlign: 'center' }}>
-        tokens used
-      </div>
     </div>
   );
 };
