@@ -8,6 +8,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy all Python source files (excluding tests in production, but keeping for now)
 COPY *.py ./
 
+# Copy JSON config files (Stripe plans configuration)
+COPY stripe_plans_*.json ./
+
 # Copy scripts directory (utility scripts like setup_stripe.py)
 COPY scripts/ ./scripts/
 

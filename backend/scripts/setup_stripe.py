@@ -115,11 +115,12 @@ def get_or_create_meter() -> Any:
         print(f"⚠️  Error listing meters: {e}")
 
     print(f"  ➕ Creating meter for event_name={METER_EVENT_NAME}")
+    # Note: event_ingestion parameter was removed in newer Stripe API versions
+    # The default behavior (raw event ingestion) is used automatically
     meter = stripe.billing.Meter.create(
         display_name=METER_DISPLAY_NAME,
         event_name=METER_EVENT_NAME,
         default_aggregation={"formula": "sum"},  # Sum all usage values for billing period
-        event_ingestion="raw",  # Handle all events as standalone (default, but explicit)
         customer_mapping={
             "event_payload_key": "stripe_customer_id",  # Key in payload for customer ID
             "type": "by_id",  # Map by Stripe customer ID
