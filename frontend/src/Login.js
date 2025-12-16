@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import './App.css';
 
 // Build API URL at runtime - always use HTTPS for production-like domains
 const getApiUrl = () => {
@@ -223,51 +224,23 @@ function Login({ onLoginSuccess }) {
   };
 
   return (
-    <div style={{
-      display: 'flex',
-      justifyContent: 'center',
-      alignItems: 'center',
-      minHeight: '100vh',
-      background: '#1a1a2e'
-    }}>
-      <div style={{
-        background: '#16213e',
-        padding: '2rem',
-        borderRadius: '8px',
-        maxWidth: '400px',
-        width: '100%',
-        boxShadow: '0 4px 6px rgba(0,0,0,0.3)'
-      }}>
-        <h1 style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+    <div className="login-container">
+      <div className="login-card">
+        <h1 className="login-title">
           {appTitle}
         </h1>
         
         {!showVerification && !showPasswordReset && (
-          <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+          <div className="login-tabs">
             <button
               onClick={() => { setIsLogin(true); setMessage(''); setShowVerification(false); }}
-              style={{
-                padding: '0.5rem 1rem',
-                marginRight: '0.5rem',
-                background: isLogin ? '#0f3460' : 'transparent',
-                border: '1px solid #0f3460',
-                color: 'white',
-                borderRadius: '4px',
-                cursor: 'pointer'
-              }}
+              className={`login-tab ${isLogin ? 'active' : ''}`}
             >
               Login
             </button>
             <button
               onClick={() => { setIsLogin(false); setMessage(''); setShowVerification(false); }}
-              style={{
-                padding: '0.5rem 1rem',
-                background: !isLogin ? '#0f3460' : 'transparent',
-                border: '1px solid #0f3460',
-                color: 'white',
-                borderRadius: '4px',
-                cursor: 'pointer'
-              }}
+              className={`login-tab ${!isLogin ? 'active' : ''}`}
             >
               Register
             </button>
@@ -277,18 +250,12 @@ function Login({ onLoginSuccess }) {
         {showVerification ? (
           <form onSubmit={handleVerifyEmail}>
             <div style={{ marginBottom: '1rem', textAlign: 'center' }}>
-              <p style={{ color: '#999', marginBottom: '1rem' }}>
+              <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
                 We sent a verification code to <strong>{email}</strong>
               </p>
             </div>
             <div
-              style={{
-                marginBottom: '1.5rem',
-                display: 'flex',
-                justifyContent: 'center',
-                gap: '0.5rem',
-                position: 'relative'
-              }}
+              className="verification-code-container"
               onClick={() => {
                 const input = document.getElementById('verification-code-input');
                 if (input) {
@@ -308,33 +275,10 @@ function Login({ onLoginSuccess }) {
                     e.target.value.replace(/[^a-zA-Z0-9]/g, '').slice(0, 6).toUpperCase()
                   )
                 }
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  opacity: 0,
-                  border: 'none',
-                  background: 'transparent',
-                  color: 'transparent',
-                  caretColor: 'transparent'
-                }}
+                className="verification-code-input"
               />
               {Array.from({ length: 6 }).map((_, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    width: '2.2rem',
-                    height: '2.8rem',
-                    borderRadius: '4px',
-                    border: '1px solid #0f3460',
-                    background: '#1a1a2e',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: '1.5rem',
-                    fontFamily: 'monospace',
-                    color: 'white'
-                  }}
-                >
+                <div key={idx} className="verification-code-box">
                   {verificationCode[idx] || ''}
                 </div>
               ))}
@@ -342,18 +286,7 @@ function Login({ onLoginSuccess }) {
             <button
               type="submit"
               disabled={loading || verificationCode.length !== 6}
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                background: '#e94560',
-                border: 'none',
-                borderRadius: '4px',
-                color: 'white',
-                fontSize: '1rem',
-                fontWeight: 'bold',
-                cursor: (loading || verificationCode.length !== 6) ? 'not-allowed' : 'pointer',
-                opacity: (loading || verificationCode.length !== 6) ? 0.6 : 1
-              }}
+              className="login-button"
             >
               {loading ? 'Verifying...' : 'Verify Email'}
             </button>
@@ -361,18 +294,7 @@ function Login({ onLoginSuccess }) {
               type="button"
               onClick={handleResendVerification}
               disabled={resending}
-              style={{
-                width: '100%',
-                padding: '0.5rem',
-                marginTop: '0.5rem',
-                background: 'transparent',
-                border: 'none',
-                borderRadius: '4px',
-                color: '#999',
-                fontSize: '0.875rem',
-                cursor: resending ? 'not-allowed' : 'pointer',
-                textDecoration: 'underline'
-              }}
+              className="login-button-secondary"
             >
               {resending ? 'Resending...' : "Didn't get a code? Resend email"}
             </button>
@@ -405,12 +327,12 @@ function Login({ onLoginSuccess }) {
               }}
             >
               <div style={{ marginBottom: '1rem', textAlign: 'center' }}>
-                <p style={{ color: '#999', marginBottom: '1rem' }}>
+                <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
                   Enter a new password to complete your reset.
                 </p>
               </div>
 
-              <div style={{ marginBottom: '1.5rem' }}>
+              <div className="login-form-group">
                 <input
                   type="password"
                   placeholder="New password (min 8 characters)"
@@ -418,33 +340,14 @@ function Login({ onLoginSuccess }) {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   minLength={8}
-                  style={{
-                    width: '100%',
-                    padding: '0.75rem',
-                    background: '#1a1a2e',
-                    border: '1px solid #0f3460',
-                    borderRadius: '4px',
-                    color: 'white',
-                    fontSize: '1rem'
-                  }}
+                  className="login-input"
                 />
               </div>
 
               <button
                 type="submit"
                 disabled={resettingPassword || password.length < 8}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  background: '#e94560',
-                  border: 'none',
-                  borderRadius: '4px',
-                  color: 'white',
-                  fontSize: '1rem',
-                  fontWeight: 'bold',
-                  cursor: (resettingPassword || password.length < 8) ? 'not-allowed' : 'pointer',
-                  opacity: (resettingPassword || password.length < 8) ? 0.6 : 1
-                }}
+                className="login-button"
               >
                 {resettingPassword ? 'Resetting...' : 'Reset Password'}
               </button>
@@ -458,17 +361,7 @@ function Login({ onLoginSuccess }) {
                   setMessage('');
                   setIsLogin(true);
                 }}
-                style={{
-                  width: '100%',
-                  padding: '0.5rem',
-                  marginTop: '0.5rem',
-                  background: 'transparent',
-                  border: '1px solid #0f3460',
-                  borderRadius: '4px',
-                  color: '#999',
-                  fontSize: '0.875rem',
-                  cursor: 'pointer'
-                }}
+                className="login-button-secondary"
               >
                 Back to Login
               </button>
@@ -492,45 +385,26 @@ function Login({ onLoginSuccess }) {
               }}
             >
               <div style={{ marginBottom: '1rem', textAlign: 'center' }}>
-                <p style={{ color: '#999', marginBottom: '1rem' }}>
+                <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
                   Enter your email address and we'll send you a link to reset your password.
                 </p>
               </div>
 
-              <div style={{ marginBottom: '1.5rem' }}>
+              <div className="login-form-group">
                 <input
                   type="email"
                   placeholder="Email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  style={{
-                    width: '100%',
-                    padding: '0.75rem',
-                    background: '#1a1a2e',
-                    border: '1px solid #0f3460',
-                    borderRadius: '4px',
-                    color: 'white',
-                    fontSize: '1rem'
-                  }}
+                  className="login-input"
                 />
               </div>
 
               <button
                 type="submit"
                 disabled={sendingReset || !email}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  background: '#e94560',
-                  border: 'none',
-                  borderRadius: '4px',
-                  color: 'white',
-                  fontSize: '1rem',
-                  fontWeight: 'bold',
-                  cursor: (sendingReset || !email) ? 'not-allowed' : 'pointer',
-                  opacity: (sendingReset || !email) ? 0.6 : 1
-                }}
+                className="login-button"
               >
                 {sendingReset ? 'Sending...' : 'Send Reset Email'}
               </button>
@@ -543,17 +417,7 @@ function Login({ onLoginSuccess }) {
                   setMessage('');
                   setIsLogin(true);
                 }}
-                style={{
-                  width: '100%',
-                  padding: '0.5rem',
-                  marginTop: '0.5rem',
-                  background: 'transparent',
-                  border: '1px solid #0f3460',
-                  borderRadius: '4px',
-                  color: '#999',
-                  fontSize: '0.875rem',
-                  cursor: 'pointer'
-                }}
+                className="login-button-secondary"
               >
                 Back to Login
               </button>
@@ -561,26 +425,18 @@ function Login({ onLoginSuccess }) {
           )
         ) : (
           <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: '1rem' }}>
+          <div className="login-form-group">
             <input
               type="email"
               placeholder="Email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                background: '#1a1a2e',
-                border: '1px solid #0f3460',
-                borderRadius: '4px',
-                color: 'white',
-                fontSize: '1rem'
-              }}
+              className="login-input"
             />
           </div>
 
-          <div style={{ marginBottom: '0.5rem' }}>
+          <div className="login-form-group">
             <input
               type="password"
               placeholder="Password (min 8 characters)"
@@ -588,15 +444,7 @@ function Login({ onLoginSuccess }) {
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={8}
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                background: '#1a1a2e',
-                border: '1px solid #0f3460',
-                borderRadius: '4px',
-                color: 'white',
-                fontSize: '1rem'
-              }}
+              className="login-input"
             />
           </div>
 
@@ -610,14 +458,7 @@ function Login({ onLoginSuccess }) {
                   setResetToken('');
                   setMessage('');
                 }}
-                style={{
-                  background: 'transparent',
-                  border: 'none',
-                  color: '#999',
-                  fontSize: '0.85rem',
-                  cursor: 'pointer',
-                  textDecoration: 'underline'
-                }}
+                className="login-link"
               >
                 Forgot password?
               </button>
@@ -627,18 +468,7 @@ function Login({ onLoginSuccess }) {
           <button
             type="submit"
             disabled={loading}
-            style={{
-              width: '100%',
-              padding: '0.75rem',
-              background: '#e94560',
-              border: 'none',
-              borderRadius: '4px',
-              color: 'white',
-              fontSize: '1rem',
-              fontWeight: 'bold',
-              cursor: loading ? 'not-allowed' : 'pointer',
-              opacity: loading ? 0.6 : 1
-            }}
+            className="login-button"
           >
             {loading ? 'Please wait...' : (isLogin ? 'Login' : 'Register')}
           </button>
@@ -647,36 +477,15 @@ function Login({ onLoginSuccess }) {
 
         {!showVerification && !showPasswordReset && (
           <>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              margin: '1.5rem 0 1rem 0'
-            }}>
-              <div style={{ flex: 1, height: '1px', background: '#0f3460' }}></div>
-              <span style={{ padding: '0 1rem', color: '#999', fontSize: '0.875rem' }}>OR</span>
-              <div style={{ flex: 1, height: '1px', background: '#0f3460' }}></div>
+            <div className="login-divider">
+              <span>OR</span>
             </div>
 
             <button
               type="button"
               onClick={handleGoogleLogin}
               disabled={loading}
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                background: 'white',
-                border: '1px solid #dadce0',
-                borderRadius: '4px',
-                color: '#3c4043',
-                fontSize: '1rem',
-                fontWeight: '500',
-                cursor: loading ? 'not-allowed' : 'pointer',
-                opacity: loading ? 0.6 : 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '0.5rem'
-              }}
+              className="google-button"
             >
               <svg width="18" height="18" xmlns="http://www.w3.org/2000/svg">
                 <g fill="none" fillRule="evenodd">
@@ -692,13 +501,7 @@ function Login({ onLoginSuccess }) {
         )}
 
         {message && (
-          <div style={{
-            marginTop: '1rem',
-            padding: '0.75rem',
-            background: message.startsWith('✅') ? '#1a5928' : '#5a1a1a',
-            borderRadius: '4px',
-            textAlign: 'center'
-          }}>
+          <div className={`login-message ${message.startsWith('✅') ? 'success' : 'error'}`}>
             {message}
           </div>
         )}

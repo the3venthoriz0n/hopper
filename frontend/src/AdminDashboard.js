@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import './App.css';
 
 // Get CSRF token from axios interceptor
 let csrfToken = null;
@@ -306,92 +307,45 @@ function AdminDashboard() {
   };
 
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: 'linear-gradient(135deg, #1e1e2e 0%, #2d2d44 100%)',
-      color: '#e0e0e0',
-      padding: '2rem',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
-    }}>
-      <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center',
-          marginBottom: '2rem'
-        }}>
-          <h1 style={{ color: '#fff', margin: 0, fontSize: '2rem' }}>🔐 Admin Dashboard</h1>
+    <div className="admin-container">
+      <div className="admin-wrapper">
+        <div className="admin-header">
+          <h1 className="admin-title">🔐 Admin Dashboard</h1>
           <button
             onClick={() => navigate('/app')}
-            style={{
-              padding: '0.5rem 1rem',
-              background: 'rgba(255, 255, 255, 0.1)',
-              border: '1px solid rgba(255, 255, 255, 0.2)',
-              borderRadius: '6px',
-              color: '#fff',
-              cursor: 'pointer',
-              fontSize: '0.9rem'
-            }}
+            className="admin-button"
           >
             ← Back to App
           </button>
         </div>
 
         {message && (
-          <div style={{
-            padding: '1rem',
-            marginBottom: '1rem',
-            background: message.includes('✅') ? 'rgba(34, 197, 94, 0.2)' : 'rgba(239, 68, 68, 0.2)',
-            border: `1px solid ${message.includes('✅') ? 'rgba(34, 197, 94, 0.5)' : 'rgba(239, 68, 68, 0.5)'}`,
-            borderRadius: '6px',
-            color: message.includes('✅') ? '#4ade80' : '#ef4444'
-          }}>
+          <div className={`admin-message ${message.includes('✅') ? 'success' : 'error'}`}>
             {message}
           </div>
         )}
 
         {/* Create User Section */}
-        <div style={{
-          background: 'rgba(255, 255, 255, 0.05)',
-          borderRadius: '8px',
-          padding: '1.5rem',
-          border: '1px solid rgba(255, 255, 255, 0.1)',
-          marginBottom: '2rem'
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-            <h2 style={{ color: '#fff', margin: 0 }}>Create User</h2>
+        <div className="admin-card">
+          <div className="admin-card-header">
+            <h2 className="admin-card-title">Create User</h2>
             <button
               onClick={() => setShowCreateUser(!showCreateUser)}
-              style={{
-                padding: '0.5rem 1rem',
-                background: showCreateUser ? 'rgba(239, 68, 68, 0.3)' : 'rgba(99, 102, 241, 0.3)',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
-                borderRadius: '4px',
-                color: '#fff',
-                cursor: 'pointer',
-                fontSize: '0.9rem'
-              }}
+              className={`admin-button ${showCreateUser ? 'admin-button-danger' : 'admin-button-primary'}`}
             >
               {showCreateUser ? 'Cancel' : '+ Create User'}
             </button>
           </div>
 
           {showCreateUser && (
-            <form onSubmit={handleCreateUser} style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <form onSubmit={handleCreateUser} className="admin-form">
               <input
                 type="email"
                 value={newUserEmail}
                 onChange={(e) => setNewUserEmail(e.target.value)}
                 placeholder="Email address"
                 required
-                style={{
-                  padding: '0.75rem',
-                  background: 'rgba(0, 0, 0, 0.3)',
-                  border: '1px solid rgba(255, 255, 255, 0.2)',
-                  borderRadius: '4px',
-                  color: '#fff',
-                  fontSize: '0.9rem'
-                }}
+                className="admin-input"
               />
               <input
                 type="password"
@@ -400,16 +354,9 @@ function AdminDashboard() {
                 placeholder="Password (min 8 characters)"
                 required
                 minLength={8}
-                style={{
-                  padding: '0.75rem',
-                  background: 'rgba(0, 0, 0, 0.3)',
-                  border: '1px solid rgba(255, 255, 255, 0.2)',
-                  borderRadius: '4px',
-                  color: '#fff',
-                  fontSize: '0.9rem'
-                }}
+                className="admin-input"
               />
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#fff', cursor: 'pointer' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)', cursor: 'pointer' }}>
                 <input
                   type="checkbox"
                   checked={newUserIsAdmin}
@@ -421,16 +368,8 @@ function AdminDashboard() {
               <button
                 type="submit"
                 disabled={loading || !newUserEmail || !newUserPassword}
-                style={{
-                  padding: '0.75rem',
-                  background: loading || !newUserEmail || !newUserPassword ? 'rgba(255, 255, 255, 0.05)' : 'rgba(34, 197, 94, 0.5)',
-                  border: '1px solid rgba(255, 255, 255, 0.2)',
-                  borderRadius: '4px',
-                  color: '#fff',
-                  cursor: loading || !newUserEmail || !newUserPassword ? 'not-allowed' : 'pointer',
-                  fontSize: '0.9rem',
-                  fontWeight: '500'
-                }}
+                className="admin-button admin-button-primary"
+                style={{ opacity: (loading || !newUserEmail || !newUserPassword) ? 0.6 : 1, cursor: (loading || !newUserEmail || !newUserPassword) ? 'not-allowed' : 'pointer' }}
               >
                 {loading ? 'Creating...' : 'Create User'}
               </button>

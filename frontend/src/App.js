@@ -166,146 +166,46 @@ function PublicLanding() {
   const appTitle = isProduction ? '🐸 hopper' : '🐸 DEV hopper';
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        background: 'radial-gradient(circle at top, #1f2937 0, #020617 45%, #000 100%)',
-        color: '#e5e7eb',
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, sans-serif',
-      }}
-    >
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '1.25rem 2rem',
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.5rem',
-            fontWeight: 600,
-            fontSize: '1.1rem',
-          }}
-        >
-          <span style={{ fontSize: '1.4rem' }}>🐸</span>
+    <div className="landing-container">
+      <header className="landing-header">
+        <div className="landing-logo">
+          <span className="landing-logo-icon">🐸</span>
           <span>{appTitle.replace('🐸 ', '')}</span>
         </div>
-        <nav style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          <Link
-            to="/privacy"
-            style={{ color: '#9ca3af', textDecoration: 'none', fontSize: '0.9rem' }}
-          >
+        <nav className="landing-nav">
+          <Link to="/privacy" className="landing-nav-link">
             Privacy
           </Link>
-          <Link
-            to="/terms"
-            style={{ color: '#9ca3af', textDecoration: 'none', fontSize: '0.9rem' }}
-          >
+          <Link to="/terms" className="landing-nav-link">
             Terms
           </Link>
-          <Link
-            to="/login"
-            style={{
-              padding: '0.45rem 1rem',
-              borderRadius: '999px',
-              border: '1px solid rgba(248, 250, 252, 0.25)',
-              background: 'rgba(15, 23, 42, 0.85)',
-              color: '#f9fafb',
-              textDecoration: 'none',
-              fontSize: '0.9rem',
-              fontWeight: 500,
-            }}
-          >
+          <Link to="/login" className="landing-nav-button">
             Login
           </Link>
         </nav>
       </header>
 
-      <main
-        style={{
-          flex: 1,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '2rem',
-        }}
-      >
-        <div
-          style={{
-            maxWidth: '720px',
-            textAlign: 'center',
-          }}
-        >
-          <p
-            style={{
-              textTransform: 'uppercase',
-              letterSpacing: '0.2em',
-              fontSize: '0.75rem',
-              color: '#9ca3af',
-              marginBottom: '0.75rem',
-            }}
-          >
+      <main className="landing-main">
+        <div className="landing-content">
+          <p className="landing-tagline">
             Creator upload automation
           </p>
-          <h1
-            style={{
-              fontSize: '2.4rem',
-              lineHeight: 1.2,
-              fontWeight: 700,
-              marginBottom: '1rem',
-              color: '#f9fafb',
-            }}
-          >
-            Upload once. Hopper handles YouTube, TikTok, and Instagram for you.
+          <h1 className="landing-title">
+            Upload once.<br />Hopper handles YouTube, TikTok, and Instagram for you.
           </h1>
-          <p
-            style={{
-              fontSize: '1rem',
-              color: '#d1d5db',
-              maxWidth: '640px',
-              margin: '0 auto 1.75rem auto',
-            }}
-          >
-            hopper is a small creator tool that automates multi-platform uploads and scheduling.
+          <p className="landing-description">
+            Hopper is a creator tool that automates multi-platform uploads and scheduling.
             Connect your accounts, drag in videos, and let hopper handle the rest.
           </p>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem' }}>
-            <Link
-              to="/login"
-              style={{
-                padding: '0.75rem 1.75rem',
-                borderRadius: '999px',
-                border: 'none',
-                background:
-                  'linear-gradient(135deg, rgba(129, 140, 248, 0.9), rgba(236, 72, 153, 0.9))',
-                color: '#f9fafb',
-                textDecoration: 'none',
-                fontSize: '0.95rem',
-                fontWeight: 600,
-              }}
-            >
+          <div className="landing-cta">
+            <Link to="/login" className="landing-cta-button">
               Log in / Sign up
             </Link>
           </div>
         </div>
       </main>
 
-      <footer
-        style={{
-          padding: '1.25rem 2rem',
-          fontSize: '0.8rem',
-          color: '#6b7280',
-          textAlign: 'center',
-          borderTop: '1px solid rgba(31, 41, 55, 0.8)',
-        }}
-      >
+      <footer className="landing-footer">
         © {new Date().getFullYear()} hopper. All rights reserved.
       </footer>
     </div>
