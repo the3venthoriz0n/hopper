@@ -4237,7 +4237,14 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
 
 def handle_checkout_completed(session_data: Dict[str, Any], db: Session):
-    """Handle checkout.session.completed event."""
+    """Handle checkout.session.completed event.
+    
+    Fixes rare issue where Stripe creates subscription with 0 items.
+    This can happen due to Stripe API glitches or timing issues.
+    """
+    import stripe
+    from stripe_helpers import update_subscription_from_stripe
+    
     if session_data["mode"] != "subscription":
         return
     
@@ -4255,7 +4262,67 @@ def handle_checkout_completed(session_data: Dict[str, Any], db: Session):
     # Cancel any existing paid subscriptions (prevent duplicates)
     _cancel_existing_subscriptions(user_id, subscription_id, db)
     
-    # Note: Subscription creation is handled by customer.subscription.created event
+    # Fix 0-items issue: Check if subscription has items, if not, add them from checkout session
+    try:
+        subscription = stripe.Subscription.retrieve(
+            subscription_id,
+            expand=['items.data.price']
+        )
+        
+        # Check if subscription has items
+        items_data = subscription.items.data if (hasattr(subscription, 'items') and subscription.items and hasattr(subscription.items, 'data')) else []
+        items_count = len(items_data)
+        
+        if items_count == 0:
+            logger.error(f"⚠️  Subscription {subscription_id} has 0 items, attempting to fix from checkout session {session_data['id']}")
+            
+            # Get line items from checkout session
+            try:
+                line_items = stripe.checkout.Session.list_line_items(session_data['id'], limit=100)
+                
+                items_added = 0
+                for item in line_items.data:
+                    price_id = item.price.id if (hasattr(item, 'price') and item.price and hasattr(item.price, 'id')) else None
+                    quantity = item.quantity if hasattr(item, 'quantity') else 1
+                    
+                    if price_id:
+                        try:
+                            # Skip overage prices (they should be added later in subscription.created handler)
+                            from stripe_config import get_plans
+                            is_overage = any(
+                                p.get('stripe_overage_price_id') == price_id 
+                                for p in get_plans().values()
+                            )
+                            
+                            if not is_overage:
+                                stripe.SubscriptionItem.create(
+                                    subscription=subscription_id,
+                                    price=price_id,
+                                    quantity=quantity
+                                )
+                                items_added += 1
+                                logger.info(f"✅ Added item {price_id} (quantity: {quantity}) to subscription {subscription_id}")
+                        except stripe.error.StripeError as e:
+                            logger.error(f"❌ Failed to add item {price_id} to subscription {subscription_id}: {e}")
+                
+                if items_added > 0:
+                    # Re-retrieve subscription with updated items
+                    subscription = stripe.Subscription.retrieve(
+                        subscription_id,
+                        expand=['items.data.price']
+                    )
+                    logger.info(f"✅ Fixed subscription {subscription_id} - added {items_added} item(s)")
+                else:
+                    logger.error(f"❌ Could not fix subscription {subscription_id} - no valid items found in checkout session")
+            except stripe.error.StripeError as e:
+                logger.error(f"❌ Failed to retrieve line items from checkout session {session_data['id']}: {e}")
+        else:
+            logger.info(f"✅ Subscription {subscription_id} has {items_count} item(s) - no fix needed")
+            
+    except stripe.error.StripeError as e:
+        logger.error(f"❌ Failed to retrieve subscription {subscription_id} in checkout handler: {e}")
+    
+    # Note: Subscription creation/update is handled by customer.subscription.created event
     # We don't sync tokens here because subscription may not exist in DB yet
     # Tokens will be synced by customer.subscription.created handler
     
