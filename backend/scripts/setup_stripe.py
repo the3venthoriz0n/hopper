@@ -16,6 +16,11 @@ import sys
 import stripe
 from typing import Dict, Any, List, Optional
 
+# Meter configuration for usage-based billing (Stripe Meters API)
+# This meter is used to track overage tokens across paid plans.
+METER_EVENT_NAME = "hopper_tokens"
+METER_DISPLAY_NAME = "hopper tokens"
+
 # Product definitions
 PRODUCTS = {
     'free': {
@@ -89,26 +94,137 @@ def load_env_file(env_file: str) -> bool:
         return False
 
 
+def get_or_create_meter() -> Any:
+    """
+    Get or create the Stripe billing meter used for token overage.
+
+    Uses the new Stripe Meters API:
+    https://docs.stripe.com/billing/subscriptions/usage-based/meters/configure
+
+    NOTE: Attaching the meter to a price is configured in the Stripe Dashboard.
+    This helper only ensures the meter exists; it does not modify prices, since
+    Stripe rejects those parameters on existing prices.
+    """
+    try:
+        meters = stripe.billing.Meter.list(limit=100)
+        for meter in meters.data:
+            if getattr(meter, "event_name", None) == METER_EVENT_NAME:
+                print(f"  ✓ Using existing meter: {meter.id} (event_name={METER_EVENT_NAME})")
+                return meter
+    except Exception as e:
+        print(f"⚠️  Error listing meters: {e}")
+
+    print(f"  ➕ Creating meter for event_name={METER_EVENT_NAME}")
+    meter = stripe.billing.Meter.create(
+        display_name=METER_DISPLAY_NAME,
+        event_name=METER_EVENT_NAME,
+        default_aggregation={"formula": "sum"},  # Sum all usage values for billing period
+        event_ingestion="raw",  # Handle all events as standalone (default, but explicit)
+        customer_mapping={
+            "event_payload_key": "stripe_customer_id",  # Key in payload for customer ID
+            "type": "by_id",  # Map by Stripe customer ID
+        },
+        value_settings={"event_payload_key": "value"},  # Key in payload for usage value
+    )
+    print(f"  ✓ Created meter: {meter.id}")
+    return meter
+
+
+def archive_old_prices(product_id: str, config: Dict[str, Any], 
+                       existing_prices: List[Any], is_metered: bool = False, meter_id: Optional[str] = None) -> int:
+    """Archive old prices that should be replaced.
+    
+    For metered prices: archives any metered prices without the correct meter attached.
+    This ensures new prices with meters are created instead of reusing old ones.
+    
+    Returns:
+        Number of prices archived
+    """
+    amount = config['overage_price_cents'] if is_metered else config['price_cents']
+    archived_count = 0
+    
+    if not is_metered:
+        # Don't archive regular prices - they're fine to reuse
+        return 0
+    
+    # Only archive metered prices that don't have the correct meter
+    for price in existing_prices:
+        # Only consider prices for this product with matching amount
+        if price.product != product_id or price.unit_amount != amount:
+            continue
+        
+        # Only archive metered prices
+        if (
+            price.recurring
+            and hasattr(price.recurring, "usage_type")
+            and price.recurring.usage_type == "metered"
+        ):
+            # Check if this price has the correct meter attached
+            has_correct_meter = (
+                hasattr(price.recurring, 'meter') and 
+                price.recurring.meter is not None and
+                price.recurring.meter == meter_id
+            )
+            
+            if not has_correct_meter:
+                try:
+                    stripe.Price.modify(price.id, active=False)
+                    print(f"    🗑️  Archived old metered price (no meter): {price.id}")
+                    archived_count += 1
+                except stripe.error.StripeError as e:
+                    print(f"    ⚠️  Failed to archive price {price.id}: {e}")
+    
+    return archived_count
+
+
 def find_or_create_price(product_id: str, config: Dict[str, Any], 
-                         existing_prices: List[Any], is_metered: bool = False) -> Any:
-    """Find existing price or create new one."""
+                         existing_prices: List[Any], is_metered: bool = False, meter_id: Optional[str] = None) -> Any:
+    """Find existing price or create new one.
+    
+    Args:
+        product_id: Stripe product ID
+        config: Product configuration dict
+        existing_prices: List of existing Stripe prices
+        is_metered: Whether this is a metered price for overage
+        meter_id: Meter ID to attach (only used when creating new metered prices)
+    """
     amount = config['overage_price_cents'] if is_metered else config['price_cents']
     
-    # Search for existing price
+    # Archive old prices first (cleanup)
+    archived = archive_old_prices(product_id, config, existing_prices, is_metered, meter_id)
+    if archived > 0:
+        # Refresh the prices list after archiving
+        existing_prices = [p for p in stripe.Price.list(limit=100, active=True).data]
+    
+    # Search for existing price (only active prices are in the list)
     for price in existing_prices:
         if price.product != product_id or price.unit_amount != amount:
             continue
         
         if is_metered:
-            if (price.recurring and 
-                hasattr(price.recurring, 'usage_type') and 
-                price.recurring.usage_type == 'metered'):
-                return price
+            if (
+                price.recurring
+                and hasattr(price.recurring, "usage_type")
+                and price.recurring.usage_type == "metered"
+            ):
+                # Check if this price already has the meter attached
+                has_meter = (
+                    hasattr(price.recurring, 'meter') and 
+                    price.recurring.meter is not None and
+                    price.recurring.meter == meter_id
+                )
+                if has_meter:
+                    print(f"    ✓ Found existing metered price with meter attached: {price.id}")
+                    return price
         else:
             if price.recurring and price.recurring.interval == 'month':
                 return price
     
-    # Create new price
+    # No matching price found - create new one
+    if is_metered:
+        print(f"    ➕ Creating new metered price with meter attached...")
+    else:
+        print(f"    ➕ Creating new price...")
     price_params = {
         'product': product_id,
         'unit_amount': amount,
@@ -117,11 +233,17 @@ def find_or_create_price(product_id: str, config: Dict[str, Any],
     }
     
     if is_metered:
-        price_params['recurring'].update({
-            'usage_type': 'metered',
-            'aggregate_usage': 'sum'
-        })
+        # Create metered price with meter attached (new Meters API)
+        price_params['recurring']['usage_type'] = 'metered'
         price_params['billing_scheme'] = 'per_unit'
+        
+        # Attach meter if provided (for new Meters API)
+        # Note: When using meter, do NOT include aggregate_usage (meter handles aggregation)
+        if meter_id:
+            price_params['recurring']['meter'] = meter_id
+        else:
+            # Only include aggregate_usage if NOT using meter (for backward compatibility)
+            price_params['recurring']['aggregate_usage'] = 'sum'
     
     return stripe.Price.create(**price_params)
 
@@ -130,9 +252,17 @@ def create_or_update_products() -> Dict[str, Dict[str, Any]]:
     """Create or update Stripe products and prices."""
     print(f"\n{'='*60}\nProducts and Prices\n{'='*60}\n")
     
+    # Get or create meter first (needed for attaching to new metered prices)
+    meter = get_or_create_meter()
+    meter_id = meter.id if meter else None
+    
     results = {}
-    existing_products = {p.name: p for p in stripe.Product.list(limit=100).data}
+    # Get all products (active and inactive)
+    all_products = stripe.Product.list(limit=100).data
+    existing_products = {p.name: p for p in all_products}
+    # Only get ACTIVE prices - deleted prices won't be in this list, so new ones will be created
     existing_prices = stripe.Price.list(limit=100, active=True).data
+    print(f"Found {len(existing_products)} existing products, {len(existing_prices)} active prices\n")
     
     for key, config in PRODUCTS.items():
         print(f"{config['name']} (key: {key})")
@@ -140,8 +270,9 @@ def create_or_update_products() -> Dict[str, Dict[str, Any]]:
         # Find or create product
         product = existing_products.get(config['name'])
         if product:
-            print(f"  ✓ Product: {product.id}")
+            print(f"  ✓ Found existing product: {product.id}")
         else:
+            print(f"  ➕ Creating new product: {config['name']}")
             product = stripe.Product.create(
                 name=config['name'],
                 description=config['description']
@@ -150,7 +281,10 @@ def create_or_update_products() -> Dict[str, Dict[str, Any]]:
         
         # Find or create base price
         price = find_or_create_price(product.id, config, existing_prices)
-        print(f"  ✓ Price: {price.id} (${config['price_cents']/100:.2f}/month)")
+        if any(p.id == price.id for p in existing_prices):
+            print(f"  ✓ Found existing price: {price.id} (${config['price_cents']/100:.2f}/month)")
+        else:
+            print(f"  ✓ Created new price: {price.id} (${config['price_cents']/100:.2f}/month)")
         
         # Build plan config
         plan_config = {
@@ -167,9 +301,19 @@ def create_or_update_products() -> Dict[str, Dict[str, Any]]:
         
         # Create metered overage price if configured
         if config.get('overage_price_cents') is not None:
-            overage_price = find_or_create_price(product.id, config, existing_prices, is_metered=True)
+            # Pass meter_id so new prices get the meter attached automatically
+            overage_price = find_or_create_price(product.id, config, existing_prices, is_metered=True, meter_id=meter_id)
             plan_config['stripe_overage_price_id'] = overage_price.id
-            print(f"  ✓ Overage: {overage_price.id} (${config['overage_price_cents']/100:.2f}/token)")
+            if meter_id and not any(
+                p.id == overage_price.id and 
+                p.recurring and 
+                hasattr(p.recurring, 'meter') and 
+                p.recurring.meter == meter_id
+                for p in existing_prices
+            ):
+                print(f"  ✓ Overage: {overage_price.id} (${config['overage_price_cents']/100:.2f}/token) with meter attached")
+            else:
+                print(f"  ✓ Overage: {overage_price.id} (${config['overage_price_cents']/100:.2f}/token)")
         
         results[key] = plan_config
         print()

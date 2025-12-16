@@ -1156,12 +1156,17 @@ def record_token_usage_to_stripe(
         if new_overage > 0:
             try:
                 # Use the new Meter Event API to report usage
-                # Event name must match the meter's event_name (e.g., "hypernian_tokens")
+                # Event name must match the meter's event_name (configured in setup_stripe.py)
+                # Payload format matches meter configuration:
+                # - customer_mapping expects "stripe_customer_id" in payload
+                # - value_settings expects "value" in payload
                 stripe.billing.MeterEvent.create(
-                    event_name="hypernian_tokens",  # Must match meter's event_name
+                    event_name="hopper_tokens",  # Must match meter's event_name
                     identifier=f"user_{user_id}_{int(datetime.now(timezone.utc).timestamp() * 1000)}",  # Unique identifier
-                    value=new_overage,  # Number of overage tokens
-                    customer_id=customer_id,  # Stripe customer ID
+                    payload={
+                        "stripe_customer_id": customer_id,  # Matches customer_mapping[event_payload_key]
+                        "value": new_overage,  # Matches value_settings[event_payload_key]
+                    },
                     timestamp=int(datetime.now(timezone.utc).timestamp())
                 )
                 logger.info(
