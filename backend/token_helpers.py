@@ -214,10 +214,12 @@ def deduct_tokens(
         
         # Record usage to Stripe for metered billing (overage tokens only)
         # This must happen AFTER committing the token deduction so we have accurate usage counts
-        # Only record if there's overage (paid plans allow overage, free plan blocks it)
-        if overage_tokens_used > 0:
+        # Always call for paid plans (function will calculate overage based on total usage vs included tokens)
+        # The function will only report to Stripe if there's actual overage
+        if subscription and subscription.plan_type not in ('free', 'unlimited'):
             from stripe_helpers import record_token_usage_to_stripe
             # Pass total tokens used - function will calculate overage incrementally
+            # It compares tokens_used_this_period vs included_tokens to determine overage
             record_token_usage_to_stripe(user_id, tokens, db)
         
         logger.info(

@@ -4459,9 +4459,10 @@ def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
         )
         return
     
-    # Cancel any existing subscriptions first (safety check to prevent duplicates)
-    from stripe_helpers import cancel_all_user_subscriptions
-    cancel_all_user_subscriptions(user_id, db, verify_cancellation=False)
+    # Cancel OTHER subscriptions (not the current one) to prevent duplicates
+    # Best practice: In webhook handlers, cancel other subscriptions since the current one already exists in Stripe
+    from stripe_helpers import cancel_other_user_subscriptions
+    cancel_other_user_subscriptions(user_id, subscription.id, db)
     
     # Check if subscription already exists in DB (might have been created by .updated event first)
     existing_sub = db.query(Subscription).filter(
@@ -4482,33 +4483,56 @@ def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
     overage_price_id = get_plan_overage_price_id(updated_sub.plan_type)
     
     if overage_price_id:
-        # Check if metered item already exists
-        items_data = subscription.items.data if (hasattr(subscription, 'items') and subscription.items and hasattr(subscription.items, 'data')) else []
-        has_metered_item = False
-        for item in items_data:
-            if hasattr(item, 'price') and item.price:
-                item_price_id = item.price.id if hasattr(item.price, 'id') else None
-                if item_price_id == overage_price_id:
-                    has_metered_item = True
-                    logger.info(f"Subscription {subscription.id} already has metered overage item")
-                    break
-        
-        if not has_metered_item:
-            try:
-                # Add metered item to subscription for overage tracking
-                metered_item = stripe.SubscriptionItem.create(
-                    subscription=subscription.id,
-                    price=overage_price_id
-                )
-                logger.info(f"Added metered overage item {metered_item.id} to subscription {subscription.id} for plan {updated_sub.plan_type}")
+        # Verify subscription still exists in Stripe before trying to add metered item
+        try:
+            # Re-retrieve subscription to ensure it still exists and get latest status
+            current_subscription = stripe.Subscription.retrieve(
+                subscription.id,
+                expand=['items.data.price']
+            )
+            
+            # Only add metered item if subscription is active
+            if current_subscription.status not in ('active', 'trialing'):
+                logger.info(f"Subscription {subscription.id} is not active (status: {current_subscription.status}), skipping metered item addition")
+            else:
+                # Check if metered item already exists
+                items_data = current_subscription.items.data if (hasattr(current_subscription, 'items') and current_subscription.items and hasattr(current_subscription.items, 'data')) else []
+                has_metered_item = False
+                for item in items_data:
+                    if hasattr(item, 'price') and item.price:
+                        item_price_id = item.price.id if hasattr(item.price, 'id') else None
+                        if item_price_id == overage_price_id:
+                            has_metered_item = True
+                            logger.info(f"Subscription {subscription.id} already has metered overage item")
+                            break
                 
-                # Update subscription record with metered item ID
-                updated_sub.stripe_metered_item_id = metered_item.id
-                db.commit()
-                db.refresh(updated_sub)
-            except stripe.error.StripeError as e:
-                logger.error(f"Failed to add metered item to subscription {subscription.id}: {e}")
-                # Don't fail the whole process - subscription can work without metered item (just no overage billing)
+                if not has_metered_item:
+                    try:
+                        # Add metered item to subscription for overage tracking
+                        metered_item = stripe.SubscriptionItem.create(
+                            subscription=subscription.id,
+                            price=overage_price_id
+                        )
+                        logger.info(f"Added metered overage item {metered_item.id} to subscription {subscription.id} for plan {updated_sub.plan_type}")
+                        
+                        # Update subscription record with metered item ID
+                        updated_sub.stripe_metered_item_id = metered_item.id
+                        db.commit()
+                        db.refresh(updated_sub)
+                    except stripe.error.StripeError as e:
+                        error_str = str(e)
+                        if 'No such subscription' in error_str:
+                            logger.warning(f"Subscription {subscription.id} no longer exists in Stripe, cannot add metered item")
+                        else:
+                            logger.error(f"Failed to add metered item to subscription {subscription.id}: {e}")
+                        # Don't fail the whole process - subscription can work without metered item (just no overage billing)
+        except stripe.error.StripeError as e:
+            error_str = str(e)
+            if 'No such subscription' in error_str:
+                logger.warning(f"Subscription {subscription.id} no longer exists in Stripe, skipping metered item addition")
+            else:
+                logger.error(f"Failed to retrieve subscription {subscription.id} to add metered item: {e}")
+            # Don't fail the whole process - subscription can work without metered item (just no overage billing)
     
     # Only sync tokens if this is truly a NEW subscription (didn't exist before)
     # If it already existed, it means .updated event already processed it, so don't add tokens again
@@ -5300,26 +5324,33 @@ def get_videos(user_id: int = Depends(require_auth), db: Session = Depends(get_d
     
     return videos_with_info
 
-@app.delete("/api/videos/{video_id}")
-def delete_video(video_id: int, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
-    """Remove video from user's queue"""
-    success = db_helpers.delete_video(video_id, user_id, db=db)
-    if not success:
-        raise HTTPException(404, "Video not found")
-    
-    # Clean up file if it exists
+@app.delete("/api/videos/uploaded")
+def delete_uploaded_videos(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+    """Delete only uploaded/completed videos from user's queue"""
     videos = db_helpers.get_user_videos(user_id, db=db)
-    video = next((v for v in videos if v.id == video_id), None)
-    # ROOT CAUSE FIX: Resolve path to absolute to ensure proper file access
-    if video:
+    deleted_count = 0
+    
+    # Delete only videos that are uploaded or completed
+    for video in videos:
+        if video.status not in ('uploaded', 'completed'):
+            continue
+            
+        # Clean up file if it exists
         video_path = Path(video.path).resolve()
         if video_path.exists():
             try:
                 video_path.unlink()
             except Exception as e:
                 upload_logger.warning(f"Could not delete file {video_path}: {e}")
+        
+        # Delete from database
+        db.delete(video)
+        deleted_count += 1
     
-    return {"ok": True}
+    db.commit()
+    upload_logger.info(f"Deleted {deleted_count} uploaded videos for user {user_id}")
+    
+    return {"ok": True, "deleted": deleted_count}
 
 @app.delete("/api/videos")
 def delete_all_videos(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
@@ -5349,6 +5380,27 @@ def delete_all_videos(user_id: int = Depends(require_csrf_new), db: Session = De
     upload_logger.info(f"Deleted {deleted_count} videos for user {user_id}")
     
     return {"ok": True, "deleted": deleted_count}
+
+@app.delete("/api/videos/{video_id}")
+def delete_video(video_id: int, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+    """Remove video from user's queue"""
+    success = db_helpers.delete_video(video_id, user_id, db=db)
+    if not success:
+        raise HTTPException(404, "Video not found")
+    
+    # Clean up file if it exists
+    videos = db_helpers.get_user_videos(user_id, db=db)
+    video = next((v for v in videos if v.id == video_id), None)
+    # ROOT CAUSE FIX: Resolve path to absolute to ensure proper file access
+    if video:
+        video_path = Path(video.path).resolve()
+        if video_path.exists():
+            try:
+                video_path.unlink()
+            except Exception as e:
+                upload_logger.warning(f"Could not delete file {video_path}: {e}")
+    
+    return {"ok": True}
 
 @app.post("/api/videos/{video_id}/recompute-title")
 def recompute_video_title(video_id: int, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):

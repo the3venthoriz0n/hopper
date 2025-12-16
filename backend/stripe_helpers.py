@@ -71,7 +71,12 @@ def ensure_stripe_customer_exists(user_id: int, db: Session) -> Optional[str]:
 
 
 def cancel_all_user_subscriptions(user_id: int, db: Session, verify_cancellation: bool = True) -> bool:
-    """Cancel all active subscriptions for a user."""
+    """
+    Cancel ALL active subscriptions for a user.
+    
+    Best practice: Call this BEFORE creating a new subscription when you control creation.
+    This ensures only one subscription exists at a time.
+    """
     if not STRIPE_SECRET_KEY:
         logger.warning("Cannot cancel subscriptions: STRIPE_SECRET_KEY not set")
         return False
@@ -119,6 +124,81 @@ def cancel_all_user_subscriptions(user_id: int, db: Session, verify_cancellation
         
     except Exception as e:
         logger.error(f"Error canceling subscriptions for user {user_id}: {e}", exc_info=True)
+        db.rollback()
+        return False
+
+
+def cancel_other_user_subscriptions(user_id: int, current_subscription_id: str, db: Session) -> bool:
+    """
+    Cancel OTHER subscriptions for a user, excluding the current one.
+    
+    Best practice: Use this in webhook handlers when a subscription already exists in Stripe
+    (created by checkout session). This ensures only one subscription exists while preserving
+    the subscription being processed.
+    """
+    if not STRIPE_SECRET_KEY:
+        logger.warning("Cannot cancel subscriptions: STRIPE_SECRET_KEY not set")
+        return False
+    
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            logger.error(f"User {user_id} not found")
+            return True
+        
+        customer_id = user.stripe_customer_id
+        if not customer_id:
+            # No Stripe customer, just clean up database
+            db_subscriptions = db.query(Subscription).filter(
+                Subscription.user_id == user_id,
+                Subscription.stripe_subscription_id != current_subscription_id
+            ).all()
+            for sub in db_subscriptions:
+                db.delete(sub)
+            if db_subscriptions:
+                db.commit()
+                logger.info(f"Deleted {len(db_subscriptions)} other orphaned subscription(s)")
+            return True
+        
+        # Cancel OTHER subscriptions in Stripe
+        canceled_count = 0
+        try:
+            stripe_subscriptions = stripe.Subscription.list(customer=customer_id, status='all', limit=100)
+            for stripe_sub in stripe_subscriptions.data:
+                # Skip the current subscription
+                if stripe_sub.id == current_subscription_id:
+                    continue
+                    
+                if stripe_sub.status not in ('canceled', 'incomplete_expired'):
+                    try:
+                        stripe.Subscription.delete(stripe_sub.id)
+                        logger.info(f"Canceled other Stripe subscription {stripe_sub.id}")
+                        canceled_count += 1
+                    except stripe.error.InvalidRequestError as e:
+                        if 'already been canceled' not in str(e).lower():
+                            logger.warning(f"Error canceling {stripe_sub.id}: {e}")
+        except stripe.error.StripeError as e:
+            logger.warning(f"Error listing Stripe subscriptions: {e}")
+        
+        # Delete OTHER subscriptions from database
+        db_subscriptions = db.query(Subscription).filter(
+            Subscription.user_id == user_id,
+            Subscription.stripe_subscription_id != current_subscription_id
+        ).all()
+        for sub in db_subscriptions:
+            db.delete(sub)
+        
+        if db_subscriptions:
+            db.commit()
+            logger.info(f"Deleted {len(db_subscriptions)} other subscription(s) from database")
+        
+        if canceled_count > 0 or db_subscriptions:
+            logger.info(f"Canceled {canceled_count} other Stripe subscription(s) and {len(db_subscriptions)} database record(s) for user {user_id}")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error canceling other subscriptions for user {user_id}: {e}", exc_info=True)
         db.rollback()
         return False
 
@@ -1012,9 +1092,9 @@ def record_token_usage_to_stripe(
     """
     Record token usage to Stripe for metered billing (overage tokens).
     
+    Uses the new Stripe Meter Event API to report overage tokens.
     This function calculates how many tokens are overage (beyond included tokens)
-    and reports only the NEW overage tokens to Stripe. It uses 'increment' action
-    to add to existing usage for the billing period.
+    and reports only the NEW overage tokens to Stripe using meter events.
     
     Args:
         user_id: User ID
@@ -1042,9 +1122,10 @@ def record_token_usage_to_stripe(
         if subscription.plan_type in ('unlimited', 'free'):
             return True
         
-        # Check if subscription has metered item ID
-        if not subscription.stripe_metered_item_id:
-            logger.debug(f"Subscription {subscription.stripe_subscription_id} has no metered item ID, skipping usage recording")
+        # Get customer ID from subscription
+        customer_id = subscription.stripe_customer_id
+        if not customer_id:
+            logger.debug(f"Subscription {subscription.stripe_subscription_id} has no customer ID, skipping usage recording")
             return False
         
         # Get token balance to calculate overage
@@ -1074,20 +1155,22 @@ def record_token_usage_to_stripe(
         
         if new_overage > 0:
             try:
-                # Report usage to Stripe using 'increment' action
-                stripe.SubscriptionItem.create_usage_record(
-                    subscription.stripe_metered_item_id,
-                    quantity=new_overage,
-                    action='increment',
+                # Use the new Meter Event API to report usage
+                # Event name must match the meter's event_name (e.g., "hypernian_tokens")
+                stripe.billing.MeterEvent.create(
+                    event_name="hypernian_tokens",  # Must match meter's event_name
+                    identifier=f"user_{user_id}_{int(datetime.now(timezone.utc).timestamp() * 1000)}",  # Unique identifier
+                    value=new_overage,  # Number of overage tokens
+                    customer_id=customer_id,  # Stripe customer ID
                     timestamp=int(datetime.now(timezone.utc).timestamp())
                 )
                 logger.info(
-                    f"Recorded {new_overage} overage tokens to Stripe for user {user_id} "
+                    f"Recorded {new_overage} overage tokens to Stripe meter for user {user_id} "
                     f"(total used: {total_used}, included: {included_tokens}, overage: {current_overage})"
                 )
                 return True
             except stripe.error.StripeError as e:
-                logger.error(f"Stripe error recording usage for user {user_id}: {e}")
+                logger.error(f"Stripe error recording meter event for user {user_id}: {e}")
                 return False
         else:
             # No new overage to report (all tokens were from included allocation)

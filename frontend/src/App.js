@@ -1749,6 +1749,37 @@ function Home() {
     });
   };
 
+  const clearUploadedVideos = async () => {
+    // Filter only uploaded/completed videos
+    const uploadedVideos = videos.filter(v => v.status === 'uploaded' || v.status === 'completed');
+    
+    if (uploadedVideos.length === 0) {
+      setMessage('No uploaded videos to clear');
+      return;
+    }
+    
+    // Show confirmation dialog
+    setConfirmDialog({
+      title: 'Clear Uploaded Videos',
+      message: `Are you sure you want to clear ${uploadedVideos.length} uploaded video(s) from the queue? This action cannot be undone.`,
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        try {
+          const res = await axios.delete(`${API}/videos/uploaded`);
+          setVideos(videos.filter(v => v.status !== 'uploaded' && v.status !== 'completed'));
+          setMessage(`✅ Cleared ${res.data.deleted} uploaded video(s) from queue`);
+        } catch (err) {
+          const errorMsg = err.response?.data?.detail || err.message || 'Error clearing uploaded videos';
+          setMessage(`❌ ${errorMsg}`);
+          console.error('Error clearing uploaded videos:', err);
+        }
+      },
+      onCancel: () => {
+        setConfirmDialog(null);
+      }
+    });
+  };
+
   const cancelScheduled = async () => {
     try {
       const res = await axios.post(`${API}/videos/cancel-scheduled`);
@@ -3102,35 +3133,66 @@ function Home() {
       <div className="card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <h2 style={{ margin: 0 }}>Queue ({videos.length})</h2>
-          {videos.length > 0 && videos.some(v => v.status !== 'uploading') && (
-            <button
-              onClick={clearAllVideos}
-              style={{
-                padding: '0.5rem 1rem',
-                background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.9) 0%, rgba(220, 38, 38, 0.9) 100%)',
-                border: '1px solid rgba(239, 68, 68, 1)',
-                borderRadius: '8px',
-                color: 'white',
-                cursor: 'pointer',
-                fontSize: '0.9rem',
-                fontWeight: '600',
-                transition: 'all 0.2s',
-                boxShadow: '0 2px 8px rgba(239, 68, 68, 0.3)'
-              }}
-              onMouseEnter={(e) => {
-                e.target.style.background = 'linear-gradient(135deg, rgba(239, 68, 68, 1) 0%, rgba(220, 38, 38, 1) 100%)';
-                e.target.style.transform = 'translateY(-1px)';
-                e.target.style.boxShadow = '0 4px 12px rgba(239, 68, 68, 0.4)';
-              }}
-              onMouseLeave={(e) => {
-                e.target.style.background = 'linear-gradient(135deg, rgba(239, 68, 68, 0.9) 0%, rgba(220, 38, 38, 0.9) 100%)';
-                e.target.style.transform = 'translateY(0)';
-                e.target.style.boxShadow = '0 2px 8px rgba(239, 68, 68, 0.3)';
-              }}
-            >
-              Clear All
-            </button>
-          )}
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            {videos.length > 0 && videos.some(v => v.status === 'uploaded' || v.status === 'completed') && (
+              <button
+                onClick={clearUploadedVideos}
+                style={{
+                  padding: '0.5rem 1rem',
+                  background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.9) 0%, rgba(220, 38, 38, 0.9) 100%)',
+                  border: '1px solid rgba(239, 68, 68, 1)',
+                  borderRadius: '8px',
+                  color: 'white',
+                  cursor: 'pointer',
+                  fontSize: '0.9rem',
+                  fontWeight: '600',
+                  transition: 'all 0.2s',
+                  boxShadow: '0 2px 8px rgba(239, 68, 68, 0.3)'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.background = 'linear-gradient(135deg, rgba(239, 68, 68, 1) 0%, rgba(220, 38, 38, 1) 100%)';
+                  e.target.style.transform = 'translateY(-1px)';
+                  e.target.style.boxShadow = '0 4px 12px rgba(239, 68, 68, 0.4)';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.background = 'linear-gradient(135deg, rgba(239, 68, 68, 0.9) 0%, rgba(220, 38, 38, 0.9) 100%)';
+                  e.target.style.transform = 'translateY(0)';
+                  e.target.style.boxShadow = '0 2px 8px rgba(239, 68, 68, 0.3)';
+                }}
+              >
+                Clear Uploaded
+              </button>
+            )}
+            {videos.length > 0 && videos.some(v => v.status !== 'uploading') && (
+              <button
+                onClick={clearAllVideos}
+                style={{
+                  padding: '0.5rem 1rem',
+                  background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.9) 0%, rgba(220, 38, 38, 0.9) 100%)',
+                  border: '1px solid rgba(239, 68, 68, 1)',
+                  borderRadius: '8px',
+                  color: 'white',
+                  cursor: 'pointer',
+                  fontSize: '0.9rem',
+                  fontWeight: '600',
+                  transition: 'all 0.2s',
+                  boxShadow: '0 2px 8px rgba(239, 68, 68, 0.3)'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.background = 'linear-gradient(135deg, rgba(239, 68, 68, 1) 0%, rgba(220, 38, 38, 1) 100%)';
+                  e.target.style.transform = 'translateY(-1px)';
+                  e.target.style.boxShadow = '0 4px 12px rgba(239, 68, 68, 0.4)';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.background = 'linear-gradient(135deg, rgba(239, 68, 68, 0.9) 0%, rgba(220, 38, 38, 0.9) 100%)';
+                  e.target.style.transform = 'translateY(0)';
+                  e.target.style.boxShadow = '0 2px 8px rgba(239, 68, 68, 0.3)';
+                }}
+              >
+                Clear All
+              </button>
+            )}
+          </div>
         </div>
         {videos.length === 0 ? (
           <p className="empty">No videos</p>
