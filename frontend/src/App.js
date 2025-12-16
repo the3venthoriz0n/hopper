@@ -174,9 +174,6 @@ function PublicLanding() {
           <span>{appTitle.replace('🐸 ', '')}</span>
         </div>
         <nav className="landing-nav">
-          <Link to="/pricing" className="landing-nav-link">
-            Pricing
-          </Link>
           <Link to="/privacy" className="landing-nav-link">
             Privacy
           </Link>
@@ -202,10 +199,7 @@ function PublicLanding() {
             Connect your accounts, drag in videos, and let hopper handle the rest.
           </p>
           <div className="landing-cta">
-            <Link to="/pricing" className="landing-cta-button">
-              View Pricing
-            </Link>
-            <Link to="/login" className="landing-cta-button-secondary">
+            <Link to="/login" className="landing-cta-button">
               Log in
             </Link>
           </div>

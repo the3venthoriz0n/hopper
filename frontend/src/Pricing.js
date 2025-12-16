@@ -84,12 +84,15 @@ function Pricing() {
     };
   }, [publishableKey, pricingTableId]);
 
+  const isProduction = process.env.REACT_APP_ENVIRONMENT === 'production';
+  const appTitle = isProduction ? '🐸 hopper' : '🐸 DEV hopper';
+
   return (
     <div className="pricing-container">
       <header className="pricing-header">
         <Link to="/" className="pricing-logo">
           <span className="pricing-logo-icon">🐸</span>
-          <span>hopper</span>
+          <span>{appTitle.replace('🐸 ', '')}</span>
         </Link>
         <nav className="pricing-nav">
           <Link to="/privacy" className="pricing-nav-link">
@@ -107,32 +110,14 @@ function Pricing() {
       <main className="pricing-main">
         <div className="pricing-content">
           <div className="pricing-intro">
-            <p className="pricing-tagline">Simple, transparent pricing</p>
-            <h1 className="pricing-title">Choose the plan that works for you</h1>
+            <h1 className="pricing-title">Pricing Coming Soon</h1>
             <p className="pricing-description">
-              All plans include multi-platform upload automation, scheduling, and priority support.
+              We're working on our pricing plans. Check back soon!
             </p>
+            <Link to="/login" className="pricing-cta-button">
+              Get Started
+            </Link>
           </div>
-
-          {loading ? (
-            <div className="pricing-loading">
-              <p>Loading pricing...</p>
-            </div>
-          ) : publishableKey && pricingTableId ? (
-            <div className="pricing-table-wrapper">
-              <stripe-pricing-table
-                pricing-table-id={pricingTableId}
-                publishable-key={publishableKey}
-              ></stripe-pricing-table>
-            </div>
-          ) : (
-            <div className="pricing-error">
-              <p>Unable to load pricing table. Please contact support.</p>
-              <Link to="/login" className="pricing-cta-button">
-                Get Started
-              </Link>
-            </div>
-          )}
         </div>
       </main>
 
