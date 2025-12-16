@@ -74,9 +74,10 @@ def cancel_subscription_with_invoice(stripe_subscription_id: str, invoice_now: b
     """
     Cancel a Stripe subscription, optionally creating a final invoice for overage.
     
+    Uses stripe.Subscription.cancel() which supports invoice_now and prorate parameters.
     When invoice_now=True:
     - Creates a final invoice for any pending metered usage (overage)
-    - Does NOT prorate the subscription cost (user keeps tokens they paid for)
+    - Does NOT prorate the subscription cost (prorate=False - user keeps tokens they paid for)
     - Then cancels the subscription
     
     Args:
@@ -91,19 +92,18 @@ def cancel_subscription_with_invoice(stripe_subscription_id: str, invoice_now: b
         return False
     
     try:
+        # Use stripe.Subscription.cancel() which supports invoice_now and prorate parameters
+        # invoice_now=True: Generates a final invoice for any un-invoiced metered usage
+        # prorate=False: Don't prorate subscription cost - user keeps tokens they paid for
+        stripe.Subscription.cancel(
+            stripe_subscription_id,
+            invoice_now=invoice_now,
+            prorate=False  # Don't prorate - user paid for full period, keep tokens
+        )
+        
         if invoice_now:
-            # Cancel with invoice_now=True to finalize any pending metered usage (overage)
-            # prorate=False means we don't prorate subscription cost - user keeps tokens they paid for
-            stripe.Subscription.modify(
-                stripe_subscription_id,
-                cancel_at_period_end=False,  # Cancel immediately
-                prorate=False,  # Don't prorate - user paid for full period, keep tokens
-                invoice_now=True  # Create final invoice for overage only
-            )
             logger.info(f"Canceled subscription {stripe_subscription_id} with final invoice (overage invoiced, tokens preserved)")
         else:
-            # Cancel immediately without final invoice (legacy behavior)
-            stripe.Subscription.delete(stripe_subscription_id)
             logger.info(f"Canceled subscription {stripe_subscription_id} without final invoice")
         
         return True
