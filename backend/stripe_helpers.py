@@ -435,9 +435,14 @@ def create_checkout_session(
         # Build line items - ONLY include the base price in checkout session
         # Metered overage prices should be added AFTER subscription creation (in webhook handler)
         # This is the correct pattern for metered billing that tracks usage and bills at end of period
-        line_items = [{'price': price_id, 'quantity': 1}]
+        # Set quantity to plan's base monthly_tokens (NOT including granted tokens)
+        # This ensures invoice shows "100 tokens × $0.10 = $10.00" for the base plan
+        from stripe_config import get_plan_monthly_tokens
+        monthly_tokens = get_plan_monthly_tokens(plan_type)
+        quantity = monthly_tokens if monthly_tokens > 0 else (10 if plan_type == 'free' else 1)
+        line_items = [{'price': price_id, 'quantity': quantity}]
         
-        logger.info(f"Creating checkout session with base price for plan {plan_type} (metered overage will be added after subscription creation)")
+        logger.info(f"Creating checkout session with base price for plan {plan_type} (quantity: {quantity}, metered overage will be added after subscription creation)")
         logger.debug(f"Line items: {line_items}")
         
         # Create checkout session
@@ -615,9 +620,15 @@ def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription
         
         logger.info(f"Creating free subscription for user {user_id} with price {price_id}")
         
+        # Free plan: 10 tokens × $0.00 = $0.00
+        # Always use plan's base monthly_tokens (not including granted tokens)
+        from stripe_config import get_plan_monthly_tokens
+        monthly_tokens = get_plan_monthly_tokens('free')
+        quantity = monthly_tokens if monthly_tokens > 0 else 10
+        
         stripe_subscription = stripe.Subscription.create(
             customer=customer_id,
-            items=[{'price': price_id}],
+            items=[{'price': price_id, 'quantity': quantity}],
             metadata={'user_id': str(user_id)},
             expand=['items.data.price']
         )
@@ -682,9 +693,10 @@ def create_unlimited_subscription(user_id: int, preserved_tokens: int, db: Sessi
         cancel_all_user_subscriptions(user_id, db, verify_cancellation=True)
         
         logger.info(f"Creating unlimited subscription for user {user_id}")
+        # Unlimited plan: quantity 1 (or 0, but Stripe requires at least 1)
         stripe_subscription = stripe.Subscription.create(
             customer=customer_id,
-            items=[{'price': price_id}],
+            items=[{'price': price_id, 'quantity': 1}],
             metadata={'user_id': str(user_id), 'preserved_tokens': str(preserved_tokens)},
             expand=['items.data.price']
         )
@@ -737,9 +749,26 @@ def create_stripe_subscription(user_id: int, price_id: str, db: Session) -> Opti
         cancel_all_user_subscriptions(user_id, db, verify_cancellation=True)
         
         logger.info(f"Creating subscription for user {user_id} with price {price_id}")
+        
+        # Get plan type to determine quantity
+        from stripe_config import get_plans, get_plan_monthly_tokens
+        plans = get_plans()
+        plan_type = None
+        for pt, plan_data in plans.items():
+            if plan_data.get('stripe_price_id') == price_id:
+                plan_type = pt
+                break
+        
+        # Set quantity to plan's base monthly_tokens (NOT including granted tokens)
+        if plan_type:
+            monthly_tokens = get_plan_monthly_tokens(plan_type)
+            quantity = monthly_tokens if monthly_tokens > 0 else 1
+        else:
+            quantity = 1  # Fallback if plan not found
+        
         stripe_subscription = stripe.Subscription.create(
             customer=customer_id,
-            items=[{'price': price_id}],
+            items=[{'price': price_id, 'quantity': quantity}],
             metadata={'user_id': str(user_id)},
             expand=['items.data.price']
         )
@@ -1226,4 +1255,96 @@ def record_token_usage_to_stripe(
             
     except Exception as e:
         logger.error(f"Error recording token usage to Stripe for user {user_id}: {e}", exc_info=True)
+        return False
+
+    """
+    Update subscription item quantity to reflect current token balance (plan tokens + granted tokens).
+    
+    This is called when tokens are granted to a user, so the subscription quantity matches
+    the total tokens they have (monthly allocation + granted tokens).
+    
+    Args:
+        user_id: User ID
+        db: Database session
+        
+    Returns:
+        True if quantity was updated successfully, False otherwise
+    """
+    if not STRIPE_SECRET_KEY:
+        logger.debug("Cannot update subscription quantity: STRIPE_SECRET_KEY not set")
+        return False
+    
+    try:
+        from token_helpers import get_token_balance
+        from stripe_config import get_plan_monthly_tokens
+        
+        # Get user's subscription
+        subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+        if not subscription or not subscription.stripe_subscription_id:
+            logger.debug(f"No active subscription found for user {user_id}, skipping quantity update")
+            return False
+        
+        # Free and unlimited plans don't need quantity updates
+        if subscription.plan_type in ('free', 'unlimited'):
+            return True
+        
+        # Get current token balance
+        balance_info = get_token_balance(user_id, db)
+        if not balance_info:
+            logger.warning(f"Could not get token balance for user {user_id}")
+            return False
+        
+        # Calculate total tokens (plan allocation + granted tokens)
+        plan_tokens = get_plan_monthly_tokens(subscription.plan_type)
+        monthly_tokens = balance_info.get('monthly_tokens', plan_tokens)
+        
+        # The quantity should be the total tokens (plan + granted)
+        # This matches what we show in the UI: monthly_tokens = plan_tokens + granted_tokens
+        new_quantity = monthly_tokens
+        
+        if new_quantity <= 0:
+            logger.warning(f"Invalid quantity {new_quantity} for user {user_id}, skipping update")
+            return False
+        
+        # Get the subscription from Stripe
+        stripe_subscription = stripe.Subscription.retrieve(
+            subscription.stripe_subscription_id,
+            expand=['items.data.price']
+        )
+        
+        # Find the base price subscription item (not the metered overage item)
+        base_item = None
+        for item in stripe_subscription.items.data:
+            # Check if this is the base price (not metered)
+            if item.price and not (item.price.recurring and item.price.recurring.get('usage_type') == 'metered'):
+                base_item = item
+                break
+        
+        if not base_item:
+            logger.warning(f"Could not find base subscription item for user {user_id}")
+            return False
+        
+        # Update quantity if it's different
+        if base_item.quantity != new_quantity:
+            logger.info(
+                f"Updating subscription quantity for user {user_id}: "
+                f"{base_item.quantity} -> {new_quantity} tokens"
+            )
+            
+            stripe.SubscriptionItem.modify(
+                base_item.id,
+                quantity=new_quantity
+            )
+            
+            logger.info(f"✅ Updated subscription quantity for user {user_id} to {new_quantity} tokens")
+            return True
+        else:
+            logger.debug(f"Subscription quantity already correct for user {user_id}: {new_quantity}")
+            return True
+            
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error updating subscription quantity for user {user_id}: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Error updating subscription quantity for user {user_id}: {e}", exc_info=True)
         return False

@@ -34,15 +34,15 @@ PRODUCTS = {
         'name': 'Starter',
         'description': '100 tokens per month',
         'monthly_tokens': 100,
-        'price_cents': 999,  # $9.99/month
-        'overage_price_cents': 29  # $0.29 per token
+        'price_cents': 10,  # $0.10 per token (100 tokens × $0.10 = $10.00/month)
+        'overage_price_cents': 10  # $0.10 per token (matches base price)
     },
     'creator': {
         'name': 'Creator',
         'description': '500 tokens per month',
         'monthly_tokens': 500,
-        'price_cents': 2999,  # $29.99/month
-        'overage_price_cents': 20  # $0.20 per token
+        'price_cents': 6,  # $0.06 per token (500 tokens × $0.06 = $30.00/month)
+        'overage_price_cents': 6  # $0.06 per token (matches base price)
     },
     'unlimited': {
         'name': 'Unlimited',

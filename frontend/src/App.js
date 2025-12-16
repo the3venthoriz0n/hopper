@@ -901,13 +901,28 @@ function Home() {
       const currentPlanName = availablePlans.find(p => p.key === subscription.plan_type)?.name || subscription.plan_type;
       
       const newPlan = availablePlans.find(p => p.key === planKey);
-      const newPlanPrice = newPlan?.price?.formatted || 'the new plan';
       const currentPlan = availablePlans.find(p => p.key === subscription.plan_type);
-      const currentPlanPrice = currentPlan?.price?.formatted || currentPlanName;
+      
+      // Format prices for display (new pricing: per-token)
+      const formatPlanPrice = (plan) => {
+        if (!plan?.price) return null;
+        if (plan.key === 'free') return 'Free';
+        if (plan.monthly_tokens === -1) return plan.price.formatted;
+        
+        // New pricing: amount_dollars is per-token price
+        const perTokenPrice = plan.price.amount_dollars || 0;
+        const monthlyTokens = plan.monthly_tokens || 0;
+        const totalMonthly = perTokenPrice * monthlyTokens;
+        // Display as: "$10.00/month ($0.10/token)"
+        return `$${totalMonthly.toFixed(2)}/month ($${perTokenPrice.toFixed(2)}/token)`;
+      };
+      
+      const newPlanPrice = formatPlanPrice(newPlan);
+      const currentPlanPrice = formatPlanPrice(currentPlan);
       
       setConfirmDialog({
         title: 'Upgrade Subscription?',
-        message: `You currently have an active ${currentPlanName} subscription${currentPlanPrice && currentPlanPrice !== 'Free' ? ` (${currentPlanPrice})` : ''}. Upgrading to ${planName}${newPlanPrice && newPlanPrice !== 'Free' ? ` (${newPlanPrice})` : ''} will cancel your current subscription and replace it with the new plan. Your current token balance will be preserved.`,
+        message: `You currently have an active ${currentPlanName} subscription${currentPlanPrice ? ` (${currentPlanPrice})` : ''}. Upgrading to ${planName}${newPlanPrice ? ` (${newPlanPrice})` : ''} will cancel your current subscription and replace it with the new plan. Your current token balance will be preserved.`,
         onConfirm: async () => {
           setConfirmDialog(null);
           await proceedWithUpgrade(planKey);
@@ -3858,17 +3873,28 @@ function Home() {
                                         fontWeight: '500', 
                                         color: '#818cf8'
                                       }}>
-                                        {plan.price.formatted}
+                                        {(() => {
+                                          if (plan.key === 'free') {
+                                            return 'Free';
+                                          } else if (plan.monthly_tokens === -1) {
+                                            // Unlimited plan
+                                            return plan.price.formatted;
+                                          } else {
+                                            // New pricing: price is per-token, calculate total monthly
+                                            // amount_dollars is the per-token price in dollars (e.g., 0.10 for $0.10/token)
+                                            const perTokenPrice = plan.price.amount_dollars || 0;
+                                            const monthlyTokens = plan.monthly_tokens || 0;
+                                            const totalMonthly = perTokenPrice * monthlyTokens;
+                                            
+                                            // Display as: "$10.00/month ($0.10/token)"
+                                            return `$${totalMonthly.toFixed(2)}/month ($${perTokenPrice.toFixed(2)}/token)`;
+                                          }
+                                        })()}
                                       </span>
                                     )}
                                   </div>
                                   <div style={{ fontSize: '0.75rem', color: '#999' }}>
                                     {plan.monthly_tokens === -1 ? 'Unlimited tokens' : `${plan.monthly_tokens} tokens/month`}
-                                    {plan.overage_price && (
-                                      <span style={{ marginLeft: '0.5rem', color: '#818cf8' }}>
-                                        • {plan.overage_price.formatted} overage
-                                      </span>
-                                    )}
                                   </div>
                                 </div>
                                 {isCurrent ? (

@@ -315,6 +315,10 @@ def add_tokens(
         db.add(transaction)
         db.commit()
         
+        # NOTE: We do NOT update Stripe subscription quantity when tokens are granted.
+        # Subscription quantity should always reflect the plan's base monthly_tokens.
+        # Granted tokens are tracked separately in the database and don't affect billing.
+        
         logger.info(f"Tokens added for user {user_id}: {tokens} tokens (balance: {balance_before} -> {balance_after})")
         return True
         
