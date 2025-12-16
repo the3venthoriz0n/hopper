@@ -158,7 +158,7 @@ except ValueError:
 try:
     active_users_gauge = Gauge(
         'hopper_active_users',
-        'Number of active users (logged in within last hour)'
+        'Number of active users (made requests within last hour)'
     )
 except ValueError:
     active_users_gauge = REGISTRY._names_to_collectors.get('hopper_active_users')
@@ -1131,6 +1131,14 @@ def require_auth(request: Request) -> int:
     if not user_id:
         raise HTTPException(401, "Session expired. Please log in again.")
     
+    # Track user activity (heartbeat) - simple and extensible
+    # This updates the activity key with TTL, so we can count active users
+    try:
+        redis_client.set_user_activity(user_id)
+    except Exception:
+        # Never let activity tracking break authentication
+        pass
+    
     return user_id
 
 async def require_csrf_new(
@@ -1390,10 +1398,11 @@ def replace_template_placeholders(template: str, filename: str, wordbank: list) 
 
 def update_active_users_gauge_from_sessions() -> int:
     """
-    Recalculate and update the active users gauge based on Redis sessions.
+    Recalculate and update the active users gauge based on recent activity.
 
-    Sessions are stored as "session:{session_id}" with user_id as the value.
-    We count unique user_ids for all existing (non-expired) sessions.
+    Uses activity heartbeat keys (activity:{user_id}) which have a 1-hour TTL.
+    This tracks users who have made requests within the last hour, not just
+    users with valid sessions (which can last 30 days).
     """
     try:
         # Import here to avoid circular imports in some environments
@@ -1402,19 +1411,10 @@ def update_active_users_gauge_from_sessions() -> int:
         # Fallback to already imported module (used in most code paths)
         redis_module = redis_client  # type: ignore
 
-    session_keys = redis_module.redis_client.keys("session:*")
-    active_user_ids = set()
-    for key in session_keys:
-        user_id = redis_module.redis_client.get(key)
-        if not user_id:
-            continue
-        try:
-            active_user_ids.add(int(user_id))
-        except (ValueError, TypeError):
-            # Skip invalid user_id values
-            continue
-
+    # Get active user IDs from activity keys (simple and extensible)
+    active_user_ids = redis_module.get_active_user_ids()
     active_users = len(active_user_ids)
+    
     try:
         active_users_gauge.set(active_users)
     except Exception:
@@ -1551,21 +1551,12 @@ def logout(request: Request, response: Response):
         logger.info(f"User logged out (session: {session_id[:16]}...)")
         
         # Immediately update active users count after logout
-        # Count unique users with active sessions in Redis
-        # Only count sessions that actually exist (not expired)
-        session_keys = redis_client.redis_client.keys("session:*")
-        active_user_ids = set()
-        for key in session_keys:
-            user_id = redis_client.redis_client.get(key)
-            if user_id:  # Only count if session exists (not expired)
-                try:
-                    active_user_ids.add(int(user_id))
-                except (ValueError, TypeError):
-                    # Skip invalid user_id values
-                    continue
-        active_users = len(active_user_ids)
-        active_users_gauge.set(active_users)
-        logger.debug(f"Updated active users count after logout: {active_users}")
+        # Use shared helper for consistency
+        try:
+            active_users = update_active_users_gauge_from_sessions()
+            logger.debug(f"Updated active users count after logout: {active_users}")
+        except Exception:
+            logger.debug("Failed to update active users gauge after logout", exc_info=True)
     
     return {"message": "Logged out successfully"}
 

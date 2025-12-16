@@ -11,6 +11,9 @@ redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 # Session TTL (30 days)
 SESSION_TTL = 30 * 24 * 60 * 60
 
+# Activity tracking TTL (1 hour - users active within last hour)
+ACTIVITY_TTL = 60 * 60
+
 
 def set_session(session_id: str, user_id: int) -> None:
     """Store session in Redis"""
@@ -275,3 +278,38 @@ def delete_password_reset_token(token: str) -> None:
     """Delete password reset token."""
     key = f"password_reset_token:{token}"
     redis_client.delete(key)
+
+
+def set_user_activity(user_id: int) -> None:
+    """Track user activity - sets a heartbeat key with TTL.
+    
+    This is used to track users who are currently active (using the site).
+    The key automatically expires after ACTIVITY_TTL, so only recent activity is counted.
+    
+    Args:
+        user_id: User ID to track activity for
+    """
+    key = f"activity:{user_id}"
+    redis_client.setex(key, ACTIVITY_TTL, "1")  # Value doesn't matter, just existence
+
+
+def get_active_user_ids() -> set[int]:
+    """Get set of user IDs who have been active within the last hour.
+    
+    Returns:
+        Set of user IDs with recent activity
+    """
+    activity_keys = redis_client.keys("activity:*")
+    active_user_ids = set()
+    
+    for key in activity_keys:
+        # Extract user_id from key format "activity:{user_id}"
+        try:
+            user_id_str = key.split(":", 1)[1]
+            user_id = int(user_id_str)
+            active_user_ids.add(user_id)
+        except (ValueError, IndexError):
+            # Skip invalid keys
+            continue
+    
+    return active_user_ids
