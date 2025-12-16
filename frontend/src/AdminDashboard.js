@@ -175,6 +175,8 @@ function AdminDashboard() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [userToDelete, setUserToDelete] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
+  const [availablePlans, setAvailablePlans] = useState([]);
+  const [selectedPlanKey, setSelectedPlanKey] = useState('');
 
   // Fetch CSRF token on mount
   useEffect(() => {
@@ -195,6 +197,20 @@ function AdminDashboard() {
   useEffect(() => {
     loadUsers();
   }, [page, searchTerm]);
+
+  // Load available plans on mount
+  useEffect(() => {
+    loadPlans();
+  }, []);
+
+  const loadPlans = async () => {
+    try {
+      const res = await axios.get(`${API}/subscription/plans`);
+      setAvailablePlans(res.data.plans || []);
+    } catch (err) {
+      console.error('Failed to load plans:', err);
+    }
+  };
 
   const loadUsers = async () => {
     try {
@@ -337,6 +353,33 @@ function AdminDashboard() {
         );
         setMessage(`✅ Unenrolled user from unlimited plan`);
       }
+      loadUserDetails(userId);
+      loadUsers();
+    } catch (err) {
+      setMessage(`❌ Error: ${err.response?.data?.detail || err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSwitchPlan = async (userId, planKey) => {
+    if (!planKey) {
+      setMessage('❌ Please select a plan');
+      return;
+    }
+    
+    setLoading(true);
+    try {
+      const res = await axios.post(
+        `${API}/admin/users/${userId}/switch-plan`,
+        { plan_key: planKey },
+        { 
+          headers: { 'X-CSRF-Token': csrfToken },
+          withCredentials: true
+        }
+      );
+      setMessage(`✅ ${res.data.message || `Switched user to ${planKey} plan`}`);
+      setSelectedPlanKey(''); // Reset selection
       loadUserDetails(userId);
       loadUsers();
     } catch (err) {
@@ -924,38 +967,58 @@ function AdminDashboard() {
                     </div>
 
                     <div style={{ marginBottom: '1.5rem' }}>
-                      <h3 style={{ color: '#fff', fontSize: '1rem', marginBottom: '0.75rem' }}>Unlimited Plan</h3>
-                      <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        <button
-                          onClick={() => handleUnlimitedPlan(selectedUser.id, true)}
-                          disabled={loading || userDetails.user?.plan_type === 'unlimited'}
+                      <h3 style={{ color: '#fff', fontSize: '1rem', marginBottom: '0.75rem' }}>Switch Plan</h3>
+                      <div style={{ marginBottom: '0.75rem', color: '#999', fontSize: '0.85rem' }}>
+                        Current Plan: <span style={{ color: '#fff', fontWeight: '600', textTransform: 'capitalize' }}>
+                          {userDetails.user?.plan_type || 'N/A'}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                        <select
+                          value={selectedPlanKey}
+                          onChange={(e) => setSelectedPlanKey(e.target.value)}
+                          disabled={loading}
                           style={{
-                            padding: '0.5rem 1rem',
-                            background: loading || userDetails.user?.plan_type === 'unlimited' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(34, 197, 94, 0.3)',
+                            padding: '0.5rem',
+                            background: 'rgba(0, 0, 0, 0.3)',
                             border: '1px solid rgba(255, 255, 255, 0.2)',
                             borderRadius: '4px',
                             color: '#fff',
-                            cursor: loading || userDetails.user?.plan_type === 'unlimited' ? 'not-allowed' : 'pointer',
-                            fontSize: '0.9rem'
+                            fontSize: '0.9rem',
+                            cursor: loading ? 'not-allowed' : 'pointer',
+                            minWidth: '150px'
                           }}
                         >
-                          Enroll Unlimited Plan
-                        </button>
+                          <option value="">Select a plan...</option>
+                          {availablePlans.map(plan => (
+                            <option key={plan.key} value={plan.key} disabled={plan.key === userDetails.user?.plan_type}>
+                              {plan.name} {plan.key === userDetails.user?.plan_type ? '(current)' : ''}
+                            </option>
+                          ))}
+                        </select>
                         <button
-                          onClick={() => handleUnlimitedPlan(selectedUser.id, false)}
-                          disabled={loading || userDetails.user?.plan_type !== 'unlimited'}
+                          onClick={() => handleSwitchPlan(selectedUser.id, selectedPlanKey)}
+                          disabled={loading || !selectedPlanKey || selectedPlanKey === userDetails.user?.plan_type}
                           style={{
                             padding: '0.5rem 1rem',
-                            background: loading || userDetails.user?.plan_type !== 'unlimited' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(239, 68, 68, 0.3)',
+                            background: loading || !selectedPlanKey || selectedPlanKey === userDetails.user?.plan_type 
+                              ? 'rgba(255, 255, 255, 0.05)' 
+                              : 'rgba(99, 102, 241, 0.5)',
                             border: '1px solid rgba(255, 255, 255, 0.2)',
                             borderRadius: '4px',
                             color: '#fff',
-                            cursor: loading || userDetails.user?.plan_type !== 'unlimited' ? 'not-allowed' : 'pointer',
-                            fontSize: '0.9rem'
+                            cursor: loading || !selectedPlanKey || selectedPlanKey === userDetails.user?.plan_type 
+                              ? 'not-allowed' 
+                              : 'pointer',
+                            fontSize: '0.9rem',
+                            fontWeight: '500'
                           }}
                         >
-                          Unenroll Unlimited Plan
+                          {loading ? 'Switching...' : 'Switch Plan'}
                         </button>
+                      </div>
+                      <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#666', fontStyle: 'italic' }}>
+                        Note: Overage will be invoiced before switching. Tokens will be preserved.
                       </div>
                     </div>
 

@@ -573,6 +573,9 @@ class DeductTokensRequest(BaseModel):
     amount: int
     reason: Optional[str] = None
 
+class SwitchPlanRequest(BaseModel):
+    plan_key: str  # 'free', 'starter', 'creator', 'unlimited'
+
 class CreateUserRequest(BaseModel):
     email: EmailStr
     password: str
@@ -5114,6 +5117,129 @@ def enroll_unlimited_plan(
     logger.info(f"Admin {admin_user.id} enrolled user {target_user_id} in unlimited plan (preserved {preserved_tokens} tokens)")
     
     return {"message": f"User {target_user_id} enrolled in unlimited plan"}
+
+
+@app.post("/api/admin/users/{target_user_id}/switch-plan")
+def admin_switch_user_plan(
+    target_user_id: int,
+    request_data: SwitchPlanRequest,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Switch a user to a different plan (admin only).
+    
+    Cancels existing subscription with final invoice for overage, then creates new subscription.
+    Preserves tokens (user paid for full period, no prorating).
+    """
+    from stripe_helpers import cancel_all_user_subscriptions, create_free_subscription, create_unlimited_subscription, create_stripe_subscription
+    from stripe_config import get_plans, get_plan_price_id
+    from token_helpers import get_or_create_token_balance
+    from models import TokenTransaction
+    import stripe
+    
+    target_user = db.query(User).filter(User.id == target_user_id).first()
+    if not target_user:
+        raise HTTPException(404, "User not found")
+    
+    plan_key = request_data.plan_key.lower()
+    plans = get_plans()
+    
+    # Validate plan key
+    if plan_key not in plans:
+        raise HTTPException(400, f"Invalid plan: {plan_key}. Valid plans: {', '.join(plans.keys())}")
+    
+    # Get current subscription
+    existing_subscription = db.query(Subscription).filter(Subscription.user_id == target_user_id).first()
+    current_plan = existing_subscription.plan_type if existing_subscription else None
+    
+    # Check if already on target plan
+    if current_plan == plan_key:
+        return {"message": f"User {target_user_id} is already on {plan_key} plan"}
+    
+    # Preserve current token balance (user paid for full period)
+    token_balance = get_or_create_token_balance(target_user_id, db)
+    preserved_tokens = token_balance.tokens_remaining
+    
+    # Cancel existing subscription with final invoice for overage
+    if existing_subscription and existing_subscription.stripe_subscription_id:
+        try:
+            from stripe_helpers import cancel_subscription_with_invoice
+            cancel_subscription_with_invoice(existing_subscription.stripe_subscription_id, invoice_now=True)
+            logger.info(f"Canceled existing subscription {existing_subscription.stripe_subscription_id} for user {target_user_id} (switching to {plan_key})")
+        except Exception as e:
+            logger.warning(f"Failed to cancel existing subscription for user {target_user_id}: {e}")
+            # Continue anyway - we'll create the new subscription
+    
+    # Cancel all subscriptions to ensure clean state
+    cancel_all_user_subscriptions(target_user_id, db, invoice_now=True)
+    
+    # Create new subscription based on plan type
+    new_subscription = None
+    if plan_key == 'free':
+        # Create free subscription (skip token reset - we'll preserve tokens)
+        new_subscription = create_free_subscription(target_user_id, db, skip_token_reset=True)
+        if new_subscription:
+            # Preserve tokens and set monthly_tokens correctly
+            from stripe_config import get_plan_monthly_tokens
+            free_plan_tokens = get_plan_monthly_tokens('free')
+            token_balance = get_or_create_token_balance(target_user_id, db)
+            balance_before = token_balance.tokens_remaining
+            token_balance.tokens_remaining = preserved_tokens
+            token_balance.monthly_tokens = max(preserved_tokens, free_plan_tokens)
+            token_balance.tokens_used_this_period = 0
+            token_balance.period_start = new_subscription.current_period_start
+            token_balance.period_end = new_subscription.current_period_end
+            token_balance.last_reset_at = datetime.now(timezone.utc)
+            token_balance.updated_at = datetime.now(timezone.utc)
+            
+            # Create transaction record to indicate tokens were preserved
+            transaction = TokenTransaction(
+                user_id=target_user_id,
+                video_id=None,
+                transaction_type='reset',
+                tokens=0,  # No change - tokens preserved
+                balance_before=balance_before,
+                balance_after=preserved_tokens,
+                transaction_metadata={
+                    'plan_type': 'free',
+                    'period_start': new_subscription.current_period_start.isoformat(),
+                    'period_end': new_subscription.current_period_end.isoformat(),
+                    'is_renewal': False,
+                    'subscription_id': new_subscription.stripe_subscription_id,
+                    'tokens_preserved': True,
+                    'preserved_amount': preserved_tokens,
+                    'admin_switch': True
+                }
+            )
+            db.add(transaction)
+            db.commit()
+            
+    elif plan_key == 'unlimited':
+        # Create unlimited subscription
+        new_subscription = create_unlimited_subscription(target_user_id, preserved_tokens, db)
+        
+    else:
+        # Create paid subscription (starter or creator)
+        price_id = get_plan_price_id(plan_key)
+        if not price_id:
+            raise HTTPException(400, f"Plan {plan_key} is not configured with a Stripe price")
+        
+        new_subscription = create_stripe_subscription(target_user_id, price_id, db)
+    
+    if not new_subscription:
+        raise HTTPException(500, f"Failed to create {plan_key} subscription")
+    
+    logger.info(
+        f"Admin {admin_user.id} switched user {target_user_id} from {current_plan} to {plan_key} plan "
+        f"(preserved {preserved_tokens} tokens)"
+    )
+    
+    return {
+        "message": f"User {target_user_id} switched to {plan_key} plan",
+        "previous_plan": current_plan,
+        "new_plan": plan_key,
+        "tokens_preserved": preserved_tokens
+    }
 
 
 @app.delete("/api/admin/users/{target_user_id}/unlimited-plan")
