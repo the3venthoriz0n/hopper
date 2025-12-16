@@ -176,7 +176,6 @@ function AdminDashboard() {
   const [userToDelete, setUserToDelete] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [availablePlans, setAvailablePlans] = useState([]);
-  const [selectedPlanKey, setSelectedPlanKey] = useState('');
 
   // Fetch CSRF token on mount
   useEffect(() => {
@@ -363,11 +362,6 @@ function AdminDashboard() {
   };
 
   const handleSwitchPlan = async (userId, planKey) => {
-    if (!planKey) {
-      setMessage('❌ Please select a plan');
-      return;
-    }
-    
     setLoading(true);
     try {
       const res = await axios.post(
@@ -379,7 +373,6 @@ function AdminDashboard() {
         }
       );
       setMessage(`✅ ${res.data.message || `Switched user to ${planKey} plan`}`);
-      setSelectedPlanKey(''); // Reset selection
       loadUserDetails(userId);
       loadUsers();
     } catch (err) {
@@ -966,6 +959,7 @@ function AdminDashboard() {
                       </div>
                     </div>
 
+                    {/* Plan switching temporarily disabled - requires payment method for paid plans
                     <div style={{ marginBottom: '1.5rem' }}>
                       <h3 style={{ color: '#fff', fontSize: '1rem', marginBottom: '0.75rem' }}>Switch Plan</h3>
                       <div style={{ marginBottom: '0.75rem', color: '#999', fontSize: '0.85rem' }}>
@@ -973,52 +967,74 @@ function AdminDashboard() {
                           {userDetails.user?.plan_type || 'N/A'}
                         </span>
                       </div>
-                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                        <select
-                          value={selectedPlanKey}
-                          onChange={(e) => setSelectedPlanKey(e.target.value)}
-                          disabled={loading}
-                          style={{
-                            padding: '0.5rem',
-                            background: 'rgba(0, 0, 0, 0.3)',
-                            border: '1px solid rgba(255, 255, 255, 0.2)',
-                            borderRadius: '4px',
-                            color: '#fff',
-                            fontSize: '0.9rem',
-                            cursor: loading ? 'not-allowed' : 'pointer',
-                            minWidth: '150px'
-                          }}
-                        >
-                          <option value="">Select a plan...</option>
-                          {availablePlans.map(plan => (
-                            <option key={plan.key} value={plan.key} disabled={plan.key === userDetails.user?.plan_type}>
-                              {plan.name} {plan.key === userDetails.user?.plan_type ? '(current)' : ''}
-                            </option>
-                          ))}
-                        </select>
+                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                        {availablePlans.map(plan => {
+                          const isCurrentPlan = plan.key === userDetails.user?.plan_type;
+                          return (
+                            <button
+                              key={plan.key}
+                              onClick={() => handleSwitchPlan(selectedUser.id, plan.key)}
+                              disabled={loading || isCurrentPlan}
+                              style={{
+                                padding: '0.5rem 1rem',
+                                background: loading || isCurrentPlan
+                                  ? 'rgba(255, 255, 255, 0.05)'
+                                  : 'rgba(99, 102, 241, 0.5)',
+                                border: isCurrentPlan 
+                                  ? '1px solid rgba(34, 197, 94, 0.5)' 
+                                  : '1px solid rgba(255, 255, 255, 0.2)',
+                                borderRadius: '4px',
+                                color: isCurrentPlan ? '#22c55e' : '#fff',
+                                cursor: loading || isCurrentPlan ? 'not-allowed' : 'pointer',
+                                fontSize: '0.9rem',
+                                fontWeight: '500',
+                                textTransform: 'capitalize'
+                              }}
+                            >
+                              {plan.name} {isCurrentPlan ? '(current)' : ''}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: '#666', fontStyle: 'italic' }}>
+                        Note: Overage will be invoiced before switching. Tokens will be preserved.
+                      </div>
+                    </div>
+                    */}
+
+                    <div style={{ marginBottom: '1.5rem' }}>
+                      <h3 style={{ color: '#fff', fontSize: '1rem', marginBottom: '0.75rem' }}>Unlimited Plan</h3>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button
-                          onClick={() => handleSwitchPlan(selectedUser.id, selectedPlanKey)}
-                          disabled={loading || !selectedPlanKey || selectedPlanKey === userDetails.user?.plan_type}
+                          onClick={() => handleUnlimitedPlan(selectedUser.id, true)}
+                          disabled={loading || userDetails.user?.plan_type === 'unlimited'}
                           style={{
                             padding: '0.5rem 1rem',
-                            background: loading || !selectedPlanKey || selectedPlanKey === userDetails.user?.plan_type 
-                              ? 'rgba(255, 255, 255, 0.05)' 
-                              : 'rgba(99, 102, 241, 0.5)',
+                            background: loading || userDetails.user?.plan_type === 'unlimited' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(34, 197, 94, 0.3)',
                             border: '1px solid rgba(255, 255, 255, 0.2)',
                             borderRadius: '4px',
                             color: '#fff',
-                            cursor: loading || !selectedPlanKey || selectedPlanKey === userDetails.user?.plan_type 
-                              ? 'not-allowed' 
-                              : 'pointer',
-                            fontSize: '0.9rem',
-                            fontWeight: '500'
+                            cursor: loading || userDetails.user?.plan_type === 'unlimited' ? 'not-allowed' : 'pointer',
+                            fontSize: '0.9rem'
                           }}
                         >
-                          {loading ? 'Switching...' : 'Switch Plan'}
+                          Enroll Unlimited Plan
                         </button>
-                      </div>
-                      <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: '#666', fontStyle: 'italic' }}>
-                        Note: Overage will be invoiced before switching. Tokens will be preserved.
+                        <button
+                          onClick={() => handleUnlimitedPlan(selectedUser.id, false)}
+                          disabled={loading || userDetails.user?.plan_type !== 'unlimited'}
+                          style={{
+                            padding: '0.5rem 1rem',
+                            background: loading || userDetails.user?.plan_type !== 'unlimited' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(239, 68, 68, 0.3)',
+                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            borderRadius: '4px',
+                            color: '#fff',
+                            cursor: loading || userDetails.user?.plan_type !== 'unlimited' ? 'not-allowed' : 'pointer',
+                            fontSize: '0.9rem'
+                          }}
+                        >
+                          Unenroll Unlimited Plan
+                        </button>
                       </div>
                     </div>
 
