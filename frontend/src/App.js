@@ -378,7 +378,6 @@ function Home() {
   const [showSettings, setShowSettings] = useState(false);
   const [showTiktokSettings, setShowTiktokSettings] = useState(false);
   const [showInstagramSettings, setShowInstagramSettings] = useState(false);
-  const [showGlobalSettings, setShowGlobalSettings] = useState(false);
   const [showAccountSettings, setShowAccountSettings] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -387,6 +386,7 @@ function Home() {
   const [editTitleLength, setEditTitleLength] = useState(0);
   const [newWord, setNewWord] = useState('');
   const [wordbankExpanded, setWordbankExpanded] = useState(false);
+  const [showGlobalSettings, setShowGlobalSettings] = useState(false);
   const [maxFileSize, setMaxFileSize] = useState(null);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [sendingResetEmail, setSendingResetEmail] = useState(false);
@@ -654,7 +654,7 @@ function Home() {
         wrapper.removeEventListener('mouseleave', handleTooltipLeave);
       });
     };
-  }, [videos, editingVideo, showSettings, showTiktokSettings, showGlobalSettings, showAccountSettings, showDeleteConfirm, user]);
+  }, [videos, editingVideo, showSettings, showTiktokSettings, showAccountSettings, showDeleteConfirm, user]);
 
   // Define all load functions using useCallback BEFORE the useEffect that uses them
   // This ensures they're available when the useEffect runs
@@ -1536,7 +1536,6 @@ function Home() {
     try {
       await axios.delete(`${API}/global/wordbank`);
       setGlobalSettings({...globalSettings, wordbank: []});
-      setWordbankExpanded(false);
       setMessage('✅ Wordbank cleared');
     } catch (err) {
       setMessage('❌ Error clearing wordbank');
@@ -2346,247 +2345,245 @@ function Home() {
         </div>
       </div>
       
-      {/* Global Settings */}
+      {/* Global Settings - Collapsible, no + button */}
       <div className="card">
         <div className="card-header" onClick={() => setShowGlobalSettings(!showGlobalSettings)}>
           <h2>⚙️ Global Settings</h2>
-          <button className="settings-toggle">{showGlobalSettings ? '−' : '+'}</button>
         </div>
         {showGlobalSettings && (
           <div className="settings-panel">
-            <div className="setting-group">
-              <label>
-                Video Title Template <span className="char-counter">{globalSettings.title_template.length}/100</span>
-                <span className="tooltip-wrapper">
-                  <span className="tooltip-icon">i</span>
-                  <span className="tooltip-text">Use {'{filename}'} for filename, {'{random}'} for random wordbank word</span>
-                </span>
-              </label>
-              <input 
-                type="text"
-                value={globalSettings.title_template}
-                onChange={(e) => setGlobalSettings({...globalSettings, title_template: e.target.value})}
-                onBlur={(e) => updateGlobalSettings('title_template', e.target.value)}
-                placeholder="{filename}"
-                className="input-text"
-                maxLength="100"
-              />
-            </div>
+          <div className="setting-group">
+            <label>
+              Video Title Template <span className="char-counter">{globalSettings.title_template.length}/100</span>
+              <span className="tooltip-wrapper">
+                <span className="tooltip-icon">i</span>
+                <span className="tooltip-text">Use {'{filename}'} for filename, {'{random}'} for random wordbank word</span>
+              </span>
+            </label>
+            <input 
+              type="text"
+              value={globalSettings.title_template}
+              onChange={(e) => setGlobalSettings({...globalSettings, title_template: e.target.value})}
+              onBlur={(e) => updateGlobalSettings('title_template', e.target.value)}
+              placeholder="{filename}"
+              className="input-text"
+              maxLength="100"
+            />
+          </div>
 
-            <div className="setting-group">
-              <label>
-                Video Description Template
-                <span className="tooltip-wrapper">
-                  <span className="tooltip-icon">i</span>
-                  <span className="tooltip-text">Use {'{filename}'} for filename, {'{random}'} for random wordbank word</span>
-                </span>
-              </label>
-              <textarea 
-                value={globalSettings.description_template}
-                onChange={(e) => setGlobalSettings({...globalSettings, description_template: e.target.value})}
-                onBlur={(e) => updateGlobalSettings('description_template', e.target.value)}
-                placeholder="Uploaded via hopper"
-                className="textarea-text"
-                rows="3"
-              />
-            </div>
+          <div className="setting-group">
+            <label>
+              Video Description Template
+              <span className="tooltip-wrapper">
+                <span className="tooltip-icon">i</span>
+                <span className="tooltip-text">Use {'{filename}'} for filename, {'{random}'} for random wordbank word</span>
+              </span>
+            </label>
+            <textarea 
+              value={globalSettings.description_template}
+              onChange={(e) => setGlobalSettings({...globalSettings, description_template: e.target.value})}
+              onBlur={(e) => updateGlobalSettings('description_template', e.target.value)}
+              placeholder="Uploaded via hopper"
+              className="textarea-text"
+              rows="3"
+            />
+          </div>
 
-            <div className="setting-divider"></div>
+          <div className="setting-divider"></div>
 
-            <div className="setting-group">
-              <div className="wordbank-label">
-                <div className="wordbank-title">
-                  <span>
-                    Random Wordbank ({globalSettings.wordbank.length} words)
-                    <span className="tooltip-wrapper">
-                      <span className="tooltip-icon">i</span>
-                      <span className="tooltip-text">Words to use with {'{random}'} placeholder. Enter comma-separated words to add multiple at once</span>
-                    </span>
+          <div className="setting-group">
+            <div className="wordbank-label">
+              <div className="wordbank-title">
+                <span>
+                  Random Wordbank ({globalSettings.wordbank.length} words)
+                  <span className="tooltip-wrapper">
+                    <span className="tooltip-icon">i</span>
+                    <span className="tooltip-text">Words to use with {'{random}'} placeholder. Enter comma-separated words to add multiple at once</span>
                   </span>
-                  {globalSettings.wordbank.length > 0 && (
-                    <span 
-                      className={`wordbank-caret ${wordbankExpanded ? 'expanded' : ''}`}
-                      onClick={() => setWordbankExpanded(!wordbankExpanded)}
-                      title={wordbankExpanded ? 'Hide words' : 'Show words'}
-                    >
-                      ▼
-                    </span>
-                  )}
-                </div>
+                </span>
                 {globalSettings.wordbank.length > 0 && (
-                  <button 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      clearWordbank();
-                    }}
-                    className="btn-clear-wordbank"
-                    title="Clear all words"
+                  <span 
+                    className={`wordbank-caret ${wordbankExpanded ? 'expanded' : ''}`}
+                    onClick={() => setWordbankExpanded(!wordbankExpanded)}
+                    title={wordbankExpanded ? 'Hide words' : 'Show words'}
                   >
-                    Clear All
-                  </button>
+                    ▼
+                  </span>
                 )}
               </div>
-              <div className="wordbank-input">
-                <input 
-                  type="text"
-                  value={newWord}
-                  onChange={(e) => setNewWord(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && newWord.trim() && addWordToWordbank(newWord.trim())}
-                  placeholder="Add word(s) - comma-separated for multiple"
-                  className="input-text"
-                />
+              {globalSettings.wordbank.length > 0 && (
                 <button 
-                  onClick={() => newWord.trim() && addWordToWordbank(newWord.trim())}
-                  className="btn-add-word"
-                  disabled={!newWord.trim()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    clearWordbank();
+                  }}
+                  className="btn-clear-wordbank"
+                  title="Clear all words"
                 >
-                  Add
+                  Clear All
                 </button>
-              </div>
-              
-              {globalSettings.wordbank.length > 0 && wordbankExpanded && (
-                <div className="wordbank-list">
-                  {globalSettings.wordbank.map((word, idx) => (
-                    <div key={idx} className="wordbank-item">
-                      <span>{word}</span>
-                      <button onClick={() => removeWordFromWordbank(word)} className="btn-remove-word">×</button>
-                    </div>
-                  ))}
-                </div>
               )}
             </div>
-
-            <div className="setting-divider"></div>
-
-            <div className="setting-group">
-              <label className="checkbox-label">
-                <input 
-                  type="checkbox"
-                  checked={globalSettings.upload_immediately}
-                  onChange={(e) => updateGlobalSettings('upload_immediately', e.target.checked)}
-                  className="checkbox"
-                />
-                <span>
-                  Upload Immediately
-                  <span className="tooltip-wrapper" style={{ marginLeft: '6px' }}>
-                    <span className="tooltip-icon">i</span>
-                    <span className="tooltip-text">If disabled, videos will be scheduled</span>
-                  </span>
-                </span>
-              </label>
+            <div className="wordbank-input">
+              <input 
+                type="text"
+                value={newWord}
+                onChange={(e) => setNewWord(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && newWord.trim() && addWordToWordbank(newWord.trim())}
+                placeholder="Add word(s) - comma-separated for multiple"
+                className="input-text"
+              />
+              <button 
+                onClick={() => newWord.trim() && addWordToWordbank(newWord.trim())}
+                className="btn-add-word"
+                disabled={!newWord.trim()}
+              >
+                Add
+              </button>
             </div>
-
-            {!globalSettings.upload_immediately && (
-              <>
-                <div className="setting-group">
-                  <label>Schedule Mode</label>
-                  <select 
-                    value={globalSettings.schedule_mode}
-                    onChange={(e) => updateGlobalSettings('schedule_mode', e.target.value)}
-                    className="select"
-                  >
-                    <option value="spaced">Spaced Interval</option>
-                    <option value="specific_time">Specific Time</option>
-                  </select>
-                </div>
-
-                {globalSettings.schedule_mode === 'spaced' ? (
-                  <div className="setting-group">
-                    <label>
-                      Upload Interval
-                      <span className="tooltip-wrapper">
-                        <span className="tooltip-icon">i</span>
-                        <span className="tooltip-text">Videos upload one at a time with this interval</span>
-                      </span>
-                    </label>
-                    <div className="interval-input">
-                      <input 
-                        type="number"
-                        min="1"
-                        value={globalSettings.schedule_interval_value}
-                        onChange={(e) => {
-                          const val = parseInt(e.target.value) || 1;
-                          setGlobalSettings({...globalSettings, schedule_interval_value: val});
-                        }}
-                        onBlur={(e) => {
-                          const val = parseInt(e.target.value) || 1;
-                          updateGlobalSettings('schedule_interval_value', val);
-                        }}
-                        className="input-number"
-                      />
-                      <select 
-                        value={globalSettings.schedule_interval_unit}
-                        onChange={(e) => updateGlobalSettings('schedule_interval_unit', e.target.value)}
-                        className="select-unit"
-                      >
-                        <option value="minutes">Minutes</option>
-                        <option value="hours">Hours</option>
-                        <option value="days">Days</option>
-                      </select>
-                    </div>
+            
+            {globalSettings.wordbank.length > 0 && wordbankExpanded && (
+              <div className="wordbank-list">
+                {globalSettings.wordbank.map((word, idx) => (
+                  <div key={idx} className="wordbank-item">
+                    <span>{word}</span>
+                    <button onClick={() => removeWordFromWordbank(word)} className="btn-remove-word">×</button>
                   </div>
-                ) : (
-                  <div className="setting-group">
-                    <label>
-                      Start Time
-                      <span className="tooltip-wrapper">
-                        <span className="tooltip-icon">i</span>
-                        <span className="tooltip-text">All videos will upload at this time</span>
-                      </span>
-                    </label>
-                    <input 
-                      type="datetime-local"
-                      value={globalSettings.schedule_start_time}
-                      onChange={(e) => updateGlobalSettings('schedule_start_time', e.target.value)}
-                      className="input"
-                    />
-                  </div>
-                )}
-
-                {globalSettings.schedule_mode === 'spaced' && (
-                  <div className="setting-group">
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={globalSettings.upload_first_immediately !== false}
-                        onChange={(e) => updateGlobalSettings('upload_first_immediately', e.target.checked)}
-                        style={{ marginRight: '8px' }}
-                      />
-                      Upload first video immediately
-                      <span className="tooltip-wrapper">
-                        <span className="tooltip-icon">i</span>
-                        <span className="tooltip-text">
-                          When checked, the first video uploads immediately and subsequent videos are spaced by the interval.
-                          When unchecked, all videos (including the first) are spaced evenly by the interval.
-                        </span>
-                      </span>
-                    </label>
-                  </div>
-                )}
-              </>
+                ))}
+              </div>
             )}
-
-            <div className="setting-divider"></div>
-
-            <div className="setting-group">
-              <label className="checkbox-label">
-                <input 
-                  type="checkbox"
-                  checked={globalSettings.allow_duplicates}
-                  onChange={(e) => updateGlobalSettings('allow_duplicates', e.target.checked)}
-                  className="checkbox"
-                />
-                <span>
-                  Allow Duplicate Videos
-                  <span className="tooltip-wrapper" style={{ marginLeft: '6px' }}>
-                    <span className="tooltip-icon">i</span>
-                    <span className="tooltip-text">Allow uploading videos with the same filename</span>
-                  </span>
-                </span>
-              </label>
-            </div>
-
           </div>
+
+          <div className="setting-divider"></div>
+
+          <div className="setting-group">
+            <label className="checkbox-label">
+              <input 
+                type="checkbox"
+                checked={globalSettings.upload_immediately}
+                onChange={(e) => updateGlobalSettings('upload_immediately', e.target.checked)}
+                className="checkbox"
+              />
+              <span>
+                Upload Immediately
+                <span className="tooltip-wrapper" style={{ marginLeft: '6px' }}>
+                  <span className="tooltip-icon">i</span>
+                  <span className="tooltip-text">If disabled, videos will be scheduled</span>
+                </span>
+              </span>
+            </label>
+          </div>
+
+          {!globalSettings.upload_immediately && (
+            <>
+              <div className="setting-group">
+                <label>Schedule Mode</label>
+                <select 
+                  value={globalSettings.schedule_mode}
+                  onChange={(e) => updateGlobalSettings('schedule_mode', e.target.value)}
+                  className="select"
+                >
+                  <option value="spaced">Spaced Interval</option>
+                  <option value="specific_time">Specific Time</option>
+                </select>
+              </div>
+
+              {globalSettings.schedule_mode === 'spaced' ? (
+                <div className="setting-group">
+                  <label>
+                    Upload Interval
+                    <span className="tooltip-wrapper">
+                      <span className="tooltip-icon">i</span>
+                      <span className="tooltip-text">Videos upload one at a time with this interval</span>
+                    </span>
+                  </label>
+                  <div className="interval-input">
+                    <input 
+                      type="number"
+                      min="1"
+                      value={globalSettings.schedule_interval_value}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value) || 1;
+                        setGlobalSettings({...globalSettings, schedule_interval_value: val});
+                      }}
+                      onBlur={(e) => {
+                        const val = parseInt(e.target.value) || 1;
+                        updateGlobalSettings('schedule_interval_value', val);
+                      }}
+                      className="input-number"
+                    />
+                    <select 
+                      value={globalSettings.schedule_interval_unit}
+                      onChange={(e) => updateGlobalSettings('schedule_interval_unit', e.target.value)}
+                      className="select-unit"
+                    >
+                      <option value="minutes">Minutes</option>
+                      <option value="hours">Hours</option>
+                      <option value="days">Days</option>
+                    </select>
+                  </div>
+                </div>
+              ) : (
+                <div className="setting-group">
+                  <label>
+                    Start Time
+                    <span className="tooltip-wrapper">
+                      <span className="tooltip-icon">i</span>
+                      <span className="tooltip-text">All videos will upload at this time</span>
+                    </span>
+                  </label>
+                  <input 
+                    type="datetime-local"
+                    value={globalSettings.schedule_start_time}
+                    onChange={(e) => updateGlobalSettings('schedule_start_time', e.target.value)}
+                    className="input"
+                  />
+                </div>
+              )}
+
+              {globalSettings.schedule_mode === 'spaced' && (
+                <div className="setting-group">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={globalSettings.upload_first_immediately !== false}
+                      onChange={(e) => updateGlobalSettings('upload_first_immediately', e.target.checked)}
+                      style={{ marginRight: '8px' }}
+                    />
+                    Upload first video immediately
+                    <span className="tooltip-wrapper">
+                      <span className="tooltip-icon">i</span>
+                      <span className="tooltip-text">
+                        When checked, the first video uploads immediately and subsequent videos are spaced by the interval.
+                        When unchecked, all videos (including the first) are spaced evenly by the interval.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              )}
+            </>
+          )}
+
+          <div className="setting-divider"></div>
+
+          <div className="setting-group">
+            <label className="checkbox-label">
+              <input 
+                type="checkbox"
+                checked={globalSettings.allow_duplicates}
+                onChange={(e) => updateGlobalSettings('allow_duplicates', e.target.checked)}
+                className="checkbox"
+              />
+              <span>
+                Allow Duplicate Videos
+                <span className="tooltip-wrapper" style={{ marginLeft: '6px' }}>
+                  <span className="tooltip-icon">i</span>
+                  <span className="tooltip-text">Allow uploading videos with the same filename</span>
+                </span>
+              </span>
+            </label>
+          </div>
+        </div>
         )}
       </div>
       
@@ -2611,7 +2608,7 @@ function Home() {
               flexShrink: 0
             }}></div>
             {youtube.connected && (
-              <span className="account-info" style={{ fontSize: '0.9em', color: '#999', marginLeft: '4px' }}>
+              <span className="account-info" style={{ fontSize: '0.9em', color: '#999', marginLeft: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
                 {youtube.account ? (
                   youtube.account.channel_name ? 
                     youtube.account.channel_name + (youtube.account.email ? ` (${youtube.account.email})` : '') : 
@@ -2785,7 +2782,7 @@ function Home() {
               flexShrink: 0
             }}></div>
             {tiktok.connected && (
-              <span className="account-info" style={{ fontSize: '0.9em', color: '#999', marginLeft: '4px' }}>
+              <span className="account-info" style={{ fontSize: '0.9em', color: '#999', marginLeft: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
                 {tiktok.account ? (
                   tiktok.account.display_name ? 
                     tiktok.account.display_name + (tiktok.account.username ? ` (@${tiktok.account.username})` : '') : 
@@ -2966,7 +2963,7 @@ function Home() {
               flexShrink: 0
             }}></div>
             {instagram.connected && (
-              <span className="account-info" style={{ fontSize: '0.9em', color: '#999', marginLeft: '4px' }}>
+              <span className="account-info" style={{ fontSize: '0.9em', color: '#999', marginLeft: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
                 {instagram.account ? (
                   instagram.account.username ? 
                     `@${instagram.account.username}` : 
@@ -3147,9 +3144,9 @@ function Home() {
       {/* Queue */}
       {message && <div className="message">{message}</div>}
       <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+        <div className="queue-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
           <h2 style={{ margin: 0 }}>Queue ({videos.length})</h2>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <div className="queue-buttons" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             {videos.length > 0 && videos.some(v => v.status === 'uploaded' || v.status === 'completed') && (
               <button
                 onClick={clearUploadedVideos}
@@ -3241,50 +3238,7 @@ function Home() {
                           ⚠️ {v.title_original_length}
                         </span>
                       )}
-                      {v.file_size_bytes && (
-                        <>
-                          <span 
-                            style={{ 
-                              marginLeft: '8px',
-                              padding: '2px 8px',
-                              background: 'rgba(156, 163, 175, 0.15)',
-                              border: '1px solid rgba(156, 163, 175, 0.3)',
-                              borderRadius: '12px',
-                              fontSize: '0.75rem',
-                              fontWeight: '500',
-                              color: '#9ca3af',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px'
-                            }}
-                            title={`File size: ${formatFileSize(v.file_size_bytes)}`}
-                          >
-                            <span>📦</span>
-                            <span>{formatFileSize(v.file_size_bytes)}</span>
-                          </span>
-                          <span 
-                            style={{ 
-                              marginLeft: '8px',
-                              padding: '2px 8px',
-                              background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%)',
-                              border: '1px solid rgba(99, 102, 241, 0.3)',
-                              borderRadius: '12px',
-                              fontSize: '0.75rem',
-                              fontWeight: '600',
-                              color: '#818cf8',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px'
-                            }}
-                            title={`Tokens: ${v.tokens_consumed || calculateTokens(v.file_size_bytes)}`}
-                          >
-                            <span>🪙</span>
-                            <span>{v.tokens_consumed || calculateTokens(v.file_size_bytes)}</span>
-                          </span>
-                        </>
-                      )}
                     </div>
-                    <div className="filename">File: {v.filename}</div>
                   </div>
                   <div className="status">
                     {v.status === 'uploading' ? (
@@ -3319,46 +3273,118 @@ function Home() {
                     </div>
                   )}
                   {isExpanded && (
-                    <div style={{ 
-                      marginTop: '1rem', 
-                      padding: '1rem', 
-                      background: 'rgba(0, 0, 0, 0.2)', 
-                      borderRadius: '8px',
-                      fontSize: '0.9rem'
-                    }}>
-                      <div style={{ fontWeight: 'bold', marginBottom: '0.5rem' }}>Upload Properties:</div>
-                      {youtubeProps.title && (
-                        <div style={{ marginBottom: '0.5rem' }}>
-                          <strong>YouTube:</strong>
-                          <div style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
-                            <div>Title: {youtubeProps.title}</div>
-                            <div>Visibility: {youtubeProps.visibility}</div>
-                            <div>Made for Kids: {youtubeProps.made_for_kids ? 'Yes' : 'No'}</div>
-                            {youtubeProps.description && <div>Description: {youtubeProps.description.substring(0, 100)}{youtubeProps.description.length > 100 ? '...' : ''}</div>}
-                            {youtubeProps.tags && <div>Tags: {youtubeProps.tags}</div>}
+                    <div className="video-expanded-details">
+                      {/* File Info Section */}
+                      <div className="video-detail-section">
+                        <div className="video-detail-label">File Information</div>
+                        <div className="video-detail-content">
+                          <div className="video-detail-row">
+                            <span className="video-detail-key">Filename:</span>
+                            <span className="video-detail-value">{v.filename}</span>
                           </div>
+                          {v.file_size_bytes && (
+                            <>
+                              <div className="video-detail-row">
+                                <span className="video-detail-key">File Size:</span>
+                                <span className="video-detail-value">{formatFileSize(v.file_size_bytes)}</span>
+                              </div>
+                              <div className="video-detail-row">
+                                <span className="video-detail-key">Tokens:</span>
+                                <span className="video-detail-value video-detail-tokens">{v.tokens_consumed || calculateTokens(v.file_size_bytes)}</span>
+                              </div>
+                            </>
+                          )}
                         </div>
-                      )}
-                      {uploadProps.tiktok && (
-                        <div style={{ marginBottom: '0.5rem' }}>
-                          <strong>TikTok:</strong>
-                          <div style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
-                            <div>Title: {uploadProps.tiktok.title}</div>
-                            <div>Privacy: {uploadProps.tiktok.privacy_level}</div>
-                            <div>Allow Comments: {uploadProps.tiktok.allow_comments ? 'Yes' : 'No'}</div>
-                            <div>Allow Duet: {uploadProps.tiktok.allow_duet ? 'Yes' : 'No'}</div>
-                            <div>Allow Stitch: {uploadProps.tiktok.allow_stitch ? 'Yes' : 'No'}</div>
-                          </div>
-                        </div>
-                      )}
-                      {uploadProps.instagram && (
-                        <div style={{ marginBottom: '0.5rem' }}>
-                          <strong>Instagram:</strong>
-                          <div style={{ marginLeft: '1rem', marginTop: '0.25rem' }}>
-                            <div>Caption: {uploadProps.instagram.caption}</div>
-                            {uploadProps.instagram.location_id && <div>Location ID: {uploadProps.instagram.location_id}</div>}
-                            <div>Disable Comments: {uploadProps.instagram.disable_comments ? 'Yes' : 'No'}</div>
-                            <div>Disable Likes: {uploadProps.instagram.disable_likes ? 'Yes' : 'No'}</div>
+                      </div>
+
+                      {/* Upload Properties Section */}
+                      {(youtubeProps.title || uploadProps.tiktok || uploadProps.instagram) && (
+                        <div className="video-detail-section">
+                          <div className="video-detail-label">Upload Properties</div>
+                          <div className="video-detail-content">
+                            {youtubeProps.title && (
+                              <div className="video-detail-platform">
+                                <div className="video-detail-platform-name">YouTube</div>
+                                <div className="video-detail-platform-props">
+                                  <div className="video-detail-row">
+                                    <span className="video-detail-key">Title:</span>
+                                    <span className="video-detail-value">{youtubeProps.title}</span>
+                                  </div>
+                                  <div className="video-detail-row">
+                                    <span className="video-detail-key">Visibility:</span>
+                                    <span className="video-detail-value">{youtubeProps.visibility}</span>
+                                  </div>
+                                  <div className="video-detail-row">
+                                    <span className="video-detail-key">Made for Kids:</span>
+                                    <span className="video-detail-value">{youtubeProps.made_for_kids ? 'Yes' : 'No'}</span>
+                                  </div>
+                                  {youtubeProps.description && (
+                                    <div className="video-detail-row">
+                                      <span className="video-detail-key">Description:</span>
+                                      <span className="video-detail-value">{youtubeProps.description.substring(0, 100)}{youtubeProps.description.length > 100 ? '...' : ''}</span>
+                                    </div>
+                                  )}
+                                  {youtubeProps.tags && (
+                                    <div className="video-detail-row">
+                                      <span className="video-detail-key">Tags:</span>
+                                      <span className="video-detail-value">{youtubeProps.tags}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                            {uploadProps.tiktok && (
+                              <div className="video-detail-platform">
+                                <div className="video-detail-platform-name">TikTok</div>
+                                <div className="video-detail-platform-props">
+                                  <div className="video-detail-row">
+                                    <span className="video-detail-key">Title:</span>
+                                    <span className="video-detail-value">{uploadProps.tiktok.title}</span>
+                                  </div>
+                                  <div className="video-detail-row">
+                                    <span className="video-detail-key">Privacy:</span>
+                                    <span className="video-detail-value">{uploadProps.tiktok.privacy_level}</span>
+                                  </div>
+                                  <div className="video-detail-row">
+                                    <span className="video-detail-key">Allow Comments:</span>
+                                    <span className="video-detail-value">{uploadProps.tiktok.allow_comments ? 'Yes' : 'No'}</span>
+                                  </div>
+                                  <div className="video-detail-row">
+                                    <span className="video-detail-key">Allow Duet:</span>
+                                    <span className="video-detail-value">{uploadProps.tiktok.allow_duet ? 'Yes' : 'No'}</span>
+                                  </div>
+                                  <div className="video-detail-row">
+                                    <span className="video-detail-key">Allow Stitch:</span>
+                                    <span className="video-detail-value">{uploadProps.tiktok.allow_stitch ? 'Yes' : 'No'}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                            {uploadProps.instagram && (
+                              <div className="video-detail-platform">
+                                <div className="video-detail-platform-name">Instagram</div>
+                                <div className="video-detail-platform-props">
+                                  <div className="video-detail-row">
+                                    <span className="video-detail-key">Caption:</span>
+                                    <span className="video-detail-value">{uploadProps.instagram.caption}</span>
+                                  </div>
+                                  {uploadProps.instagram.location_id && (
+                                    <div className="video-detail-row">
+                                      <span className="video-detail-key">Location ID:</span>
+                                      <span className="video-detail-value">{uploadProps.instagram.location_id}</span>
+                                    </div>
+                                  )}
+                                  <div className="video-detail-row">
+                                    <span className="video-detail-key">Disable Comments:</span>
+                                    <span className="video-detail-value">{uploadProps.instagram.disable_comments ? 'Yes' : 'No'}</span>
+                                  </div>
+                                  <div className="video-detail-row">
+                                    <span className="video-detail-key">Disable Likes:</span>
+                                    <span className="video-detail-value">{uploadProps.instagram.disable_likes ? 'Yes' : 'No'}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
                       )}

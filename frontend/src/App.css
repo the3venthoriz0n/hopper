@@ -906,6 +906,262 @@ button:disabled {
   }
 }
 
+/* Mobile responsive fixes for iPhone 14 Pro Max (430px) and similar devices */
+@media (max-width: 480px) {
+  /* App container - reduce padding on mobile */
+  .app {
+    padding: 1rem;
+  }
+
+  /* Destination cards - fix toggle and settings button layout */
+  .destination {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.75rem;
+  }
+
+  .destination > div:first-child {
+    flex: 1;
+    min-width: 0; /* Allow text to shrink */
+    overflow: hidden;
+  }
+
+  .destination > div:last-child {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+
+  /* Settings button - ensure it doesn't overflow */
+  .btn-settings {
+    padding: 0.4rem 0.6rem;
+    font-size: 0.9rem;
+    flex-shrink: 0;
+    min-width: 36px;
+  }
+
+  /* Toggle switch - ensure proper size on mobile */
+  .toggle {
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+  }
+
+  /* Account info text - truncate on mobile */
+  .account-info {
+    font-size: 0.75em !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 150px;
+  }
+
+  /* Video queue header - stack buttons on mobile */
+  .queue-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 0.75rem !important;
+  }
+
+  .queue-buttons {
+    width: 100%;
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  /* Queue buttons - make them stack or wrap properly */
+  .queue-buttons > button {
+    flex: 1;
+    min-width: calc(50% - 0.25rem);
+    padding: 0.6rem 0.75rem !important;
+    font-size: 0.85rem !important;
+  }
+
+  /* Card padding - reduce on mobile */
+  .card {
+    padding: 1rem;
+  }
+
+  /* Settings panel - cleaner on mobile */
+  .settings-panel {
+    padding: 1rem !important;
+  }
+
+  /* Global Settings - cleaner spacing on mobile */
+  .card h2 {
+    margin-bottom: 1rem;
+  }
+
+  /* Video expanded section - cleaner on mobile */
+  .video-info-container {
+    min-width: 0; /* Allow text to wrap */
+  }
+
+  /* Reduce font sizes on mobile */
+  h1 {
+    font-size: 2rem;
+  }
+
+  h2 {
+    font-size: 1rem;
+  }
+}
+
+/* Video expanded details - professional and consistent design */
+.video-expanded-details {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  font-size: 0.875rem;
+}
+
+.video-detail-section {
+  margin-bottom: 1.25rem;
+}
+
+.video-detail-section:last-child {
+  margin-bottom: 0;
+}
+
+.video-detail-label {
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #9ca3af;
+  margin-bottom: 0.75rem;
+}
+
+.video-detail-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.video-detail-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.video-detail-row:last-child {
+  border-bottom: none;
+}
+
+.video-detail-key {
+  color: #9ca3af;
+  font-size: 0.875rem;
+  min-width: 100px;
+  flex-shrink: 0;
+}
+
+.video-detail-value {
+  color: #e5e7eb;
+  font-size: 0.875rem;
+  flex: 1;
+  word-break: break-word;
+}
+
+.video-detail-tokens {
+  color: #818cf8;
+  font-weight: 500;
+}
+
+.video-detail-platform {
+  padding: 0.75rem;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+  border-left: 3px solid rgba(255, 255, 255, 0.1);
+}
+
+.video-detail-platform-name {
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: #e5e7eb;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.video-detail-platform-props {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.video-detail-platform-props .video-detail-row {
+  padding: 0.375rem 0;
+  border-bottom: none;
+  margin: 0;
+}
+
+.video-detail-platform-props .video-detail-key {
+  min-width: 120px;
+  font-size: 0.8125rem;
+}
+
+.video-detail-platform-props .video-detail-value {
+  font-size: 0.8125rem;
+}
+
+/* Mobile responsive for video expanded details */
+@media (max-width: 480px) {
+  .video-expanded-details {
+    padding: 0.75rem;
+    font-size: 0.8125rem;
+  }
+
+  .video-detail-section {
+    margin-bottom: 1rem;
+  }
+
+  .video-detail-label {
+    font-size: 0.7rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .video-detail-row {
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.375rem 0;
+  }
+
+  .video-detail-key {
+    min-width: auto;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .video-detail-value {
+    font-size: 0.8125rem;
+  }
+
+  .video-detail-platform {
+    padding: 0.5rem;
+  }
+
+  .video-detail-platform-name {
+    font-size: 0.8125rem;
+    margin-bottom: 0.375rem;
+    padding-bottom: 0.375rem;
+  }
+
+  .video-detail-platform-props .video-detail-key {
+    min-width: auto;
+    font-size: 0.75rem;
+  }
+
+  .video-detail-platform-props .video-detail-value {
+    font-size: 0.75rem;
+  }
+}
+
 /* Notification popup animation */
 @keyframes slideInRight {
   from {
