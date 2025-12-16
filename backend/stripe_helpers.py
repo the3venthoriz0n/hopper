@@ -616,8 +616,19 @@ def get_customer_portal_url(user_id: int, return_url: str, db: Session) -> Optio
 
 
 
-def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription]:
-    """Create a free subscription for a new user via Stripe."""
+def create_free_subscription(user_id: int, db: Session, skip_token_reset: bool = False) -> Optional[Subscription]:
+    """
+    Create a free subscription for a user via Stripe.
+    
+    Args:
+        user_id: User ID
+        db: Database session
+        skip_token_reset: If True, skip token reset (caller will handle tokens manually).
+                          Use this when switching plans to preserve existing tokens.
+    
+    Returns:
+        Subscription object or None if creation failed
+    """
     if not STRIPE_SECRET_KEY:
         logger.error("Cannot create free subscription: STRIPE_SECRET_KEY not set")
         return None
@@ -641,7 +652,7 @@ def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription
             logger.error("Free plan price ID not configured")
             return None
         
-        logger.info(f"Creating free subscription for user {user_id} with price {price_id}")
+        logger.info(f"Creating free subscription for user {user_id} with price {price_id} (skip_token_reset={skip_token_reset})")
         
         # Free plan: 10 tokens × $0.00 = $0.00
         # Always use plan's base monthly_tokens (not including granted tokens)
@@ -664,21 +675,25 @@ def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription
         )
         
         if subscription:
-            from token_helpers import reset_tokens_for_subscription
-            from stripe_config import get_plan_monthly_tokens
-            token_initialized = reset_tokens_for_subscription(
-                user_id,
-                subscription.plan_type,
-                subscription.current_period_start,
-                subscription.current_period_end,
-                db,
-                is_renewal=False
-            )
-            if token_initialized:
-                monthly_tokens = get_plan_monthly_tokens('free')
-                logger.info(f"Created free subscription for user {user_id}: {stripe_subscription.id} with {monthly_tokens} tokens")
+            if not skip_token_reset:
+                # Only reset tokens if not skipping (for new users)
+                from token_helpers import reset_tokens_for_subscription
+                from stripe_config import get_plan_monthly_tokens
+                token_initialized = reset_tokens_for_subscription(
+                    user_id,
+                    subscription.plan_type,
+                    subscription.current_period_start,
+                    subscription.current_period_end,
+                    db,
+                    is_renewal=False
+                )
+                if token_initialized:
+                    monthly_tokens = get_plan_monthly_tokens('free')
+                    logger.info(f"Created free subscription for user {user_id}: {stripe_subscription.id} with {monthly_tokens} tokens")
+                else:
+                    logger.warning(f"Created subscription but token initialization failed")
             else:
-                logger.warning(f"Created subscription but token initialization failed")
+                logger.info(f"Created free subscription for user {user_id}: {stripe_subscription.id} (token reset skipped - caller will handle)")
         else:
             logger.error(f"Failed to create subscription record for user {user_id}")
         

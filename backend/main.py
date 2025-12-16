@@ -4137,30 +4137,29 @@ def cancel_subscription(
     db.delete(subscription)
     db.commit()
     
-    # Create new free Stripe subscription
-    free_subscription = create_free_subscription(user_id, db)
+    # Create new free Stripe subscription (skip token reset - we'll handle it manually)
+    free_subscription = create_free_subscription(user_id, db, skip_token_reset=True)
     if not free_subscription:
         raise HTTPException(500, "Failed to create free subscription")
     
-    # Preserve tokens: restore the original token balance (don't add free plan tokens)
-    # The create_free_subscription adds free plan tokens, but we want to preserve the original balance
+    # Handle tokens manually: preserve existing tokens and set monthly_tokens correctly
     from stripe_config import get_plan_monthly_tokens
     free_plan_tokens = get_plan_monthly_tokens('free')
     
-    # Get the balance again after free subscription creation
+    # Get the balance after subscription creation
     token_balance = get_or_create_token_balance(user_id, db)
-    # Subtract the free plan tokens that were added, then restore original balance
-    # If create_free_subscription added tokens: balance = current_tokens + free_plan_tokens
-    # We want: balance = current_tokens
-    # So: balance = balance - free_plan_tokens + current_tokens
-    # But we need to be careful - if current_tokens was already preserved, we don't want to double-add
-    # Actually, simpler: just set it to current_tokens directly
+    
+    # Preserve existing tokens (don't add free plan tokens)
     token_balance.tokens_remaining = current_tokens
-    # Update monthly_tokens to reflect the actual starting balance for the new plan
+    
+    # Set monthly_tokens to reflect actual starting balance for the new plan
     # Use max of preserved tokens and free plan tokens to ensure counter displays correctly
     token_balance.monthly_tokens = max(current_tokens, free_plan_tokens)
+    
     # Reset usage counter for clean start on new plan
     token_balance.tokens_used_this_period = 0
+    
+    # Update period to match new subscription
     token_balance.period_start = free_subscription.current_period_start
     token_balance.period_end = free_subscription.current_period_end
     token_balance.updated_at = datetime.now(timezone.utc)
