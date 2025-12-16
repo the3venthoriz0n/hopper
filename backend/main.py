@@ -4995,12 +4995,31 @@ def unenroll_unlimited_plan(
         logger.error(f"Error unenrolling user {target_user_id} from unlimited plan: {e}", exc_info=True)
         raise HTTPException(500, f"Failed to unenroll from unlimited plan: {str(e)}")
     
-    # After create_free_subscription, the balance has been increased by free_plan_monthly_tokens
-    # We want the final balance to be just preserved_tokens (not preserved_tokens + free_plan_monthly_tokens)
-    # So we set it back to preserved_tokens, effectively removing the free plan tokens that were added
+    # After create_free_subscription, reset_tokens_for_subscription was called which:
+    # - Added free plan tokens to preserved_tokens (10 + 10 = 20)
+    # - Set monthly_tokens to the new total (20)
+    # We want the final balance to be just preserved_tokens (not preserved_tokens + free_plan_tokens)
+    # So we set both tokens_remaining and monthly_tokens to preserved_tokens
     token_balance = get_or_create_token_balance(target_user_id, db)
+    from stripe_config import get_plan_monthly_tokens
+    free_plan_tokens = get_plan_monthly_tokens('free')
+    
+    # Set tokens_remaining to preserved_tokens
     token_balance.tokens_remaining = preserved_tokens
+    
+    # Set monthly_tokens to preserved_tokens (or free plan tokens if preserved is less)
+    # This ensures the counter shows the correct starting balance
+    token_balance.monthly_tokens = max(preserved_tokens, free_plan_tokens)
+    
+    # Ensure tokens_used_this_period is 0 (fresh start on free plan)
+    token_balance.tokens_used_this_period = 0
+    
     db.commit()
+    
+    logger.info(
+        f"Set token balance after unenroll: tokens_remaining={token_balance.tokens_remaining}, "
+        f"monthly_tokens={token_balance.monthly_tokens}, preserved_tokens={preserved_tokens}"
+    )
     
     logger.info(
         f"Admin {admin_user.id} unenrolled user {target_user_id} from unlimited plan "
