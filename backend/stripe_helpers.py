@@ -1028,6 +1028,12 @@ def _get_plan_type_from_price(price_id: str) -> str:
 
 def get_subscription_info(user_id: int, db: Session) -> Optional[Dict[str, Any]]:
     """Get subscription information for a user."""
+    # Verify user exists before querying subscription
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        logger.warning(f"get_subscription_info called for deleted user {user_id}")
+        return None
+    
     subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
     
     if not subscription:

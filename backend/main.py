@@ -3817,6 +3817,12 @@ def get_current_subscription(user_id: int = Depends(require_auth), db: Session =
     - Webhooks (primary mechanism)
     - Background scheduler (periodic sync for missed webhooks)
     """
+    # Verify user still exists (may have been deleted after authentication)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        logger.warning(f"Subscription request for deleted user {user_id}")
+        raise HTTPException(404, "User not found")
+    
     subscription_info = get_subscription_info(user_id, db)
     
     # If user doesn't have a subscription, create a free one
@@ -3827,6 +3833,7 @@ def get_current_subscription(user_id: int = Depends(require_auth), db: Session =
             subscription_info = get_subscription_info(user_id, db)
         else:
             # If creation fails, return a default response
+            # Note: create_free_subscription already logs the error, including if user doesn't exist
             logger.error(f"Failed to create free subscription for user {user_id}")
             return {
                 "subscription": None,
@@ -4038,6 +4045,12 @@ def get_subscription_portal(
     - If user is on free plan, redirects to purchase/upgrade page
     - If user has paid subscription, opens Stripe customer portal
     """
+    # Verify user still exists (may have been deleted after authentication)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        logger.warning(f"Subscription portal request for deleted user {user_id}")
+        raise HTTPException(404, "User not found")
+    
     from stripe_helpers import get_subscription_info
     
     subscription_info = get_subscription_info(user_id, db)
@@ -4071,6 +4084,12 @@ def cancel_subscription(
     Cancels the Stripe subscription immediately and creates a new free Stripe subscription.
     Preserves the user's current token balance.
     """
+    # Verify user still exists (may have been deleted after authentication)
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        logger.warning(f"Cancel subscription request for deleted user {user_id}")
+        raise HTTPException(404, "User not found")
+    
     from token_helpers import get_or_create_token_balance
     from stripe_helpers import create_free_subscription
     
