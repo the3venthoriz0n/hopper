@@ -5683,16 +5683,49 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
             balance_info = get_token_balance(user_id, db)
             tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
             error_msg = f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining"
+            
+            # Log with comprehensive context
+            youtube_logger.error(
+                f"❌ YouTube upload FAILED - Insufficient tokens - User {user_id}, Video {video_id} ({video.filename}): "
+                f"Required {tokens_required} tokens, but only {tokens_remaining} remaining. "
+                f"File size: {video.file_size_bytes / (1024*1024):.2f} MB",
+                extra={
+                    "context": {
+                        "user_id": user_id,
+                        "video_id": video_id,
+                        "filename": video.filename,
+                        "file_size_bytes": video.file_size_bytes,
+                        "tokens_required": tokens_required,
+                        "tokens_remaining": tokens_remaining,
+                        "platform": "youtube",
+                        "error_type": "InsufficientTokens",
+                    }
+                }
+            )
+            
             db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
-            youtube_logger.error(error_msg)
+            failed_uploads_gauge.inc()
             return
     
     # Get YouTube credentials from database
     youtube_token = db_helpers.get_oauth_token(user_id, "youtube", db=db)
     if not youtube_token:
-        db_helpers.update_video(video_id, user_id, db=db, status="failed", error="No YouTube credentials")
-        youtube_logger.error("No YouTube credentials")
-        return
+            error_msg = "No YouTube credentials"
+            youtube_logger.error(
+                f"❌ YouTube upload FAILED - No credentials - User {user_id}, Video {video_id} ({video.filename})",
+                extra={
+                    "context": {
+                        "user_id": user_id,
+                        "video_id": video_id,
+                        "filename": video.filename,
+                        "platform": "youtube",
+                        "error_type": "MissingCredentials",
+                    }
+                }
+            )
+            db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+            failed_uploads_gauge.inc()
+            return
     
     # Convert OAuth token to Google Credentials
     youtube_creds = db_helpers.oauth_token_to_credentials(youtube_token, db=db)
@@ -5809,7 +5842,22 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
         
         # Verify file exists before attempting upload
         if not video_path.exists():
-            raise FileNotFoundError(f"Video file not found: {video_path}")
+            error_msg = f"Video file not found: {video_path}"
+            youtube_logger.error(
+                f"❌ YouTube upload FAILED - File not found - User {user_id}, Video {video_id} ({video.filename}): "
+                f"Path: {video_path}",
+                extra={
+                    "context": {
+                        "user_id": user_id,
+                        "video_id": video_id,
+                        "filename": video.filename,
+                        "video_path": str(video_path),
+                        "platform": "youtube",
+                        "error_type": "FileNotFound",
+                    }
+                }
+            )
+            raise FileNotFoundError(error_msg)
         
         request = youtube.videos().insert(
             part='snippet,status',
@@ -5867,9 +5915,55 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
             youtube_logger.info(f"Tokens already deducted for this video (tokens_consumed={video.tokens_consumed}), skipping")
     
     except Exception as e:
-        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=str(e))
-        youtube_logger.error(f"Error uploading {video.filename}: {str(e)}", exc_info=True)
+        error_type = type(e).__name__
+        error_msg = str(e)
+        
+        # Gather comprehensive context for troubleshooting
+        context = {
+            "user_id": user_id,
+            "video_id": video_id,
+            "filename": video.filename,
+            "file_size_bytes": video.file_size_bytes,
+            "file_size_mb": round(video.file_size_bytes / (1024 * 1024), 2) if video.file_size_bytes else None,
+            "tokens_consumed": video.tokens_consumed,
+            "platform": "youtube",
+            "error_type": error_type,
+            "error_message": error_msg,
+        }
+        
+        # Add video path if available
+        try:
+            video_path = Path(video.path).resolve() if video.path else None
+            if video_path:
+                context["video_path"] = str(video_path)
+                context["file_exists"] = video_path.exists()
+        except Exception:
+            pass
+        
+        # Add token balance info if available
+        try:
+            balance_info = get_token_balance(user_id, db)
+            if balance_info:
+                context["tokens_remaining"] = balance_info.get('tokens_remaining', 0)
+                context["tokens_used_this_period"] = balance_info.get('tokens_used_this_period', 0)
+        except Exception:
+            pass
+        
+        # Log comprehensive error details
+        youtube_logger.error(
+            f"❌ YouTube upload FAILED - User {user_id}, Video {video_id} ({video.filename}): "
+            f"{error_type}: {error_msg}",
+            extra={"context": context},
+            exc_info=True
+        )
+        
+        # Update video status with detailed error
+        detailed_error = f"YouTube upload failed: {error_type}: {error_msg}"
+        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=detailed_error)
         redis_client.delete_upload_progress(user_id, video_id)
+        
+        # Increment failed uploads metric
+        failed_uploads_gauge.inc()
 
 
 def check_tiktok_rate_limit(session_id: str = None, user_id: int = None):
@@ -5960,16 +6054,49 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
             balance_info = get_token_balance(user_id, db)
             tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
             error_msg = f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining"
+            
+            # Log with comprehensive context
+            tiktok_logger.error(
+                f"❌ TikTok upload FAILED - Insufficient tokens - User {user_id}, Video {video_id} ({video.filename}): "
+                f"Required {tokens_required} tokens, but only {tokens_remaining} remaining. "
+                f"File size: {video.file_size_bytes / (1024*1024):.2f} MB",
+                extra={
+                    "context": {
+                        "user_id": user_id,
+                        "video_id": video_id,
+                        "filename": video.filename,
+                        "file_size_bytes": video.file_size_bytes,
+                        "tokens_required": tokens_required,
+                        "tokens_remaining": tokens_remaining,
+                        "platform": "tiktok",
+                        "error_type": "InsufficientTokens",
+                    }
+                }
+            )
+            
             db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
-            tiktok_logger.error(error_msg)
+            failed_uploads_gauge.inc()
             return
     
     # Get TikTok credentials from database
     tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
     if not tiktok_token:
-        db_helpers.update_video(video_id, user_id, db=db, status="failed", error="No TikTok credentials")
-        tiktok_logger.error("No TikTok credentials")
-        return
+            error_msg = "No TikTok credentials"
+            tiktok_logger.error(
+                f"❌ TikTok upload FAILED - No credentials - User {user_id}, Video {video_id} ({video.filename})",
+                extra={
+                    "context": {
+                        "user_id": user_id,
+                        "video_id": video_id,
+                        "filename": video.filename,
+                        "platform": "tiktok",
+                        "error_type": "MissingCredentials",
+                    }
+                }
+            )
+            db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+            failed_uploads_gauge.inc()
+            return
     
     # Decrypt access token
     access_token = decrypt(tiktok_token.access_token)
@@ -5996,11 +6123,42 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         # ROOT CAUSE FIX: Resolve path to absolute to ensure file is found
         video_path = Path(video.path).resolve()
         if not video_path.exists():
-            raise FileNotFoundError(f"Video file not found: {video_path}")
+            error_msg = f"Video file not found: {video_path}"
+            tiktok_logger.error(
+                f"❌ TikTok upload FAILED - File not found - User {user_id}, Video {video_id} ({video.filename}): "
+                f"Path: {video_path}",
+                extra={
+                    "context": {
+                        "user_id": user_id,
+                        "video_id": video_id,
+                        "filename": video.filename,
+                        "video_path": str(video_path),
+                        "platform": "tiktok",
+                        "error_type": "FileNotFound",
+                    }
+                }
+            )
+            raise FileNotFoundError(error_msg)
         
         video_size = video_path.stat().st_size
         if video_size == 0:
-            raise Exception("Video file is empty")
+            error_msg = "Video file is empty"
+            tiktok_logger.error(
+                f"❌ TikTok upload FAILED - Empty file - User {user_id}, Video {video_id} ({video.filename}): "
+                f"File size: {video_size} bytes",
+                extra={
+                    "context": {
+                        "user_id": user_id,
+                        "video_id": video_id,
+                        "filename": video.filename,
+                        "video_path": str(video_path),
+                        "file_size": video_size,
+                        "platform": "tiktok",
+                        "error_type": "EmptyFile",
+                    }
+                }
+            )
+            raise Exception(error_msg)
         
         # Prepare metadata
         filename_no_ext = video.filename.rsplit('.', 1)[0] if '.' in video.filename else video.filename
@@ -6057,13 +6215,38 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         
         if init_response.status_code != 200:
             import json as json_module
-            tiktok_logger.error(f"Init failed with status {init_response.status_code}")
+            error_context = {
+                "user_id": user_id,
+                "video_id": video_id,
+                "filename": video.filename,
+                "platform": "tiktok",
+                "http_status": init_response.status_code,
+                "stage": "init_upload",
+            }
+            
             try:
                 response_data = init_response.json()
-                tiktok_logger.error(f"Full response: {json_module.dumps(response_data, indent=2)}")
+                error_context["response_data"] = response_data
                 error = response_data.get("error", {})
-                raise Exception(f"Init failed: {error.get('message', 'Unknown error')}")
+                error_message = error.get('message', 'Unknown error')
+                error_context["error_code"] = error.get('code')
+                error_context["error_message"] = error_message
+                
+                tiktok_logger.error(
+                    f"❌ TikTok upload FAILED - Init error - User {user_id}, Video {video_id} ({video.filename}): "
+                    f"HTTP {init_response.status_code} - {error_message}",
+                    extra={"context": error_context}
+                )
+                tiktok_logger.error(f"Full response: {json_module.dumps(response_data, indent=2)}")
+                raise Exception(f"Init failed: {error_message}")
             except Exception as parse_error:
+                error_context["raw_response"] = init_response.text
+                error_context["parse_error"] = str(parse_error)
+                tiktok_logger.error(
+                    f"❌ TikTok upload FAILED - Init error (parse failed) - User {user_id}, Video {video_id} ({video.filename}): "
+                    f"HTTP {init_response.status_code}",
+                    extra={"context": error_context}
+                )
                 tiktok_logger.error(f"Raw response text: {init_response.text}")
                 raise Exception(f"Init failed: {init_response.status_code} - {init_response.text}")
         
@@ -6093,14 +6276,41 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         
         if upload_response.status_code not in [200, 201]:
             import json as json_module
-            tiktok_logger.error(f"Upload failed with status {upload_response.status_code}")
+            error_context = {
+                "user_id": user_id,
+                "video_id": video_id,
+                "filename": video.filename,
+                "platform": "tiktok",
+                "http_status": upload_response.status_code,
+                "stage": "file_upload",
+                "publish_id": publish_id if 'publish_id' in locals() else None,
+                "video_size": video_size if 'video_size' in locals() else None,
+            }
+            
             try:
                 response_data = upload_response.json()
+                error_context["response_data"] = response_data
+                error = response_data.get("error", {})
+                error_msg = error.get("message", upload_response.text)
+                error_context["error_code"] = error.get('code')
+                error_context["error_message"] = error_msg
+                
+                tiktok_logger.error(
+                    f"❌ TikTok upload FAILED - File upload error - User {user_id}, Video {video_id} ({video.filename}): "
+                    f"HTTP {upload_response.status_code} - {error_msg}",
+                    extra={"context": error_context}
+                )
                 tiktok_logger.error(f"Full upload response: {json_module.dumps(response_data, indent=2)}")
-                error_msg = response_data.get("error", {}).get("message", upload_response.text)
-            except:
-                tiktok_logger.error(f"Raw upload response: {upload_response.text}")
+            except Exception as parse_error:
+                error_context["raw_response"] = upload_response.text
+                error_context["parse_error"] = str(parse_error)
                 error_msg = upload_response.text
+                tiktok_logger.error(
+                    f"❌ TikTok upload FAILED - File upload error (parse failed) - User {user_id}, Video {video_id} ({video.filename}): "
+                    f"HTTP {upload_response.status_code}",
+                    extra={"context": error_context}
+                )
+                tiktok_logger.error(f"Raw upload response: {upload_response.text}")
             raise Exception(f"Upload failed: {upload_response.status_code} - {error_msg}")
         
         # Success - update video in database
@@ -6135,9 +6345,66 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
             tiktok_logger.info(f"Tokens already deducted for this video (tokens_consumed={video.tokens_consumed}), skipping")
         
     except Exception as e:
-        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=f'TikTok upload failed: {str(e)}')
-        tiktok_logger.error(f"Upload error: {str(e)}", exc_info=True)
+        error_type = type(e).__name__
+        error_msg = str(e)
+        
+        # Gather comprehensive context for troubleshooting
+        context = {
+            "user_id": user_id,
+            "video_id": video_id,
+            "filename": video.filename,
+            "file_size_bytes": video.file_size_bytes,
+            "file_size_mb": round(video.file_size_bytes / (1024 * 1024), 2) if video.file_size_bytes else None,
+            "tokens_consumed": video.tokens_consumed,
+            "platform": "tiktok",
+            "error_type": error_type,
+            "error_message": error_msg,
+        }
+        
+        # Add video path if available
+        try:
+            video_path = Path(video.path).resolve() if video.path else None
+            if video_path:
+                context["video_path"] = str(video_path)
+                context["file_exists"] = video_path.exists()
+                if video_path.exists():
+                    context["actual_file_size_bytes"] = video_path.stat().st_size
+        except Exception:
+            pass
+        
+        # Add token balance info if available
+        try:
+            balance_info = get_token_balance(user_id, db)
+            if balance_info:
+                context["tokens_remaining"] = balance_info.get('tokens_remaining', 0)
+                context["tokens_used_this_period"] = balance_info.get('tokens_used_this_period', 0)
+        except Exception:
+            pass
+        
+        # Add TikTok-specific context if available
+        try:
+            if 'publish_id' in locals():
+                context["tiktok_publish_id"] = publish_id
+            if 'upload_url' in locals():
+                context["tiktok_upload_url"] = upload_url
+        except Exception:
+            pass
+        
+        # Log comprehensive error details
+        tiktok_logger.error(
+            f"❌ TikTok upload FAILED - User {user_id}, Video {video_id} ({video.filename}): "
+            f"{error_type}: {error_msg}",
+            extra={"context": context},
+            exc_info=True
+        )
+        
+        # Update video status with detailed error
+        detailed_error = f"TikTok upload failed: {error_type}: {error_msg}"
+        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=detailed_error)
         redis_client.delete_upload_progress(user_id, video_id)
+        
+        # Increment failed uploads metric
+        failed_uploads_gauge.inc()
             
 async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = None):
     """Upload video to Instagram using Graph API - queries database directly"""
@@ -6155,16 +6422,49 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             balance_info = get_token_balance(user_id, db)
             tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
             error_msg = f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining"
+            
+            # Log with comprehensive context
+            instagram_logger.error(
+                f"❌ Instagram upload FAILED - Insufficient tokens - User {user_id}, Video {video_id} ({video.filename}): "
+                f"Required {tokens_required} tokens, but only {tokens_remaining} remaining. "
+                f"File size: {video.file_size_bytes / (1024*1024):.2f} MB",
+                extra={
+                    "context": {
+                        "user_id": user_id,
+                        "video_id": video_id,
+                        "filename": video.filename,
+                        "file_size_bytes": video.file_size_bytes,
+                        "tokens_required": tokens_required,
+                        "tokens_remaining": tokens_remaining,
+                        "platform": "instagram",
+                        "error_type": "InsufficientTokens",
+                    }
+                }
+            )
+            
             db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
-            instagram_logger.error(error_msg)
+            failed_uploads_gauge.inc()
             return
     
     # Get Instagram credentials from database
     instagram_token = db_helpers.get_oauth_token(user_id, "instagram", db=db)
     if not instagram_token:
-        db_helpers.update_video(video_id, user_id, db=db, status="failed", error="No Instagram credentials")
-        instagram_logger.error("No Instagram credentials")
-        return
+            error_msg = "No Instagram credentials"
+            instagram_logger.error(
+                f"❌ Instagram upload FAILED - No credentials - User {user_id}, Video {video_id} ({video.filename})",
+                extra={
+                    "context": {
+                        "user_id": user_id,
+                        "video_id": video_id,
+                        "filename": video.filename,
+                        "platform": "instagram",
+                        "error_type": "MissingCredentials",
+                    }
+                }
+            )
+            db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+            failed_uploads_gauge.inc()
+            return
     
     # Decrypt access token
     access_token = decrypt(instagram_token.access_token)
@@ -6197,7 +6497,22 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         # ROOT CAUSE FIX: Resolve path to absolute to ensure file is found
         video_path = Path(video.path).resolve()
         if not video_path.exists():
-            raise FileNotFoundError(f"Video file not found: {video_path}")
+            error_msg = f"Video file not found: {video_path}"
+            instagram_logger.error(
+                f"❌ Instagram upload FAILED - File not found - User {user_id}, Video {video_id} ({video.filename}): "
+                f"Path: {video_path}",
+                extra={
+                    "context": {
+                        "user_id": user_id,
+                        "video_id": video_id,
+                        "filename": video.filename,
+                        "video_path": str(video_path),
+                        "platform": "instagram",
+                        "error_type": "FileNotFound",
+                    }
+                }
+            )
+            raise FileNotFoundError(error_msg)
         
         # Prepare caption
         filename_no_ext = video.filename.rsplit('.', 1)[0] if '.' in video.filename else video.filename
@@ -6273,14 +6588,43 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             )
             
             if container_response.status_code != 200:
+                error_context = {
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "filename": video.filename,
+                    "platform": "instagram",
+                    "http_status": container_response.status_code,
+                    "stage": "create_container",
+                    "business_account_id": business_account_id,
+                }
+                
                 error_data = container_response.json() if container_response.headers.get('content-type', '').startswith('application/json') else container_response.text
-                instagram_logger.error(f"Failed to create container: {error_data}")
-                instagram_logger.error(f"Response status: {container_response.status_code}")
-                instagram_logger.error(f"Response headers: {dict(container_response.headers)}")
+                error_context["response_data"] = error_data
+                error_context["response_headers"] = dict(container_response.headers)
                 
                 # Check if it's a token expiration issue
-                if isinstance(error_data, dict) and error_data.get('error', {}).get('code') == 190:
-                    raise Exception("Instagram access token is invalid or expired. Please reconnect your Instagram account.")
+                if isinstance(error_data, dict):
+                    error_obj = error_data.get('error', {})
+                    error_context["error_code"] = error_obj.get('code')
+                    error_context["error_message"] = error_obj.get('message')
+                    error_context["error_type"] = error_obj.get('type')
+                    
+                    if error_obj.get('code') == 190:
+                        error_msg = "Instagram access token is invalid or expired. Please reconnect your Instagram account."
+                        instagram_logger.error(
+                            f"❌ Instagram upload FAILED - Token expired - User {user_id}, Video {video_id} ({video.filename}): "
+                            f"HTTP {container_response.status_code} - {error_msg}",
+                            extra={"context": error_context}
+                        )
+                        raise Exception(error_msg)
+                
+                instagram_logger.error(
+                    f"❌ Instagram upload FAILED - Container creation error - User {user_id}, Video {video_id} ({video.filename}): "
+                    f"HTTP {container_response.status_code}",
+                    extra={"context": error_context}
+                )
+                instagram_logger.error(f"Response status: {container_response.status_code}")
+                instagram_logger.error(f"Response headers: {dict(container_response.headers)}")
                 
                 raise Exception(f"Failed to create resumable upload container: {error_data}")
             
@@ -6311,7 +6655,32 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             )
             
             if upload_response.status_code != 200:
+                error_context = {
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "filename": video.filename,
+                    "platform": "instagram",
+                    "http_status": upload_response.status_code,
+                    "stage": "upload_video_data",
+                    "container_id": container_id if 'container_id' in locals() else None,
+                    "video_size": video_size if 'video_size' in locals() else None,
+                }
+                
                 error_data = upload_response.json() if upload_response.headers.get('content-type', '').startswith('application/json') else upload_response.text
+                error_context["response_data"] = error_data
+                error_context["response_headers"] = dict(upload_response.headers)
+                
+                if isinstance(error_data, dict):
+                    error_obj = error_data.get('error', {})
+                    error_context["error_code"] = error_obj.get('code')
+                    error_context["error_message"] = error_obj.get('message')
+                    error_context["error_type"] = error_obj.get('type')
+                
+                instagram_logger.error(
+                    f"❌ Instagram upload FAILED - Video upload error - User {user_id}, Video {video_id} ({video.filename}): "
+                    f"HTTP {upload_response.status_code}",
+                    extra={"context": error_context}
+                )
                 instagram_logger.error(f"Failed to upload video: {error_data}")
                 raise Exception(f"Failed to upload video data: {error_data}")
             
@@ -6372,7 +6741,31 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             publish_response = await client.post(publish_url, json=publish_params, headers=publish_headers)
             
             if publish_response.status_code != 200:
+                error_context = {
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "filename": video.filename,
+                    "platform": "instagram",
+                    "http_status": publish_response.status_code,
+                    "stage": "publish_media",
+                    "container_id": container_id if 'container_id' in locals() else None,
+                }
+                
                 error_data = publish_response.json() if publish_response.headers.get('content-type', '').startswith('application/json') else publish_response.text
+                error_context["response_data"] = error_data
+                error_context["response_headers"] = dict(publish_response.headers)
+                
+                if isinstance(error_data, dict):
+                    error_obj = error_data.get('error', {})
+                    error_context["error_code"] = error_obj.get('code')
+                    error_context["error_message"] = error_obj.get('message')
+                    error_context["error_type"] = error_obj.get('type')
+                
+                instagram_logger.error(
+                    f"❌ Instagram upload FAILED - Publish error - User {user_id}, Video {video_id} ({video.filename}): "
+                    f"HTTP {publish_response.status_code}",
+                    extra={"context": error_context}
+                )
                 instagram_logger.error(f"Failed to publish: {error_data}")
                 raise Exception(f"Failed to publish media: {error_data}")
             
@@ -6419,9 +6812,68 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             redis_client.delete_upload_progress(user_id, video_id)
         
     except Exception as e:
-        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=f'Instagram upload failed: {str(e)}')
-        instagram_logger.error(f"Error uploading {video.filename}: {str(e)}", exc_info=True)
+        error_type = type(e).__name__
+        error_msg = str(e)
+        
+        # Gather comprehensive context for troubleshooting
+        context = {
+            "user_id": user_id,
+            "video_id": video_id,
+            "filename": video.filename,
+            "file_size_bytes": video.file_size_bytes,
+            "file_size_mb": round(video.file_size_bytes / (1024 * 1024), 2) if video.file_size_bytes else None,
+            "tokens_consumed": video.tokens_consumed,
+            "platform": "instagram",
+            "error_type": error_type,
+            "error_message": error_msg,
+        }
+        
+        # Add video path if available
+        try:
+            video_path = Path(video.path).resolve() if video.path else None
+            if video_path:
+                context["video_path"] = str(video_path)
+                context["file_exists"] = video_path.exists()
+                if video_path.exists():
+                    context["actual_file_size_bytes"] = video_path.stat().st_size
+        except Exception:
+            pass
+        
+        # Add token balance info if available
+        try:
+            balance_info = get_token_balance(user_id, db)
+            if balance_info:
+                context["tokens_remaining"] = balance_info.get('tokens_remaining', 0)
+                context["tokens_used_this_period"] = balance_info.get('tokens_used_this_period', 0)
+        except Exception:
+            pass
+        
+        # Add Instagram-specific context if available
+        try:
+            if 'container_id' in locals():
+                context["instagram_container_id"] = container_id
+            if 'business_account_id' in locals():
+                context["instagram_business_account_id"] = business_account_id
+            if 'video_size' in locals():
+                context["uploaded_video_size"] = video_size
+        except Exception:
+            pass
+        
+        # Log comprehensive error details
+        instagram_logger.error(
+            f"❌ Instagram upload FAILED - User {user_id}, Video {video_id} ({video.filename}): "
+            f"{error_type}: {error_msg}",
+            extra={"context": context},
+            exc_info=True
+        )
+        
+        # Update video status with detailed error
+        detailed_error = f"Instagram upload failed: {error_type}: {error_msg}"
+        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=detailed_error)
         redis_client.delete_upload_progress(user_id, video_id)
+        
+        # Increment failed uploads metric
+        failed_uploads_gauge.inc()
 
 # Register upload functions
 DESTINATION_UPLOADERS["youtube"] = upload_video_to_youtube
@@ -6713,6 +7165,28 @@ async def scheduler_task():
                                             if updated_video and check_upload_success(updated_video, dest_name):
                                                 success_count += 1
                                         except Exception as upload_err:
+                                            error_type = type(upload_err).__name__
+                                            error_msg = str(upload_err)
+                                            
+                                            # Gather context for troubleshooting
+                                            context = {
+                                                "user_id": user_id,
+                                                "video_id": video_id,
+                                                "filename": video.filename,
+                                                "platform": dest_name,
+                                                "error_type": error_type,
+                                                "error_message": error_msg,
+                                                "scheduled_time": str(scheduled_time) if 'scheduled_time' in locals() else None,
+                                            }
+                                            
+                                            # Log comprehensive error
+                                            upload_logger.error(
+                                                f"❌ Upload FAILED in scheduler - User {user_id}, Video {video_id} ({video.filename}), "
+                                                f"Platform {dest_name}: {error_type}: {error_msg}",
+                                                extra={"context": context},
+                                                exc_info=True
+                                            )
+                                            
                                             print(f"  Error uploading to {dest_name}: {upload_err}")
                                 
                                 # Update final status - use shared session
@@ -6731,9 +7205,32 @@ async def scheduler_task():
                                     db_helpers.update_video(video_id, user_id, db=db, status="failed", error=f"Upload failed for some destinations")
                                     
                         except Exception as e:
+                            error_type = type(e).__name__
+                            error_msg = str(e)
+                            
+                            # Gather context for troubleshooting
+                            context = {
+                                "user_id": user_id,
+                                "video_id": video_id if 'video_id' in locals() else None,
+                                "filename": video.filename,
+                                "video_status": video.status,
+                                "error_type": error_type,
+                                "error_message": error_msg,
+                                "scheduled_time": str(scheduled_time) if 'scheduled_time' in locals() else None,
+                            }
+                            
+                            # Log comprehensive error
+                            upload_logger.error(
+                                f"❌ Scheduler task FAILED - User {user_id}, Video {video.id if hasattr(video, 'id') else 'unknown'} "
+                                f"({video.filename}): {error_type}: {error_msg}",
+                                extra={"context": context},
+                                exc_info=True
+                            )
+                            
                             print(f"Error processing scheduled video {video.filename}: {e}")
                             if 'video_id' in locals():
-                                db_helpers.update_video(video_id, user_id, db=db, status="failed", error=str(e))
+                                detailed_error = f"Scheduler error: {error_type}: {error_msg}"
+                                db_helpers.update_video(video_id, user_id, db=db, status="failed", error=detailed_error)
                 
                 scheduler_runs_counter.labels(status="success").inc()
             finally:
