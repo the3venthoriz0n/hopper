@@ -3140,6 +3140,12 @@ function Home() {
                         </span>
                       )}
                     </div>
+                    {/* Token count - desktop only */}
+                    {v.file_size_bytes && (
+                      <div className="video-token-badge-desktop">
+                        🪙 {v.tokens_consumed || calculateTokens(v.file_size_bytes)}
+                      </div>
+                    )}
                   </div>
                   <div className="status">
                     {v.status === 'uploading' ? (

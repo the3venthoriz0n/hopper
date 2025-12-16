@@ -5745,16 +5745,14 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
                 f"Required {tokens_required} tokens, but only {tokens_remaining} remaining. "
                 f"File size: {video.file_size_bytes / (1024*1024):.2f} MB",
                 extra={
-                    "context": {
-                        "user_id": user_id,
-                        "video_id": video_id,
-                        "filename": video.filename,
-                        "file_size_bytes": video.file_size_bytes,
-                        "tokens_required": tokens_required,
-                        "tokens_remaining": tokens_remaining,
-                        "platform": "youtube",
-                        "error_type": "InsufficientTokens",
-                    }
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "filename": video.filename,
+                    "file_size_bytes": video.file_size_bytes,
+                    "tokens_required": tokens_required,
+                    "tokens_remaining": tokens_remaining,
+                    "platform": "youtube",
+                    "error_type": "InsufficientTokens",
                 }
             )
             
@@ -5769,13 +5767,11 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
             youtube_logger.error(
                 f"❌ YouTube upload FAILED - No credentials - User {user_id}, Video {video_id} ({video.filename})",
                 extra={
-                    "context": {
-                        "user_id": user_id,
-                        "video_id": video_id,
-                        "filename": video.filename,
-                        "platform": "youtube",
-                        "error_type": "MissingCredentials",
-                    }
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "filename": video.filename,
+                    "platform": "youtube",
+                    "error_type": "MissingCredentials",
                 }
             )
             db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
@@ -6004,11 +6000,11 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
         except Exception:
             pass
         
-        # Log comprehensive error details
+        # Log comprehensive error details (flatten context dict directly into extra)
         youtube_logger.error(
             f"❌ YouTube upload FAILED - User {user_id}, Video {video_id} ({video.filename}): "
             f"{error_type}: {error_msg}",
-            extra={"context": context},
+            extra=context,
             exc_info=True
         )
         
@@ -6116,16 +6112,14 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                 f"Required {tokens_required} tokens, but only {tokens_remaining} remaining. "
                 f"File size: {video.file_size_bytes / (1024*1024):.2f} MB",
                 extra={
-                    "context": {
-                        "user_id": user_id,
-                        "video_id": video_id,
-                        "filename": video.filename,
-                        "file_size_bytes": video.file_size_bytes,
-                        "tokens_required": tokens_required,
-                        "tokens_remaining": tokens_remaining,
-                        "platform": "tiktok",
-                        "error_type": "InsufficientTokens",
-                    }
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "filename": video.filename,
+                    "file_size_bytes": video.file_size_bytes,
+                    "tokens_required": tokens_required,
+                    "tokens_remaining": tokens_remaining,
+                    "platform": "tiktok",
+                    "error_type": "InsufficientTokens",
                 }
             )
             
@@ -6140,13 +6134,11 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
             tiktok_logger.error(
                 f"❌ TikTok upload FAILED - No credentials - User {user_id}, Video {video_id} ({video.filename})",
                 extra={
-                    "context": {
-                        "user_id": user_id,
-                        "video_id": video_id,
-                        "filename": video.filename,
-                        "platform": "tiktok",
-                        "error_type": "MissingCredentials",
-                    }
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "filename": video.filename,
+                    "platform": "tiktok",
+                    "error_type": "MissingCredentials",
                 }
             )
             db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
@@ -6183,14 +6175,12 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                 f"❌ TikTok upload FAILED - File not found - User {user_id}, Video {video_id} ({video.filename}): "
                 f"Path: {video_path}",
                 extra={
-                    "context": {
-                        "user_id": user_id,
-                        "video_id": video_id,
-                        "filename": video.filename,
-                        "video_path": str(video_path),
-                        "platform": "tiktok",
-                        "error_type": "FileNotFound",
-                    }
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "filename": video.filename,
+                    "video_path": str(video_path),
+                    "platform": "tiktok",
+                    "error_type": "FileNotFound",
                 }
             )
             raise FileNotFoundError(error_msg)
@@ -6290,7 +6280,7 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                 tiktok_logger.error(
                     f"❌ TikTok upload FAILED - Init error - User {user_id}, Video {video_id} ({video.filename}): "
                     f"HTTP {init_response.status_code} - {error_message}",
-                    extra={"context": error_context}
+                    extra=error_context
                 )
                 tiktok_logger.error(f"Full response: {json_module.dumps(response_data, indent=2)}")
                 raise Exception(f"Init failed: {error_message}")
@@ -6300,7 +6290,7 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                 tiktok_logger.error(
                     f"❌ TikTok upload FAILED - Init error (parse failed) - User {user_id}, Video {video_id} ({video.filename}): "
                     f"HTTP {init_response.status_code}",
-                    extra={"context": error_context}
+                    extra=error_context
                 )
                 tiktok_logger.error(f"Raw response text: {init_response.text}")
                 raise Exception(f"Init failed: {init_response.status_code} - {init_response.text}")
@@ -6353,7 +6343,7 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                 tiktok_logger.error(
                     f"❌ TikTok upload FAILED - File upload error - User {user_id}, Video {video_id} ({video.filename}): "
                     f"HTTP {upload_response.status_code} - {error_msg}",
-                    extra={"context": error_context}
+                    extra=error_context
                 )
                 tiktok_logger.error(f"Full upload response: {json_module.dumps(response_data, indent=2)}")
             except Exception as parse_error:
@@ -6363,7 +6353,7 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                 tiktok_logger.error(
                     f"❌ TikTok upload FAILED - File upload error (parse failed) - User {user_id}, Video {video_id} ({video.filename}): "
                     f"HTTP {upload_response.status_code}",
-                    extra={"context": error_context}
+                    extra=error_context
                 )
                 tiktok_logger.error(f"Raw upload response: {upload_response.text}")
             raise Exception(f"Upload failed: {upload_response.status_code} - {error_msg}")
@@ -6445,11 +6435,11 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         except Exception:
             pass
         
-        # Log comprehensive error details
+        # Log comprehensive error details (flatten context dict directly into extra)
         tiktok_logger.error(
             f"❌ TikTok upload FAILED - User {user_id}, Video {video_id} ({video.filename}): "
             f"{error_type}: {error_msg}",
-            extra={"context": context},
+            extra=context,
             exc_info=True
         )
         
@@ -6669,14 +6659,14 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
                         instagram_logger.error(
                             f"❌ Instagram upload FAILED - Token expired - User {user_id}, Video {video_id} ({video.filename}): "
                             f"HTTP {container_response.status_code} - {error_msg}",
-                            extra={"context": error_context}
+                            extra=error_context
                         )
                         raise Exception(error_msg)
                 
                 instagram_logger.error(
                     f"❌ Instagram upload FAILED - Container creation error - User {user_id}, Video {video_id} ({video.filename}): "
                     f"HTTP {container_response.status_code}",
-                    extra={"context": error_context}
+                    extra=error_context
                 )
                 instagram_logger.error(f"Response status: {container_response.status_code}")
                 instagram_logger.error(f"Response headers: {dict(container_response.headers)}")
@@ -6734,7 +6724,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
                 instagram_logger.error(
                     f"❌ Instagram upload FAILED - Video upload error - User {user_id}, Video {video_id} ({video.filename}): "
                     f"HTTP {upload_response.status_code}",
-                    extra={"context": error_context}
+                    extra=error_context
                 )
                 instagram_logger.error(f"Failed to upload video: {error_data}")
                 raise Exception(f"Failed to upload video data: {error_data}")
@@ -6819,7 +6809,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
                 instagram_logger.error(
                     f"❌ Instagram upload FAILED - Publish error - User {user_id}, Video {video_id} ({video.filename}): "
                     f"HTTP {publish_response.status_code}",
-                    extra={"context": error_context}
+                    extra=error_context
                 )
                 instagram_logger.error(f"Failed to publish: {error_data}")
                 raise Exception(f"Failed to publish media: {error_data}")
@@ -6914,11 +6904,11 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         except Exception:
             pass
         
-        # Log comprehensive error details
+        # Log comprehensive error details (flatten context dict directly into extra)
         instagram_logger.error(
             f"❌ Instagram upload FAILED - User {user_id}, Video {video_id} ({video.filename}): "
             f"{error_type}: {error_msg}",
-            extra={"context": context},
+            extra=context,
             exc_info=True
         )
         
@@ -7238,7 +7228,7 @@ async def scheduler_task():
                                             upload_logger.error(
                                                 f"❌ Upload FAILED in scheduler - User {user_id}, Video {video_id} ({video.filename}), "
                                                 f"Platform {dest_name}: {error_type}: {error_msg}",
-                                                extra={"context": context},
+                                                extra=context,
                                                 exc_info=True
                                             )
                                             
