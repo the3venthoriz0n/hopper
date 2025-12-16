@@ -1112,20 +1112,23 @@ def record_token_usage_to_stripe(
         from token_helpers import get_or_create_token_balance
         from stripe_config import get_plan_monthly_tokens
         
+        logger.info(f"🔍 record_token_usage_to_stripe called for user {user_id}, tokens_used={tokens_used}")
+        
         # Get user's subscription
         subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
         if not subscription:
-            logger.debug(f"No subscription found for user {user_id}, skipping Stripe usage recording")
+            logger.warning(f"❌ No subscription found for user {user_id}, skipping Stripe usage recording")
             return False
         
         # Unlimited and free plans don't have metered usage
         if subscription.plan_type in ('unlimited', 'free'):
+            logger.debug(f"⏭️  User {user_id} on {subscription.plan_type} plan (no metered usage)")
             return True
         
         # Get customer ID from subscription
         customer_id = subscription.stripe_customer_id
         if not customer_id:
-            logger.debug(f"Subscription {subscription.stripe_subscription_id} has no customer ID, skipping usage recording")
+            logger.warning(f"❌ Subscription {subscription.stripe_subscription_id} has no customer ID, skipping usage recording")
             return False
         
         # Get token balance to calculate overage
@@ -1153,6 +1156,14 @@ def record_token_usage_to_stripe(
         #   - new_overage = 5 - 0 = 5 (only report the 5 overage tokens to Stripe)
         new_overage = current_overage - previous_overage
         
+        logger.info(
+            f"📊 Token usage calculation for user {user_id}: "
+            f"total_used={total_used}, included_tokens={included_tokens}, "
+            f"previous_total_used={previous_total_used}, "
+            f"current_overage={current_overage}, previous_overage={previous_overage}, "
+            f"new_overage={new_overage}"
+        )
+        
         if new_overage > 0:
             try:
                 # Use the new Meter Event API to report usage
@@ -1160,29 +1171,39 @@ def record_token_usage_to_stripe(
                 # Payload format matches meter configuration:
                 # - customer_mapping expects "stripe_customer_id" in payload
                 # - value_settings expects "value" in payload
-                timestamp = int(datetime.now(timezone.utc).timestamp())
-                identifier = f"user_{user_id}_{timestamp * 1000}"
+                # 
+                # NOTE: We don't specify timestamp - Stripe will use the current time automatically.
+                # This avoids issues with timestamp validation (must be within 35 days).
+                current_timestamp = int(datetime.now(timezone.utc).timestamp())
+                identifier = f"user_{user_id}_{current_timestamp * 1000}_{new_overage}"
                 
                 logger.info(
                     f"Sending meter event for user {user_id}: "
                     f"event_name=hopper_tokens, customer={customer_id}, value={new_overage}, "
-                    f"timestamp={timestamp}, identifier={identifier}"
+                    f"identifier={identifier}"
                 )
+                
+                # Refresh balance from DB to ensure we have latest data
+                db.refresh(balance)
                 
                 meter_event = stripe.billing.MeterEvent.create(
                     event_name="hopper_tokens",  # Must match meter's event_name
-                    identifier=identifier,  # Unique identifier
+                    identifier=identifier,  # Unique identifier (must be unique per event)
                     payload={
                         "stripe_customer_id": customer_id,  # Matches customer_mapping[event_payload_key]
                         "value": new_overage,  # Matches value_settings[event_payload_key]
-                    },
-                    timestamp=timestamp
+                    }
+                    # No timestamp parameter - Stripe will use current time automatically
                 )
                 
                 logger.info(
-                    f"✓ Successfully recorded {new_overage} overage tokens to Stripe meter for user {user_id} "
-                    f"(meter_event_id={meter_event.id}, total used: {total_used}, included: {included_tokens}, overage: {current_overage})"
+                    f"✅ Successfully recorded {new_overage} overage tokens to Stripe meter for user {user_id} "
+                    f"(meter_event_id={meter_event.id}, customer_id={customer_id}, "
+                    f"total used: {total_used}, included: {included_tokens}, overage: {current_overage})"
                 )
+                
+                # Log the full meter event response for debugging
+                logger.debug(f"Meter event response: {meter_event}")
                 return True
             except stripe.error.StripeError as e:
                 logger.error(
@@ -1197,9 +1218,9 @@ def record_token_usage_to_stripe(
                 return False
         else:
             # No new overage to report (all tokens were from included allocation)
-            logger.debug(
-                f"No new overage for user {user_id} "
-                f"(total used: {total_used}, included: {included_tokens}, overage: {current_overage})"
+            logger.info(
+                f"ℹ️  No new overage to report for user {user_id} "
+                f"(total used: {total_used}, included: {included_tokens}, current_overage: {current_overage}, new_overage: {new_overage})"
             )
             return True
             
