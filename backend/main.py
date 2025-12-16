@@ -569,6 +569,10 @@ class GrantTokensRequest(BaseModel):
     amount: int
     reason: Optional[str] = None
 
+class DeductTokensRequest(BaseModel):
+    amount: int
+    reason: Optional[str] = None
+
 class CreateUserRequest(BaseModel):
     email: EmailStr
     password: str
@@ -5287,6 +5291,87 @@ def grant_tokens(
     
     logger.info(f"Admin {admin_user.id} granted {request_data.amount} tokens to user {user_id}")
     return {"message": f"Granted {request_data.amount} tokens to user {user_id}"}
+
+
+@app.post("/api/admin/users/{user_id}/deduct-tokens")
+def deduct_tokens_admin(
+    user_id: int,
+    request_data: DeductTokensRequest,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Deduct tokens from a user (admin only) - for testing overage pricing.
+    
+    This endpoint allows admins to manually deduct tokens to test:
+    - Token deduction logic
+    - Overage pricing calculations
+    - Meter event creation for overage tokens
+    """
+    if request_data.amount <= 0:
+        raise HTTPException(400, "Token amount must be positive")
+    
+    target_user = db.query(User).filter(User.id == user_id).first()
+    if not target_user:
+        raise HTTPException(404, "User not found")
+    
+    # Get balance before deduction
+    balance_before = get_token_balance(user_id, db)
+    if not balance_before:
+        raise HTTPException(500, "Could not retrieve user token balance")
+    
+    # Get subscription info to determine included tokens
+    subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+    from stripe_config import get_plan_monthly_tokens
+    included_tokens = get_plan_monthly_tokens(subscription.plan_type) if subscription else 0
+    
+    # Calculate if this will trigger overage
+    tokens_used_before = balance_before.get('tokens_used_this_period', 0)
+    tokens_used_after = tokens_used_before + request_data.amount
+    overage_before = max(0, tokens_used_before - included_tokens)
+    overage_after = max(0, tokens_used_after - included_tokens)
+    new_overage = overage_after - overage_before
+    
+    # Deduct tokens using the standard function (this will trigger meter events if overage)
+    success = deduct_tokens(
+        user_id=user_id,
+        tokens=request_data.amount,
+        transaction_type='admin_test',
+        metadata={
+            'admin_id': admin_user.id,
+            'reason': request_data.reason or 'admin_test',
+            'test_overage': new_overage > 0
+        },
+        db=db
+    )
+    
+    if not success:
+        raise HTTPException(500, "Failed to deduct tokens")
+    
+    # Get balance after deduction
+    balance_after = get_token_balance(user_id, db)
+    
+    logger.info(
+        f"Admin {admin_user.id} deducted {request_data.amount} tokens from user {user_id} "
+        f"(balance: {balance_before.get('tokens_remaining', 0)} -> {balance_after.get('tokens_remaining', 0)}, "
+        f"overage: {overage_before} -> {overage_after}, new_overage: {new_overage})"
+    )
+    
+    return {
+        "message": f"Deducted {request_data.amount} tokens from user {user_id}",
+        "transaction": {
+            "tokens_deducted": request_data.amount,
+            "balance_before": balance_before.get('tokens_remaining', 0),
+            "balance_after": balance_after.get('tokens_remaining', 0),
+            "tokens_used_before": tokens_used_before,
+            "tokens_used_after": tokens_used_after,
+            "included_tokens": included_tokens,
+            "overage_before": overage_before,
+            "overage_after": overage_after,
+            "new_overage": new_overage,
+            "triggered_meter_event": new_overage > 0
+        }
+    }
 
 
 @app.post("/api/admin/test-meter-event/{user_id}")

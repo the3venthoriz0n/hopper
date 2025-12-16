@@ -51,6 +51,9 @@ function AdminDashboard() {
   const [userDetails, setUserDetails] = useState(null);
   const [tokenAmount, setTokenAmount] = useState('');
   const [grantReason, setGrantReason] = useState('');
+  const [deductAmount, setDeductAmount] = useState('');
+  const [deductReason, setDeductReason] = useState('');
+  const [deductResult, setDeductResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -166,6 +169,36 @@ function AdminDashboard() {
       setMessage(`✅ Granted ${tokenAmount} tokens`);
       setTokenAmount('');
       setGrantReason('');
+      loadUserDetails(userId);
+      loadUsers();
+    } catch (err) {
+      setMessage(`❌ Error: ${err.response?.data?.detail || err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeductTokens = async (userId) => {
+    if (!deductAmount || parseInt(deductAmount) <= 0) {
+      setMessage('❌ Please enter a valid token amount');
+      return;
+    }
+
+    setLoading(true);
+    setDeductResult(null);
+    try {
+      const response = await axios.post(
+        `${API}/admin/users/${userId}/deduct-tokens`,
+        { amount: parseInt(deductAmount), reason: deductReason },
+        { 
+          headers: { 'X-CSRF-Token': csrfToken },
+          withCredentials: true
+        }
+      );
+      setMessage(`✅ Deducted ${deductAmount} tokens`);
+      setDeductResult(response.data.transaction);
+      setDeductAmount('');
+      setDeductReason('');
       loadUserDetails(userId);
       loadUsers();
     } catch (err) {
@@ -647,6 +680,82 @@ function AdminDashboard() {
                         >
                           Grant Tokens
                         </button>
+                      </div>
+                    </div>
+
+                    <div style={{ marginBottom: '1.5rem' }}>
+                      <h3 style={{ color: '#fff', fontSize: '1rem', marginBottom: '0.75rem' }}>Deduct Tokens (Test Overage)</h3>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        <input
+                          type="number"
+                          value={deductAmount}
+                          onChange={(e) => setDeductAmount(e.target.value)}
+                          placeholder="Token amount to deduct"
+                          style={{
+                            padding: '0.5rem',
+                            background: 'rgba(0, 0, 0, 0.3)',
+                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            borderRadius: '4px',
+                            color: '#fff',
+                            fontSize: '0.9rem'
+                          }}
+                        />
+                        <input
+                          type="text"
+                          value={deductReason}
+                          onChange={(e) => setDeductReason(e.target.value)}
+                          placeholder="Reason (optional)"
+                          style={{
+                            padding: '0.5rem',
+                            background: 'rgba(0, 0, 0, 0.3)',
+                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            borderRadius: '4px',
+                            color: '#fff',
+                            fontSize: '0.9rem'
+                          }}
+                        />
+                        <button
+                          onClick={() => handleDeductTokens(selectedUser.id)}
+                          disabled={loading || !deductAmount}
+                          style={{
+                            padding: '0.75rem',
+                            background: loading || !deductAmount ? 'rgba(255, 255, 255, 0.05)' : 'rgba(239, 68, 68, 0.5)',
+                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            borderRadius: '4px',
+                            color: '#fff',
+                            cursor: loading || !deductAmount ? 'not-allowed' : 'pointer',
+                            fontSize: '0.9rem',
+                            fontWeight: '500'
+                          }}
+                        >
+                          Deduct Tokens
+                        </button>
+                        {deductResult && (
+                          <div style={{
+                            marginTop: '0.75rem',
+                            padding: '0.75rem',
+                            background: 'rgba(0, 0, 0, 0.4)',
+                            border: '1px solid rgba(255, 255, 255, 0.1)',
+                            borderRadius: '4px',
+                            fontSize: '0.85rem'
+                          }}>
+                            <div style={{ color: '#fff', marginBottom: '0.5rem', fontWeight: '600' }}>Transaction Details:</div>
+                            <div style={{ color: '#ccc', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                              <div>Balance: {deductResult.balance_before} → {deductResult.balance_after}</div>
+                              <div>Used: {deductResult.tokens_used_before} → {deductResult.tokens_used_after}</div>
+                              <div>Included: {deductResult.included_tokens}</div>
+                              <div style={{ color: deductResult.overage_after > 0 ? '#fbbf24' : '#ccc' }}>
+                                Overage: {deductResult.overage_before} → {deductResult.overage_after}
+                                {deductResult.new_overage > 0 && ` (+${deductResult.new_overage} new)`}
+                              </div>
+                              {deductResult.triggered_meter_event && (
+                                <div style={{ color: '#10b981', fontWeight: '600', marginTop: '0.25rem' }}>
+                                  ✅ Meter event triggered for {deductResult.new_overage} overage tokens
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
 
