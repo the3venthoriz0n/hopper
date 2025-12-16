@@ -9,13 +9,13 @@ import Login from './Login';
 import AdminDashboard from './AdminDashboard';
 
 // Circular Progress Component for Token Usage
-const CircularTokenProgress = ({ tokensUsed, monthlyTokens, overageTokens, unlimited }) => {
+const CircularTokenProgress = ({ tokensUsed, monthlyTokens, overageTokens, unlimited, isLoading }) => {
   if (unlimited) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.3rem' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}>
         <div style={{
-          width: '60px',
-          height: '60px',
+          width: '48px',
+          height: '48px',
           borderRadius: '50%',
           background: 'conic-gradient(from 0deg, #10b981 0deg 360deg)',
           display: 'flex',
@@ -24,21 +24,21 @@ const CircularTokenProgress = ({ tokensUsed, monthlyTokens, overageTokens, unlim
           position: 'relative'
         }}>
           <div style={{
-            width: '45px',
-            height: '45px',
+            width: '36px',
+            height: '36px',
             borderRadius: '50%',
             background: '#0a0a0a',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            fontSize: '1.2rem',
+            fontSize: '1rem',
             fontWeight: '700',
             color: '#10b981'
           }}>
             ∞
           </div>
         </div>
-        <div style={{ fontSize: '0.7rem', color: '#999', textAlign: 'center' }}>Unlimited</div>
+        <div style={{ fontSize: '0.6rem', color: '#999', textAlign: 'center' }}>Unlimited</div>
       </div>
     );
   }
@@ -57,34 +57,35 @@ const CircularTokenProgress = ({ tokensUsed, monthlyTokens, overageTokens, unlim
   }
   
   // Calculate stroke-dasharray for the circle
-  const circumference = 2 * Math.PI * 27; // radius = 27
+  const radius = 21; // reduced from 27
+  const circumference = 2 * Math.PI * radius;
   const strokeDashoffset = circumference - (percentage / 100) * circumference;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.3rem' }}>
-      <div style={{ position: 'relative', width: '60px', height: '60px' }}>
-        <svg width="60" height="60" style={{ transform: 'rotate(-90deg)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}>
+      <div style={{ position: 'relative', width: '48px', height: '48px' }}>
+        <svg width="48" height="48" style={{ transform: 'rotate(-90deg)' }}>
           {/* Background circle */}
           <circle
-            cx="30"
-            cy="30"
-            r="27"
+            cx="24"
+            cy="24"
+            r={radius}
             fill="none"
             stroke="rgba(255, 255, 255, 0.1)"
-            strokeWidth="4"
+            strokeWidth="3"
           />
           {/* Progress circle */}
           <circle
-            cx="30"
-            cy="30"
-            r="27"
+            cx="24"
+            cy="24"
+            r={radius}
             fill="none"
             stroke={progressColor}
-            strokeWidth="4"
+            strokeWidth="3"
             strokeDasharray={circumference}
             strokeDashoffset={strokeDashoffset}
             strokeLinecap="round"
-            style={{ transition: 'stroke-dashoffset 0.5s ease' }}
+            style={{ transition: 'stroke-dashoffset 0.5s ease', opacity: isLoading ? 0.5 : 1 }}
           />
         </svg>
         {/* Center text */}
@@ -99,15 +100,15 @@ const CircularTokenProgress = ({ tokensUsed, monthlyTokens, overageTokens, unlim
           alignItems: 'center',
           gap: '0.05rem'
         }}>
-          <div style={{ fontSize: '0.75rem', fontWeight: '700', color: '#fff', lineHeight: '1' }}>
+          <div style={{ fontSize: '0.65rem', fontWeight: '700', color: isLoading ? '#666' : '#fff', lineHeight: '1' }}>
             {tokensUsed}
           </div>
-          <div style={{ fontSize: '0.55rem', color: '#999', lineHeight: '1' }}>
+          <div style={{ fontSize: '0.5rem', color: isLoading ? '#444' : '#999', lineHeight: '1' }}>
             / {monthlyTokens}
           </div>
         </div>
       </div>
-      <div style={{ fontSize: '0.65rem', color: '#999', textAlign: 'center' }}>
+      <div style={{ fontSize: '0.6rem', color: '#999', textAlign: 'center' }}>
         tokens used
       </div>
     </div>
@@ -2194,7 +2195,7 @@ function Home() {
           {/* Token Balance Indicator - always rendered, shows loading state if not yet loaded */}
           <div 
               style={{
-                padding: '0.5rem 1rem',
+                padding: '0.4rem 0.8rem',
                 background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%)',
                 border: '1px solid rgba(99, 102, 241, 0.3)',
                 borderRadius: '20px',
@@ -2215,19 +2216,13 @@ function Home() {
               }}
               title="Click to manage subscription"
             >
-              {tokenBalance ? (
-                <CircularTokenProgress
-                  tokensUsed={tokenBalance.tokens_used_this_period || 0}
-                  monthlyTokens={tokenBalance.monthly_tokens || 0}
-                  overageTokens={tokenBalance.overage_tokens || 0}
-                  unlimited={tokenBalance.unlimited}
-                />
-              ) : (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <span style={{ fontSize: '1rem' }}>🪙</span>
-                  <span style={{ fontSize: '1.1rem', fontWeight: '700', color: '#818cf8' }}>…</span>
-                </div>
-              )}
+              <CircularTokenProgress
+                tokensUsed={tokenBalance?.tokens_used_this_period || 0}
+                monthlyTokens={tokenBalance?.monthly_tokens || 0}
+                overageTokens={tokenBalance?.overage_tokens || 0}
+                unlimited={tokenBalance?.unlimited || false}
+                isLoading={!tokenBalance}
+              />
           </div>
           
           <span style={{ color: '#999', fontSize: '0.9rem' }}>
@@ -3672,34 +3667,26 @@ function Home() {
                 
                 {/* Token Balance - Always visible */}
                 <div style={{
-                  padding: '1.2rem',
+                  padding: '1rem',
                   background: 'rgba(0, 0, 0, 0.2)',
                   borderRadius: '8px',
                   marginBottom: '1rem',
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'center',
-                  gap: '0.8rem'
+                  gap: '0.6rem'
                 }}>
-                  <div style={{ fontSize: '0.8rem', color: '#999', textAlign: 'center' }}>Token Usage</div>
-                  {tokenBalance ? (
-                    <>
-                      <CircularTokenProgress
-                        tokensUsed={tokenBalance.tokens_used_this_period || 0}
-                        monthlyTokens={tokenBalance.monthly_tokens || 0}
-                        overageTokens={tokenBalance.overage_tokens || 0}
-                        unlimited={tokenBalance.unlimited}
-                      />
-                      {!tokenBalance.unlimited && tokenBalance.period_end && (
-                        <div style={{ fontSize: '0.7rem', color: '#666', textAlign: 'center' }}>
-                          Resets: {new Date(tokenBalance.period_end).toLocaleDateString()}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <span style={{ fontSize: '1rem' }}>🪙</span>
-                      <span style={{ fontSize: '1rem', fontWeight: '700', color: '#818cf8' }}>Loading...</span>
+                  <div style={{ fontSize: '0.75rem', color: '#999', textAlign: 'center' }}>Token Usage</div>
+                  <CircularTokenProgress
+                    tokensUsed={tokenBalance?.tokens_used_this_period || 0}
+                    monthlyTokens={tokenBalance?.monthly_tokens || 0}
+                    overageTokens={tokenBalance?.overage_tokens || 0}
+                    unlimited={tokenBalance?.unlimited || false}
+                    isLoading={!tokenBalance}
+                  />
+                  {tokenBalance && !tokenBalance.unlimited && tokenBalance.period_end && (
+                    <div style={{ fontSize: '0.65rem', color: '#666', textAlign: 'center' }}>
+                      Resets: {new Date(tokenBalance.period_end).toLocaleDateString()}
                     </div>
                   )}
                 </div>

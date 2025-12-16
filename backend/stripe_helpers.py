@@ -653,6 +653,9 @@ def create_stripe_subscription(user_id: int, price_id: str, db: Session) -> Opti
         if not customer_id:
             return None
         
+        # Cancel any existing subscriptions before creating new one
+        cancel_all_user_subscriptions(user_id, db, verify_cancellation=True)
+        
         logger.info(f"Creating subscription for user {user_id} with price {price_id}")
         stripe_subscription = stripe.Subscription.create(
             customer=customer_id,
@@ -830,6 +833,19 @@ def update_subscription_from_stripe(
                 subscription.updated_at = datetime.now(timezone.utc)
             else:
                 logger.info(f"Creating new subscription for user {user_id}")
+                
+                # Delete any other subscriptions for this user to prevent duplicates
+                other_subscriptions = db.query(Subscription).filter(
+                    Subscription.user_id == user_id,
+                    Subscription.stripe_subscription_id != stripe_subscription.id
+                ).all()
+                
+                if other_subscriptions:
+                    logger.warning(f"Deleting {len(other_subscriptions)} other subscription(s) for user {user_id} before creating new one")
+                    for other_sub in other_subscriptions:
+                        db.delete(other_sub)
+                    db.flush()  # Ensure deletes happen before insert
+                
                 subscription = Subscription(
                     user_id=user_id,
                     stripe_subscription_id=stripe_subscription.id,

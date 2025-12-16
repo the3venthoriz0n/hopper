@@ -4327,6 +4327,10 @@ def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
         )
         return
     
+    # Cancel any existing subscriptions first (safety check to prevent duplicates)
+    from stripe_helpers import cancel_all_user_subscriptions
+    cancel_all_user_subscriptions(user_id, db, verify_cancellation=False)
+    
     # Check if subscription already exists in DB (might have been created by .updated event first)
     existing_sub = db.query(Subscription).filter(
         Subscription.stripe_subscription_id == subscription.id
