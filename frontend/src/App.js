@@ -7,6 +7,7 @@ import Privacy from './Privacy';
 import DeleteYourData from './DeleteYourData';
 import Login from './Login';
 import AdminDashboard from './AdminDashboard';
+import Pricing from './Pricing';
 
 // Circular Progress Component for Token Usage
 // monthlyTokens tracks starting balance (plan allocation + granted tokens)
@@ -198,8 +199,11 @@ function PublicLanding() {
             Connect your accounts, drag in videos, and let hopper handle the rest.
           </p>
           <div className="landing-cta">
-            <Link to="/login" className="landing-cta-button">
-              Log in / Sign up
+            <Link to="/pricing" className="landing-cta-button">
+              View Pricing
+            </Link>
+            <Link to="/login" className="landing-cta-button-secondary">
+              Log in
             </Link>
           </div>
         </div>
@@ -4164,6 +4168,7 @@ function App() {
 
       {/* Other routes */}
       <Route path="/login" element={<Login />} />
+      <Route path="/pricing" element={<Pricing />} />
       <Route path="/admin" element={<AdminDashboard />} />
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />

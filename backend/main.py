@@ -3729,6 +3729,22 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
 # SUBSCRIPTION & TOKEN MANAGEMENT ENDPOINTS
 # ============================================================================
 
+@app.get("/api/stripe/config")
+def get_stripe_config():
+    """Get Stripe publishable key and pricing table ID for frontend"""
+    from stripe_config import STRIPE_PUBLISHABLE_KEY
+    
+    # Get pricing table ID from environment variable
+    pricing_table_id = os.getenv("STRIPE_PRICING_TABLE_ID", "")
+    
+    if not STRIPE_PUBLISHABLE_KEY:
+        raise HTTPException(500, "Stripe not configured")
+    
+    return {
+        "publishable_key": STRIPE_PUBLISHABLE_KEY,
+        "pricing_table_id": pricing_table_id
+    }
+
 @app.get("/api/subscription/plans")
 def get_subscription_plans():
     """Get available subscription plans (excludes hidden/dev-only plans)"""
