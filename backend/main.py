@@ -5145,6 +5145,66 @@ def grant_tokens(
     return {"message": f"Granted {request_data.amount} tokens to user {user_id}"}
 
 
+@app.post("/api/admin/test-meter-event/{user_id}")
+def test_meter_event(
+    user_id: int,
+    value: int = Query(1, ge=1, description="Number of tokens to report to meter"),
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Test endpoint to manually send a meter event to Stripe (admin only)"""
+    try:
+        from stripe_helpers import record_token_usage_to_stripe
+        
+        # Get user's subscription to verify they have a paid plan
+        subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+        if not subscription:
+            raise HTTPException(404, f"User {user_id} has no subscription")
+        
+        if subscription.plan_type in ('free', 'unlimited'):
+            raise HTTPException(400, f"User {user_id} is on {subscription.plan_type} plan (meter events only for paid plans)")
+        
+        if not subscription.stripe_customer_id:
+            raise HTTPException(400, f"User {user_id} has no Stripe customer ID")
+        
+        # Temporarily increase tokens_used_this_period to simulate overage
+        # This will make record_token_usage_to_stripe report the value
+        from token_helpers import get_or_create_token_balance
+        balance = get_or_create_token_balance(user_id, db)
+        original_used = balance.tokens_used_this_period
+        
+        # Set tokens_used_this_period to create overage
+        from stripe_config import get_plan_monthly_tokens
+        included_tokens = get_plan_monthly_tokens(subscription.plan_type)
+        balance.tokens_used_this_period = included_tokens + value
+        db.commit()
+        
+        # Record the meter event
+        success = record_token_usage_to_stripe(user_id, value, db)
+        
+        # Restore original value
+        balance.tokens_used_this_period = original_used
+        db.commit()
+        
+        if success:
+            logger.info(f"Admin {admin_user.id} sent test meter event for user {user_id}: {value} tokens")
+            return {
+                "success": True,
+                "message": f"Sent meter event: {value} tokens for customer {subscription.stripe_customer_id}",
+                "customer_id": subscription.stripe_customer_id,
+                "value": value,
+                "event_name": "hopper_tokens"
+            }
+        else:
+            raise HTTPException(500, "Failed to send meter event (check logs for details)")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error sending test meter event for user {user_id}: {e}", exc_info=True)
+        raise HTTPException(500, f"Error: {str(e)}")
+
+
 @app.post("/api/admin/users")
 def create_user_admin(
     request_data: CreateUserRequest,

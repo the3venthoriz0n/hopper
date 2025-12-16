@@ -1582,10 +1582,11 @@ function Home() {
     };
     setVideos(prev => [...prev, tempVideo]);
     
-      try {
-        // Calculate timeout based on file size (allow 1 minute per 100MB, minimum 5 minutes, maximum 2 hours)
-        const timeoutMs = Math.max(5 * 60 * 1000, Math.min(2 * 60 * 60 * 1000, (file.size / (100 * 1024 * 1024)) * 60 * 1000));
-        
+    // Calculate timeout based on file size (allow 1 minute per 100MB, minimum 5 minutes, maximum 2 hours)
+    // Declare outside try-catch so it's accessible in error handling
+    const timeoutMs = Math.max(5 * 60 * 1000, Math.min(2 * 60 * 60 * 1000, (file.size / (100 * 1024 * 1024)) * 60 * 1000));
+    
+    try {
         const res = await axios.post(`${API}/videos`, form, {
           timeout: timeoutMs,
           maxContentLength: Infinity,

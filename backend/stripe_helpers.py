@@ -1160,22 +1160,40 @@ def record_token_usage_to_stripe(
                 # Payload format matches meter configuration:
                 # - customer_mapping expects "stripe_customer_id" in payload
                 # - value_settings expects "value" in payload
-                stripe.billing.MeterEvent.create(
+                timestamp = int(datetime.now(timezone.utc).timestamp())
+                identifier = f"user_{user_id}_{timestamp * 1000}"
+                
+                logger.info(
+                    f"Sending meter event for user {user_id}: "
+                    f"event_name=hopper_tokens, customer={customer_id}, value={new_overage}, "
+                    f"timestamp={timestamp}, identifier={identifier}"
+                )
+                
+                meter_event = stripe.billing.MeterEvent.create(
                     event_name="hopper_tokens",  # Must match meter's event_name
-                    identifier=f"user_{user_id}_{int(datetime.now(timezone.utc).timestamp() * 1000)}",  # Unique identifier
+                    identifier=identifier,  # Unique identifier
                     payload={
                         "stripe_customer_id": customer_id,  # Matches customer_mapping[event_payload_key]
                         "value": new_overage,  # Matches value_settings[event_payload_key]
                     },
-                    timestamp=int(datetime.now(timezone.utc).timestamp())
+                    timestamp=timestamp
                 )
+                
                 logger.info(
-                    f"Recorded {new_overage} overage tokens to Stripe meter for user {user_id} "
-                    f"(total used: {total_used}, included: {included_tokens}, overage: {current_overage})"
+                    f"✓ Successfully recorded {new_overage} overage tokens to Stripe meter for user {user_id} "
+                    f"(meter_event_id={meter_event.id}, total used: {total_used}, included: {included_tokens}, overage: {current_overage})"
                 )
                 return True
             except stripe.error.StripeError as e:
-                logger.error(f"Stripe error recording meter event for user {user_id}: {e}")
+                logger.error(
+                    f"❌ Stripe error recording meter event for user {user_id}: {e} "
+                    f"(customer_id={customer_id}, new_overage={new_overage})"
+                )
+                # Log full error details for debugging
+                if hasattr(e, 'user_message'):
+                    logger.error(f"Stripe user message: {e.user_message}")
+                if hasattr(e, 'code'):
+                    logger.error(f"Stripe error code: {e.code}")
                 return False
         else:
             # No new overage to report (all tokens were from included allocation)
