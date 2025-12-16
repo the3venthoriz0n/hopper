@@ -4152,10 +4152,12 @@ def cancel_subscription(
     # Preserve tokens that user paid for (they paid for full period, no prorating)
     # Overage has been invoiced and doesn't carry over
     from stripe_config import get_plan_monthly_tokens
+    from models import TokenTransaction
     free_plan_tokens = get_plan_monthly_tokens('free')
     
     # Get the balance after subscription creation
     token_balance = get_or_create_token_balance(user_id, db)
+    balance_before = token_balance.tokens_remaining
     
     # Preserve existing tokens (user paid for full period)
     token_balance.tokens_remaining = current_tokens
@@ -4170,7 +4172,29 @@ def cancel_subscription(
     # Update period to match new subscription
     token_balance.period_start = free_subscription.current_period_start
     token_balance.period_end = free_subscription.current_period_end
+    token_balance.last_reset_at = datetime.now(timezone.utc)  # Mark as reset to prevent webhook from adding tokens
     token_balance.updated_at = datetime.now(timezone.utc)
+    
+    # Create a transaction record to indicate tokens were preserved (not reset)
+    # This helps prevent webhook from adding tokens again
+    transaction = TokenTransaction(
+        user_id=user_id,
+        video_id=None,
+        transaction_type='reset',
+        tokens=0,  # No change - tokens preserved
+        balance_before=balance_before,
+        balance_after=current_tokens,
+        transaction_metadata={
+            'plan_type': 'free',
+            'period_start': free_subscription.current_period_start.isoformat(),
+            'period_end': free_subscription.current_period_end.isoformat(),
+            'is_renewal': False,
+            'subscription_id': free_subscription.stripe_subscription_id,
+            'tokens_preserved': True,
+            'preserved_amount': current_tokens
+        }
+    )
+    db.add(transaction)
     db.commit()
     
     logger.info(f"User {user_id} canceled subscription {old_subscription_id} and switched to free plan. Overage invoiced, preserved {current_tokens} tokens (user paid for full period)")
@@ -4649,29 +4673,55 @@ def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
     # Grant tokens for NEW subscriptions (didn't exist before)
     # If it already existed, it means .updated event already processed it, so don't add tokens again
     if not existing_sub:
-        logger.info(f"New subscription created for user {user_id}: {updated_sub.plan_type} - granting initial tokens")
-        from token_helpers import reset_tokens_for_subscription
-        from stripe_config import get_plan_monthly_tokens
+        # Check if tokens were already reset for this period (e.g., by create_free_subscription with skip_token_reset=False)
+        # This prevents duplicate token grants when webhook fires after manual subscription creation
+        from token_helpers import get_or_create_token_balance
+        from datetime import timedelta
+        balance = get_or_create_token_balance(user_id, db)
         
-        monthly_tokens = get_plan_monthly_tokens(updated_sub.plan_type)
-        logger.info(f"Granting {monthly_tokens} tokens to user {user_id} for new {updated_sub.plan_type} subscription")
+        # Check if tokens were recently reset (within last 5 minutes) for the same period
+        tokens_already_reset = False
+        if balance.last_reset_at and balance.period_start and balance.period_end:
+            time_since_reset = datetime.now(timezone.utc) - balance.last_reset_at
+            period_matches = (
+                abs((balance.period_start - updated_sub.current_period_start).total_seconds()) < 60 and
+                abs((balance.period_end - updated_sub.current_period_end).total_seconds()) < 60
+            )
+            
+            # If reset was recent (within 5 minutes) and period matches, tokens were already handled
+            if time_since_reset < timedelta(minutes=5) and period_matches:
+                tokens_already_reset = True
+                logger.info(
+                    f"Tokens were already reset for user {user_id} subscription {subscription.id} "
+                    f"(reset {time_since_reset.total_seconds():.0f}s ago, period matches) - skipping webhook token grant"
+                )
         
-        # Explicitly grant tokens for new subscription (is_renewal=False adds tokens to current balance)
-        token_granted = reset_tokens_for_subscription(
-            user_id,
-            updated_sub.plan_type,
-            updated_sub.current_period_start,
-            updated_sub.current_period_end,
-            db,
-            is_renewal=False  # New subscription - adds monthly tokens
-        )
-        
-        if token_granted:
-            logger.info(f"✅ Successfully granted {monthly_tokens} tokens to user {user_id} for {updated_sub.plan_type} subscription")
+        if not tokens_already_reset:
+            logger.info(f"New subscription created for user {user_id}: {updated_sub.plan_type} - granting initial tokens")
+            from token_helpers import reset_tokens_for_subscription
+            from stripe_config import get_plan_monthly_tokens
+            
+            monthly_tokens = get_plan_monthly_tokens(updated_sub.plan_type)
+            logger.info(f"Granting {monthly_tokens} tokens to user {user_id} for new {updated_sub.plan_type} subscription")
+            
+            # Explicitly grant tokens for new subscription (is_renewal=False adds tokens to current balance)
+            token_granted = reset_tokens_for_subscription(
+                user_id,
+                updated_sub.plan_type,
+                updated_sub.current_period_start,
+                updated_sub.current_period_end,
+                db,
+                is_renewal=False  # New subscription - adds monthly tokens
+            )
+            
+            if token_granted:
+                logger.info(f"✅ Successfully granted {monthly_tokens} tokens to user {user_id} for {updated_sub.plan_type} subscription")
+            else:
+                logger.error(f"❌ Failed to grant tokens to user {user_id} for {updated_sub.plan_type} subscription")
+                # Fallback: try ensure_tokens_synced_for_subscription as safety net
+                ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
         else:
-            logger.error(f"❌ Failed to grant tokens to user {user_id} for {updated_sub.plan_type} subscription")
-            # Fallback: try ensure_tokens_synced_for_subscription as safety net
-            ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
+            logger.info(f"Skipping token grant for subscription {subscription.id} - tokens already handled")
     else:
         logger.info(f"Subscription {subscription.id} already existed in DB (likely processed by .updated event first) - skipping token grant to avoid double-adding")
     
