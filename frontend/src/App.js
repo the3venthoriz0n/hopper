@@ -136,58 +136,31 @@ axios.interceptors.response.use(
     return response;
   },
   (error) => {
-    // Handle 401 errors globally - force re-authentication
-    // BUT: NEVER reload on auth endpoints (login/register/verify) - let them handle errors themselves
-    // AND: NEVER reload if we're already on the login page
-    // Works for both dev and prod environments
+    // Handle 401 errors for authenticated routes
+    // Only exclude authentication action endpoints from interception
     if (error.response?.status === 401) {
       const url = error.config?.url || '';
-      const currentPath = window.location.pathname;
       
-      // Check if we're already on the login page - PRIORITY CHECK
-      // This prevents redirects when login fails (wrong password, etc.)
-      const isOnLoginPage = currentPath === '/login' || currentPath === '/login/';
+      // Only pass through specific authentication action endpoints
+      // These are endpoints where 401 is expected (wrong password, etc.)
+      // /auth/me, /auth/logout, etc. should NOT be excluded - they indicate session issues
+      const isAuthActionEndpoint = url.includes('/auth/login') ||
+                                   url.includes('/auth/register') ||
+                                   url.includes('/auth/verify') ||
+                                   url.includes('/auth/forgot-password') ||
+                                   url.includes('/auth/reset-password') ||
+                                   url.includes('/api/auth/login') ||
+                                   url.includes('/api/auth/register') ||
+                                   url.includes('/api/auth/verify') ||
+                                   url.includes('/api/auth/forgot-password') ||
+                                   url.includes('/api/auth/reset-password');
       
-      // If on login page, NEVER do anything - let login component handle the error
-      if (isOnLoginPage) {
+      // Never intercept authentication action endpoints - let them handle their own errors
+      if (isAuthActionEndpoint) {
         return Promise.reject(error);
       }
       
-      // Extract pathname from URL - handles both full URLs and relative paths
-      let pathname = '';
-      try {
-        if (url.startsWith('http://') || url.startsWith('https://')) {
-          pathname = new URL(url).pathname;
-        } else if (url.startsWith('/')) {
-          pathname = url;
-        } else {
-          const baseURL = error.config?.baseURL || window.location.origin;
-          try {
-            pathname = new URL(url, baseURL).pathname;
-          } catch (e) {
-            pathname = url.startsWith('/') ? url : '/' + url;
-          }
-        }
-      } catch (e) {
-        pathname = url;
-      }
-      
-      // Check if this is an auth endpoint (login, register, verify, etc.)
-      const isAuthEndpoint = pathname.includes('/auth/login') || 
-                            pathname.includes('/auth/register') || 
-                            pathname.includes('/auth/verify') ||
-                            pathname.includes('/auth/') ||
-                            url.includes('/auth/login') || 
-                            url.includes('/auth/register') || 
-                            url.includes('/auth/verify') ||
-                            url.includes('/auth/');
-      
-      // If this is an auth endpoint, let it handle its own errors
-      if (isAuthEndpoint) {
-        return Promise.reject(error);
-      }
-      
-      // Otherwise, reload to trigger auth check and redirect to login
+      // For all other endpoints (including /auth/me), session expired - reload to trigger auth check
       window.location.reload();
     }
     return Promise.reject(error);
@@ -209,6 +182,73 @@ axios.interceptors.request.use(
     return Promise.reject(error);
   }
 );
+
+// Protected Route Component - handles authentication checks
+function ProtectedRoute({ children, requireAdmin = false }) {
+  const [user, setUser] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
+  
+  // Build API URL at runtime
+  const getApiUrl = () => {
+    const backendUrl = process.env.REACT_APP_BACKEND_URL || `https://${window.location.hostname}`;
+    return `${backendUrl}/api`;
+  };
+  
+  const API = getApiUrl();
+  
+  useEffect(() => {
+    checkAuth();
+  }, []);
+  
+  const checkAuth = async () => {
+    try {
+      const res = await axios.get(`${API}/auth/me`);
+      if (res.data.user) {
+        setUser(res.data.user);
+        setIsAdmin(res.data.user.is_admin || false);
+      } else {
+        setUser(null);
+        setIsAdmin(false);
+      }
+    } catch (err) {
+      console.error('Auth check failed:', err);
+      setUser(null);
+      setIsAdmin(false);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+  
+  // Show loading state while checking auth
+  if (authLoading) {
+    return (
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        minHeight: '100vh',
+        background: '#1a1a2e',
+        color: 'white'
+      }}>
+        <div>Loading...</div>
+      </div>
+    );
+  }
+  
+  // Redirect unauthenticated users to login
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+  
+  // Check admin requirement if specified
+  if (requireAdmin && !isAdmin) {
+    return <Navigate to="/app" replace />;
+  }
+  
+  // Render children with user and isAdmin passed as props
+  return React.cloneElement(children, { user, isAdmin, setUser });
+}
 
 // Simple public landing page for unauthenticated visitors
 function PublicLanding() {
@@ -262,7 +302,7 @@ function PublicLanding() {
   );
 }
 
-function Home() {
+function Home({ user, isAdmin, setUser }) {
   const navigate = useNavigate();
   const location = useLocation();
   
@@ -275,11 +315,6 @@ function Home() {
   const API = getApiUrl();
   const isProduction = process.env.REACT_APP_ENVIRONMENT === 'production';
   const appTitle = isProduction ? '🐸 hopper' : '🐸 DEV hopper';
-  
-  // Authentication state
-  const [user, setUser] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [authLoading, setAuthLoading] = useState(true);
   
   // All state hooks must be declared before any conditional returns (Rules of Hooks)
   const [youtube, setYoutube] = useState({ connected: false, enabled: false, account: null, token_status: 'valid' });
@@ -352,9 +387,8 @@ function Home() {
   const [notification, setNotification] = useState(null); // For popup notifications
   const [confirmDialog, setConfirmDialog] = useState(null); // For confirmation dialogs
 
-  // Check if user is authenticated
+  // Check for Google login callback
   useEffect(() => {
-    // Check for Google login callback
     const urlParams = new URLSearchParams(window.location.search);
     const googleLogin = urlParams.get('google_login');
     
@@ -373,28 +407,7 @@ function Home() {
         window.close();
       }
     }
-    
-    checkAuth();
   }, []);
-  
-  const checkAuth = async () => {
-    try {
-      const res = await axios.get(`${API}/auth/me`);
-      if (res.data.user) {
-        setUser(res.data.user);
-        setIsAdmin(res.data.user.is_admin || false);
-      } else {
-        setUser(null);
-        setIsAdmin(false);
-      }
-    } catch (err) {
-      console.error('Auth check failed:', err);
-      setUser(null);
-      setIsAdmin(false);
-    } finally {
-      setAuthLoading(false);
-    }
-  };
   
   const handleLogout = async () => {
     try {
@@ -1306,10 +1319,6 @@ function Home() {
     );
   }
   
-  // Redirect unauthenticated users to login when accessing the app shell
-  if (!user) {
-    return <Navigate to="/login" replace />;
-  }
 
   const updateGlobalSettings = async (key, value) => {
     try {
@@ -4234,15 +4243,17 @@ function App() {
       {/* Public marketing/landing page */}
       <Route path="/" element={<PublicLanding />} />
 
-      {/* Authenticated app shell */}
-      <Route path="/app" element={<Home />} />
-      <Route path="/subscription" element={<Home />} />
-      <Route path="/subscription/success" element={<Home />} />
+      {/* Authenticated app shell - protected routes */}
+      <Route path="/app" element={<ProtectedRoute><Home /></ProtectedRoute>} />
+      <Route path="/subscription" element={<ProtectedRoute><Home /></ProtectedRoute>} />
+      <Route path="/subscription/success" element={<ProtectedRoute><Home /></ProtectedRoute>} />
 
-      {/* Other routes */}
+      {/* Admin route - requires admin access */}
+      <Route path="/admin" element={<ProtectedRoute requireAdmin><AdminDashboard /></ProtectedRoute>} />
+
+      {/* Public routes */}
       <Route path="/login" element={<Login />} />
       <Route path="/pricing" element={<Pricing />} />
-      <Route path="/admin" element={<AdminDashboard />} />
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/delete-your-data" element={<DeleteYourData />} />

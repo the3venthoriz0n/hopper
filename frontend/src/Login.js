@@ -131,7 +131,9 @@ function Login({ onLoginSuccess }) {
       e?.stopPropagation?.();
       
       // Explicitly ensure we're on login page - navigate there if needed (safety check)
-      if (window.location.pathname !== '/login' && window.location.pathname !== '/') {
+      // If we're on / or any other path, navigate to /login
+      const currentPath = window.location.pathname;
+      if (currentPath !== '/login') {
         navigate('/login', { replace: true });
       }
     } finally {
