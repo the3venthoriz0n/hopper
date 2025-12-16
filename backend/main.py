@@ -3740,6 +3740,10 @@ def get_stripe_config():
     if not STRIPE_PUBLISHABLE_KEY:
         raise HTTPException(500, "Stripe not configured")
     
+    # Log warning if pricing table ID is not set (for debugging)
+    if not pricing_table_id:
+        logger.warning("STRIPE_PRICING_TABLE_ID not set in environment variables")
+    
     return {
         "publishable_key": STRIPE_PUBLISHABLE_KEY,
         "pricing_table_id": pricing_table_id

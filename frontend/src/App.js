@@ -174,6 +174,9 @@ function PublicLanding() {
           <span>{appTitle.replace('🐸 ', '')}</span>
         </div>
         <nav className="landing-nav">
+          <Link to="/pricing" className="landing-nav-link">
+            Pricing
+          </Link>
           <Link to="/privacy" className="landing-nav-link">
             Privacy
           </Link>

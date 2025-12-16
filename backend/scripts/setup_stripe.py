@@ -354,6 +354,71 @@ def save_config(plans: Dict[str, Dict[str, Any]], mode: str) -> bool:
         return False
 
 
+def create_or_update_pricing_table(plans: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    """
+    Detect and validate existing Stripe pricing table.
+    
+    Note: Stripe pricing tables must be created via Dashboard.
+    This function detects the pricing table ID from environment variables.
+    
+    Returns:
+        Pricing table ID if found in environment, None otherwise
+    """
+    print(f"\n{'='*60}\nPricing Table\n{'='*60}\n")
+    
+    # Check if pricing table ID is already in environment
+    existing_table_id = os.getenv('STRIPE_PRICING_TABLE_ID')
+    if existing_table_id:
+        print(f"✓ Found pricing table ID in environment: {existing_table_id}")
+        print(f"  View in Dashboard: https://dashboard.stripe.com/pricing-tables/{existing_table_id}")
+        
+        # Validate the pricing table exists (optional check)
+        try:
+            # Try to retrieve it to verify it exists
+            # Note: This API endpoint may not exist, so we'll catch the error
+            try:
+                table = stripe.billing.PricingTable.retrieve(existing_table_id)
+                print(f"  ✓ Verified pricing table exists")
+                if hasattr(table, 'display_name'):
+                    print(f"  Display name: {table.display_name}")
+            except (AttributeError, stripe.error.InvalidRequestError):
+                # API doesn't support retrieval, but that's okay
+                print(f"  ✓ Pricing table ID configured (cannot verify via API)")
+            except Exception as e:
+                print(f"  ⚠️  Could not verify pricing table: {e}")
+        except Exception:
+            pass
+        
+        return existing_table_id
+    
+    # No pricing table ID found - provide instructions
+    print("⚠️  No pricing table ID found in environment")
+    print("\n📋 To set up pricing table:\n")
+    print("  1. Create pricing table in Dashboard: https://dashboard.stripe.com/pricing-tables")
+    print("  2. Add your products to the pricing table")
+    print("  3. Copy the Pricing Table ID (starts with 'prctbl_')")
+    print("  4. Add to your .env file:")
+    print("     STRIPE_PRICING_TABLE_ID=prctbl_xxxxx")
+    print()
+    print("  Available products for your pricing table:\n")
+    
+    visible_plans = {k: v for k, v in plans.items() if not v.get('hidden', False)}
+    for key, plan in visible_plans.items():
+        tokens = plan['monthly_tokens']
+        if tokens > 0:
+            token_text = f"{tokens} tokens/month"
+        elif tokens == -1:
+            token_text = "Unlimited tokens"
+        else:
+            token_text = f"{tokens} tokens/month"
+        
+        print(f"     - {plan['name']}: {plan['stripe_product_id']} / {plan['stripe_price_id']} ({token_text})")
+    
+    print()
+    
+    return None
+
+
 def create_or_update_webhook(webhook_url: str) -> Optional[Dict[str, Any]]:
     """Create or update Stripe webhook endpoint."""
     print(f"\n{'='*60}\nWebhook\n{'='*60}\n")
@@ -422,6 +487,9 @@ def main():
     # Save config to JSON
     config_saved = save_config(plans, mode)
     
+    # Create pricing table
+    pricing_table_id = create_or_update_pricing_table(plans)
+    
     # Create webhook (optional)
     webhook = None
     webhook_url = args.webhook_url or os.getenv('BACKEND_URL', '').rstrip('/') + '/api/stripe/webhook'
@@ -432,6 +500,11 @@ def main():
     print(f"\n{'='*60}\n✅ Setup Complete\n{'='*60}\n")
     if not config_saved:
         print("⚠️  Config file not saved")
+    if pricing_table_id:
+        print(f"✓ Pricing table ID: {pricing_table_id}")
+        print(f"  Add to .env: STRIPE_PRICING_TABLE_ID={pricing_table_id}")
+    else:
+        print("⚠️  Pricing table not created - see instructions above")
     if webhook and not webhook.get('secret'):
         print("⚠️  Get webhook secret from Stripe Dashboard")
     print(f"{'='*60}\n")

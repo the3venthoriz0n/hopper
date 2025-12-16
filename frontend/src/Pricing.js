@@ -25,19 +25,31 @@ function Pricing() {
         }
         
         // Fallback: try to get from API
-        const API = process.env.REACT_APP_BACKEND_URL 
-          ? `${process.env.REACT_APP_BACKEND_URL}/api`
-          : `https://${window.location.hostname}/api`;
+        const backendUrl = process.env.REACT_APP_BACKEND_URL || `https://${window.location.hostname}`;
+        const API = `${backendUrl}/api`;
         
         try {
           const response = await fetch(`${API}/stripe/config`);
           if (response.ok) {
             const data = await response.json();
-            setPublishableKey(data.publishable_key);
-            setPricingTableId(data.pricing_table_id);
+            if (data.publishable_key) {
+              setPublishableKey(data.publishable_key);
+            } else {
+              console.warn('No publishable_key in API response');
+            }
+            if (data.pricing_table_id) {
+              setPricingTableId(data.pricing_table_id);
+            } else {
+              console.warn('No pricing_table_id in API response. Make sure STRIPE_PRICING_TABLE_ID is set in backend .env');
+            }
+          } else {
+            console.error(`Failed to load Stripe config: ${response.status} ${response.statusText}`);
+            const errorText = await response.text();
+            console.error('Error response:', errorText);
           }
         } catch (err) {
           console.error('Failed to load Stripe config:', err);
+          console.error('API URL attempted:', `${API}/stripe/config`);
         }
       } catch (err) {
         console.error('Error loading Stripe config:', err);
@@ -47,21 +59,30 @@ function Pricing() {
     };
     
     loadStripeConfig();
-    
-    // Load Stripe pricing table script
-    const script = document.createElement('script');
-    script.src = 'https://js.stripe.com/v3/pricing-table.js';
-    script.async = true;
-    document.body.appendChild(script);
+  }, []);
+
+  // Load Stripe pricing table script when config is ready
+  useEffect(() => {
+    if (publishableKey && pricingTableId) {
+      const scriptId = 'stripe-pricing-table-script';
+      // Check if script already exists
+      if (!document.getElementById(scriptId)) {
+        const script = document.createElement('script');
+        script.id = scriptId;
+        script.src = 'https://js.stripe.com/v3/pricing-table.js';
+        script.async = true;
+        document.body.appendChild(script);
+      }
+    }
     
     return () => {
-      // Cleanup script on unmount
-      const existingScript = document.querySelector('script[src="https://js.stripe.com/v3/pricing-table.js"]');
+      // Cleanup script on unmount (optional, but good practice)
+      const existingScript = document.getElementById('stripe-pricing-table-script');
       if (existingScript) {
-        document.body.removeChild(existingScript);
+        existingScript.remove();
       }
     };
-  }, []);
+  }, [publishableKey, pricingTableId]);
 
   return (
     <div className="pricing-container">

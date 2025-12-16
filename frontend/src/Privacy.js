@@ -42,6 +42,8 @@ function Privacy() {
         </p>
         
         <div className="page-footer">
+          <Link to="/pricing" className="page-link">Pricing</Link>
+          <span className="page-separator">|</span>
           <Link to="/terms" className="page-link">Terms of Service</Link>
           <span className="page-separator">|</span>
           <Link to="/" className="page-link">Home</Link>

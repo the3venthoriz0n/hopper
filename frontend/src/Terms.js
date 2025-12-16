@@ -29,6 +29,8 @@ function Terms() {
         <p>We reserve the right to modify these Terms at any time. Continued use of the service after changes constitutes acceptance of the modified Terms.</p>
         
         <div className="page-footer">
+          <Link to="/pricing" className="page-link">Pricing</Link>
+          <span className="page-separator">|</span>
           <Link to="/privacy" className="page-link">Privacy Policy</Link>
           <span className="page-separator">|</span>
           <Link to="/" className="page-link">Home</Link>
