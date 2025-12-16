@@ -1295,12 +1295,14 @@ def record_token_usage_to_stripe(
         
         # Get token balance to calculate overage
         balance = get_or_create_token_balance(user_id, db)
-        included_tokens = get_plan_monthly_tokens(subscription.plan_type)
+        # Use monthly_tokens (actual starting balance) not base plan amount
+        # This accounts for preserved/granted tokens when user upgrades
+        included_tokens = balance.monthly_tokens if balance.monthly_tokens > 0 else get_plan_monthly_tokens(subscription.plan_type)
         
         # Calculate overage - we ONLY track tokens beyond the included amount
-        # Example: Starter plan gives 100 tokens included
+        # Example: Starter plan gives 100 tokens included, but user upgraded and has 200 tokens
         #   - If user uses 50 tokens: overage = 0 (all within included)
-        #   - If user uses 150 tokens: overage = 50 (only tokens 101-150 are billed)
+        #   - If user uses 250 tokens: overage = 50 (only tokens 201-250 are billed)
         # tokens_used_this_period includes the tokens just consumed
         total_used = balance.tokens_used_this_period
         current_overage = max(0, total_used - included_tokens)

@@ -65,8 +65,9 @@ def get_token_balance(user_id: int, db: Session) -> Dict[str, Any]:
     stored_monthly_tokens = balance.monthly_tokens if balance.monthly_tokens > 0 else plan_monthly_tokens
     
     # Calculate overage tokens (tokens used beyond the included amount)
-    # If tokens_used_this_period > plan_monthly_tokens, user is in overage
-    overage_tokens = max(0, balance.tokens_used_this_period - plan_monthly_tokens) if plan_monthly_tokens > 0 else 0
+    # Use stored_monthly_tokens (actual starting balance) not plan_monthly_tokens (base plan amount)
+    # This accounts for preserved/granted tokens when user upgrades
+    overage_tokens = max(0, balance.tokens_used_this_period - stored_monthly_tokens) if stored_monthly_tokens > 0 else 0
     
     return {
         'tokens_remaining': display_tokens_remaining,  # Show 0 if negative (in overage)

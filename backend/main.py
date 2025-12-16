@@ -5326,9 +5326,17 @@ def deduct_tokens_admin(
         raise HTTPException(500, "Could not retrieve user token balance")
     
     # Get subscription info to determine included tokens
-    subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
-    from stripe_config import get_plan_monthly_tokens
-    included_tokens = get_plan_monthly_tokens(subscription.plan_type) if subscription else 0
+    # Use monthly_tokens from balance (actual starting balance) not base plan amount
+    # This accounts for preserved/granted tokens when user upgrades
+    from token_helpers import get_or_create_token_balance
+    balance = get_or_create_token_balance(user_id, db)
+    included_tokens = balance.monthly_tokens if balance.monthly_tokens > 0 else 0
+    
+    # Fallback to plan amount if monthly_tokens not set
+    if included_tokens == 0:
+        subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+        from stripe_config import get_plan_monthly_tokens
+        included_tokens = get_plan_monthly_tokens(subscription.plan_type) if subscription else 0
     
     # Calculate if this will trigger overage
     tokens_used_before = balance_before.get('tokens_used_this_period', 0)
