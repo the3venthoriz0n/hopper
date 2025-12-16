@@ -783,17 +783,17 @@ def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription
             return None
         
         # Get free plan price ID
-        from stripe_config import get_plan_price_id, get_plan_overage_price_id
+        from stripe_config import get_plan_price_id
         price_id = get_plan_price_id('free')
         if not price_id:
             logger.error("Free plan price ID not configured")
             return None
         
-        # Build subscription items (base price + optional metered price)
-        items = [{'price': price_id}]
-        overage_price_id = get_plan_overage_price_id('free')
-        if overage_price_id:
-            items.append({'price': overage_price_id})
+        # Build subscription items - free plan only has base price (no overage)
+        # Free plan has hard limit, no metered billing
+        items = [{'price': price_id, 'quantity': 1}]
+        
+        logger.info(f"Creating free subscription for user {user_id} with price {price_id}")
         
         # Create Stripe subscription for free plan ($0/month)
         stripe_subscription = stripe.Subscription.create(
@@ -801,6 +801,22 @@ def create_free_subscription(user_id: int, db: Session) -> Optional[Subscription
             items=items,
             metadata={'user_id': str(user_id)},
         )
+        
+        # Verify subscription was created with items
+        if hasattr(stripe_subscription, 'items') and stripe_subscription.items:
+            items_data = stripe_subscription.items.data if hasattr(stripe_subscription.items, 'data') else []
+            if len(items_data) == 0:
+                logger.error(f"CRITICAL: Free subscription {stripe_subscription.id} was created with 0 items!")
+                # Try to delete the invalid subscription
+                try:
+                    stripe.Subscription.delete(stripe_subscription.id)
+                except Exception as e:
+                    logger.error(f"Failed to delete invalid subscription {stripe_subscription.id}: {e}")
+                return None
+            logger.info(f"Free subscription {stripe_subscription.id} created with {len(items_data)} item(s)")
+        else:
+            logger.error(f"CRITICAL: Free subscription {stripe_subscription.id} has no items attribute!")
+            return None
         
         # Update database subscription from Stripe subscription
         subscription = update_subscription_from_stripe(stripe_subscription, db, user_id=user_id)
@@ -899,11 +915,11 @@ def create_unlimited_subscription(
             )
             return None
         
-        # Build subscription items (base price + optional metered price)
-        items = [{'price': price_id}]
-        overage_price_id = get_plan_overage_price_id('unlimited')
-        if overage_price_id:
-            items.append({'price': overage_price_id})
+        # Build subscription items - unlimited plan only has base price (no overage)
+        # Unlimited plan has unlimited tokens, no metered billing
+        items = [{'price': price_id, 'quantity': 1}]
+        
+        logger.info(f"Creating unlimited subscription for user {user_id} with price {price_id}")
         
         # Create Stripe subscription for unlimited plan
         stripe_subscription = stripe.Subscription.create(
@@ -914,6 +930,21 @@ def create_unlimited_subscription(
                 'preserved_tokens': str(preserved_tokens)  # Store preserved tokens in metadata
             },
         )
+        
+        # Verify subscription was created with items
+        if hasattr(stripe_subscription, 'items') and stripe_subscription.items:
+            items_data = stripe_subscription.items.data if hasattr(stripe_subscription.items, 'data') else []
+            if len(items_data) == 0:
+                logger.error(f"CRITICAL: Unlimited subscription {stripe_subscription.id} was created with 0 items!")
+                try:
+                    stripe.Subscription.delete(stripe_subscription.id)
+                except Exception as e:
+                    logger.error(f"Failed to delete invalid subscription {stripe_subscription.id}: {e}")
+                return None
+            logger.info(f"Unlimited subscription {stripe_subscription.id} created with {len(items_data)} item(s)")
+        else:
+            logger.error(f"CRITICAL: Unlimited subscription {stripe_subscription.id} has no items attribute!")
+            return None
         
         # Update database subscription from Stripe subscription
         subscription = update_subscription_from_stripe(stripe_subscription, db, user_id=user_id)
@@ -975,15 +1006,15 @@ def create_stripe_subscription(user_id: int, price_id: str, db: Session) -> Opti
         if not customer_id:
             return None
         
-        # Get plan type from price_id to determine if we need metered price
-        from stripe_config import get_plan_overage_price_id
+        # Get plan type from price_id
         plan_type = _get_plan_type_from_price(price_id)
         
-        # Build subscription items (base price + optional metered price)
-        items = [{'price': price_id}]
-        overage_price_id = get_plan_overage_price_id(plan_type)
-        if overage_price_id:
-            items.append({'price': overage_price_id})
+        # Build subscription items - ONLY include base price
+        # Metered overage items should be added AFTER subscription creation (in webhook handler)
+        # This matches the pattern used in checkout sessions
+        items = [{'price': price_id, 'quantity': 1}]
+        
+        logger.info(f"Creating subscription for user {user_id} with price {price_id} (plan: {plan_type})")
         
         # Create subscription in Stripe
         stripe_subscription = stripe.Subscription.create(
@@ -991,6 +1022,21 @@ def create_stripe_subscription(user_id: int, price_id: str, db: Session) -> Opti
             items=items,
             metadata={'user_id': str(user_id)},
         )
+        
+        # Verify subscription was created with items
+        if hasattr(stripe_subscription, 'items') and stripe_subscription.items:
+            items_data = stripe_subscription.items.data if hasattr(stripe_subscription.items, 'data') else []
+            if len(items_data) == 0:
+                logger.error(f"CRITICAL: Subscription {stripe_subscription.id} was created with 0 items!")
+                try:
+                    stripe.Subscription.delete(stripe_subscription.id)
+                except Exception as e:
+                    logger.error(f"Failed to delete invalid subscription {stripe_subscription.id}: {e}")
+                return None
+            logger.info(f"Subscription {stripe_subscription.id} created with {len(items_data)} item(s)")
+        else:
+            logger.error(f"CRITICAL: Subscription {stripe_subscription.id} has no items attribute!")
+            return None
         
         # Update database subscription from Stripe subscription
         subscription = update_subscription_from_stripe(stripe_subscription, db, user_id=user_id)
