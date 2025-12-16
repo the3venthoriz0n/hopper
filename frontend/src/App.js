@@ -702,6 +702,25 @@ function Home() {
               await loadSubscription();
               await new Promise(resolve => setTimeout(resolve, 500));
               
+              // Check if there's a canceled subscription notification to show
+              const canceledSubInfo = sessionStorage.getItem('upgrade_canceled_subscription');
+              if (canceledSubInfo) {
+                try {
+                  const info = JSON.parse(canceledSubInfo);
+                  const planName = availablePlans.find(p => p.key === info.new_plan_key)?.name || info.new_plan_key;
+                  setNotification({
+                    type: 'info',
+                    title: 'Subscription Upgraded',
+                    message: `Your ${info.canceled_plan_type} subscription has been canceled and replaced with ${planName}. Your new plan is now active.`
+                  });
+                  setTimeout(() => setNotification(null), 8000);
+                  sessionStorage.removeItem('upgrade_canceled_subscription');
+                } catch (e) {
+                  console.error('Error parsing canceled subscription info:', e);
+                  sessionStorage.removeItem('upgrade_canceled_subscription');
+                }
+              }
+              
               // Navigate to subscription page with success flag - message will be shown by the other useEffect
               // The upgrade success handler will verify tokens are updated before showing the message
               if (location.pathname === '/subscription/success') {
@@ -841,21 +860,23 @@ function Home() {
   const proceedWithUpgrade = async (planKey) => {
     setLoadingPlanKey(planKey); // Set which specific plan is loading
     setLoadingSubscription(true);
+    // Clear any previous canceled subscription info (in case user is starting a new checkout)
+    sessionStorage.removeItem('upgrade_canceled_subscription');
     try {
       const res = await axios.post(`${API}/subscription/create-checkout`, { plan_key: planKey });
       if (res.data.url) {
-        // If a subscription was canceled, show info message
+        // If a subscription was canceled, store info to show after successful checkout
         if (res.data.canceled_subscription) {
-          setNotification({
-            type: 'info',
-            title: 'Subscription Upgraded',
-            message: `Your ${res.data.canceled_subscription.plan_type} subscription has been canceled. You'll be redirected to complete your ${planKey} subscription.`
-          });
-          setTimeout(() => setNotification(null), 5000);
+          sessionStorage.setItem('upgrade_canceled_subscription', JSON.stringify({
+            canceled_plan_type: res.data.canceled_subscription.plan_type,
+            new_plan_key: planKey
+          }));
         }
         window.location.href = res.data.url;
       }
     } catch (err) {
+      // Clear stored info on error since checkout didn't start
+      sessionStorage.removeItem('upgrade_canceled_subscription');
       console.error('Error creating checkout session:', err);
       
       // Check if user already has an active subscription (shouldn't happen with our new logic, but handle it)

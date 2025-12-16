@@ -3,6 +3,112 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import './App.css';
 
+// Circular Progress Component for Token Usage
+const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, overageTokens, unlimited, isLoading }) => {
+  if (unlimited) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}>
+        <div style={{
+          width: '48px',
+          height: '48px',
+          borderRadius: '50%',
+          background: 'conic-gradient(from 0deg, #10b981 0deg 360deg)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          position: 'relative'
+        }}>
+          <div style={{
+            width: '36px',
+            height: '36px',
+            borderRadius: '50%',
+            background: '#0a0a0a',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '1rem',
+            fontWeight: '700',
+            color: '#10b981'
+          }}>
+            ∞
+          </div>
+        </div>
+        <div style={{ fontSize: '0.6rem', color: '#999', textAlign: 'center' }}>Unlimited</div>
+      </div>
+    );
+  }
+
+  // monthlyTokens = starting balance for period (plan + granted tokens)
+  const effectiveMonthlyTokens = monthlyTokens || 0;
+  
+  // Calculate percentage: tokensUsed / monthlyTokens
+  const percentage = effectiveMonthlyTokens > 0 ? (tokensUsed / effectiveMonthlyTokens) * 100 : 0;
+  const hasOverage = overageTokens > 0;
+  
+  // Color based on usage - red when in overage, amber when high usage, green otherwise
+  let progressColor = '#10b981'; // green
+  if (hasOverage) {
+    progressColor = '#ef4444'; // red when in overage
+  } else if (percentage >= 90) {
+    progressColor = '#f59e0b'; // amber when 90% or more used
+  }
+  
+  // Calculate stroke-dasharray for the circle
+  const radius = 21;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - (percentage / 100) * circumference;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}>
+      <div style={{ position: 'relative', width: '48px', height: '48px' }}>
+        <svg width="48" height="48" style={{ transform: 'rotate(-90deg)' }}>
+          {/* Background circle */}
+          <circle
+            cx="24"
+            cy="24"
+            r={radius}
+            fill="none"
+            stroke="rgba(255, 255, 255, 0.1)"
+            strokeWidth="3"
+          />
+          {/* Progress circle */}
+          <circle
+            cx="24"
+            cy="24"
+            r={radius}
+            fill="none"
+            stroke={progressColor}
+            strokeWidth="3"
+            strokeDasharray={circumference}
+            strokeDashoffset={strokeDashoffset}
+            strokeLinecap="round"
+            style={{ transition: 'stroke-dashoffset 0.5s ease', opacity: isLoading ? 0.5 : 1 }}
+          />
+        </svg>
+        {/* Center text - show usage / monthlyTokens (starting balance) */}
+        <div style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          textAlign: 'center',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '0.05rem'
+        }}>
+          <div style={{ fontSize: '0.65rem', fontWeight: '700', color: isLoading ? '#666' : '#fff', lineHeight: '1' }}>
+            {tokensUsed}
+          </div>
+          <div style={{ fontSize: '0.5rem', color: isLoading ? '#444' : '#999', lineHeight: '1' }}>
+            / {effectiveMonthlyTokens}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // Get CSRF token from axios interceptor
 let csrfToken = null;
 
@@ -608,11 +714,30 @@ function AdminDashboard() {
                 {userDetails && (
                   <>
                     <div style={{ marginBottom: '1.5rem' }}>
-                      <div style={{ fontSize: '0.85rem', color: '#999', marginBottom: '0.5rem' }}>Token Balance</div>
-                      <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#818cf8' }}>
-                        {userDetails.token_balance?.unlimited 
-                          ? '∞ Unlimited' 
-                          : userDetails.token_balance?.tokens_remaining ?? 'N/A'}
+                      <div style={{ fontSize: '0.85rem', color: '#999', marginBottom: '0.75rem' }}>Token Balance</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.75rem' }}>
+                        <CircularTokenProgress
+                          tokensRemaining={userDetails.token_balance?.tokens_remaining ?? 0}
+                          tokensUsed={userDetails.token_usage?.tokens_used_this_period ?? 0}
+                          monthlyTokens={userDetails.token_balance?.monthly_tokens ?? 0}
+                          overageTokens={userDetails.token_balance?.overage_tokens ?? 0}
+                          unlimited={userDetails.token_balance?.unlimited ?? false}
+                          isLoading={loading}
+                        />
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: '0.9rem', color: '#fff', marginBottom: '0.25rem' }}>
+                            Remaining: <span style={{ color: '#818cf8', fontWeight: '600' }}>
+                              {userDetails.token_balance?.unlimited 
+                                ? '∞ Unlimited' 
+                                : userDetails.token_balance?.tokens_remaining ?? 'N/A'}
+                            </span>
+                          </div>
+                          {userDetails.token_balance?.overage_tokens > 0 && (
+                            <div style={{ fontSize: '0.85rem', color: '#fbbf24', marginTop: '0.25rem' }}>
+                              Overage: {userDetails.token_balance.overage_tokens} tokens
+                            </div>
+                          )}
+                        </div>
                       </div>
                       {userDetails.subscription && (
                         <div style={{ fontSize: '0.85rem', color: '#999', marginTop: '0.5rem' }}>
