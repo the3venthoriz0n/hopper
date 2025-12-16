@@ -125,8 +125,15 @@ function Login({ onLoginSuccess }) {
       // Extract error message from FastAPI response (detail field) or fallback to generic message
       const errorMsg = err.response?.data?.detail || err.response?.data?.message || err.message || 'Authentication failed';
       setMessage(`❌ ${errorMsg}`);
-      // Ensure we stay on the login page - don't navigate away on error
-      // The error message will be displayed to the user
+      // CRITICAL: Ensure we stay on the login page - prevent ANY navigation on error
+      // Stop event propagation and prevent default to avoid any redirects
+      e?.preventDefault?.();
+      e?.stopPropagation?.();
+      
+      // Explicitly ensure we're on login page - navigate there if needed (safety check)
+      if (window.location.pathname !== '/login' && window.location.pathname !== '/') {
+        navigate('/login', { replace: true });
+      }
     } finally {
       setLoading(false);
     }
