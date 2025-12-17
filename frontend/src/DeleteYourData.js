@@ -23,7 +23,12 @@ function DeleteYourData() {
         <p>Account deletion is permanent and cannot be undone. Your data is deleted immediately after confirmation. There is no waiting period or recovery option.</p>
         
         <h2>4. Need Help?</h2>
-        <p>If you have trouble deleting your data or have questions about data privacy, please contact us at support@{window.location.hostname.split(':')[0]}</p>
+        <p>If you have trouble deleting your data or have questions about data privacy, please contact us at{' '}
+          <a href="mailto:andrewkpln+hopper@gmail.com" className="page-link">
+            andrewkpln+hopper@gmail.com
+          </a>
+          .
+        </p>
         
         <div className="page-footer">
           <Link to="/terms" className="page-link">Terms of Service</Link>

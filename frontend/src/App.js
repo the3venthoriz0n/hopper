@@ -176,33 +176,8 @@ axios.interceptors.response.use(
     return response;
   },
   (error) => {
-    // Handle 401 errors for authenticated routes
-    // Only exclude authentication action endpoints from interception
-    if (error.response?.status === 401) {
-      const url = error.config?.url || '';
-      
-      // Only pass through specific authentication action endpoints
-      // These are endpoints where 401 is expected (wrong password, etc.)
-      // /auth/me, /auth/logout, etc. should NOT be excluded - they indicate session issues
-      const isAuthActionEndpoint = url.includes('/auth/login') ||
-                                   url.includes('/auth/register') ||
-                                   url.includes('/auth/verify') ||
-                                   url.includes('/auth/forgot-password') ||
-                                   url.includes('/auth/reset-password') ||
-                                   url.includes('/api/auth/login') ||
-                                   url.includes('/api/auth/register') ||
-                                   url.includes('/api/auth/verify') ||
-                                   url.includes('/api/auth/forgot-password') ||
-                                   url.includes('/api/auth/reset-password');
-      
-      // Never intercept authentication action endpoints - let them handle their own errors
-      if (isAuthActionEndpoint) {
-        return Promise.reject(error);
-      }
-      
-      // For all other endpoints (including /auth/me), session expired - reload to trigger auth check
-      window.location.reload();
-    }
+    // Handle 401 errors - don't reload the page, let components handle their own auth errors
+    // This prevents annoying page refreshes on login failures and session expirations
     return Promise.reject(error);
   }
 );
@@ -227,7 +202,7 @@ axios.interceptors.request.use(
 function ProtectedRoute({ children, requireAdmin = false }) {
   const location = useLocation();
   const { user, isAdmin, setUser, authLoading } = useAuth();
-  
+
   // Show loading state while checking auth
   if (authLoading) {
     return (
@@ -243,7 +218,7 @@ function ProtectedRoute({ children, requireAdmin = false }) {
       </div>
     );
   }
-  
+
   // Redirect unauthenticated users to login
   // BUT: Never redirect if we're already on /login (prevents redirect loops)
   if (!user) {
@@ -254,14 +229,14 @@ function ProtectedRoute({ children, requireAdmin = false }) {
     // If already on /login, just return null (don't render protected content)
     return null;
   }
-  
+
   // Check admin requirement if specified
   if (requireAdmin && !isAdmin) {
     return <Navigate to="/app" replace />;
   }
-  
-  // Render children with user and isAdmin passed as props
-  return React.cloneElement(children, { user, isAdmin, setUser });
+
+  // Render children with user, isAdmin, and authLoading passed as props
+  return React.cloneElement(children, { user, isAdmin, setUser, authLoading });
 }
 
 // Simple public landing page for unauthenticated visitors
@@ -349,7 +324,7 @@ function RootPathRedirect() {
   return <PublicLanding />;
 }
 
-function Home({ user, isAdmin, setUser }) {
+function Home({ user, isAdmin, setUser, authLoading }) {
   const navigate = useNavigate();
   const location = useLocation();
   
