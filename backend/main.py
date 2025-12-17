@@ -7508,6 +7508,9 @@ async def scheduler_task():
             # Batch query: Get all scheduled videos across all users in a single query
             from models import SessionLocal, Video
             db = SessionLocal()
+            if db is None:
+                logger.error("Failed to create database session in scheduler task")
+                continue
             try:
                 # Single query to get all scheduled videos, grouped by user_id
                 videos_by_user = db_helpers.get_all_scheduled_videos(db=db)
@@ -7516,7 +7519,22 @@ async def scheduler_task():
                 # Process videos grouped by user (allows batch loading of user settings/tokens)
                 for user_id, videos in videos_by_user.items():
                     # Build upload context (enabled destinations, settings, tokens)
-                    upload_context = build_upload_context(user_id, db)
+                    # ROOT CAUSE FIX: Ensure session is valid before use, create new one if invalid
+                    if db is None:
+                        db = SessionLocal()
+                    try:
+                        upload_context = build_upload_context(user_id, db)
+                    except Exception as context_err:
+                        # Session might be invalid - create a new one
+                        logger.warning(f"Session invalid when building upload context for user {user_id}, creating new session: {context_err}")
+                        if db is not None:
+                            try:
+                                db.close()
+                            except Exception:
+                                pass
+                        db = SessionLocal()
+                        upload_context = build_upload_context(user_id, db)
+                    
                     enabled_destinations = upload_context["enabled_destinations"]
                     
                     if not enabled_destinations:
@@ -7545,7 +7563,21 @@ async def scheduler_task():
                                 
                                 # Mark as uploading - use shared session
                                 # This is idempotent - safe to call even if already "uploading"
-                                db_helpers.update_video(video_id, user_id, db=db, status="uploading")
+                                # ROOT CAUSE FIX: Ensure session is valid before use
+                                if db is None:
+                                    db = SessionLocal()
+                                try:
+                                    db_helpers.update_video(video_id, user_id, db=db, status="uploading")
+                                except Exception as update_err:
+                                    # Session might be invalid - create a new one
+                                    logger.warning(f"Session invalid when updating video {video_id}, creating new session: {update_err}")
+                                    if db is not None:
+                                        try:
+                                            db.close()
+                                        except Exception:
+                                            pass
+                                    db = SessionLocal()
+                                    db_helpers.update_video(video_id, user_id, db=db, status="uploading")
                                 
                                 # Upload to each enabled destination - uploader functions query DB directly
                                 # Note: Upload functions create their own sessions (backward compatible)
@@ -7563,14 +7595,40 @@ async def scheduler_task():
                                             
                                             # Expire the video object from this session to force fresh query
                                             # The upload function uses its own session, so we need to refresh
-                                            db.expire_all()
-                                            
-                                            # Check if upload succeeded by querying updated video - use shared session
-                                            # Note: We could optimize this further by caching the video object, but for now
-                                            # we'll query to ensure we have the latest state
-                                            updated_video = db.query(Video).filter(Video.id == video_id).first()
-                                            if updated_video and check_upload_success(updated_video, dest_name):
-                                                success_count += 1
+                                            # ROOT CAUSE FIX: Ensure session is valid before use, create new one if invalid
+                                            if db is None:
+                                                db = SessionLocal()
+                                            try:
+                                                db.expire_all()
+                                                
+                                                # Check if upload succeeded by querying updated video - use shared session
+                                                # Note: We could optimize this further by caching the video object, but for now
+                                                # we'll query to ensure we have the latest state
+                                                updated_video = db.query(Video).filter(Video.id == video_id).first()
+                                                if updated_video and check_upload_success(updated_video, dest_name):
+                                                    success_count += 1
+                                            except Exception as db_err:
+                                                # Session might be invalid - create a new one to check upload status
+                                                logger.warning(f"Session invalid when checking upload status for video {video_id}, creating new session: {db_err}")
+                                                if db is not None:
+                                                    try:
+                                                        db.close()
+                                                    except Exception:
+                                                        pass
+                                                db = SessionLocal()
+                                                try:
+                                                    updated_video = db.query(Video).filter(Video.id == video_id).first()
+                                                    if updated_video and check_upload_success(updated_video, dest_name):
+                                                        success_count += 1
+                                                except Exception:
+                                                    # If still failing, use temporary session
+                                                    temp_db = SessionLocal()
+                                                    try:
+                                                        updated_video = temp_db.query(Video).filter(Video.id == video_id).first()
+                                                        if updated_video and check_upload_success(updated_video, dest_name):
+                                                            success_count += 1
+                                                    finally:
+                                                        temp_db.close()
                                         except Exception as upload_err:
                                             error_type = type(upload_err).__name__
                                             error_msg = str(upload_err)
@@ -7597,20 +7655,59 @@ async def scheduler_task():
                                             
                                             print(f"  Error uploading to {dest_name}: {upload_err}")
                                 
-                                # Update final status - use shared session
+                                # Update final status - use shared session if valid, otherwise create new one
+                                # ROOT CAUSE FIX: Ensure session is valid before use
+                                if db is None:
+                                    db = SessionLocal()
+                                
                                 if success_count == len(enabled_destinations):
-                                    db_helpers.update_video(video_id, user_id, db=db, status="uploaded")
+                                    try:
+                                        db_helpers.update_video(video_id, user_id, db=db, status="uploaded")
+                                    except Exception as update_err:
+                                        # Session might be invalid - create a new one
+                                        logger.warning(f"Session invalid when updating video {video_id} to uploaded, creating new session: {update_err}")
+                                        if db is not None:
+                                            try:
+                                                db.close()
+                                            except Exception:
+                                                pass
+                                        db = SessionLocal()
+                                        db_helpers.update_video(video_id, user_id, db=db, status="uploaded")
                                     
                                     # Increment successful uploads counter
                                     successful_uploads_counter.inc()
                                     
                                     # Cleanup: Delete video file after successful upload to all destinations
                                     # Keep database record for history
-                                    updated_video = db.query(Video).filter(Video.id == video_id).first()
-                                    if updated_video:
-                                        cleanup_video_file(updated_video)
+                                    try:
+                                        updated_video = db.query(Video).filter(Video.id == video_id).first()
+                                        if updated_video:
+                                            cleanup_video_file(updated_video)
+                                    except Exception as query_err:
+                                        # Session might be invalid - create a new one
+                                        logger.warning(f"Session invalid when querying video {video_id}, creating new session: {query_err}")
+                                        if db is not None:
+                                            try:
+                                                db.close()
+                                            except Exception:
+                                                pass
+                                        db = SessionLocal()
+                                        updated_video = db.query(Video).filter(Video.id == video_id).first()
+                                        if updated_video:
+                                            cleanup_video_file(updated_video)
                                 else:
-                                    db_helpers.update_video(video_id, user_id, db=db, status="failed", error=f"Upload failed for some destinations")
+                                    try:
+                                        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=f"Upload failed for some destinations")
+                                    except Exception as update_err:
+                                        # Session might be invalid - create a new one
+                                        logger.warning(f"Session invalid when updating video {video_id} to failed, creating new session: {update_err}")
+                                        if db is not None:
+                                            try:
+                                                db.close()
+                                            except Exception:
+                                                pass
+                                        db = SessionLocal()
+                                        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=f"Upload failed for some destinations")
                                     
                         except Exception as e:
                             error_type = type(e).__name__
@@ -7639,7 +7736,22 @@ async def scheduler_task():
                             print(f"Error processing scheduled video {video.filename}: {e}")
                             if 'video_id' in locals():
                                 detailed_error = f"Scheduler error: {error_type}: {error_msg}"
-                                db_helpers.update_video(video_id, user_id, db=db, status="failed", error=detailed_error)
+                                if db is not None:
+                                    try:
+                                        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=detailed_error)
+                                    except Exception:
+                                        # Session invalid - create new one
+                                        temp_db = SessionLocal()
+                                        try:
+                                            db_helpers.update_video(video_id, user_id, db=temp_db, status="failed", error=detailed_error)
+                                        finally:
+                                            temp_db.close()
+                                else:
+                                    temp_db = SessionLocal()
+                                    try:
+                                        db_helpers.update_video(video_id, user_id, db=temp_db, status="failed", error=detailed_error)
+                                    finally:
+                                        temp_db.close()
                 
                 scheduler_runs_counter.labels(status="success").inc()
             finally:
