@@ -6034,6 +6034,69 @@ async def cancel_scheduled_videos(user_id: int = Depends(require_csrf_new), db: 
     return {"ok": True, "cancelled": cancelled_count}
 
 
+@app.post("/api/videos/{video_id}/retry")
+async def retry_failed_upload(video_id: int, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+    """Retry a failed upload"""
+    # Get video
+    videos = db_helpers.get_user_videos(user_id, db=db)
+    video = next((v for v in videos if v.id == video_id), None)
+    
+    if not video:
+        raise HTTPException(404, "Video not found")
+    
+    # Only allow retry for failed videos
+    if video.status != "failed":
+        raise HTTPException(400, f"Cannot retry video with status '{video.status}'. Only failed videos can be retried.")
+    
+    # Reset status to pending and clear error
+    db_helpers.update_video(video_id, user_id, db=db, status="pending", error=None)
+    
+    # Trigger upload immediately
+    # Get enabled destinations
+    upload_context = build_upload_context(user_id, db)
+    enabled_destinations = upload_context["enabled_destinations"]
+    
+    if not enabled_destinations:
+        raise HTTPException(400, "No enabled destinations. Enable at least one destination first.")
+    
+    # Upload to all enabled destinations
+    succeeded_destinations = []
+    for dest_name in enabled_destinations:
+        uploader_func = DESTINATION_UPLOADERS.get(dest_name)
+        if uploader_func:
+            try:
+                # Set status to uploading
+                db_helpers.update_video(video_id, user_id, db=db, status="uploading")
+                
+                # Upload
+                if dest_name == "instagram":
+                    await uploader_func(user_id, video_id, db=db)
+                else:
+                    uploader_func(user_id, video_id, db=db)
+                
+                # Check if upload succeeded
+                updated_video = db.query(Video).filter(Video.id == video_id).first()
+                if updated_video and check_upload_success(updated_video, dest_name):
+                    succeeded_destinations.append(dest_name)
+            except Exception as upload_err:
+                upload_logger.error(f"Retry upload failed for {dest_name}: {upload_err}")
+                # Continue to next destination
+    
+    # Update final status
+    if len(succeeded_destinations) == len(enabled_destinations):
+        db_helpers.update_video(video_id, user_id, db=db, status="uploaded")
+    elif len(succeeded_destinations) > 0:
+        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=f"Upload succeeded for {', '.join(succeeded_destinations)} but failed for others")
+    else:
+        db_helpers.update_video(video_id, user_id, db=db, status="failed", error="Upload failed for all destinations")
+    
+    return {
+        "ok": True,
+        "succeeded": succeeded_destinations,
+        "message": f"Retry completed. Succeeded: {', '.join(succeeded_destinations) if succeeded_destinations else 'none'}"
+    }
+
+
 @app.post("/api/admin/cleanup")
 async def manual_cleanup(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Manually trigger cleanup of old and orphaned files

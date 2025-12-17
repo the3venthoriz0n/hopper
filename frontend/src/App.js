@@ -3283,6 +3283,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         minute: '2-digit',
                         second: '2-digit'
                       })}</span>
+                    ) : v.status === 'failed' ? (
+                      <span style={{ color: '#ef4444' }}>❌ Failed{v.error ? `: ${v.error.substring(0, 50)}${v.error.length > 50 ? '...' : ''}` : ''}</span>
                     ) : (
                       <span>{v.status}</span>
                     )}
@@ -3453,6 +3455,33 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       }} className="btn-edit" title="Edit video settings">
                         ✏️
                       </button>
+                      {v.status === 'failed' && (
+                        <button 
+                          onClick={async () => {
+                            try {
+                              await axios.post(`${API}/videos/${v.id}/retry`);
+                              setMessage('🔄 Retrying upload...');
+                              // Refresh videos to show updated status
+                              loadVideos();
+                            } catch (err) {
+                              setMessage(`❌ ${err.response?.data?.detail || err.message || 'Failed to retry upload'}`);
+                            }
+                          }}
+                          className="btn-edit" 
+                          title="Retry failed upload"
+                          style={{
+                            marginRight: '4px',
+                            fontSize: '0.9rem',
+                            padding: '0.25rem 0.5rem',
+                            background: 'rgba(34, 197, 94, 0.2)',
+                            border: '1px solid rgba(34, 197, 94, 0.4)',
+                            color: '#22c55e',
+                            fontWeight: '500'
+                          }}
+                        >
+                          🔄 Retry
+                        </button>
+                      )}
                     </>
                   )}
                   <button onClick={() => removeVideo(v.id)} disabled={v.status === 'uploading'}>×</button>
