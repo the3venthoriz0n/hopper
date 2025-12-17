@@ -185,6 +185,7 @@ axios.interceptors.request.use(
 
 // Protected Route Component - handles authentication checks
 function ProtectedRoute({ children, requireAdmin = false }) {
+  const location = useLocation();
   const [user, setUser] = useState(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
@@ -237,8 +238,14 @@ function ProtectedRoute({ children, requireAdmin = false }) {
   }
   
   // Redirect unauthenticated users to login
+  // BUT: Never redirect if we're already on /login (prevents redirect loops)
   if (!user) {
-    return <Navigate to="/login" replace />;
+    // Only redirect if not already on login page
+    if (location.pathname !== '/login') {
+      return <Navigate to="/login" replace />;
+    }
+    // If already on /login, just return null (don't render protected content)
+    return null;
   }
   
   // Check admin requirement if specified
@@ -300,6 +307,64 @@ function PublicLanding() {
       </footer>
     </div>
   );
+}
+
+// Public Landing Redirect - handles root path based on auth state
+// Prevents redirects to / when login fails on /login
+function PublicLandingRedirect() {
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  
+  // Build API URL at runtime
+  const getApiUrl = () => {
+    const backendUrl = process.env.REACT_APP_BACKEND_URL || `https://${window.location.hostname}`;
+    return `${backendUrl}/api`;
+  };
+  
+  const API = getApiUrl();
+  
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const res = await axios.get(`${API}/auth/me`);
+        if (res.data.user) {
+          setUser(res.data.user);
+        } else {
+          setUser(null);
+        }
+      } catch (err) {
+        // User is not authenticated
+        setUser(null);
+      } finally {
+        setAuthLoading(false);
+      }
+    };
+    checkAuth();
+  }, [API]);
+  
+  // Show loading state while checking auth
+  if (authLoading) {
+    return (
+      <div style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        minHeight: '100vh',
+        background: '#1a1a2e',
+        color: 'white'
+      }}>
+        <div>Loading...</div>
+      </div>
+    );
+  }
+  
+  // If user is authenticated, redirect them to the app
+  if (user) {
+    return <Navigate to="/app" replace />;
+  }
+  
+  // If user is NOT authenticated, render the public landing page
+  return <PublicLanding />;
 }
 
 function Home({ user, isAdmin, setUser }) {
@@ -4240,8 +4305,8 @@ function Home({ user, isAdmin, setUser }) {
 function App() {
   return (
     <Routes>
-      {/* Public marketing/landing page */}
-      <Route path="/" element={<PublicLanding />} />
+      {/* Public marketing/landing page - checks auth state to prevent redirects */}
+      <Route path="/" element={<PublicLandingRedirect />} />
 
       {/* Authenticated app shell - protected routes */}
       <Route path="/app" element={<ProtectedRoute><Home /></ProtectedRoute>} />
