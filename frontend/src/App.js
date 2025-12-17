@@ -5,6 +5,7 @@ import './App.css';
 import Terms from './Terms';
 import Privacy from './Privacy';
 import DeleteYourData from './DeleteYourData';
+import Help from './Help';
 import Login from './Login';
 import AdminDashboard from './AdminDashboard';
 import Pricing from './Pricing';
@@ -254,6 +255,9 @@ function PublicLanding() {
           </Link>
           <Link to="/terms" className="landing-nav-link">
             Terms
+          </Link>
+          <Link to="/help" className="landing-nav-link">
+            Help
           </Link>
           <Link to="/delete-your-data" className="landing-nav-link">
             Delete Your Data
@@ -4272,6 +4276,20 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         </Link>
         <span style={{ color: '#ccc' }}>|</span>
         <Link 
+          to="/help"
+          style={{ 
+            color: '#666', 
+            textDecoration: 'none', 
+            margin: '0 1rem',
+            transition: 'color 0.2s'
+          }}
+          onMouseEnter={(e) => e.target.style.color = '#0066cc'}
+          onMouseLeave={(e) => e.target.style.color = '#666'}
+        >
+          Help
+        </Link>
+        <span style={{ color: '#ccc' }}>|</span>
+        <Link 
           to="/delete-your-data"
           style={{ 
             color: '#666', 
@@ -4314,6 +4332,7 @@ function App() {
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/delete-your-data" element={<DeleteYourData />} />
+      <Route path="/help" element={<Help />} />
 
       {/* Landing/Root - show public page or redirect to app if authenticated */}
       <Route path="/" element={<LandingOrApp />} />

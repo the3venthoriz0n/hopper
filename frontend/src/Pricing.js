@@ -101,6 +101,9 @@ function Pricing() {
           <Link to="/terms" className="pricing-nav-link">
             Terms
           </Link>
+          <Link to="/help" className="pricing-nav-link">
+            Help
+          </Link>
           <Link to="/login" className="pricing-nav-button">
             Login
           </Link>
@@ -122,7 +125,18 @@ function Pricing() {
       </main>
 
       <footer className="pricing-footer">
-        © {new Date().getFullYear()} hopper. All rights reserved.
+        <div style={{ marginBottom: '1rem' }}>
+          <Link to="/terms" style={{ color: '#666', textDecoration: 'none', marginRight: '1rem' }}>Terms of Service</Link>
+          <span style={{ color: '#ccc' }}>|</span>
+          <Link to="/privacy" style={{ color: '#666', textDecoration: 'none', margin: '0 1rem' }}>Privacy Policy</Link>
+          <span style={{ color: '#ccc' }}>|</span>
+          <Link to="/help" style={{ color: '#666', textDecoration: 'none', margin: '0 1rem' }}>Help</Link>
+          <span style={{ color: '#ccc' }}>|</span>
+          <Link to="/delete-your-data" style={{ color: '#666', textDecoration: 'none', marginLeft: '1rem' }}>Delete Your Data</Link>
+        </div>
+        <div>
+          © {new Date().getFullYear()} hopper. All rights reserved.
+        </div>
       </footer>
     </div>
   );

@@ -29,7 +29,11 @@ function Terms() {
         <p>We reserve the right to modify these Terms at any time. Continued use of the service after changes constitutes acceptance of the modified Terms.</p>
         
         <div className="page-footer">
+          <Link to="/terms" className="page-link">Terms of Service</Link>
+          <span className="page-separator">|</span>
           <Link to="/privacy" className="page-link">Privacy Policy</Link>
+          <span className="page-separator">|</span>
+          <Link to="/help" className="page-link">Help</Link>
           <span className="page-separator">|</span>
           <Link to="/delete-your-data" className="page-link">Delete Your Data</Link>
           <span className="page-separator">|</span>

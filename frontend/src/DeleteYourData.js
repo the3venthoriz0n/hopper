@@ -35,6 +35,10 @@ function DeleteYourData() {
           <span className="page-separator">|</span>
           <Link to="/privacy" className="page-link">Privacy Policy</Link>
           <span className="page-separator">|</span>
+          <Link to="/help" className="page-link">Help</Link>
+          <span className="page-separator">|</span>
+          <Link to="/delete-your-data" className="page-link">Delete Your Data</Link>
+          <span className="page-separator">|</span>
           <Link to="/" className="page-link">Home</Link>
         </div>
       </div>
