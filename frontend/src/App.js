@@ -124,6 +124,46 @@ axios.defaults.withCredentials = true;
 // CSRF Token Management
 let csrfToken = null;
 
+// Build API URL helper function
+const getApiUrl = () => {
+  const backendUrl = process.env.REACT_APP_BACKEND_URL || `https://${window.location.hostname}`;
+  return `${backendUrl}/api`;
+};
+
+// Custom hook for authentication state management
+function useAuth() {
+  const [user, setUser] = useState(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
+  
+  const API = getApiUrl();
+  
+  const checkAuth = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API}/auth/me`);
+      if (res.data.user) {
+        setUser(res.data.user);
+        setIsAdmin(res.data.user.is_admin || false);
+      } else {
+        setUser(null);
+        setIsAdmin(false);
+      }
+    } catch (err) {
+      console.error('Auth check failed:', err);
+      setUser(null);
+      setIsAdmin(false);
+    } finally {
+      setAuthLoading(false);
+    }
+  }, [API]);
+  
+  useEffect(() => {
+    checkAuth();
+  }, [checkAuth]);
+  
+  return { user, isAdmin, setUser, authLoading, checkAuth };
+}
+
 // Intercept GET responses to extract CSRF token
 axios.interceptors.response.use(
   (response) => {
@@ -186,40 +226,7 @@ axios.interceptors.request.use(
 // Protected Route Component - handles authentication checks
 function ProtectedRoute({ children, requireAdmin = false }) {
   const location = useLocation();
-  const [user, setUser] = useState(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [authLoading, setAuthLoading] = useState(true);
-  
-  // Build API URL at runtime
-  const getApiUrl = () => {
-    const backendUrl = process.env.REACT_APP_BACKEND_URL || `https://${window.location.hostname}`;
-    return `${backendUrl}/api`;
-  };
-  
-  const API = getApiUrl();
-  
-  useEffect(() => {
-    checkAuth();
-  }, []);
-  
-  const checkAuth = async () => {
-    try {
-      const res = await axios.get(`${API}/auth/me`);
-      if (res.data.user) {
-        setUser(res.data.user);
-        setIsAdmin(res.data.user.is_admin || false);
-      } else {
-        setUser(null);
-        setIsAdmin(false);
-      }
-    } catch (err) {
-      console.error('Auth check failed:', err);
-      setUser(null);
-      setIsAdmin(false);
-    } finally {
-      setAuthLoading(false);
-    }
-  };
+  const { user, isAdmin, setUser, authLoading } = useAuth();
   
   // Show loading state while checking auth
   if (authLoading) {
@@ -276,6 +283,9 @@ function PublicLanding() {
           <Link to="/terms" className="landing-nav-link">
             Terms
           </Link>
+          <Link to="/delete-your-data" className="landing-nav-link">
+            Delete Your Data
+          </Link>
           <Link to="/login" className="landing-nav-button">
             Login
           </Link>
@@ -309,38 +319,10 @@ function PublicLanding() {
   );
 }
 
-// Public Landing Redirect - handles root path based on auth state
+// Root Path Redirect - handles root path based on auth state
 // Prevents redirects to / when login fails on /login
-function PublicLandingRedirect() {
-  const [user, setUser] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  
-  // Build API URL at runtime
-  const getApiUrl = () => {
-    const backendUrl = process.env.REACT_APP_BACKEND_URL || `https://${window.location.hostname}`;
-    return `${backendUrl}/api`;
-  };
-  
-  const API = getApiUrl();
-  
-  useEffect(() => {
-    const checkAuth = async () => {
-      try {
-        const res = await axios.get(`${API}/auth/me`);
-        if (res.data.user) {
-          setUser(res.data.user);
-        } else {
-          setUser(null);
-        }
-      } catch (err) {
-        // User is not authenticated
-        setUser(null);
-      } finally {
-        setAuthLoading(false);
-      }
-    };
-    checkAuth();
-  }, [API]);
+function RootPathRedirect() {
+  const { user, authLoading } = useAuth();
   
   // Show loading state while checking auth
   if (authLoading) {
@@ -372,11 +354,6 @@ function Home({ user, isAdmin, setUser }) {
   const location = useLocation();
   
   // Build API URL at runtime - always use HTTPS
-  const getApiUrl = () => {
-    const backendUrl = process.env.REACT_APP_BACKEND_URL || `https://${window.location.hostname}`;
-    return `${backendUrl}/api`;
-  };
-  
   const API = getApiUrl();
   const isProduction = process.env.REACT_APP_ENVIRONMENT === 'production';
   const appTitle = isProduction ? '🐸 hopper' : '🐸 DEV hopper';
@@ -4305,8 +4282,8 @@ function Home({ user, isAdmin, setUser }) {
 function App() {
   return (
     <Routes>
-      {/* Public marketing/landing page - checks auth state to prevent redirects */}
-      <Route path="/" element={<PublicLandingRedirect />} />
+      {/* Landing Page Logic: '/' is now a smart handler */}
+      <Route path="/" element={<RootPathRedirect />} />
 
       {/* Authenticated app shell - protected routes */}
       <Route path="/app" element={<ProtectedRoute><Home /></ProtectedRoute>} />
