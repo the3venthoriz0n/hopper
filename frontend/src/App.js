@@ -198,44 +198,41 @@ axios.interceptors.request.use(
   }
 );
 
+// Loading Screen Component
+function LoadingScreen() {
+  return (
+    <div style={{
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      minHeight: '100vh',
+      background: '#1a1a2e',
+      color: 'white'
+    }}>
+      <div>Loading...</div>
+    </div>
+  );
+}
+
 // Protected Route Component - handles authentication checks
 function ProtectedRoute({ children, requireAdmin = false }) {
   const location = useLocation();
   const { user, isAdmin, setUser, authLoading } = useAuth();
 
-  // Show loading state while checking auth
   if (authLoading) {
-    return (
-      <div style={{
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        minHeight: '100vh',
-        background: '#1a1a2e',
-        color: 'white'
-      }}>
-        <div>Loading...</div>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
-  // Redirect unauthenticated users to login
-  // BUT: Never redirect if we're already on /login (prevents redirect loops)
   if (!user) {
-    // Only redirect if not already on login page
-    if (location.pathname !== '/login') {
-      return <Navigate to="/login" replace />;
-    }
-    // If already on /login, just return null (don't render protected content)
-    return null;
+    // Save the attempted location for redirect after login
+    return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // Check admin requirement if specified
   if (requireAdmin && !isAdmin) {
     return <Navigate to="/app" replace />;
   }
 
-  // Render children with user, isAdmin, and authLoading passed as props
+  // Pass auth context via props
   return React.cloneElement(children, { user, isAdmin, setUser, authLoading });
 }
 
@@ -294,34 +291,56 @@ function PublicLanding() {
   );
 }
 
-// Root Path Redirect - handles root path based on auth state
-// Prevents redirects to / when login fails on /login
-function RootPathRedirect() {
+// Landing or App - smart redirect based on auth state
+function LandingOrApp() {
   const { user, authLoading } = useAuth();
   
-  // Show loading state while checking auth
   if (authLoading) {
-    return (
-      <div style={{
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        minHeight: '100vh',
-        background: '#1a1a2e',
-        color: 'white'
-      }}>
-        <div>Loading...</div>
-      </div>
-    );
+    return <LoadingScreen />;
   }
   
-  // If user is authenticated, redirect them to the app
-  if (user) {
-    return <Navigate to="/app" replace />;
-  }
-  
-  // If user is NOT authenticated, render the public landing page
-  return <PublicLanding />;
+  return user ? <Navigate to="/app" replace /> : <PublicLanding />;
+}
+
+// App Routes - nested routes for app section
+function AppRoutes({ user, isAdmin, setUser, authLoading }) {
+  return (
+    <Routes>
+      <Route index element={<Home user={user} isAdmin={isAdmin} setUser={setUser} authLoading={authLoading} />} />
+      <Route path="subscription" element={<Home user={user} isAdmin={isAdmin} setUser={setUser} authLoading={authLoading} />} />
+      <Route path="subscription/success" element={<Home user={user} isAdmin={isAdmin} setUser={setUser} authLoading={authLoading} />} />
+    </Routes>
+  );
+}
+
+// 404 Not Found Component
+function NotFound() {
+  return (
+    <div style={{ 
+      textAlign: 'center', 
+      padding: '2rem',
+      minHeight: '100vh',
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'center',
+      alignItems: 'center',
+      background: '#1a1a2e',
+      color: 'white'
+    }}>
+      <h1 style={{ fontSize: '3rem', marginBottom: '1rem' }}>404</h1>
+      <p style={{ fontSize: '1.2rem', marginBottom: '2rem' }}>Page Not Found</p>
+      <Link 
+        to="/" 
+        style={{ 
+          color: '#0066cc', 
+          textDecoration: 'none',
+          fontSize: '1.1rem'
+        }}
+      >
+        Go Home
+      </Link>
+    </div>
+  );
 }
 
 function Home({ user, isAdmin, setUser, authLoading }) {
@@ -332,6 +351,9 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const API = getApiUrl();
   const isProduction = process.env.REACT_APP_ENVIRONMENT === 'production';
   const appTitle = isProduction ? '🐸 hopper' : '🐸 DEV hopper';
+  
+  // Determine if we're on the subscription view
+  const isSubscriptionView = location.pathname.startsWith('/app/subscription');
   
   // All state hooks must be declared before any conditional returns (Rules of Hooks)
   const [youtube, setYoutube] = useState({ connected: false, enabled: false, account: null, token_status: 'valid' });
@@ -678,7 +700,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   // Check for subscription upgrade success message (from query param after redirect)
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('upgraded') === 'success' && location.pathname === '/subscription') {
+    if (urlParams.get('upgraded') === 'success' && location.pathname === '/app/subscription') {
       // Wait for subscription and token balance to be loaded before showing success message
       // This ensures tokens are updated before showing the popup
       const showSuccessMessage = async () => {
@@ -734,11 +756,11 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     }
   }, [location.pathname, location.search, user, loadSubscription, tokenBalance]);
 
-  // Check for checkout success (from /subscription/success route or query param)
+  // Check for checkout success (from /app/subscription/success route or query param)
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const sessionId = urlParams.get('session_id');
-    const isSuccessPage = location.pathname === '/subscription/success' || urlParams.get('checkout') === 'success';
+    const isSuccessPage = location.pathname === '/app/subscription/success' || urlParams.get('checkout') === 'success';
     
     if (isSuccessPage && user && sessionId) {
       setMessage('✅ Payment successful! Processing your subscription update...');
@@ -802,11 +824,11 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               
               // Navigate to subscription page with success flag - message will be shown by the other useEffect
               // The upgrade success handler will verify tokens are updated before showing the message
-              if (location.pathname === '/subscription/success') {
-                navigate('/subscription?upgraded=success', { replace: true });
+              if (location.pathname === '/app/subscription/success') {
+                navigate('/app/subscription?upgraded=success', { replace: true });
               } else {
                 // If already on subscription page, navigate to trigger the useEffect
-                navigate('/subscription?upgraded=success', { replace: true });
+                navigate('/app/subscription?upgraded=success', { replace: true });
               }
               return; // Stop polling
             } else if (attempts < maxAttempts) {
@@ -825,8 +847,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             } else {
               setMessage('✅ Payment processing. Your subscription will be active shortly.');
             }
-            if (location.pathname === '/subscription/success') {
-              navigate('/subscription', { replace: true });
+            if (location.pathname === '/app/subscription/success') {
+              navigate('/app/subscription', { replace: true });
             }
             return;
           }
@@ -841,8 +863,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           // If it's a 403 or 404, the session might be invalid - stop polling
           if (err.response?.status === 403 || err.response?.status === 404) {
             setMessage('⚠️ Could not verify checkout session. Please check your subscription status.');
-            if (location.pathname === '/subscription/success') {
-              navigate('/subscription', { replace: true });
+            if (location.pathname === '/app/subscription/success') {
+              navigate('/app/subscription', { replace: true });
             }
             return;
           }
@@ -853,8 +875,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             pollTimeout = setTimeout(checkCheckoutStatus, delay);
           } else {
             setMessage('✅ Payment successful! Your subscription should be active shortly.');
-            if (location.pathname === '/subscription/success') {
-              navigate('/subscription', { replace: true });
+            if (location.pathname === '/app/subscription/success') {
+              navigate('/app/subscription', { replace: true });
             }
           }
         }
@@ -874,8 +896,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       // No session_id, just reload subscription and show message
       loadSubscription();
       setMessage('✅ Payment successful! Your subscription should be active shortly.');
-      if (location.pathname === '/subscription/success') {
-        navigate('/subscription', { replace: true });
+      if (location.pathname === '/app/subscription/success') {
+        navigate('/app/subscription', { replace: true });
       }
     }
   }, [user, API, location.pathname, navigate, loadSubscription]);
@@ -4257,23 +4279,24 @@ function Home({ user, isAdmin, setUser, authLoading }) {
 function App() {
   return (
     <Routes>
-      {/* Landing Page Logic: '/' is now a smart handler */}
-      <Route path="/" element={<RootPathRedirect />} />
-
-      {/* Authenticated app shell - protected routes */}
-      <Route path="/app" element={<ProtectedRoute><Home /></ProtectedRoute>} />
-      <Route path="/subscription" element={<ProtectedRoute><Home /></ProtectedRoute>} />
-      <Route path="/subscription/success" element={<ProtectedRoute><Home /></ProtectedRoute>} />
-
-      {/* Admin route - requires admin access */}
-      <Route path="/admin" element={<ProtectedRoute requireAdmin><AdminDashboard /></ProtectedRoute>} />
-
-      {/* Public routes */}
+      {/* Public routes - no auth required */}
       <Route path="/login" element={<Login />} />
       <Route path="/pricing" element={<Pricing />} />
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/delete-your-data" element={<DeleteYourData />} />
+
+      {/* Landing/Root - show public page or redirect to app if authenticated */}
+      <Route path="/" element={<LandingOrApp />} />
+
+      {/* Protected routes - require authentication */}
+      <Route path="/app/*" element={<ProtectedRoute><AppRoutes /></ProtectedRoute>} />
+      
+      {/* Admin route - requires admin access */}
+      <Route path="/admin" element={<ProtectedRoute requireAdmin><AdminDashboard /></ProtectedRoute>} />
+      
+      {/* 404 - Must be last */}
+      <Route path="*" element={<NotFound />} />
     </Routes>
   );
 }
