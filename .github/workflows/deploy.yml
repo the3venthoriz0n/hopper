@@ -1,0 +1,304 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    #   - 'dev/**'  # Support feature branches like dev/configureHosting
+
+env:
+  GHCR_REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    outputs:
+      env: ${{ steps.env.outputs.env }}
+      tag: ${{ steps.tag.outputs.tag }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set environment
+        id: env
+        run: |
+          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "env=prod" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == refs/heads/dev* ]]; then
+            echo "env=dev" >> $GITHUB_OUTPUT
+          else
+            echo "env=dev" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate tag
+        id: tag
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          echo "tag=${{ steps.env.outputs.env }}-${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-backend:${{ steps.tag.outputs.tag }}
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-backend:${{ steps.env.outputs.env }}-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          build-args: |
+            REACT_APP_BACKEND_URL=${{ secrets.BACKEND_URL }}
+            REACT_APP_DOMAIN=${{ secrets.DOMAIN }}
+            REACT_APP_FRONTEND_URL=${{ secrets.FRONTEND_URL }}
+            REACT_APP_ENVIRONMENT=${{ steps.env.outputs.env == 'prod' && 'production' || 'development' }}
+            REACT_APP_VERSION=${{ steps.tag.outputs.tag }}
+          tags: |
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-frontend:${{ steps.tag.outputs.tag }}
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-frontend:${{ steps.env.outputs.env }}-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push otel-collector
+        uses: docker/build-push-action@v5
+        with:
+          context: ./monitoring
+          file: ./monitoring/Dockerfile.otel.${{ steps.env.outputs.env }}
+          push: true
+          tags: |
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-otel:${{ steps.tag.outputs.tag }}
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-otel:${{ steps.env.outputs.env }}-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push prometheus
+        uses: docker/build-push-action@v5
+        with:
+          context: ./monitoring
+          file: ./monitoring/Dockerfile.prometheus
+          push: true
+          build-args: |
+            ENV=${{ steps.env.outputs.env }}
+          tags: |
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-prometheus:${{ steps.tag.outputs.tag }}
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-prometheus:${{ steps.env.outputs.env }}-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push loki
+        uses: docker/build-push-action@v5
+        with:
+          context: ./monitoring
+          file: ./monitoring/Dockerfile.loki.${{ steps.env.outputs.env }}
+          push: true
+          tags: |
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-loki:${{ steps.tag.outputs.tag }}
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-loki:${{ steps.env.outputs.env }}-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push grafana
+        uses: docker/build-push-action@v5
+        with:
+          context: ./monitoring
+          file: ./monitoring/Dockerfile.grafana
+          push: true
+          build-args: |
+            ENV=${{ steps.env.outputs.env }}
+          tags: |
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-grafana:${{ steps.tag.outputs.tag }}
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-grafana:${{ steps.env.outputs.env }}-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: |
+            ${{ github.ref == 'refs/heads/main' && secrets.PROD_SSH_KEY || secrets.DEV_SSH_KEY }}
+
+
+      - name: Deploy to server
+        if: needs.build-and-push.outputs.env == 'prod'
+        env:
+          SSH_HOST: ${{ secrets.PROD_HOST }}
+          SSH_USER: ${{ secrets.PROD_USER }}
+          ENV: ${{ needs.build-and-push.outputs.env }}
+          TAG: ${{ needs.build-and-push.outputs.tag }}
+          GITHUB_REPO: ${{ github.repository }}
+          # Production secrets
+          ENVIRONMENT: production
+          LOG_LEVEL: ${{ secrets.PROD_LOG_LEVEL || 'INFO' }}
+          DOMAIN: ${{ secrets.PROD_DOMAIN }}
+          FRONTEND_URL: ${{ secrets.PROD_FRONTEND_URL }}
+          BACKEND_URL: ${{ secrets.PROD_BACKEND_URL }}
+          CLOUDFLARE_ACCESS_AUD_TAG: ${{ secrets.PROD_CLOUDFLARE_ACCESS_AUD_TAG }}
+          CLOUDFLARE_ACCESS_TEAM_DOMAIN: ${{ secrets.PROD_CLOUDFLARE_ACCESS_TEAM_DOMAIN }}
+          GOOGLE_CLIENT_ID: ${{ secrets.PROD_GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.PROD_GOOGLE_CLIENT_SECRET }}
+          GOOGLE_PROJECT_ID: ${{ secrets.PROD_GOOGLE_PROJECT_ID }}
+          TIKTOK_CLIENT_KEY: ${{ secrets.PROD_TIKTOK_CLIENT_KEY }}
+          TIKTOK_CLIENT_SECRET: ${{ secrets.PROD_TIKTOK_CLIENT_SECRET }}
+          FACEBOOK_APP_ID: ${{ secrets.PROD_FACEBOOK_APP_ID }}
+          FACEBOOK_APP_SECRET: ${{ secrets.PROD_FACEBOOK_APP_SECRET }}
+          POSTGRES_PASSWORD: ${{ secrets.PROD_POSTGRES_PASSWORD }}
+          ENCRYPTION_KEY: ${{ secrets.PROD_ENCRYPTION_KEY }}
+          STRIPE_SECRET_KEY: ${{ secrets.PROD_STRIPE_SECRET_KEY }}
+          STRIPE_PUBLISHABLE_KEY: ${{ secrets.PROD_STRIPE_PUBLISHABLE_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.PROD_STRIPE_WEBHOOK_SECRET }}
+          STRIPE_PRICING_TABLE_ID: ${{ secrets.PROD_STRIPE_PRICING_TABLE_ID }}
+          STRIPE_API_VERSION: ${{ secrets.PROD_STRIPE_API_VERSION || '2024-11-20.acacia' }}
+          RESEND_API_KEY: ${{ secrets.PROD_RESEND_API_KEY }}
+          RESEND_FROM_EMAIL: ${{ secrets.PROD_RESEND_FROM_EMAIL }}
+          GRAFANA_PASSWORD: ${{ secrets.PROD_GRAFANA_PASSWORD || 'admin' }}
+        run: |
+          echo "🚀 Deploying $ENV environment with tag $TAG to $SSH_USER@$SSH_HOST"
+          
+          # Extract short tag (everything after the first dash)
+          SHORT_TAG=$(echo "$TAG" | cut -d'-' -f2-)
+          APP_DIR="/opt/hopper"
+          
+          # Copy necessary files
+          ssh -o StrictHostKeyChecking=no $SSH_USER@$SSH_HOST "mkdir -p $APP_DIR/nginx"
+          scp -o StrictHostKeyChecking=no docker-compose.$ENV.yml $SSH_USER@$SSH_HOST:$APP_DIR/docker-compose.$ENV.yml
+          scp -o StrictHostKeyChecking=no nginx/hopper.conf $SSH_USER@$SSH_HOST:$APP_DIR/nginx/hopper.conf
+          scp -o StrictHostKeyChecking=no scripts/deploy.sh $SSH_USER@$SSH_HOST:$APP_DIR/deploy.sh
+          
+          # Create environment file on server from GitHub Secrets and run deployment
+          ssh -o StrictHostKeyChecking=no $SSH_USER@$SSH_HOST "cat > $APP_DIR/.env.$ENV << 'ENVEOF'
+ENVIRONMENT=$ENVIRONMENT
+LOG_LEVEL=$LOG_LEVEL
+DOMAIN=$DOMAIN
+FRONTEND_URL=$FRONTEND_URL
+BACKEND_URL=$BACKEND_URL
+CLOUDFLARE_ACCESS_AUD_TAG=$CLOUDFLARE_ACCESS_AUD_TAG
+CLOUDFLARE_ACCESS_TEAM_DOMAIN=$CLOUDFLARE_ACCESS_TEAM_DOMAIN
+GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
+GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET
+GOOGLE_PROJECT_ID=$GOOGLE_PROJECT_ID
+TIKTOK_CLIENT_KEY=$TIKTOK_CLIENT_KEY
+TIKTOK_CLIENT_SECRET=$TIKTOK_CLIENT_SECRET
+FACEBOOK_APP_ID=$FACEBOOK_APP_ID
+FACEBOOK_APP_SECRET=$FACEBOOK_APP_SECRET
+POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+ENCRYPTION_KEY=$ENCRYPTION_KEY
+STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY
+STRIPE_PUBLISHABLE_KEY=$STRIPE_PUBLISHABLE_KEY
+STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET
+STRIPE_PRICING_TABLE_ID=$STRIPE_PRICING_TABLE_ID
+STRIPE_API_VERSION=$STRIPE_API_VERSION
+RESEND_API_KEY=$RESEND_API_KEY
+RESEND_FROM_EMAIL=$RESEND_FROM_EMAIL
+GRAFANA_PASSWORD=$GRAFANA_PASSWORD
+ENVEOF
+chmod +x $APP_DIR/deploy.sh && cd $APP_DIR && GITHUB_REPOSITORY=$GITHUB_REPO ./deploy.sh $ENV $SHORT_TAG"
+
+      - name: Deploy to server (dev)
+        if: needs.build-and-push.outputs.env == 'dev'
+        env:
+          SSH_HOST: ${{ secrets.DEV_HOST }}
+          SSH_USER: ${{ secrets.DEV_USER }}
+          ENV: ${{ needs.build-and-push.outputs.env }}
+          TAG: ${{ needs.build-and-push.outputs.tag }}
+          GITHUB_REPO: ${{ github.repository }}
+          # Development secrets
+          ENVIRONMENT: development
+          LOG_LEVEL: ${{ secrets.DEV_LOG_LEVEL || 'DEBUG' }}
+          DOMAIN: ${{ secrets.DEV_DOMAIN }}
+          FRONTEND_URL: ${{ secrets.DEV_FRONTEND_URL }}
+          BACKEND_URL: ${{ secrets.DEV_BACKEND_URL }}
+          CLOUDFLARE_ACCESS_AUD_TAG: ${{ secrets.DEV_CLOUDFLARE_ACCESS_AUD_TAG }}
+          CLOUDFLARE_ACCESS_TEAM_DOMAIN: ${{ secrets.DEV_CLOUDFLARE_ACCESS_TEAM_DOMAIN }}
+          GOOGLE_CLIENT_ID: ${{ secrets.DEV_GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.DEV_GOOGLE_CLIENT_SECRET }}
+          GOOGLE_PROJECT_ID: ${{ secrets.DEV_GOOGLE_PROJECT_ID }}
+          TIKTOK_CLIENT_KEY: ${{ secrets.DEV_TIKTOK_CLIENT_KEY }}
+          TIKTOK_CLIENT_SECRET: ${{ secrets.DEV_TIKTOK_CLIENT_SECRET }}
+          FACEBOOK_APP_ID: ${{ secrets.DEV_FACEBOOK_APP_ID }}
+          FACEBOOK_APP_SECRET: ${{ secrets.DEV_FACEBOOK_APP_SECRET }}
+          POSTGRES_PASSWORD: ${{ secrets.DEV_POSTGRES_PASSWORD }}
+          ENCRYPTION_KEY: ${{ secrets.DEV_ENCRYPTION_KEY }}
+          STRIPE_SECRET_KEY: ${{ secrets.DEV_STRIPE_SECRET_KEY }}
+          STRIPE_PUBLISHABLE_KEY: ${{ secrets.DEV_STRIPE_PUBLISHABLE_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.DEV_STRIPE_WEBHOOK_SECRET }}
+          STRIPE_PRICING_TABLE_ID: ${{ secrets.DEV_STRIPE_PRICING_TABLE_ID }}
+          STRIPE_API_VERSION: ${{ secrets.DEV_STRIPE_API_VERSION || '2024-11-20.acacia' }}
+          RESEND_API_KEY: ${{ secrets.DEV_RESEND_API_KEY }}
+          RESEND_FROM_EMAIL: ${{ secrets.DEV_RESEND_FROM_EMAIL }}
+          GRAFANA_PASSWORD: ${{ secrets.DEV_GRAFANA_PASSWORD || 'admin' }}
+        run: |
+          echo "🚀 Deploying $ENV environment with tag $TAG to $SSH_USER@$SSH_HOST"
+          
+          # Extract short tag (everything after the first dash)
+          SHORT_TAG=$(echo "$TAG" | cut -d'-' -f2-)
+          APP_DIR="/opt/hopper-dev"
+          
+          # Copy necessary files
+          ssh -o StrictHostKeyChecking=no $SSH_USER@$SSH_HOST "mkdir -p $APP_DIR"
+          scp -o StrictHostKeyChecking=no docker-compose.$ENV.yml $SSH_USER@$SSH_HOST:$APP_DIR/docker-compose.$ENV.yml
+          scp -o StrictHostKeyChecking=no scripts/deploy.sh $SSH_USER@$SSH_HOST:$APP_DIR/deploy.sh
+          
+          # Create environment file on server from GitHub Secrets and run deployment
+          ssh -o StrictHostKeyChecking=no $SSH_USER@$SSH_HOST "cat > $APP_DIR/.env.$ENV << 'ENVEOF'
+ENVIRONMENT=$ENVIRONMENT
+LOG_LEVEL=$LOG_LEVEL
+DOMAIN=$DOMAIN
+FRONTEND_URL=$FRONTEND_URL
+BACKEND_URL=$BACKEND_URL
+CLOUDFLARE_ACCESS_AUD_TAG=$CLOUDFLARE_ACCESS_AUD_TAG
+CLOUDFLARE_ACCESS_TEAM_DOMAIN=$CLOUDFLARE_ACCESS_TEAM_DOMAIN
+GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID
+GOOGLE_CLIENT_SECRET=$GOOGLE_CLIENT_SECRET
+GOOGLE_PROJECT_ID=$GOOGLE_PROJECT_ID
+TIKTOK_CLIENT_KEY=$TIKTOK_CLIENT_KEY
+TIKTOK_CLIENT_SECRET=$TIKTOK_CLIENT_SECRET
+FACEBOOK_APP_ID=$FACEBOOK_APP_ID
+FACEBOOK_APP_SECRET=$FACEBOOK_APP_SECRET
+POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+ENCRYPTION_KEY=$ENCRYPTION_KEY
+STRIPE_SECRET_KEY=$STRIPE_SECRET_KEY
+STRIPE_PUBLISHABLE_KEY=$STRIPE_PUBLISHABLE_KEY
+STRIPE_WEBHOOK_SECRET=$STRIPE_WEBHOOK_SECRET
+STRIPE_PRICING_TABLE_ID=$STRIPE_PRICING_TABLE_ID
+STRIPE_API_VERSION=$STRIPE_API_VERSION
+RESEND_API_KEY=$RESEND_API_KEY
+RESEND_FROM_EMAIL=$RESEND_FROM_EMAIL
+GRAFANA_PASSWORD=$GRAFANA_PASSWORD
+ENVEOF
+chmod +x $APP_DIR/deploy.sh && cd $APP_DIR && GITHUB_REPOSITORY=$GITHUB_REPO ./deploy.sh $ENV $SHORT_TAG"
+
+      - name: Deployment status
+        run: |
+          echo "✅ Deployment completed successfully!"
+

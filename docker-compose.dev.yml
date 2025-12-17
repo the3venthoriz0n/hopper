@@ -35,8 +35,9 @@ services:
         max-file: "3"
 
   backend:
-    build: ./backend
+    image: ${GHCR_IMAGE_BACKEND}
     container_name: dev-hopper-backend
+    pull_policy: always
     ports:
       - "8000:8000"
     volumes:
@@ -85,15 +86,9 @@ services:
       - hopper_default
 
   frontend:
-    build:
-      context: ./frontend
-      args:
-        REACT_APP_BACKEND_URL: ${BACKEND_URL}
-        REACT_APP_DOMAIN: ${DOMAIN}
-        REACT_APP_FRONTEND_URL: ${FRONTEND_URL}
-        REACT_APP_ENVIRONMENT: development
-        REACT_APP_VERSION: ${GIT_VERSION}
+    image: ${GHCR_IMAGE_FRONTEND}
     container_name: dev-hopper-frontend
+    pull_policy: always
     ports:
       - "3000:3000"
     volumes:
@@ -119,10 +114,9 @@ services:
       - hopper_default
 
   otel-collector:
-    build:
-      context: ./monitoring
-      dockerfile: Dockerfile.otel.dev
+    image: ${GHCR_IMAGE_OTEL}
     container_name: dev-hopper-otel-collector
+    pull_policy: always
     ports:
       - "4317:4317"   # OTLP gRPC receiver
       - "4318:4318"   # OTLP HTTP receiver
@@ -136,12 +130,9 @@ services:
       - hopper_default
 
   prometheus:
-    build:
-      context: ./monitoring
-      dockerfile: Dockerfile.prometheus
-      args:
-        ENV: dev
+    image: ${GHCR_IMAGE_PROMETHEUS}
     container_name: dev-hopper-prometheus
+    pull_policy: always
     volumes:
       - prometheus_data:/prometheus
     command:
@@ -158,10 +149,9 @@ services:
       - hopper_default
 
   loki:
-    build:
-      context: ./monitoring
-      dockerfile: Dockerfile.loki.dev
+    image: ${GHCR_IMAGE_LOKI}
     container_name: dev-hopper-loki
+    pull_policy: always
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
@@ -173,12 +163,9 @@ services:
   # Promtail removed - logs now collected via OTEL collector (single source of truth)
 
   grafana:
-    build:
-      context: ./monitoring
-      dockerfile: Dockerfile.grafana
-      args:
-        ENV: dev
+    image: ${GHCR_IMAGE_GRAFANA}
     container_name: dev-hopper-grafana
+    pull_policy: always
     volumes:
       - grafana_data:/var/lib/grafana
     ports:
