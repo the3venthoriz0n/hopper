@@ -80,7 +80,7 @@ def get_token_balance(user_id: int, db: Session) -> Dict[str, Any]:
     }
 
 
-def check_tokens_available(user_id: int, tokens_required: int, db: Session) -> bool:
+def check_tokens_available(user_id: int, tokens_required: int, db: Session = None) -> bool:
     """
     Check if user has enough tokens available.
     
@@ -91,26 +91,36 @@ def check_tokens_available(user_id: int, tokens_required: int, db: Session) -> b
     Returns:
         True if tokens can be used, False otherwise
     """
-    from models import Subscription
+    from models import Subscription, SessionLocal
     
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        return False
+    # ROOT CAUSE FIX: Create session if not provided (backward compatible)
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
     
-    # Unlimited plan bypasses check
-    subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
-    if subscription and subscription.plan_type == 'unlimited':
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return False
+        
+        # Unlimited plan bypasses check
+        subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+        if subscription and subscription.plan_type == 'unlimited':
+            return True
+        
+        balance = get_or_create_token_balance(user_id, db)
+        
+        # Free plan has hard limit - must have enough included tokens
+        if subscription and subscription.plan_type == 'free':
+            return balance.tokens_remaining >= tokens_required
+        
+        # Paid plans (starter, creator) allow overage - always return True
+        # The actual overage will be tracked and billed via Stripe metered billing
         return True
-    
-    balance = get_or_create_token_balance(user_id, db)
-    
-    # Free plan has hard limit - must have enough included tokens
-    if subscription and subscription.plan_type == 'free':
-        return balance.tokens_remaining >= tokens_required
-    
-    # Paid plans (starter, creator) allow overage - always return True
-    # The actual overage will be tracked and billed via Stripe metered billing
-    return True
+    finally:
+        if should_close:
+            db.close()
 
 
 def deduct_tokens(
