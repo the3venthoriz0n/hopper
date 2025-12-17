@@ -6202,24 +6202,30 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
         if len(title) > 100:
             title = title[:100]
         
-        # Priority for description: destination template > global template
-        desc_template = youtube_settings.get('description_template', '') or global_settings.get('description_template', 'Uploaded via Hopper')
-        description = replace_template_placeholders(
-            desc_template,
-            filename_no_ext,
-            global_settings.get('wordbank', [])
-        )
+        # Priority for description: per-video custom > destination template > global template
+        if 'description' in custom_settings:
+            description = custom_settings['description']
+        else:
+            desc_template = youtube_settings.get('description_template', '') or global_settings.get('description_template', 'Uploaded via Hopper')
+            description = replace_template_placeholders(
+                desc_template,
+                filename_no_ext,
+                global_settings.get('wordbank', [])
+            )
         
-        # Get visibility and made_for_kids from settings
-        visibility = youtube_settings.get('visibility', 'private')
-        made_for_kids = youtube_settings.get('made_for_kids', False)
+        # Get visibility and made_for_kids: per-video custom > destination settings
+        visibility = custom_settings.get('visibility', youtube_settings.get('visibility', 'private'))
+        made_for_kids = custom_settings.get('made_for_kids', youtube_settings.get('made_for_kids', False))
         
-        # Get tags from template
-        tags_str = replace_template_placeholders(
-            youtube_settings.get('tags_template', ''),
-            filename_no_ext,
-            global_settings.get('wordbank', [])
-        )
+        # Get tags: per-video custom > template
+        if 'tags' in custom_settings:
+            tags_str = custom_settings['tags']
+        else:
+            tags_str = replace_template_placeholders(
+                youtube_settings.get('tags_template', ''),
+                filename_no_ext,
+                global_settings.get('wordbank', [])
+            )
         
         # Parse tags (comma-separated, strip whitespace, filter empty)
         tags = [tag.strip() for tag in tags_str.split(',') if tag.strip()] if tags_str else []
@@ -6570,12 +6576,12 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         
         title = (title or filename_no_ext)[:2200]  # TikTok limit
         
-        # Get settings with defaults
-        privacy_level = tiktok_settings.get('privacy_level', 'public')
+        # Get settings: per-video custom > destination settings
+        privacy_level = custom_settings.get('privacy_level', tiktok_settings.get('privacy_level', 'public'))
         tiktok_privacy = map_privacy_level_to_tiktok(privacy_level, creator_info)
-        allow_comments = tiktok_settings.get('allow_comments', True)
-        allow_duet = tiktok_settings.get('allow_duet', True)
-        allow_stitch = tiktok_settings.get('allow_stitch', True)
+        allow_comments = custom_settings.get('allow_comments', tiktok_settings.get('allow_comments', True))
+        allow_duet = custom_settings.get('allow_duet', tiktok_settings.get('allow_duet', True))
+        allow_stitch = custom_settings.get('allow_stitch', tiktok_settings.get('allow_stitch', True))
         
         tiktok_logger.info(f"Uploading {video.filename} ({video_size / (1024*1024):.2f} MB)")
         redis_client.set_upload_progress(user_id, video_id, 5)
@@ -6622,9 +6628,23 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                 # Convert dict to JSON string for OpenTelemetry compatibility
                 error_context["response_data"] = json_module.dumps(response_data)
                 error = response_data.get("error", {})
+                error_code = error.get('code', '')
                 error_message = error.get('message', 'Unknown error')
-                error_context["error_code"] = error.get('code')
+                error_context["error_code"] = error_code
                 error_context["error_message"] = error_message
+                
+                # Handle specific TikTok API errors with user-friendly messages
+                if error_code == "unaudited_client_can_only_post_to_private_accounts":
+                    user_friendly_error = (
+                        "TikTok app is not audited. Unaudited apps can only post to private accounts. "
+                        "Please set your TikTok privacy level to 'private' in settings, or wait for app audit completion."
+                    )
+                    tiktok_logger.error(
+                        f"❌ TikTok upload FAILED - Unaudited client limitation - User {user_id}, Video {video_id} ({video.filename}): "
+                        f"{user_friendly_error}",
+                        extra=error_context
+                    )
+                    raise Exception(user_friendly_error)
                 
                 tiktok_logger.error(
                     f"❌ TikTok upload FAILED - Init error - User {user_id}, Video {video_id} ({video.filename}): "
@@ -6928,8 +6948,8 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         # Instagram caption limit is 2200 characters
         caption = (caption or filename_no_ext)[:2200]
         
-        # Get settings
-        location_id = instagram_settings.get('location_id', '')
+        # Get settings: per-video custom > destination settings
+        location_id = custom_settings.get('location_id', instagram_settings.get('location_id', ''))
         
         instagram_logger.info(f"Uploading {video.filename} to Instagram")
         redis_client.set_upload_progress(user_id, video_id, 10)
