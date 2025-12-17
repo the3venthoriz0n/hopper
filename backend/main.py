@@ -7587,11 +7587,12 @@ async def scheduler_task():
                                     if uploader_func:
                                         try:
                                             print(f"  Uploading to {dest_name}...")
-                                            # Pass user_id and video_id - uploader functions query DB directly
+                                            # Pass user_id, video_id, and db session - uploader functions need db
+                                            # ROOT CAUSE FIX: Pass db session to uploader functions so they don't receive None
                                             if dest_name == "instagram":
-                                                await uploader_func(user_id, video_id)
+                                                await uploader_func(user_id, video_id, db=db)
                                             else:
-                                                uploader_func(user_id, video_id)
+                                                uploader_func(user_id, video_id, db=db)
                                             
                                             # Expire the video object from this session to force fresh query
                                             # The upload function uses its own session, so we need to refresh
