@@ -21,8 +21,8 @@ import sys
 import os
 from datetime import datetime, timezone, timedelta
 
-# Add parent directory to path to import backend modules
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add current directory to path to import backend modules
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from models import SessionLocal, User, Subscription, TokenBalance, TokenTransaction
 

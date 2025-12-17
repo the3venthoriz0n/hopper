@@ -70,10 +70,9 @@ def load_env_file(env_file: str) -> bool:
         from dotenv import load_dotenv
         
         # Look for .env file in multiple locations
-        # 1. Project root (../../.env.{env_file} from scripts/)
+        # 1. Project root (../.env.{env_file} from backend/)
         # 2. Current directory
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        backend_dir = os.path.dirname(script_dir)
+        backend_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.dirname(backend_dir)
         
         paths = [
@@ -335,9 +334,8 @@ def create_or_update_products() -> Dict[str, Dict[str, Any]]:
 
 def save_config(plans: Dict[str, Dict[str, Any]], mode: str) -> bool:
     """Save plans configuration to JSON file."""
-    # Write to backend/ directory (one level up from scripts/)
-    # This will be: /mnt/y/Misc/_DevRemote/hopper_sync/backend/stripe_plans_{mode}.json
-    config_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # Write to backend/ directory (same directory as this script)
+    config_dir = os.path.dirname(os.path.abspath(__file__))
     config_file = os.path.join(config_dir, f'stripe_plans_{mode}.json')
     
     print(f"\n{'='*60}\nSaving Configuration\n{'='*60}")
@@ -524,3 +522,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+

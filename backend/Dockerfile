@@ -11,9 +11,6 @@ COPY *.py ./
 # Copy JSON config files (Stripe plans configuration)
 COPY stripe_plans_*.json ./
 
-# Copy scripts directory (utility scripts like setup_stripe.py)
-COPY scripts/ ./scripts/
-
 
 EXPOSE 8000
 
