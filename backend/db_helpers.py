@@ -521,9 +521,45 @@ def check_token_expiration(token: Optional[OAuthToken]) -> Dict[str, Any]:
     # Check if expired
     is_expired = token.expires_at < now
     
-    # Check if expires within 24 hours
+    # For tokens with refresh tokens, check refresh token expiration instead
+    # TikTok and Instagram tokens can be refreshed, so we should check refresh_expires_in
+    if token.refresh_token and token.extra_data:
+        refresh_expires_in = token.extra_data.get("refresh_expires_in")
+        if refresh_expires_in:
+            # Calculate refresh token expiration
+            from datetime import timedelta
+            refresh_expires_at = token.updated_at + timedelta(seconds=int(refresh_expires_in)) if token.updated_at else None
+            if refresh_expires_at:
+                # If refresh token is expired, token is expired
+                if refresh_expires_at < now:
+                    return {
+                        "expired": True,
+                        "expires_soon": False,
+                        "expires_at": refresh_expires_at,
+                        "status": "expired"
+                    }
+                # If refresh token expires within 7 days, show expires_soon
+                time_until_refresh_expiry = refresh_expires_at - now
+                expires_soon = time_until_refresh_expiry.total_seconds() < 604800  # 7 days
+                status = "expires_soon" if expires_soon else "valid"
+                return {
+                    "expired": False,
+                    "expires_soon": expires_soon,
+                    "expires_at": refresh_expires_at,
+                    "status": status
+                }
+    
+    # For tokens without refresh tokens or if refresh_expires_in not available,
+    # check access token expiration
+    # TikTok access tokens expire in 1-2 hours, so use shorter threshold
     time_until_expiry = token.expires_at - now
-    expires_soon = not is_expired and time_until_expiry.total_seconds() < 86400  # 24 hours
+    if token.platform == "tiktok":
+        # TikTok access tokens expire quickly, but can be refreshed
+        # Only show "expires soon" if access token expires in less than 1 hour AND no refresh token
+        expires_soon = not is_expired and not token.refresh_token and time_until_expiry.total_seconds() < 3600  # 1 hour
+    else:
+        # For other platforms, use 24 hour threshold
+        expires_soon = not is_expired and time_until_expiry.total_seconds() < 86400  # 24 hours
     
     status = "expired" if is_expired else ("expires_soon" if expires_soon else "valid")
     
