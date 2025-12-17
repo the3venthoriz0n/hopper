@@ -6095,7 +6095,7 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
                 extra={
                     "user_id": user_id,
                     "video_id": video_id,
-                    "filename": video.filename,
+                    "video_filename": video.filename,
                     "file_size_bytes": video.file_size_bytes,
                     "tokens_required": tokens_required,
                     "tokens_remaining": tokens_remaining,
@@ -6117,7 +6117,7 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
                 extra={
                     "user_id": user_id,
                     "video_id": video_id,
-                    "filename": video.filename,
+                    "video_filename": video.filename,
                     "platform": "youtube",
                     "error_type": "MissingCredentials",
                 }
@@ -6249,7 +6249,7 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
                     "context": {
                         "user_id": user_id,
                         "video_id": video_id,
-                        "filename": video.filename,
+                        "video_filename": video.filename,
                         "video_path": str(video_path),
                         "platform": "youtube",
                         "error_type": "FileNotFound",
@@ -6318,10 +6318,11 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
         error_msg = str(e)
         
         # Gather comprehensive context for troubleshooting
+        # Note: Use 'video_filename' instead of 'filename' to avoid conflict with LogRecord.filename
         context = {
             "user_id": user_id,
             "video_id": video_id,
-            "filename": video.filename,
+            "video_filename": video.filename,
             "file_size_bytes": video.file_size_bytes,
             "file_size_mb": round(video.file_size_bytes / (1024 * 1024), 2) if video.file_size_bytes else None,
             "tokens_consumed": video.tokens_consumed,
@@ -6462,7 +6463,7 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                 extra={
                     "user_id": user_id,
                     "video_id": video_id,
-                    "filename": video.filename,
+                    "video_filename": video.filename,
                     "file_size_bytes": video.file_size_bytes,
                     "tokens_required": tokens_required,
                     "tokens_remaining": tokens_remaining,
@@ -6484,7 +6485,7 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                 extra={
                     "user_id": user_id,
                     "video_id": video_id,
-                    "filename": video.filename,
+                    "video_filename": video.filename,
                     "platform": "tiktok",
                     "error_type": "MissingCredentials",
                 }
@@ -6525,7 +6526,7 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                 extra={
                     "user_id": user_id,
                     "video_id": video_id,
-                    "filename": video.filename,
+                    "video_filename": video.filename,
                     "video_path": str(video_path),
                     "platform": "tiktok",
                     "error_type": "FileNotFound",
@@ -6540,15 +6541,13 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                 f"❌ TikTok upload FAILED - Empty file - User {user_id}, Video {video_id} ({video.filename}): "
                 f"File size: {video_size} bytes",
                 extra={
-                    "context": {
-                        "user_id": user_id,
-                        "video_id": video_id,
-                        "filename": video.filename,
-                        "video_path": str(video_path),
-                        "file_size": video_size,
-                        "platform": "tiktok",
-                        "error_type": "EmptyFile",
-                    }
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "video_filename": video.filename,
+                    "video_path": str(video_path),
+                    "file_size": video_size,
+                    "platform": "tiktok",
+                    "error_type": "EmptyFile",
                 }
             )
             raise Exception(error_msg)
@@ -6608,10 +6607,11 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         
         if init_response.status_code != 200:
             import json as json_module
+            import json as json_module
             error_context = {
                 "user_id": user_id,
                 "video_id": video_id,
-                "filename": video.filename,
+                "video_filename": video.filename,
                 "platform": "tiktok",
                 "http_status": init_response.status_code,
                 "stage": "init_upload",
@@ -6619,7 +6619,8 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
             
             try:
                 response_data = init_response.json()
-                error_context["response_data"] = response_data
+                # Convert dict to JSON string for OpenTelemetry compatibility
+                error_context["response_data"] = json_module.dumps(response_data)
                 error = response_data.get("error", {})
                 error_message = error.get('message', 'Unknown error')
                 error_context["error_code"] = error.get('code')
@@ -6669,10 +6670,11 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         
         if upload_response.status_code not in [200, 201]:
             import json as json_module
+            import json as json_module
             error_context = {
                 "user_id": user_id,
                 "video_id": video_id,
-                "filename": video.filename,
+                "video_filename": video.filename,
                 "platform": "tiktok",
                 "http_status": upload_response.status_code,
                 "stage": "file_upload",
@@ -6682,7 +6684,8 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
             
             try:
                 response_data = upload_response.json()
-                error_context["response_data"] = response_data
+                # Convert dict to JSON string for OpenTelemetry compatibility
+                error_context["response_data"] = json_module.dumps(response_data)
                 error = response_data.get("error", {})
                 error_msg = error.get("message", upload_response.text)
                 error_context["error_code"] = error.get('code')
@@ -6742,10 +6745,11 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         error_msg = str(e)
         
         # Gather comprehensive context for troubleshooting
+        # Note: Use 'video_filename' instead of 'filename' to avoid conflict with LogRecord.filename
         context = {
             "user_id": user_id,
             "video_id": video_id,
-            "filename": video.filename,
+            "video_filename": video.filename,
             "file_size_bytes": video.file_size_bytes,
             "file_size_mb": round(video.file_size_bytes / (1024 * 1024), 2) if video.file_size_bytes else None,
             "tokens_consumed": video.tokens_consumed,
@@ -6822,16 +6826,14 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
                 f"Required {tokens_required} tokens, but only {tokens_remaining} remaining. "
                 f"File size: {video.file_size_bytes / (1024*1024):.2f} MB",
                 extra={
-                    "context": {
-                        "user_id": user_id,
-                        "video_id": video_id,
-                        "filename": video.filename,
-                        "file_size_bytes": video.file_size_bytes,
-                        "tokens_required": tokens_required,
-                        "tokens_remaining": tokens_remaining,
-                        "platform": "instagram",
-                        "error_type": "InsufficientTokens",
-                    }
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "video_filename": video.filename,
+                    "file_size_bytes": video.file_size_bytes,
+                    "tokens_required": tokens_required,
+                    "tokens_remaining": tokens_remaining,
+                    "platform": "instagram",
+                    "error_type": "InsufficientTokens",
                 }
             )
             
@@ -6846,13 +6848,11 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             instagram_logger.error(
                 f"❌ Instagram upload FAILED - No credentials - User {user_id}, Video {video_id} ({video.filename})",
                 extra={
-                    "context": {
-                        "user_id": user_id,
-                        "video_id": video_id,
-                        "filename": video.filename,
-                        "platform": "instagram",
-                        "error_type": "MissingCredentials",
-                    }
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "video_filename": video.filename,
+                    "platform": "instagram",
+                    "error_type": "MissingCredentials",
                 }
             )
             db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
@@ -6895,14 +6895,12 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
                 f"❌ Instagram upload FAILED - File not found - User {user_id}, Video {video_id} ({video.filename}): "
                 f"Path: {video_path}",
                 extra={
-                    "context": {
-                        "user_id": user_id,
-                        "video_id": video_id,
-                        "filename": video.filename,
-                        "video_path": str(video_path),
-                        "platform": "instagram",
-                        "error_type": "FileNotFound",
-                    }
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "video_filename": video.filename,
+                    "video_path": str(video_path),
+                    "platform": "instagram",
+                    "error_type": "FileNotFound",
                 }
             )
             raise FileNotFoundError(error_msg)
@@ -6981,10 +6979,11 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             )
             
             if container_response.status_code != 200:
+                import json as json_module
                 error_context = {
                     "user_id": user_id,
                     "video_id": video_id,
-                    "filename": video.filename,
+                    "video_filename": video.filename,
                     "platform": "instagram",
                     "http_status": container_response.status_code,
                     "stage": "create_container",
@@ -6992,8 +6991,12 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
                 }
                 
                 error_data = container_response.json() if container_response.headers.get('content-type', '').startswith('application/json') else container_response.text
-                error_context["response_data"] = error_data
-                error_context["response_headers"] = dict(container_response.headers)
+                # Convert dict/list to JSON string for OpenTelemetry compatibility
+                if isinstance(error_data, (dict, list)):
+                    error_context["response_data"] = json_module.dumps(error_data)
+                else:
+                    error_context["response_data"] = str(error_data)
+                error_context["response_headers"] = json_module.dumps(dict(container_response.headers))
                 
                 # Check if it's a token expiration issue
                 if isinstance(error_data, dict):
@@ -7048,10 +7051,11 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             )
             
             if upload_response.status_code != 200:
+                import json as json_module
                 error_context = {
                     "user_id": user_id,
                     "video_id": video_id,
-                    "filename": video.filename,
+                    "video_filename": video.filename,
                     "platform": "instagram",
                     "http_status": upload_response.status_code,
                     "stage": "upload_video_data",
@@ -7060,8 +7064,12 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
                 }
                 
                 error_data = upload_response.json() if upload_response.headers.get('content-type', '').startswith('application/json') else upload_response.text
-                error_context["response_data"] = error_data
-                error_context["response_headers"] = dict(upload_response.headers)
+                # Convert dict/list to JSON string for OpenTelemetry compatibility
+                if isinstance(error_data, (dict, list)):
+                    error_context["response_data"] = json_module.dumps(error_data)
+                else:
+                    error_context["response_data"] = str(error_data)
+                error_context["response_headers"] = json_module.dumps(dict(upload_response.headers))
                 
                 if isinstance(error_data, dict):
                     error_obj = error_data.get('error', {})
@@ -7134,10 +7142,11 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             publish_response = await client.post(publish_url, json=publish_params, headers=publish_headers)
             
             if publish_response.status_code != 200:
+                import json as json_module
                 error_context = {
                     "user_id": user_id,
                     "video_id": video_id,
-                    "filename": video.filename,
+                    "video_filename": video.filename,
                     "platform": "instagram",
                     "http_status": publish_response.status_code,
                     "stage": "publish_media",
@@ -7145,8 +7154,12 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
                 }
                 
                 error_data = publish_response.json() if publish_response.headers.get('content-type', '').startswith('application/json') else publish_response.text
-                error_context["response_data"] = error_data
-                error_context["response_headers"] = dict(publish_response.headers)
+                # Convert dict/list to JSON string for OpenTelemetry compatibility
+                if isinstance(error_data, (dict, list)):
+                    error_context["response_data"] = json_module.dumps(error_data)
+                else:
+                    error_context["response_data"] = str(error_data)
+                error_context["response_headers"] = json_module.dumps(dict(publish_response.headers))
                 
                 if isinstance(error_data, dict):
                     error_obj = error_data.get('error', {})
@@ -7209,10 +7222,11 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         error_msg = str(e)
         
         # Gather comprehensive context for troubleshooting
+        # Note: Use 'video_filename' instead of 'filename' to avoid conflict with LogRecord.filename
         context = {
             "user_id": user_id,
             "video_id": video_id,
-            "filename": video.filename,
+            "video_filename": video.filename,
             "file_size_bytes": video.file_size_bytes,
             "file_size_mb": round(video.file_size_bytes / (1024 * 1024), 2) if video.file_size_bytes else None,
             "tokens_consumed": video.tokens_consumed,
@@ -7562,10 +7576,11 @@ async def scheduler_task():
                                             error_msg = str(upload_err)
                                             
                                             # Gather context for troubleshooting
+                                            # Note: Use 'video_filename' instead of 'filename' to avoid conflict with LogRecord.filename
                                             context = {
                                                 "user_id": user_id,
                                                 "video_id": video_id,
-                                                "filename": video.filename,
+                                                "video_filename": video.filename,
                                                 "platform": dest_name,
                                                 "error_type": error_type,
                                                 "error_message": error_msg,
@@ -7602,10 +7617,11 @@ async def scheduler_task():
                             error_msg = str(e)
                             
                             # Gather context for troubleshooting
+                            # Note: Use 'video_filename' instead of 'filename' to avoid conflict with LogRecord.filename
                             context = {
                                 "user_id": user_id,
                                 "video_id": video_id if 'video_id' in locals() else None,
-                                "filename": video.filename,
+                                "video_filename": video.filename,
                                 "video_status": video.status,
                                 "error_type": error_type,
                                 "error_message": error_msg,
