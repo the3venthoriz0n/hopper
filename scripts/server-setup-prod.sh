@@ -23,11 +23,13 @@ if ! command -v docker &> /dev/null; then
     systemctl start docker
 fi
 
-# Install nginx
-if ! command -v nginx &> /dev/null; then
-    echo "🌐 Installing nginx..."
-    apt-get install -y nginx
-    systemctl enable nginx
+# Note: We don't install system nginx - we use nginx in Docker
+# If system nginx exists, stop and disable it
+if systemctl is-active --quiet nginx 2>/dev/null || systemctl is-enabled --quiet nginx 2>/dev/null; then
+    echo "🛑 Stopping and disabling system nginx (we use nginx in Docker)..."
+    systemctl stop nginx 2>/dev/null || true
+    systemctl disable nginx 2>/dev/null || true
+    echo "✅ System nginx stopped and disabled"
 fi
 
 # Configure firewall - CRITICAL ORDER
