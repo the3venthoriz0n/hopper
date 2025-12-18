@@ -61,46 +61,47 @@ jobs:
 
       - name: Build and push images
         run: |
-           ENV="${{ steps.env.outputs.env }}"
-           TAG="${{ steps.tag.outputs.tag }}"
-           
-           # Define services to build
-           declare -A SERVICES=(
-             ["backend"]="./backend|Dockerfile"
-             ["frontend"]="./frontend|Dockerfile"
-             ["otel-collector"]="./monitoring|Dockerfile.otel.$ENV"
-             ["prometheus"]="./monitoring|Dockerfile.prometheus"
-             ["loki"]="./monitoring|Dockerfile.loki.$ENV"
-             ["grafana"]="./monitoring|Dockerfile.grafana"
-           )
-           
-           for SERVICE in "${!SERVICES[@]}"; do
-             IFS='|' read -r CONTEXT DOCKERFILE <<< "${SERVICES[$SERVICE]}"
-             
-             echo "🐳 Building hopper-$SERVICE..."
-             
-             # Build args for frontend
-             BUILD_ARGS=""
-             if [ "$SERVICE" == "frontend" ]; then
-               BUILD_ARGS="--build-arg REACT_APP_BACKEND_URL=${{ steps.env.outputs.env == 'prod' && secrets.PROD_BACKEND_URL || secrets.DEV_BACKEND_URL }} \
-                           --build-arg REACT_APP_DOMAIN=${{ steps.env.outputs.env == 'prod' && secrets.PROD_DOMAIN || secrets.DEV_DOMAIN }} \
-                           --build-arg REACT_APP_FRONTEND_URL=${{ steps.env.outputs.env == 'prod' && secrets.PROD_FRONTEND_URL || secrets.DEV_FRONTEND_URL }} \
-                           --build-arg REACT_APP_ENVIRONMENT=${{ steps.env.outputs.env == 'prod' && 'production' || 'development' }} \
-                           --build-arg REACT_APP_VERSION=$TAG"
-             elif [[ "$SERVICE" =~ ^(prometheus|grafana)$ ]]; then
-               BUILD_ARGS="--build-arg ENV=$ENV"
-             fi
-             
-             docker buildx build \
-               "$CONTEXT" \
-               --file "$CONTEXT/$DOCKERFILE" \
-               --push \
-               --cache-from type=gha \
-               --cache-to type=gha,mode=max \
-               --tag "${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-$SERVICE:$TAG" \
-               --tag "${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-$SERVICE:$ENV-latest" \
-               $BUILD_ARGS
-           done
+          ENV="${{ steps.env.outputs.env }}"
+          TAG="${{ steps.tag.outputs.tag }}"
+          
+          # Define services to build
+          declare -A SERVICES=(
+            ["backend"]="./backend"
+            ["frontend"]="./frontend"
+            ["otel-collector"]="./monitoring|Dockerfile.otel.$ENV"
+            ["prometheus"]="./monitoring|Dockerfile.prometheus"
+            ["loki"]="./monitoring|Dockerfile.loki.$ENV"
+            ["grafana"]="./monitoring|Dockerfile.grafana"
+          )
+          
+          for SERVICE in "${!SERVICES[@]}"; do
+            IFS='|' read -r CONTEXT DOCKERFILE <<< "${SERVICES[$SERVICE]}"
+            DOCKERFILE=${DOCKERFILE:-Dockerfile}
+            
+            echo "🐳 Building hopper-$SERVICE..."
+            
+            # Build args for frontend
+            BUILD_ARGS=""
+            if [ "$SERVICE" == "frontend" ]; then
+              BUILD_ARGS="--build-arg REACT_APP_BACKEND_URL=${{ steps.env.outputs.env == 'prod' && secrets.PROD_BACKEND_URL || secrets.DEV_BACKEND_URL }} \
+                          --build-arg REACT_APP_DOMAIN=${{ steps.env.outputs.env == 'prod' && secrets.PROD_DOMAIN || secrets.DEV_DOMAIN }} \
+                          --build-arg REACT_APP_FRONTEND_URL=${{ steps.env.outputs.env == 'prod' && secrets.PROD_FRONTEND_URL || secrets.DEV_FRONTEND_URL }} \
+                          --build-arg REACT_APP_ENVIRONMENT=${{ steps.env.outputs.env == 'prod' && 'production' || 'development' }} \
+                          --build-arg REACT_APP_VERSION=$TAG"
+            elif [[ "$SERVICE" =~ ^(prometheus|grafana)$ ]]; then
+              BUILD_ARGS="--build-arg ENV=$ENV"
+            fi
+            
+            docker buildx build \
+              --context "$CONTEXT" \
+              --file "$CONTEXT/$DOCKERFILE" \
+              --push \
+              --cache-from type=gha \
+              --cache-to type=gha,mode=max \
+              --tag "${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-$SERVICE:$TAG" \
+              --tag "${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-$SERVICE:$ENV-latest" \
+              $BUILD_ARGS
+          done
 
   deploy:
     needs: build-and-push
@@ -230,11 +231,12 @@ jobs:
       - name: Cleanup secrets
         if: always()
         env:
-          SSH_OPTS: "-o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o IdentitiesOnly=yes"
+          SSH_OPTS: "-i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o IdentitiesOnly=yes"
           SSH_HOST: ${{ steps.vars.outputs.ssh_host }}
           SSH_USER: ${{ steps.vars.outputs.ssh_user }}
           APP_DIR: ${{ steps.vars.outputs.app_dir }}
           ENV: ${{ needs.build-and-push.outputs.env }}
         run: |
-          echo "🧹 Cleaning up secrets file..."
-          ssh $SSH_OPTS $SSH_USER@$SSH_HOST "rm -f $APP_DIR/.env.$ENV" || echo "⚠️  Cleanup failed (non-critical)"
+          echo "🧹 Cleaning up secrets..."
+          ssh $SSH_OPTS $SSH_USER@$SSH_HOST "rm -f $APP_DIR/.env.$ENV" 2>/dev/null || true
+          rm -f ~/.ssh/deploy_key
