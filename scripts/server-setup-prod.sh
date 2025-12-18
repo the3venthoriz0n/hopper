@@ -59,7 +59,7 @@ if command -v ufw &> /dev/null; then
 fi
 
 # Create app directory
-APP_DIR="/opt/hopper"
+APP_DIR="/opt/hopper-prod"
 echo "📁 Creating app directory..."
 mkdir -p $APP_DIR/nginx
 

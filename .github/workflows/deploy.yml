@@ -158,7 +158,7 @@ jobs:
           if [ "$ENV" == "prod" ]; then
             echo "ssh_host=${{ secrets.PROD_HOST }}" >> $GITHUB_OUTPUT
             echo "ssh_user=${{ secrets.PROD_USER }}" >> $GITHUB_OUTPUT
-            echo "app_dir=/opt/hopper" >> $GITHUB_OUTPUT
+            echo "app_dir=/opt/hopper-prod" >> $GITHUB_OUTPUT
           else
             echo "ssh_host=${{ secrets.DEV_HOST }}" >> $GITHUB_OUTPUT
             echo "ssh_user=${{ secrets.DEV_USER }}" >> $GITHUB_OUTPUT

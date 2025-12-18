@@ -6,7 +6,12 @@ set -e
 
 ENV=${1:-prod}
 TAG=${2:-latest}
-APP_DIR="/opt/hopper${ENV:+-$ENV}"
+# App directory: /opt/hopper-prod for prod, /opt/hopper-dev for dev
+if [ "$ENV" == "prod" ]; then
+    APP_DIR="/opt/hopper-prod"
+else
+    APP_DIR="/opt/hopper-dev"
+fi
 
 if [ "$ENV" != "dev" ] && [ "$ENV" != "prod" ]; then
     echo "❌ Invalid environment: $ENV. Use 'dev' or 'prod'"
