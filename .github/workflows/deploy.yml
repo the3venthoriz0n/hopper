@@ -92,15 +92,15 @@ jobs:
               BUILD_ARGS="--build-arg ENV=$ENV"
             fi
             
-             docker buildx build \
-               "$CONTEXT" \
-               --file "$CONTEXT/$DOCKERFILE" \
-               --push \
-               --cache-from type=gha \
-               --cache-to type=gha,mode=max \
-               --tag "${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-$SERVICE:$TAG" \
-               --tag "${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-$SERVICE:$ENV-latest" \
-               $BUILD_ARGS
+            docker buildx build \
+              --context "$CONTEXT" \
+              --file "$CONTEXT/$DOCKERFILE" \
+              --push \
+              --cache-from type=gha \
+              --cache-to type=gha,mode=max \
+              --tag "${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-$SERVICE:$TAG" \
+              --tag "${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-$SERVICE:$ENV-latest" \
+              $BUILD_ARGS
           done
 
   deploy:
