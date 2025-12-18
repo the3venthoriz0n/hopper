@@ -7,7 +7,6 @@ venv/
 # Backend
 backend/uploads/
 backend/client_secrets.json
-backend/stripe_plans_*.json
 
 # Node
 node_modules/

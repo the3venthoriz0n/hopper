@@ -4,7 +4,8 @@ on:
   push:
     branches:
       - main
-      - dev
+      # Note: 'dev' branch deployments are handled manually on Unraid
+      # Dev environment uses local builds with hot reload, not GHCR images
 
 env:
   GHCR_REGISTRY: ghcr.io
@@ -30,7 +31,7 @@ jobs:
         run: |
           if [ "${{ github.ref }}" == "refs/heads/main" ]; then
             echo "env=prod" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref }}" == refs/heads/dev* ]]; then
+          elif [ "${{ github.ref }}" == "refs/heads/dev" ]; then
             echo "env=dev" >> $GITHUB_OUTPUT
           else
             echo "env=dev" >> $GITHUB_OUTPUT
@@ -39,8 +40,18 @@ jobs:
       - name: Generate tag
         id: tag
         run: |
-          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-          echo "tag=${{ steps.env.outputs.env }}-${SHORT_SHA}" >> $GITHUB_OUTPUT
+          # Try to get git tag, fallback to short commit hash
+          GIT_TAG=$(git describe --tags --exact-match 2>/dev/null || echo "")
+          if [ -n "$GIT_TAG" ]; then
+            # Use the git tag directly (e.g., v1.0.0)
+            echo "tag=$GIT_TAG" >> $GITHUB_OUTPUT
+            echo "version=$GIT_TAG" >> $GITHUB_OUTPUT
+          else
+            # Fallback to env-sha format
+            SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+            echo "tag=${{ steps.env.outputs.env }}-${SHORT_SHA}" >> $GITHUB_OUTPUT
+            echo "version=${{ steps.env.outputs.env }}-${SHORT_SHA}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -69,11 +80,11 @@ jobs:
           context: ./frontend
           push: true
           build-args: |
-            REACT_APP_BACKEND_URL=${{ secrets.BACKEND_URL }}
-            REACT_APP_DOMAIN=${{ secrets.DOMAIN }}
-            REACT_APP_FRONTEND_URL=${{ secrets.FRONTEND_URL }}
+            REACT_APP_BACKEND_URL=${{ steps.env.outputs.env == 'prod' && secrets.PROD_BACKEND_URL || secrets.DEV_BACKEND_URL }}
+            REACT_APP_DOMAIN=${{ steps.env.outputs.env == 'prod' && secrets.PROD_DOMAIN || secrets.DEV_DOMAIN }}
+            REACT_APP_FRONTEND_URL=${{ steps.env.outputs.env == 'prod' && secrets.PROD_FRONTEND_URL || secrets.DEV_FRONTEND_URL }}
             REACT_APP_ENVIRONMENT=${{ steps.env.outputs.env == 'prod' && 'production' || 'development' }}
-            REACT_APP_VERSION=${{ steps.tag.outputs.tag }}
+            REACT_APP_VERSION=${{ steps.tag.outputs.version || steps.tag.outputs.tag }}
           tags: |
             ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-frontend:${{ steps.tag.outputs.tag }}
             ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-frontend:${{ steps.env.outputs.env }}-latest
@@ -191,7 +202,7 @@ jobs:
           # Copy necessary files
           ssh -o StrictHostKeyChecking=no $SSH_USER@$SSH_HOST "mkdir -p $APP_DIR/nginx"
           scp -o StrictHostKeyChecking=no docker-compose.$ENV.yml $SSH_USER@$SSH_HOST:$APP_DIR/docker-compose.$ENV.yml
-          scp -o StrictHostKeyChecking=no nginx/hopper.conf $SSH_USER@$SSH_HOST:$APP_DIR/nginx/hopper.conf
+          scp -o StrictHostKeyChecking=no nginx/prod-hopper.conf $SSH_USER@$SSH_HOST:$APP_DIR/nginx/prod-hopper.conf
           scp -o StrictHostKeyChecking=no scripts/deploy.sh $SSH_USER@$SSH_HOST:$APP_DIR/deploy.sh
           
           # Run deployment with all environment variables passed directly

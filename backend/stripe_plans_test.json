@@ -1,0 +1,31 @@
+{
+  "free": {
+    "name": "Free",
+    "monthly_tokens": 10,
+    "stripe_product_id": "prod_TbxHlGihnNIHVP",
+    "stripe_price_id": "price_1SejN1AJugrwwGJAOEdJeaIw",
+    "stripe_overage_price_id": null
+  },
+  "starter": {
+    "name": "Starter",
+    "monthly_tokens": 100,
+    "stripe_product_id": "prod_TbxHg5Va4ATcVo",
+    "stripe_price_id": "price_1Sf2mqAJugrwwGJAx9xQeeNd",
+    "stripe_overage_price_id": "price_1Sf2mqAJugrwwGJA3Hpk41KN"
+  },
+  "creator": {
+    "name": "Creator",
+    "monthly_tokens": 500,
+    "stripe_product_id": "prod_TbxHtZ0YGFJaBZ",
+    "stripe_price_id": "price_1Sf2mqAJugrwwGJAr3CPjHLi",
+    "stripe_overage_price_id": "price_1Sf2mqAJugrwwGJAptT2wyOC"
+  },
+  "unlimited": {
+    "name": "Unlimited",
+    "monthly_tokens": -1,
+    "stripe_product_id": "prod_TbxHLbYi9ilKdQ",
+    "stripe_price_id": "price_1SejN2AJugrwwGJA979CsaKS",
+    "stripe_overage_price_id": null,
+    "hidden": true
+  }
+}

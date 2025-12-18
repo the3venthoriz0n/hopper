@@ -4,6 +4,11 @@
 
 set -e
 
+# Change to project root directory (parent of scripts/)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 # Hardcoded remote server configuration
 REMOTE_HOST="dbserver"
 REMOTE_USER="root"
@@ -12,6 +17,7 @@ REMOTE_PATH="/mnt/y/Misc/_DevRemote/hopper_sync"
 SYNC_DEST="${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}"
 
 echo "Syncing to remote server: $SYNC_DEST"
+echo "Working directory: $(pwd)"
 
 # Common rsync options
 RSYNC_OPTS="-avz --delete"
@@ -32,5 +38,10 @@ echo "Syncing root files..."
 rsync -avz \
     docker-compose.dev.yml makefile \
     "${SYNC_DEST}/"
+
+echo "Syncing nginx config..."
+rsync -avz \
+    nginx/dev-hopper.conf \
+    "${SYNC_DEST}/nginx/"
 
 echo "✅ Sync complete!"

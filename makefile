@@ -33,18 +33,18 @@ help:
 	@echo "  clean         Remove stopped containers and unused images"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make up                      Start dev environment"
-	@echo "  make up ENV=prod             Start prod environment"
+	@echo "  make up                      Start dev environment (Unraid, hot reload)"
+	@echo "  make up ENV=prod             Start prod environment (DigitalOcean, GHCR images)"
 	@echo "  make logs SERVICE=backend    Follow backend logs"
 	@echo "  make logs LINES=100          View last 100 lines"
 	@echo "  make rebuild ENV=prod        Fresh prod rebuild"
 	@echo ""
 	@echo "Environments:"
-	@echo "  dev:  hopper-dev.dunkbox.net  (ports 3000/8000)"
-	@echo "  prod: hopper.dunkbox.net      (ports 3001/8001)"
+	@echo "  dev:   hopper-dev.dunkbox.net (Unraid, local builds, hot reload)"
+	@echo "  prod:  hopper.dunkbox.net     (DigitalOcean, GHCR images)"
 
 sync:
-	@bash sync-rsync.sh
+	@bash scripts/sync-rsync.sh
 
 test:
 	@echo "🧪 Building backend image (to ensure pytest is installed)..."
