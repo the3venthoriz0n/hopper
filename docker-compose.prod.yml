@@ -199,7 +199,6 @@ services:
 
 networks:
   hopper_default:
-    external: true
 
 volumes:
   postgres_data:
