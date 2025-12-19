@@ -5,7 +5,7 @@ services:
     ports:
       - "8080:80"
     volumes:
-      -  /mnt/y/Misc/_DevRemote/hopper_sync/nginx/dev-hopper.conf:/etc/nginx/conf.d/default.conf:ro
+      - /mnt/y/Misc/_DevRemote/hopper_sync/nginx/dev-hopper.conf:/etc/nginx/conf.d/default.conf:ro
       - nginx_cache:/var/cache/nginx
     depends_on:
       - frontend
