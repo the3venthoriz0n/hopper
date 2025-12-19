@@ -68,6 +68,13 @@ docker compose -f "$COMPOSE_FILE" pull || {
     echo "⚠️  Some images failed to pull. Continuing with existing images..."
 }
 
+# Prune old/unused Docker images to free up disk space
+echo "🧹 Pruning old Docker images..."
+docker image prune -af --filter "until=168h" || {
+    echo "⚠️  Image pruning failed, continuing..."
+}
+echo "✅ Image pruning complete"
+
 # Stop existing containers
 echo "🛑 Stopping existing containers..."
 docker compose -f "$COMPOSE_FILE" down
