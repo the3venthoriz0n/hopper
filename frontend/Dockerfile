@@ -8,6 +8,10 @@ FROM node:18-alpine AS dev
 
 WORKDIR /app
 
+# React env vars - passed as build args (for when image is built)
+ARG REACT_APP_VERSION=dev
+ENV REACT_APP_VERSION=${REACT_APP_VERSION}
+
 # Install dependencies
 COPY package*.json ./
 RUN npm install

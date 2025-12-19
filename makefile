@@ -3,8 +3,8 @@
 # Default environment (can be overridden: make up ENV=prod)
 ENV ?= dev
 
-# Get git version (tag or short commit hash)
-GIT_VERSION := $(shell git describe --tags --always 2>/dev/null || echo "dev")
+# Get git version (latest release tag, e.g., v5.0.5)
+GIT_VERSION := $(shell git tag --sort=-version:refname | head -1 2>/dev/null || echo "dev")
 
 # Export GIT_VERSION so docker-compose can use it
 export GIT_VERSION

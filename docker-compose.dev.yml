@@ -114,6 +114,8 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       target: dev
+      args:
+        REACT_APP_VERSION=${GIT_VERSION:-dev}
     container_name: dev-hopper-frontend
     # Port not exposed to host - accessed via nginx
     expose:
@@ -129,7 +131,7 @@ services:
       - REACT_APP_DOMAIN=${DOMAIN}
       - REACT_APP_FRONTEND_URL=${FRONTEND_URL}
       - REACT_APP_ENVIRONMENT=development
-      # REACT_APP_VERSION is baked into the build at build time, no runtime env needed
+      - REACT_APP_VERSION=${GIT_VERSION:-dev}
       - CHOKIDAR_USEPOLLING=true
       - WATCHPACK_POLLING=true
     logging:

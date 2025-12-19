@@ -1,10 +1,10 @@
 name: Build and Deploy
 
 on:
-  push:
-    branches:
-      - main
-      # Note: 'dev' branch deployments are handled manually on Unraid
+  release:
+    types: [created]
+    # Triggers when you create a new release (which creates a git tag)
+    # Note: 'dev' branch deployments are handled manually on Unraid
 
 env:
   GHCR_REGISTRY: ghcr.io
@@ -28,25 +28,30 @@ jobs:
       - name: Set environment
         id: env
         run: |
-          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
-            echo "env=prod" >> $GITHUB_OUTPUT
-          else
-            echo "env=dev" >> $GITHUB_OUTPUT
-          fi
+          # Releases are always production
+          echo "env=prod" >> $GITHUB_OUTPUT
 
       - name: Generate tag
         id: tag
         run: |
-          GIT_TAG=$(git tag --sort=-version:refname | head -1 || echo "")
+          # Use the release tag (e.g., v5.0.5) from the release event
+          RELEASE_TAG="${{ github.event.release.tag_name }}"
           
-          if [ -n "$GIT_TAG" ]; then
-            echo "tag=$GIT_TAG" >> $GITHUB_OUTPUT
-            echo "✅ Using git tag: $GIT_TAG"
+          if [ -n "$RELEASE_TAG" ]; then
+            echo "tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+            echo "✅ Using release tag: $RELEASE_TAG"
           else
-            SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-            FALLBACK_TAG="${{ steps.env.outputs.env }}-${SHORT_SHA}"
-            echo "tag=${FALLBACK_TAG}" >> $GITHUB_OUTPUT
-            echo "⚠️  No git tags found, using fallback: ${FALLBACK_TAG}"
+            # Fallback: get latest tag (shouldn't happen with release trigger)
+            GIT_TAG=$(git tag --sort=-version:refname | head -1 || echo "")
+            if [ -n "$GIT_TAG" ]; then
+              echo "tag=$GIT_TAG" >> $GITHUB_OUTPUT
+              echo "⚠️  Using latest git tag as fallback: $GIT_TAG"
+            else
+              SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+              FALLBACK_TAG="${{ steps.env.outputs.env }}-${SHORT_SHA}"
+              echo "tag=${FALLBACK_TAG}" >> $GITHUB_OUTPUT
+              echo "⚠️  No tags found, using fallback: ${FALLBACK_TAG}"
+            fi
           fi
 
       - name: Log in to GHCR

@@ -51,16 +51,16 @@ fi
 # Get GitHub repository from environment or use default
 GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-"USERNAME/REPO"}
 
-# Set image tags based on environment and tag
-# For rollback: images are tagged with both version tag and env-latest
-export GHCR_IMAGE_BACKEND="ghcr.io/${GITHUB_REPOSITORY}/hopper-backend:${ENV}-${TAG}"
-export GHCR_IMAGE_FRONTEND="ghcr.io/${GITHUB_REPOSITORY}/hopper-frontend:${ENV}-${TAG}"
-export GHCR_IMAGE_OTEL="ghcr.io/${GITHUB_REPOSITORY}/hopper-otel:${ENV}-${TAG}"
-export GHCR_IMAGE_PROMETHEUS="ghcr.io/${GITHUB_REPOSITORY}/hopper-prometheus:${ENV}-${TAG}"
-export GHCR_IMAGE_LOKI="ghcr.io/${GITHUB_REPOSITORY}/hopper-loki:${ENV}-${TAG}"
-export GHCR_IMAGE_GRAFANA="ghcr.io/${GITHUB_REPOSITORY}/hopper-grafana:${ENV}-${TAG}"
+# Set image tags based on git release tag (e.g., v5.0.5)
+# Images are tagged with the git tag directly (matching GitHub workflow)
+export GHCR_IMAGE_BACKEND="ghcr.io/${GITHUB_REPOSITORY}/hopper-backend:${TAG}"
+export GHCR_IMAGE_FRONTEND="ghcr.io/${GITHUB_REPOSITORY}/hopper-frontend:${TAG}"
+export GHCR_IMAGE_OTEL="ghcr.io/${GITHUB_REPOSITORY}/hopper-otel:${TAG}"
+export GHCR_IMAGE_PROMETHEUS="ghcr.io/${GITHUB_REPOSITORY}/hopper-prometheus:${TAG}"
+export GHCR_IMAGE_LOKI="ghcr.io/${GITHUB_REPOSITORY}/hopper-loki:${TAG}"
+export GHCR_IMAGE_GRAFANA="ghcr.io/${GITHUB_REPOSITORY}/hopper-grafana:${TAG}"
 
-echo "🏷️  Using images with tag: ${ENV}-${TAG}"
+echo "🏷️  Using images with tag: ${TAG}"
 
 # Pull latest images
 echo "📥 Pulling latest images..."
@@ -199,5 +199,5 @@ echo ""
 echo "📋 Useful commands:"
 echo "   View logs: docker compose -f $COMPOSE_FILE logs -f"
 echo "   Check status: docker compose -f $COMPOSE_FILE ps"
-echo "   Rollback to previous version: Update TAG in .env.$ENV and run ./deploy.sh $ENV <previous-tag>"
+echo "   Rollback to previous version: Run ./deploy.sh $ENV <previous-tag> (e.g., ./deploy.sh prod v5.0.4)"
 
