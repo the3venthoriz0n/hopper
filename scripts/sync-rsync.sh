@@ -39,9 +39,9 @@ rsync -avz \
     docker-compose.dev.yml makefile \
     "${SYNC_DEST}/"
 
-echo "Syncing nginx config..."
+echo "Syncing nginx configs..."
 rsync -avz \
-    nginx/dev-hopper.conf \
+    nginx/ \
     "${SYNC_DEST}/nginx/"
 
 echo "✅ Sync complete!"
