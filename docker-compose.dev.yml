@@ -221,6 +221,7 @@ services:
 
 networks:
   hopper_default:
+    name: hopper_default
 
 volumes:
   postgres_data:
