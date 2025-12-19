@@ -278,6 +278,7 @@ jobs:
           echo "📦 Copying application files..."
           scp $SSH_OPTS docker-compose.$ENV.yml $SSH_USER@$SSH_HOST:$APP_DIR/
           scp $SSH_OPTS scripts/deploy.sh $SSH_USER@$SSH_HOST:$APP_DIR/
+          scp $SSH_OPTS makefile $SSH_USER@$SSH_HOST:$APP_DIR/
           
           # Copy nginx config and SSL deployment script for prod only
           if [ "$ENV" == "prod" ]; then
@@ -311,7 +312,7 @@ jobs:
           echo "✅ Deployment completed successfully!"
 
       - name: Cleanup secrets
-        if: always()
+        if: failure()
         env:
           SSH_OPTS: "-i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o IdentitiesOnly=yes"
           SSH_HOST: ${{ steps.vars.outputs.ssh_host }}
@@ -319,6 +320,6 @@ jobs:
           APP_DIR: ${{ steps.vars.outputs.app_dir }}
           ENV: ${{ needs.build-and-push.outputs.env }}
         run: |
-          echo "🧹 Cleaning up secrets..."
+          echo "🧹 Cleaning up secrets after failed deployment..."
           ssh $SSH_OPTS $SSH_USER@$SSH_HOST "rm -f $APP_DIR/.env.$ENV" 2>/dev/null || true
           rm -f ~/.ssh/deploy_key
