@@ -16,7 +16,7 @@ set -e
 DOMAINS=(
     "hopper.dunkbox.net"
     "api.dunkbox.net"
-    "grafana.hopper.dunkbox.net"
+    "hopper-grafana-prod.dunkbox.net"
 )
 
 # Renew certificates

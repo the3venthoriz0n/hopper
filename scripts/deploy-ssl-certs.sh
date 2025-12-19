@@ -30,7 +30,7 @@ mkdir -p "$CERT_DIR"
 DOMAINS=(
     "hopper.dunkbox.net"
     "api.dunkbox.net"
-    "grafana.hopper.dunkbox.net"
+    "hopper-grafana-prod.dunkbox.net"
 )
 
 # Deploy the same certificate to all domains
