@@ -230,6 +230,9 @@ jobs:
           RESEND_API_KEY=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_RESEND_API_KEY || secrets.DEV_RESEND_API_KEY }}
           RESEND_FROM_EMAIL=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_RESEND_FROM_EMAIL || secrets.DEV_RESEND_FROM_EMAIL }}
           GRAFANA_PASSWORD=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_GRAFANA_PASSWORD || secrets.DEV_GRAFANA_PASSWORD || 'admin' }}
+          # SSL Certificate (Cloudflare Origin Certificate - single wildcard cert for all domains) - only for prod
+          PROD_SSL_CERT=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_SSL_CERT || '' }}
+          PROD_SSL_KEY=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_SSL_KEY || '' }}
           GITHUB_REPOSITORY=${{ github.repository }}
           ENVEOF
           
@@ -260,7 +263,7 @@ jobs:
           
           # Create directories
           echo "📁 Creating directories..."
-          ssh $SSH_OPTS $SSH_USER@$SSH_HOST "mkdir -p $APP_DIR/nginx"
+          ssh $SSH_OPTS $SSH_USER@$SSH_HOST "mkdir -p $APP_DIR/nginx $APP_DIR/scripts"
           
           # Deploy secrets file
           echo "🔐 Deploying secrets..."
@@ -276,9 +279,24 @@ jobs:
           scp $SSH_OPTS docker-compose.$ENV.yml $SSH_USER@$SSH_HOST:$APP_DIR/
           scp $SSH_OPTS scripts/deploy.sh $SSH_USER@$SSH_HOST:$APP_DIR/
           
-          # Copy nginx config for prod only
+          # Copy nginx config and SSL deployment script for prod only
           if [ "$ENV" == "prod" ]; then
             scp $SSH_OPTS nginx/prod-hopper.conf $SSH_USER@$SSH_HOST:$APP_DIR/nginx/
+            scp $SSH_OPTS scripts/deploy-ssl-certs.sh $SSH_USER@$SSH_HOST:$APP_DIR/scripts/
+          fi
+          
+          # Deploy SSL certificates (before running main deployment)
+          if [ "$ENV" == "prod" ]; then
+            echo "🔒 Deploying SSL certificates..."
+            ssh $SSH_OPTS $SSH_USER@$SSH_HOST "
+              cd $APP_DIR && \
+              chmod +x scripts/deploy-ssl-certs.sh && \
+              source .env.$ENV && \
+              sudo -E ./scripts/deploy-ssl-certs.sh $ENV
+            " || {
+              echo "⚠️  SSL certificate deployment failed or certificates not configured"
+              echo "   Continuing with deployment (certificates can be deployed manually)"
+            }
           fi
           
           # Run deployment

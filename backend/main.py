@@ -1063,8 +1063,9 @@ else:
     RATE_LIMIT_STRICT_REQUESTS = 1000  # stricter limit for state-changing operations (increased for production)
     RATE_LIMIT_STRICT_WINDOW = 60  # seconds
 
-# Allowed origins for Origin/Referer validation
-ALLOWED_ORIGINS = [FRONTEND_URL] if ENVIRONMENT == "production" else [FRONTEND_URL, "http://localhost:3000", "http://localhost:8000"]
+# Allowed origins for Origin/Referer validation (use same list as CORS middleware)
+# Filter out None values and wildcard (wildcard can't be used with credentials)
+ALLOWED_ORIGINS = [origin for origin in allowed_origins if origin and origin != "*"]
 
 def get_client_identifier(request: Request, session_id: Optional[str] = None) -> str:
     """Get client identifier for rate limiting (prefer session_id, fallback to IP)"""

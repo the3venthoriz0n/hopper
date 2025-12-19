@@ -41,6 +41,8 @@ services:
     volumes:
       - ./nginx/prod-hopper.conf:/etc/nginx/conf.d/default.conf:ro
       - nginx_cache:/var/cache/nginx
+      - ssl_certs:/etc/nginx/ssl:ro
+      - certbot_www:/var/www/certbot:ro
     depends_on:
       - frontend
       - backend
@@ -209,4 +211,6 @@ volumes:
   grafana_data:
   loki_data:
   nginx_cache:
+  ssl_certs:
+  certbot_www:
 
