@@ -62,9 +62,12 @@ export GHCR_IMAGE_GRAFANA="ghcr.io/${GITHUB_REPOSITORY}/hopper-grafana:${TAG}"
 
 echo "🏷️  Using images with tag: ${TAG}"
 
+# Set project name to match makefile convention: $(ENV)-hopper
+PROJECT_NAME="${ENV}-hopper"
+
 # Pull latest images
 echo "📥 Pulling latest images..."
-docker compose -f "$COMPOSE_FILE" pull || {
+docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" pull || {
     echo "⚠️  Some images failed to pull. Continuing with existing images..."
 }
 
@@ -77,11 +80,11 @@ echo "✅ Image pruning complete"
 
 # Stop existing containers
 echo "🛑 Stopping existing containers..."
-docker compose -f "$COMPOSE_FILE" down
+docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" down
 
 # Start services
 echo "🚀 Starting services..."
-docker compose -f "$COMPOSE_FILE" up -d
+docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" up -d
 
 # Wait for services to start
 echo "⏳ Waiting for services to start..."
@@ -191,12 +194,12 @@ check_health grafana || echo "⚠️  grafana health check failed (non-critical)
 # Check service status
 echo ""
 echo "📊 Service status:"
-docker compose -f "$COMPOSE_FILE" ps
+docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" ps
 
 if [ $HEALTH_CHECK_FAILED -eq 1 ]; then
     echo ""
     echo "❌ Health checks failed for critical services!"
-    echo "📋 Check logs: docker compose -f $COMPOSE_FILE logs"
+    echo "📋 Check logs: docker compose -p $PROJECT_NAME -f $COMPOSE_FILE logs"
     exit 1
 fi
 
@@ -204,7 +207,7 @@ echo ""
 echo "✅ Deployment complete! All critical services are healthy."
 echo ""
 echo "📋 Useful commands:"
-echo "   View logs: docker compose -f $COMPOSE_FILE logs -f"
-echo "   Check status: docker compose -f $COMPOSE_FILE ps"
+echo "   View logs: docker compose -p $PROJECT_NAME -f $COMPOSE_FILE logs -f"
+echo "   Check status: docker compose -p $PROJECT_NAME -f $COMPOSE_FILE ps"
 echo "   Rollback to previous version: Run ./deploy.sh $ENV <previous-tag> (e.g., ./deploy.sh prod v5.0.4)"
 

@@ -201,6 +201,8 @@ services:
 
 networks:
   hopper_default:
+    name: hopper_default
+    external: false
 
 volumes:
   postgres_data:

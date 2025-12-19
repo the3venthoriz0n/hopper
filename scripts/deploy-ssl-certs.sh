@@ -6,7 +6,6 @@
 set -e
 
 ENV=${1:-prod}
-CERT_DIR="/var/lib/docker/volumes/hopper_ssl_certs/_data"
 
 echo "🔒 Deploying SSL certificates for $ENV environment..."
 
@@ -22,6 +21,24 @@ if [ -z "$PROD_SSL_CERT" ] || [ -z "$PROD_SSL_KEY" ]; then
     echo "   Skipping SSL certificate deployment"
     exit 0
 fi
+
+# Use the same project name convention as deploy.sh and makefile: ${ENV}-hopper
+# This ensures volumes are named consistently: ${ENV}-hopper_ssl_certs
+PROJECT_NAME="${ENV}-hopper"
+VOLUME_NAME="${PROJECT_NAME}_ssl_certs"
+
+# Check if volume exists, create if it doesn't
+if ! docker volume inspect "$VOLUME_NAME" >/dev/null 2>&1; then
+    echo "📦 Creating SSL volume: $VOLUME_NAME"
+    docker volume create "$VOLUME_NAME" >/dev/null 2>&1 || {
+        echo "❌ Error: Could not create SSL certificates volume: $VOLUME_NAME"
+        exit 1
+    }
+else
+    echo "✅ Found SSL volume: $VOLUME_NAME"
+fi
+
+CERT_DIR="/var/lib/docker/volumes/${VOLUME_NAME}/_data"
 
 # Create certificate directory
 mkdir -p "$CERT_DIR"

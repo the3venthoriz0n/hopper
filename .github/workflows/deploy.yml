@@ -231,6 +231,13 @@ jobs:
           RESEND_FROM_EMAIL=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_RESEND_FROM_EMAIL || secrets.DEV_RESEND_FROM_EMAIL }}
           GRAFANA_PASSWORD=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_GRAFANA_PASSWORD || secrets.DEV_GRAFANA_PASSWORD || 'admin' }}
           GITHUB_REPOSITORY=${{ github.repository }}
+          TAG=${{ steps.vars.outputs.short_tag }}
+          GHCR_IMAGE_BACKEND=ghcr.io/${{ github.repository }}/hopper-backend:${{ steps.vars.outputs.short_tag }}
+          GHCR_IMAGE_FRONTEND=ghcr.io/${{ github.repository }}/hopper-frontend:${{ steps.vars.outputs.short_tag }}
+          GHCR_IMAGE_OTEL=ghcr.io/${{ github.repository }}/hopper-otel:${{ steps.vars.outputs.short_tag }}
+          GHCR_IMAGE_PROMETHEUS=ghcr.io/${{ github.repository }}/hopper-prometheus:${{ steps.vars.outputs.short_tag }}
+          GHCR_IMAGE_LOKI=ghcr.io/${{ github.repository }}/hopper-loki:${{ steps.vars.outputs.short_tag }}
+          GHCR_IMAGE_GRAFANA=ghcr.io/${{ github.repository }}/hopper-grafana:${{ steps.vars.outputs.short_tag }}
           ENVEOF
           
           chmod 600 .env.$ENV

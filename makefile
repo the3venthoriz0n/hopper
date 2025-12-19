@@ -4,6 +4,7 @@
 ENV ?= dev
 
 # Get git version (latest release tag, e.g., v5.0.5)
+# On prod server (no git repo), default to "dev" or read from .env file if available
 GIT_VERSION := $(shell git tag --sort=-version:refname | head -1 2>/dev/null || echo "dev")
 
 # Export GIT_VERSION so docker-compose can use it
@@ -44,14 +45,22 @@ help:
 	@echo "  prod:  hopper.dunkbox.net     (DigitalOcean, GHCR images)"
 
 sync:
-	@bash scripts/sync-rsync.sh
+	@if [ "$(ENV)" = "prod" ]; then \
+		echo "⏭️  Skipping sync for prod (code is deployed via GitHub Actions)"; \
+	else \
+		bash scripts/sync-rsync.sh; \
+	fi
 
 test:
-	@echo "🧪 Building backend image (to ensure pytest is installed)..."
-	@$(COMPOSE) build backend
-	@echo "🧪 Running unit tests..."
-	@$(COMPOSE) run --rm backend python -m pytest /app/test_main.py -v
-	@echo "✅ All tests passed!"
+	@if [ "$(ENV)" = "prod" ]; then \
+		echo "⏭️  Skipping tests for prod environment (use deploy.sh for production deployments)"; \
+	else \
+		echo "🧪 Building backend image (to ensure pytest is installed)..."; \
+		$(COMPOSE) build backend; \
+		echo "🧪 Running unit tests..."; \
+		$(COMPOSE) run --rm backend python -m pytest /app/test_main.py -v; \
+		echo "✅ All tests passed!"; \
+	fi
 
 test-security: 
 	@echo "🔒 Running security tests (requires API to be running)..."
@@ -59,19 +68,35 @@ test-security:
 	@$(COMPOSE) run --rm -e TEST_BASE_URL=http://backend:8000 backend python -m pytest /app/test_security.py -v
 	@echo "✅ Security tests passed!"
 
-up: test sync
+up: sync
+	@if [ "$(ENV)" != "prod" ]; then \
+		$(MAKE) test ENV=$(ENV); \
+	fi
 	@echo "🚀 Starting $(ENV) environment..."
-	@$(COMPOSE) up -d --build $(SERVICE)
+	@if [ "$(ENV)" = "prod" ]; then \
+		$(COMPOSE) up -d $(SERVICE); \
+	else \
+		$(COMPOSE) up -d --build $(SERVICE); \
+	fi
 	@echo "✅ $(ENV) is running!"
 
 down:
 	@echo "🛑 Stopping $(ENV) environment..."
 	@$(COMPOSE) down $(SERVICE)
 
-rebuild: down sync test
+rebuild: down sync
+	@if [ "$(ENV)" != "prod" ]; then \
+		$(MAKE) test ENV=$(ENV); \
+	fi
 	@echo "🔨 Rebuilding $(ENV) from scratch..."
-	@$(COMPOSE) build --no-cache $(SERVICE)
-	@$(COMPOSE) up -d $(SERVICE)
+	@if [ "$(ENV)" = "prod" ]; then \
+		echo "⚠️  Prod rebuild: pulling latest images instead of building..."; \
+		$(COMPOSE) pull $(SERVICE); \
+		$(COMPOSE) up -d $(SERVICE); \
+	else \
+		$(COMPOSE) build --no-cache $(SERVICE); \
+		$(COMPOSE) up -d $(SERVICE); \
+	fi
 	@docker image prune -f
 	@echo "✅ $(ENV) rebuild complete!"
 
