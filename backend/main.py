@@ -4149,6 +4149,32 @@ def cancel_subscription(
     
     # Delete old subscription record
     db.delete(subscription)
+    
+    # Mark tokens as reset BEFORE creating new subscription to prevent webhook from adding tokens
+    # This must happen before create_free_subscription to prevent race condition with webhooks
+    # We'll update the period after subscription creation, but setting last_reset_at now prevents webhook grants
+    token_balance = get_or_create_token_balance(user_id, db)
+    reset_time = datetime.now(timezone.utc)
+    token_balance.last_reset_at = reset_time
+    
+    # Create a transaction record NOW (before subscription creation) to mark tokens as preserved
+    # This ensures webhook sees the preserve transaction even if it fires immediately
+    from models import TokenTransaction
+    preserve_transaction = TokenTransaction(
+        user_id=user_id,
+        video_id=None,
+        transaction_type='reset',
+        tokens=0,  # No change - tokens preserved
+        balance_before=current_tokens,
+        balance_after=current_tokens,
+        transaction_metadata={
+            'plan_type': 'free',
+            'tokens_preserved': True,
+            'preserved_amount': current_tokens,
+            'cancel_subscription': True
+        }
+    )
+    db.add(preserve_transaction)
     db.commit()
     
     # Create new free Stripe subscription (skip token reset - we'll preserve tokens)
@@ -4179,29 +4205,25 @@ def cancel_subscription(
     # Update period to match new subscription
     token_balance.period_start = free_subscription.current_period_start
     token_balance.period_end = free_subscription.current_period_end
-    token_balance.last_reset_at = datetime.now(timezone.utc)  # Mark as reset to prevent webhook from adding tokens
+    # last_reset_at already set above before creating subscription to prevent webhook race condition
     token_balance.updated_at = datetime.now(timezone.utc)
     
-    # Create a transaction record to indicate tokens were preserved (not reset)
-    # This helps prevent webhook from adding tokens again
-    transaction = TokenTransaction(
-        user_id=user_id,
-        video_id=None,
-        transaction_type='reset',
-        tokens=0,  # No change - tokens preserved
-        balance_before=balance_before,
-        balance_after=current_tokens,
-        transaction_metadata={
-            'plan_type': 'free',
+    # Update the preserve transaction with period info (transaction already created above)
+    preserve_transaction = db.query(TokenTransaction).filter(
+        TokenTransaction.user_id == user_id,
+        TokenTransaction.transaction_type == 'reset',
+        TokenTransaction.transaction_metadata['tokens_preserved'].astext == 'True',
+        TokenTransaction.transaction_metadata['cancel_subscription'].astext == 'True',
+        TokenTransaction.created_at > datetime.now(timezone.utc) - timedelta(minutes=1)
+    ).order_by(TokenTransaction.created_at.desc()).first()
+    
+    if preserve_transaction:
+        preserve_transaction.transaction_metadata.update({
             'period_start': free_subscription.current_period_start.isoformat(),
             'period_end': free_subscription.current_period_end.isoformat(),
-            'is_renewal': False,
-            'subscription_id': free_subscription.stripe_subscription_id,
-            'tokens_preserved': True,
-            'preserved_amount': current_tokens
-        }
-    )
-    db.add(transaction)
+            'subscription_id': free_subscription.stripe_subscription_id
+        })
+    
     db.commit()
     
     logger.info(f"User {user_id} canceled subscription {old_subscription_id} and switched to free plan. Overage invoiced, preserved {current_tokens} tokens (user paid for full period)")
@@ -4683,6 +4705,7 @@ def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
         # Check if tokens were already reset for this period (e.g., by create_free_subscription with skip_token_reset=False)
         # This prevents duplicate token grants when webhook fires after manual subscription creation
         from token_helpers import get_or_create_token_balance
+        from models import TokenTransaction
         from datetime import timedelta
         balance = get_or_create_token_balance(user_id, db)
         
@@ -4701,6 +4724,22 @@ def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
                 logger.info(
                     f"Tokens were already reset for user {user_id} subscription {subscription.id} "
                     f"(reset {time_since_reset.total_seconds():.0f}s ago, period matches) - skipping webhook token grant"
+                )
+        
+        # Also check if there's a recent transaction indicating tokens were preserved (e.g., from cancel_subscription)
+        if not tokens_already_reset:
+            recent_preserve_transaction = db.query(TokenTransaction).filter(
+                TokenTransaction.user_id == user_id,
+                TokenTransaction.transaction_type == 'reset',
+                TokenTransaction.transaction_metadata['tokens_preserved'].astext == 'True',
+                TokenTransaction.created_at > datetime.now(timezone.utc) - timedelta(minutes=5)
+            ).first()
+            
+            if recent_preserve_transaction:
+                tokens_already_reset = True
+                logger.info(
+                    f"Tokens were preserved for user {user_id} subscription {subscription.id} "
+                    f"(preserve transaction {recent_preserve_transaction.id} found) - skipping webhook token grant"
                 )
         
         if not tokens_already_reset:
