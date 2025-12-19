@@ -230,9 +230,6 @@ jobs:
           RESEND_API_KEY=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_RESEND_API_KEY || secrets.DEV_RESEND_API_KEY }}
           RESEND_FROM_EMAIL=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_RESEND_FROM_EMAIL || secrets.DEV_RESEND_FROM_EMAIL }}
           GRAFANA_PASSWORD=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_GRAFANA_PASSWORD || secrets.DEV_GRAFANA_PASSWORD || 'admin' }}
-          # SSL Certificate (Cloudflare Origin Certificate - single wildcard cert for all domains) - only for prod
-          PROD_SSL_CERT=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_SSL_CERT || '' }}
-          PROD_SSL_KEY=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_SSL_KEY || '' }}
           GITHUB_REPOSITORY=${{ github.repository }}
           ENVEOF
           
@@ -289,15 +286,29 @@ jobs:
           # Deploy SSL certificates (before running main deployment)
           if [ "$ENV" == "prod" ]; then
             echo "🔒 Deploying SSL certificates..."
-            ssh $SSH_OPTS $SSH_USER@$SSH_HOST "
-              cd $APP_DIR && \
-              chmod +x scripts/deploy-ssl-certs.sh && \
-              source .env.$ENV && \
-              sudo -E ./scripts/deploy-ssl-certs.sh $ENV
-            " || {
-              echo "⚠️  SSL certificate deployment failed or certificates not configured"
-              echo "   Continuing with deployment (certificates can be deployed manually)"
-            }
+            # Write certificates to temporary files if they exist
+            if [ -n "${{ secrets.PROD_SSL_CERT }}" ] && [ -n "${{ secrets.PROD_SSL_KEY }}" ]; then
+              echo "${{ secrets.PROD_SSL_CERT }}" > /tmp/ssl_cert.pem
+              echo "${{ secrets.PROD_SSL_KEY }}" > /tmp/ssl_key.pem
+              scp $SSH_OPTS /tmp/ssl_cert.pem $SSH_USER@$SSH_HOST:/tmp/ssl_cert.pem
+              scp $SSH_OPTS /tmp/ssl_key.pem $SSH_USER@$SSH_HOST:/tmp/ssl_key.pem
+              rm -f /tmp/ssl_cert.pem /tmp/ssl_key.pem
+              
+              ssh $SSH_OPTS $SSH_USER@$SSH_HOST "
+                cd $APP_DIR && \
+                chmod +x scripts/deploy-ssl-certs.sh && \
+                export PROD_SSL_CERT=\$(cat /tmp/ssl_cert.pem) && \
+                export PROD_SSL_KEY=\$(cat /tmp/ssl_key.pem) && \
+                rm -f /tmp/ssl_cert.pem /tmp/ssl_key.pem && \
+                sudo -E ./scripts/deploy-ssl-certs.sh $ENV
+              " || {
+                echo "⚠️  SSL certificate deployment failed"
+                echo "   Continuing with deployment (certificates can be deployed manually)"
+              }
+            else
+              echo "⚠️  SSL certificates not configured in GitHub secrets"
+              echo "   Skipping SSL certificate deployment"
+            fi
           fi
           
           # Run deployment
