@@ -4209,13 +4209,19 @@ def cancel_subscription(
     token_balance.updated_at = datetime.now(timezone.utc)
     
     # Update the preserve transaction with period info (transaction already created above)
-    preserve_transaction = db.query(TokenTransaction).filter(
+    # Query recent reset transactions and filter in Python (matches existing codebase pattern)
+    recent_transactions = db.query(TokenTransaction).filter(
         TokenTransaction.user_id == user_id,
         TokenTransaction.transaction_type == 'reset',
-        TokenTransaction.transaction_metadata['tokens_preserved'].astext == 'True',
-        TokenTransaction.transaction_metadata['cancel_subscription'].astext == 'True',
         TokenTransaction.created_at > datetime.now(timezone.utc) - timedelta(minutes=1)
-    ).order_by(TokenTransaction.created_at.desc()).first()
+    ).order_by(TokenTransaction.created_at.desc()).all()
+    
+    preserve_transaction = None
+    for transaction in recent_transactions:
+        metadata = transaction.transaction_metadata or {}
+        if metadata.get('tokens_preserved') == True and metadata.get('cancel_subscription') == True:
+            preserve_transaction = transaction
+            break
     
     if preserve_transaction:
         preserve_transaction.transaction_metadata.update({
@@ -4728,12 +4734,19 @@ def handle_subscription_created(subscription_data: Dict[str, Any], db: Session):
         
         # Also check if there's a recent transaction indicating tokens were preserved (e.g., from cancel_subscription)
         if not tokens_already_reset:
-            recent_preserve_transaction = db.query(TokenTransaction).filter(
+            # Query recent reset transactions and filter in Python (matches existing codebase pattern)
+            recent_reset_transactions = db.query(TokenTransaction).filter(
                 TokenTransaction.user_id == user_id,
                 TokenTransaction.transaction_type == 'reset',
-                TokenTransaction.transaction_metadata['tokens_preserved'].astext == 'True',
                 TokenTransaction.created_at > datetime.now(timezone.utc) - timedelta(minutes=5)
-            ).first()
+            ).all()
+            
+            recent_preserve_transaction = None
+            for transaction in recent_reset_transactions:
+                metadata = transaction.transaction_metadata or {}
+                if metadata.get('tokens_preserved') == True:
+                    recent_preserve_transaction = transaction
+                    break
             
             if recent_preserve_transaction:
                 tokens_already_reset = True
