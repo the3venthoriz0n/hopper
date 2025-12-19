@@ -1,5 +1,23 @@
-# Multi-stage build for production
-# Stage 1: Build React app
+# Unified Dockerfile for both dev and prod
+# Usage:
+#   Dev: docker build --target dev -t frontend:dev .
+#   Prod: docker build --target prod -t frontend:prod .
+
+# Development stage - runs React dev server
+FROM node:18-alpine AS dev
+
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json ./
+RUN npm install
+
+EXPOSE 3000
+
+# Start React dev server (code mounted as volume in docker-compose)
+CMD ["npm", "start"]
+
+# Production stage - builds and serves with nginx
 FROM node:18-alpine AS builder
 
 WORKDIR /app
@@ -24,8 +42,8 @@ RUN npm install
 COPY . .
 RUN npm run build
 
-# Stage 2: Serve with nginx
-FROM nginx:alpine
+# Production serve stage
+FROM nginx:alpine AS prod
 
 # Copy built app from builder
 COPY --from=builder /app/build /usr/share/nginx/html

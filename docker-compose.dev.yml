@@ -112,7 +112,8 @@ services:
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile.dev
+      dockerfile: Dockerfile
+      target: dev
     container_name: dev-hopper-frontend
     # Port not exposed to host - accessed via nginx
     expose:
