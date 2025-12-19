@@ -288,21 +288,34 @@ jobs:
             echo "🔒 Deploying SSL certificates..."
             # Write certificates to temporary files if they exist
             if [ -n "${{ secrets.PROD_SSL_CERT }}" ] && [ -n "${{ secrets.PROD_SSL_KEY }}" ]; then
-              echo "${{ secrets.PROD_SSL_CERT }}" > /tmp/ssl_cert.pem
-              echo "${{ secrets.PROD_SSL_KEY }}" > /tmp/ssl_key.pem
-              scp $SSH_OPTS /tmp/ssl_cert.pem $SSH_USER@$SSH_HOST:/tmp/ssl_cert.pem
-              scp $SSH_OPTS /tmp/ssl_key.pem $SSH_USER@$SSH_HOST:/tmp/ssl_key.pem
-              rm -f /tmp/ssl_cert.pem /tmp/ssl_key.pem
+              # Create temp files with restrictive permissions
+              TEMP_DIR=$(mktemp -d)
+              chmod 700 "$TEMP_DIR"
+              echo "${{ secrets.PROD_SSL_CERT }}" > "$TEMP_DIR/ssl_cert.pem"
+              echo "${{ secrets.PROD_SSL_KEY }}" > "$TEMP_DIR/ssl_key.pem"
+              chmod 600 "$TEMP_DIR/ssl_cert.pem" "$TEMP_DIR/ssl_key.pem"
               
+              # Copy to server with restrictive permissions
+              SERVER_TEMP=$(ssh $SSH_OPTS $SSH_USER@$SSH_HOST "mktemp -d" | tr -d '\r\n')
+              scp $SSH_OPTS "$TEMP_DIR/ssl_cert.pem" $SSH_USER@$SSH_HOST:"$SERVER_TEMP/ssl_cert.pem"
+              scp $SSH_OPTS "$TEMP_DIR/ssl_key.pem" $SSH_USER@$SSH_HOST:"$SERVER_TEMP/ssl_key.pem"
+              
+              # Clean up local temp files immediately
+              rm -rf "$TEMP_DIR"
+              
+              # Deploy certificates and clean up server temp files
               ssh $SSH_OPTS $SSH_USER@$SSH_HOST "
+                chmod 600 $SERVER_TEMP/ssl_cert.pem $SERVER_TEMP/ssl_key.pem && \
                 cd $APP_DIR && \
                 chmod +x scripts/deploy-ssl-certs.sh && \
-                export PROD_SSL_CERT=\$(cat /tmp/ssl_cert.pem) && \
-                export PROD_SSL_KEY=\$(cat /tmp/ssl_key.pem) && \
-                rm -f /tmp/ssl_cert.pem /tmp/ssl_key.pem && \
+                export PROD_SSL_CERT=\$(cat $SERVER_TEMP/ssl_cert.pem) && \
+                export PROD_SSL_KEY=\$(cat $SERVER_TEMP/ssl_key.pem) && \
+                rm -rf $SERVER_TEMP && \
                 sudo -E ./scripts/deploy-ssl-certs.sh $ENV
               " || {
                 echo "⚠️  SSL certificate deployment failed"
+                # Ensure cleanup even on failure
+                ssh $SSH_OPTS $SSH_USER@$SSH_HOST "rm -rf $SERVER_TEMP" 2>/dev/null || true
                 echo "   Continuing with deployment (certificates can be deployed manually)"
               }
             else
