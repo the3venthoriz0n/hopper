@@ -3914,8 +3914,8 @@ def create_subscription_checkout(
     
     # Get frontend URL from environment or request
     frontend_url = os.getenv("FRONTEND_URL", str(request.base_url).rstrip("/"))
-    success_url = f"{frontend_url}/subscription/success?session_id={{CHECKOUT_SESSION_ID}}"
-    cancel_url = f"{frontend_url}/subscription"
+    success_url = f"{frontend_url}/app/subscription/success?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{frontend_url}/app/subscription"
     
     try:
         session_data = create_checkout_session(user_id, plan["stripe_price_id"], success_url, cancel_url, db, cancel_existing=cancel_existing)
@@ -3927,7 +3927,7 @@ def create_subscription_checkout(
     except ValueError as e:
         # User already has subscription (caught by create_checkout_session)
         frontend_url = os.getenv("FRONTEND_URL", str(request.base_url).rstrip("/"))
-        portal_url = get_customer_portal_url(user_id, f"{frontend_url}/subscription", db)
+        portal_url = get_customer_portal_url(user_id, f"{frontend_url}/app/subscription", db)
         if portal_url:
             return JSONResponse(
                 status_code=400,
@@ -4080,12 +4080,12 @@ def get_subscription_portal(
     if not subscription_info or subscription_info.get('plan_type') == 'free':
         frontend_url = os.getenv("FRONTEND_URL", str(request.base_url).rstrip("/"))
         # Return URL to subscription page where they can see plans and purchase
-        purchase_url = f"{frontend_url}/subscription"
+        purchase_url = f"{frontend_url}/app/subscription"
         return {"url": purchase_url, "action": "purchase"}
     
     # If user has a paid subscription, open Stripe customer portal
     frontend_url = os.getenv("FRONTEND_URL", str(request.base_url).rstrip("/"))
-    return_url = f"{frontend_url}/subscription"
+    return_url = f"{frontend_url}/app/subscription"
     
     portal_url = get_customer_portal_url(user_id, return_url, db)
     
