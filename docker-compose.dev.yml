@@ -115,7 +115,7 @@ services:
       dockerfile: Dockerfile
       target: dev
       args:
-        REACT_APP_VERSION=${GIT_VERSION:-dev}
+        - REACT_APP_VERSION=${GIT_VERSION:-dev}
     container_name: dev-hopper-frontend
     # Port not exposed to host - accessed via nginx
     expose:
