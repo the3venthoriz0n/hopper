@@ -1271,9 +1271,9 @@ async def security_middleware(request: Request, call_next):
                 log_api_access(request, session_id, 429, error)
                 return response
             
-            # Origin/Referer validation (skip for GET requests in dev, skip for public endpoints)
+            # Origin/Referer validation (skip for OPTIONS/CORS preflight, GET requests in dev, and public endpoints)
             # Note: OAuth callbacks are already excluded by the outer if not is_callback block
-            if not is_public_endpoint and (request.method != "GET" or ENVIRONMENT == "production"):
+            if not is_public_endpoint and request.method != "OPTIONS" and (request.method != "GET" or ENVIRONMENT == "production"):
                 if not validate_origin_referer(request):
                     client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
                     if not client_ip:
@@ -1290,11 +1290,16 @@ async def security_middleware(request: Request, call_next):
                         status_code=403,
                         media_type="application/json"
                     )
-                    # Add CORS headers to error response
+                    # Always add CORS headers to error response (even if origin validation failed)
+                    # This allows the browser to see the error instead of a CORS error
                     origin = request.headers.get("Origin")
-                    if origin and origin in allowed_origins:
-                        response.headers["Access-Control-Allow-Origin"] = origin
-                        response.headers["Access-Control-Allow-Credentials"] = "true"
+                    if origin:
+                        # Check if origin is in allowed list
+                        if origin in allowed_origins or "*" in allowed_origins:
+                            response.headers["Access-Control-Allow-Origin"] = origin if "*" not in allowed_origins else "*"
+                            response.headers["Access-Control-Allow-Credentials"] = "true" if "*" not in allowed_origins else "false"
+                            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, PATCH, OPTIONS"
+                            response.headers["Access-Control-Allow-Headers"] = "*"
                     log_api_access(request, session_id, 403, error)
                     return response
         
