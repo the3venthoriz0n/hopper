@@ -11,7 +11,119 @@ env:
   IMAGE_PREFIX: ${{ github.repository }}
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build backend image for testing
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: false
+          tags: hopper-backend-test:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run unit tests
+        run: |
+          echo "🧪 Running unit tests..."
+          docker run --rm hopper-backend-test:latest python -m pytest /app/test_main.py -v
+          echo "✅ Unit tests passed!"
+
+      - name: Start services for security tests
+        run: |
+          echo "🚀 Starting services for security tests..."
+          docker network create hopper_test_network || true
+          
+          # Start PostgreSQL
+          docker run -d --name test-postgres \
+            --network hopper_test_network \
+            -e POSTGRES_DB=hopper \
+            -e POSTGRES_USER=hopper \
+            -e POSTGRES_PASSWORD=test_password \
+            postgres:16-alpine
+          
+          # Start Redis
+          docker run -d --name test-redis \
+            --network hopper_test_network \
+            redis:7-alpine
+          
+          # Wait for services to be ready
+          echo "⏳ Waiting for services to start..."
+          sleep 5
+          
+          # Wait for PostgreSQL
+          until docker exec test-postgres pg_isready -U hopper; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+          
+          # Wait for Redis
+          until docker exec test-redis redis-cli ping; do
+            echo "Waiting for Redis..."
+            sleep 2
+          done
+
+      - name: Start backend for security tests
+        run: |
+          echo "🚀 Starting backend for security tests..."
+          docker run -d --name test-backend \
+            --network hopper_test_network \
+            -e DATABASE_URL=postgresql://hopper:test_password@test-postgres:5432/hopper \
+            -e REDIS_URL=redis://test-redis:6379/0 \
+            -e ENVIRONMENT=test \
+            -e ENCRYPTION_KEY=test_encryption_key_32_chars_long \
+            -e LOG_LEVEL=INFO \
+            hopper-backend-test:latest
+          
+          # Wait for backend to be ready
+          echo "⏳ Waiting for backend to start..."
+          for i in {1..30}; do
+            if docker exec test-backend curl -f http://localhost:8000/health >/dev/null 2>&1 || \
+               docker exec test-backend wget -q --spider http://localhost:8000/health >/dev/null 2>&1; then
+              echo "✅ Backend is ready!"
+              break
+            fi
+            # Fallback: check if container is running
+            if [ "$(docker inspect -f '{{.State.Running}}' test-backend 2>/dev/null)" = "true" ]; then
+              if [ $i -ge 10 ]; then
+                echo "⚠️  Backend container is running but health endpoint not responding (may be starting)"
+                break
+              fi
+            fi
+            echo "Waiting for backend... ($i/30)"
+            sleep 2
+          done
+
+      - name: Run security tests
+        run: |
+          echo "🔒 Running security tests..."
+          docker run --rm \
+            --network hopper_test_network \
+            -e TEST_BASE_URL=http://test-backend:8000 \
+            -e TEST_FRONTEND_ORIGIN=http://localhost:3000 \
+            hopper-backend-test:latest \
+            python -m pytest /app/test_security.py -v
+          echo "✅ Security tests passed!"
+
+      - name: Cleanup test services
+        if: always()
+        run: |
+          echo "🧹 Cleaning up test services..."
+          docker stop test-backend test-postgres test-redis 2>/dev/null || true
+          docker rm test-backend test-postgres test-redis 2>/dev/null || true
+          docker network rm hopper_test_network 2>/dev/null || true
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -145,7 +257,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   deploy:
-    needs: build-and-push
+    needs: [test, build-and-push]
     runs-on: ubuntu-latest
     if: github.event_name == 'release'
     
