@@ -42,8 +42,10 @@ jobs:
       - name: Run unit tests
         run: |
           echo "🧪 Running unit tests..."
+          # Generate a valid Fernet key for testing (44 chars, base64-encoded)
+          TEST_ENCRYPTION_KEY=$(docker run --rm hopper-backend-test:latest python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
           docker run --rm \
-            -e ENCRYPTION_KEY=test_encryption_key_for_unit_tests_32_chars \
+            -e ENCRYPTION_KEY="$TEST_ENCRYPTION_KEY" \
             -e ENVIRONMENT=test \
             -e LOG_LEVEL=INFO \
             hopper-backend-test:latest \
@@ -87,12 +89,14 @@ jobs:
       - name: Start backend for security tests
         run: |
           echo "🚀 Starting backend for security tests..."
+          # Generate a valid Fernet key for testing (44 chars, base64-encoded)
+          TEST_ENCRYPTION_KEY=$(docker run --rm hopper-backend-test:latest python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
           docker run -d --name test-backend \
             --network hopper_test_network \
             -e DATABASE_URL=postgresql://hopper:test_password@test-postgres:5432/hopper \
             -e REDIS_URL=redis://test-redis:6379/0 \
             -e ENVIRONMENT=test \
-            -e ENCRYPTION_KEY=test_encryption_key_32_chars_long \
+            -e ENCRYPTION_KEY="$TEST_ENCRYPTION_KEY" \
             -e LOG_LEVEL=INFO \
             hopper-backend-test:latest
           
