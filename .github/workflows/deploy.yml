@@ -42,7 +42,12 @@ jobs:
       - name: Run unit tests
         run: |
           echo "🧪 Running unit tests..."
-          docker run --rm hopper-backend-test:latest python -m pytest /app/test_main.py -v
+          docker run --rm \
+            -e ENCRYPTION_KEY=test_encryption_key_for_unit_tests_32_chars \
+            -e ENVIRONMENT=test \
+            -e LOG_LEVEL=INFO \
+            hopper-backend-test:latest \
+            python -m pytest /app/test_main.py -v
           echo "✅ Unit tests passed!"
 
       - name: Start services for security tests
