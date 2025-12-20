@@ -28,9 +28,16 @@ jobs:
         with:
           context: ./backend
           push: false
+          load: true
           tags: hopper-backend-test:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Verify image was built
+        run: |
+          echo "🔍 Verifying test image exists..."
+          docker images | grep hopper-backend-test || (echo "❌ Image not found!" && exit 1)
+          echo "✅ Image verified!"
 
       - name: Run unit tests
         run: |
