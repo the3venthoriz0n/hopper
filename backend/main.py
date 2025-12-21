@@ -2576,6 +2576,9 @@ async def auth_tiktok_callback(
                     elif "avatar_url" in creator_info:
                         extra_data["avatar_url"] = creator_info["avatar_url"]
                     
+                    # Cache full creator_info for privacy_level_options and interaction settings
+                    extra_data["creator_info"] = creator_info
+                    
                     tiktok_logger.info(f"Cached TikTok account info during OAuth: {extra_data.get('display_name')} (@{extra_data.get('username')})")
                 else:
                     tiktok_logger.warning(f"Could not fetch creator info during OAuth (status {creator_info_response.status_code}), will try later")
@@ -2616,7 +2619,7 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
     tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
     
     if not tiktok_token:
-        return {"account": None}
+        return {"account": None, "creator_info": None}
     
     try:
         # Check for cached account info in extra_data first (like Instagram)
@@ -2625,6 +2628,7 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
         cached_username = extra_data.get("username")
         cached_avatar_url = extra_data.get("avatar_url")
         open_id = extra_data.get("open_id")
+        cached_creator_info = extra_data.get("creator_info")  # Cache full creator_info
         
         # Build account info from cached data (always preserve what we have)
         account_info = {}
@@ -2641,21 +2645,24 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
         # ALWAYS return it immediately and NEVER call the API.
         # This prevents the account name from being lost when API fails.
         if cached_display_name or cached_username:
-            tiktok_logger.debug(f"Returning cached TikTok account info for user {user_id}")
-            return {"account": account_info}
+            tiktok_logger.debug(f"Returning cached TikTok account info and creator_info for user {user_id}")
+            return {
+                "account": account_info,
+                "creator_info": cached_creator_info
+            }
         
         # If no cached display_name/username but we have open_id, try to fetch from API
         if not open_id:
             tiktok_logger.warning(f"No open_id found for user {user_id}")
             # Return None if we don't have open_id (can't identify account)
-            return {"account": None}
+            return {"account": None, "creator_info": None}
         
         # Get access token (decrypted)
         access_token = decrypt(tiktok_token.access_token)
         if not access_token:
             tiktok_logger.warning(f"Failed to decrypt TikTok token for user {user_id}")
             # Return None if we don't have complete account info (need display_name or username)
-            return {"account": None}
+            return {"account": None, "creator_info": None}
         
         # Check if token is expired and refresh if needed
         token_expiry = db_helpers.check_token_expiration(tiktok_token)
@@ -2716,6 +2723,7 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
                             refresh_extra_data = tiktok_token_refresh.extra_data
                             refresh_display_name = refresh_extra_data.get("display_name")
                             refresh_username = refresh_extra_data.get("username")
+                            refresh_creator_info = refresh_extra_data.get("creator_info")
                             if refresh_display_name or refresh_username:
                                 # We have cached data - return it instead of incomplete data
                                 account_info = {}
@@ -2728,9 +2736,12 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
                                 if refresh_extra_data.get("avatar_url"):
                                     account_info["avatar_url"] = refresh_extra_data.get("avatar_url")
                                 tiktok_logger.debug(f"Found cached account info after API failure, returning it")
-                                return {"account": account_info}
+                                return {
+                                    "account": account_info,
+                                    "creator_info": refresh_creator_info
+                                }
                         # If no cached data with display_name/username, return None (don't return incomplete data)
-                        return {"account": None}
+                        return {"account": None, "creator_info": None}
                 
                 creator_data = creator_info_response.json()
                 creator_info = creator_data.get("data", {})
@@ -2751,11 +2762,13 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
                 elif "avatar_url" in creator_info:
                     account_info["avatar_url"] = creator_info["avatar_url"]
                 
-                # Cache the account info in extra_data for future requests
+                # Cache the account info AND creator_info in extra_data for future requests
                 if account_info.get("display_name") or account_info.get("username"):
                     extra_data["display_name"] = account_info.get("display_name")
                     extra_data["username"] = account_info.get("username")
                     extra_data["avatar_url"] = account_info.get("avatar_url")
+                    # Cache full creator_info for privacy_level_options and interaction settings
+                    extra_data["creator_info"] = creator_info
                     db_helpers.save_oauth_token(
                         user_id=user_id,
                         platform="tiktok",
@@ -2766,20 +2779,26 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
                         db=db
                     )
                 
-                # Only return if we have complete account info (display_name or username)
+                # Return account and creator_info
                 if account_info.get("display_name") or account_info.get("username"):
-                    return {"account": account_info}
+                    return {
+                        "account": account_info,
+                        "creator_info": creator_info
+                    }
                 else:
                     # Incomplete data - return None
-                    return {"account": None}
+                    return {"account": None, "creator_info": None}
                     
         except Exception as api_error:
             tiktok_logger.warning(f"Error calling TikTok API for user {user_id}: {str(api_error)}")
             # Return cached account info only if it's complete (has display_name or username)
             if account_info.get("display_name") or account_info.get("username"):
-                return {"account": account_info}
+                return {
+                    "account": account_info,
+                    "creator_info": cached_creator_info
+                }
             # Don't return incomplete account data (only open_id)
-            return {"account": None}
+            return {"account": None, "creator_info": None}
         
     except Exception as e:
         tiktok_logger.error(f"Error getting TikTok account info for user {user_id}: {str(e)}", exc_info=True)
@@ -2798,10 +2817,25 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
                     account_info["display_name"] = cached_display_name
                 if cached_username:
                     account_info["username"] = cached_username
-                return {"account": account_info}
+                return {
+                    "account": account_info,
+                    "creator_info": None
+                }
         except:
             pass
-        return {"account": None, "error": str(e)}
+        return {"account": None, "creator_info": None, "error": str(e)}
+
+@app.post("/api/auth/tiktok/music-usage-confirmed")
+def confirm_tiktok_music_usage(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+    """Mark that user has confirmed TikTok music usage"""
+    db_helpers.set_user_setting(user_id, "tiktok", "music_usage_confirmed", True, db=db)
+    return {"ok": True}
+
+@app.get("/api/auth/tiktok/music-usage-confirmed")
+def get_tiktok_music_usage_confirmed(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
+    """Check if user has confirmed TikTok music usage"""
+    tiktok_settings = db_helpers.get_user_settings(user_id, "tiktok", db=db)
+    return {"confirmed": tiktok_settings.get("music_usage_confirmed", False)}
 
 @app.post("/api/auth/tiktok/disconnect")
 def disconnect_tiktok(user_id: int = Depends(require_csrf_new)):
@@ -7136,9 +7170,24 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         # Get settings: per-video custom > destination settings
         privacy_level = custom_settings.get('privacy_level', tiktok_settings.get('privacy_level', 'public'))
         tiktok_privacy = map_privacy_level_to_tiktok(privacy_level, creator_info)
-        allow_comments = custom_settings.get('allow_comments', tiktok_settings.get('allow_comments', True))
-        allow_duet = custom_settings.get('allow_duet', tiktok_settings.get('allow_duet', True))
-        allow_stitch = custom_settings.get('allow_stitch', tiktok_settings.get('allow_stitch', True))
+        
+        # Check creator_info for disabled interactions
+        # If interaction is disabled in creator_info, it cannot be enabled
+        allow_comments_setting = custom_settings.get('allow_comments', tiktok_settings.get('allow_comments', True))
+        allow_duet_setting = custom_settings.get('allow_duet', tiktok_settings.get('allow_duet', True))
+        allow_stitch_setting = custom_settings.get('allow_stitch', tiktok_settings.get('allow_stitch', True))
+        
+        # Check if interactions are disabled in creator_info
+        # creator_info may have fields like "disable_comment", "disable_duet", "disable_stitch"
+        # or "comment_disabled", "duet_disabled", "stitch_disabled" - adjust based on actual API response
+        comment_disabled = creator_info.get("disable_comment", False) or creator_info.get("comment_disabled", False)
+        duet_disabled = creator_info.get("disable_duet", False) or creator_info.get("duet_disabled", False)
+        stitch_disabled = creator_info.get("disable_stitch", False) or creator_info.get("stitch_disabled", False)
+        
+        # If user tried to enable a disabled interaction, use False
+        allow_comments = allow_comments_setting and not comment_disabled
+        allow_duet = allow_duet_setting and not duet_disabled
+        allow_stitch = allow_stitch_setting and not stitch_disabled
         
         tiktok_logger.info(f"Uploading {video.filename} ({video_size / (1024*1024):.2f} MB)")
         redis_client.set_upload_progress(user_id, video_id, 5)

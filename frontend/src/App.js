@@ -362,6 +362,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   // All state hooks must be declared before any conditional returns (Rules of Hooks)
   const [youtube, setYoutube] = useState({ connected: false, enabled: false, account: null, token_status: 'valid' });
   const [tiktok, setTiktok] = useState({ connected: false, enabled: false, account: null, token_status: 'valid' });
+  const [tiktokCreatorInfo, setTiktokCreatorInfo] = useState(null);
+  const [musicUsageConfirmed, setMusicUsageConfirmed] = useState(false);
   const [instagram, setInstagram] = useState({ connected: false, enabled: false, account: null, token_status: 'valid' });
   const [videos, setVideos] = useState([]);
   const [message, setMessage] = useState('');
@@ -1198,9 +1200,32 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     return loadPlatformAccount('youtube', setYoutube, ['channel_name', 'email']);
   }, [loadPlatformAccount]);
 
-  const loadTiktokAccount = useCallback(() => {
-    return loadPlatformAccount('tiktok', setTiktok, ['display_name', 'username']);
-  }, [loadPlatformAccount]);
+  const loadTiktokAccount = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API}/auth/tiktok/account`);
+      if (res.data.account) {
+        setTiktok(prev => ({
+          ...prev,
+          connected: true,
+          account: res.data.account,
+          token_status: 'valid'
+        }));
+        // Store creator_info for privacy options and interaction settings
+        if (res.data.creator_info) {
+          setTiktokCreatorInfo(res.data.creator_info);
+        } else {
+          setTiktokCreatorInfo(null);
+        }
+      } else {
+        setTiktok(prev => ({ ...prev, connected: false }));
+        setTiktokCreatorInfo(null);
+      }
+    } catch (err) {
+      console.error('Error loading TikTok account:', err);
+      setTiktok(prev => ({ ...prev, connected: false }));
+      setTiktokCreatorInfo(null);
+    }
+  }, [API]);
 
   const loadInstagramAccount = useCallback(() => {
     return loadPlatformAccount('instagram', setInstagram, ['username']);
@@ -1322,6 +1347,15 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     loadInstagramSettings();
     loadVideos();
     loadUploadLimits();
+    
+    // Check music usage confirmation for TikTok
+    if (tiktok.enabled && tiktok.connected) {
+      axios.get(`${API}/auth/tiktok/music-usage-confirmed`)
+        .then(res => {
+          setMusicUsageConfirmed(res.data.confirmed);
+        })
+        .catch(err => console.error('Error checking music usage confirmation:', err));
+    }
     
     // Check OAuth callbacks - use consistent pattern for all platforms
     if (window.location.search.includes('connected=youtube')) {
@@ -1958,6 +1992,30 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   };
 
   const upload = async () => {
+    // Check if TikTok is enabled and music usage not confirmed
+    if (tiktok.enabled && !musicUsageConfirmed) {
+      setConfirmDialog({
+        title: 'TikTok Music Usage Confirmation',
+        message: 'By posting, you agree to TikTok\'s Music Usage Confirmation',
+        onConfirm: async () => {
+          try {
+            await axios.post(`${API}/auth/tiktok/music-usage-confirmed`);
+            setMusicUsageConfirmed(true);
+            setConfirmDialog(null);
+            // Retry upload after confirmation
+            upload();
+          } catch (err) {
+            console.error('Error confirming music usage:', err);
+            setMessage('❌ Failed to confirm music usage. Please try again.');
+          }
+        },
+        onCancel: () => {
+          setConfirmDialog(null);
+        }
+      });
+      return;
+    }
+    
     if (!youtube.enabled && !tiktok.enabled && !instagram.enabled) {
       setMessage('❌ Enable at least one destination first');
       return;
@@ -2854,13 +2912,26 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             <div className="setting-group">
               <label>Privacy Level</label>
               <select 
-                value={tiktokSettings.privacy_level}
-                onChange={(e) => updateTiktokSettings('privacy_level', e.target.value)}
+                value={tiktokSettings.privacy_level || ''}
+                onChange={(e) => updateTiktokSettings('privacy_level', e.target.value || null)}
                 className="select"
+                required
               >
-                <option value="private">Only Me</option>
-                <option value="friends">Friends</option>
-                <option value="public">Followers</option>
+                <option value="">-- Select Privacy Level --</option>
+                {tiktokCreatorInfo?.privacy_level_options?.map(option => {
+                  // Map API values to display labels
+                  const labelMap = {
+                    'PUBLIC_TO_EVERYONE': 'Everyone',
+                    'MUTUAL_FOLLOW_FRIENDS': 'Friends',
+                    'SELF_ONLY': 'Only Me',
+                    'FOLLOWER_OF_CREATOR': 'Followers'
+                  };
+                  return (
+                    <option key={option} value={option}>
+                      {labelMap[option] || option}
+                    </option>
+                  );
+                })}
               </select>
             </div>
 
@@ -2868,11 +2939,16 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               <label className="checkbox-label">
                 <input 
                   type="checkbox"
-                  checked={tiktokSettings.allow_comments}
+                  checked={tiktokSettings.allow_comments || false}
                   onChange={(e) => updateTiktokSettings('allow_comments', e.target.checked)}
                   className="checkbox"
+                  disabled={tiktokCreatorInfo?.disable_comment || tiktokCreatorInfo?.comment_disabled}
                 />
-                <span>Allow Comments</span>
+                <span style={{ 
+                  opacity: (tiktokCreatorInfo?.disable_comment || tiktokCreatorInfo?.comment_disabled) ? 0.5 : 1 
+                }}>
+                  Allow Comments
+                </span>
               </label>
             </div>
 
@@ -2880,11 +2956,16 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               <label className="checkbox-label">
                 <input 
                   type="checkbox"
-                  checked={tiktokSettings.allow_duet}
+                  checked={tiktokSettings.allow_duet || false}
                   onChange={(e) => updateTiktokSettings('allow_duet', e.target.checked)}
                   className="checkbox"
+                  disabled={tiktokCreatorInfo?.disable_duet || tiktokCreatorInfo?.duet_disabled}
                 />
-                <span>Allow Duet</span>
+                <span style={{ 
+                  opacity: (tiktokCreatorInfo?.disable_duet || tiktokCreatorInfo?.duet_disabled) ? 0.5 : 1 
+                }}>
+                  Allow Duet
+                </span>
               </label>
             </div>
 
@@ -2892,11 +2973,16 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               <label className="checkbox-label">
                 <input 
                   type="checkbox"
-                  checked={tiktokSettings.allow_stitch}
+                  checked={tiktokSettings.allow_stitch || false}
                   onChange={(e) => updateTiktokSettings('allow_stitch', e.target.checked)}
                   className="checkbox"
+                  disabled={tiktokCreatorInfo?.disable_stitch || tiktokCreatorInfo?.stitch_disabled}
                 />
-                <span>Allow Stitch</span>
+                <span style={{ 
+                  opacity: (tiktokCreatorInfo?.disable_stitch || tiktokCreatorInfo?.stitch_disabled) ? 0.5 : 1 
+                }}>
+                  Allow Stitch
+                </span>
               </label>
             </div>
 
@@ -3690,6 +3776,87 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   className="input-text"
                 />
               </div>
+              
+              {/* TikTok Settings */}
+              {tiktok.enabled && tiktok.connected && (
+                <>
+                  <div className="form-group">
+                    <label>TikTok Privacy Level</label>
+                    <select 
+                      defaultValue={editingVideo.custom_settings?.privacy_level || tiktokSettings.privacy_level || ''}
+                      id="edit-tiktok-privacy"
+                      className="select"
+                      required
+                    >
+                      <option value="">-- Select Privacy Level --</option>
+                      {tiktokCreatorInfo?.privacy_level_options?.map(option => {
+                        const labelMap = {
+                          'PUBLIC_TO_EVERYONE': 'Everyone',
+                          'MUTUAL_FOLLOW_FRIENDS': 'Friends',
+                          'SELF_ONLY': 'Only Me',
+                          'FOLLOWER_OF_CREATOR': 'Followers'
+                        };
+                        return (
+                          <option key={option} value={option}>
+                            {labelMap[option] || option}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                  
+                  <div className="form-group">
+                    <label className="checkbox-label">
+                      <input 
+                        type="checkbox"
+                        defaultChecked={editingVideo.custom_settings?.allow_comments ?? tiktokSettings.allow_comments ?? false}
+                        id="edit-tiktok-allow-comments"
+                        className="checkbox"
+                        disabled={tiktokCreatorInfo?.disable_comment || tiktokCreatorInfo?.comment_disabled}
+                      />
+                      <span style={{ 
+                        opacity: (tiktokCreatorInfo?.disable_comment || tiktokCreatorInfo?.comment_disabled) ? 0.5 : 1 
+                      }}>
+                        Allow Comments
+                      </span>
+                    </label>
+                  </div>
+                  
+                  <div className="form-group">
+                    <label className="checkbox-label">
+                      <input 
+                        type="checkbox"
+                        defaultChecked={editingVideo.custom_settings?.allow_duet ?? tiktokSettings.allow_duet ?? false}
+                        id="edit-tiktok-allow-duet"
+                        className="checkbox"
+                        disabled={tiktokCreatorInfo?.disable_duet || tiktokCreatorInfo?.duet_disabled}
+                      />
+                      <span style={{ 
+                        opacity: (tiktokCreatorInfo?.disable_duet || tiktokCreatorInfo?.duet_disabled) ? 0.5 : 1 
+                      }}>
+                        Allow Duet
+                      </span>
+                    </label>
+                  </div>
+                  
+                  <div className="form-group">
+                    <label className="checkbox-label">
+                      <input 
+                        type="checkbox"
+                        defaultChecked={editingVideo.custom_settings?.allow_stitch ?? tiktokSettings.allow_stitch ?? false}
+                        id="edit-tiktok-allow-stitch"
+                        className="checkbox"
+                        disabled={tiktokCreatorInfo?.disable_stitch || tiktokCreatorInfo?.stitch_disabled}
+                      />
+                      <span style={{ 
+                        opacity: (tiktokCreatorInfo?.disable_stitch || tiktokCreatorInfo?.stitch_disabled) ? 0.5 : 1 
+                      }}>
+                        Allow Stitch
+                      </span>
+                    </label>
+                  </div>
+                </>
+              )}
             </div>
             <div className="modal-footer">
               <button onClick={closeEditModal} className="btn-cancel">
