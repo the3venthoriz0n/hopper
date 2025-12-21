@@ -503,6 +503,32 @@ button:disabled {
   box-shadow: var(--shadow-sm);
 }
 
+.retry-upload-btn {
+  margin-right: 4px;
+  font-size: 0.9rem;
+  padding: 0.5rem 1rem;
+  background: var(--accent-gradient);
+  border: none;
+  border-radius: var(--radius-md);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: var(--shadow-sm);
+  letter-spacing: -0.01em;
+}
+
+.retry-upload-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4), 0 0 20px rgba(139, 92, 246, 0.3);
+  filter: brightness(1.1);
+}
+
+.retry-upload-btn:active {
+  transform: translateY(0);
+  box-shadow: var(--shadow-sm);
+}
+
 .btn-disconnect {
   background: transparent;
   border: 1px solid #666;

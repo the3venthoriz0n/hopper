@@ -2549,7 +2549,7 @@ async def auth_tiktok_callback(
                 creator_info_response = await client.post(
                     TIKTOK_CREATOR_INFO_URL,
                     headers={
-                        "Authorization": f"Bearer {access_token}",
+                        "Authorization": f"Bearer {access_token.strip()}",  # ROOT CAUSE FIX: Strip whitespace
                         "Content-Type": "application/json; charset=UTF-8"
                     },
                     json={},
@@ -2657,6 +2657,20 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
             # Return None if we don't have complete account info (need display_name or username)
             return {"account": None}
         
+        # Check if token is expired and refresh if needed
+        token_expiry = db_helpers.check_token_expiration(tiktok_token)
+        if token_expiry.get("expired", False) or token_expiry.get("expires_soon", False):
+            refresh_token_decrypted = decrypt(tiktok_token.refresh_token) if tiktok_token.refresh_token else None
+            if refresh_token_decrypted:
+                try:
+                    tiktok_logger.info(f"TikTok token expired/expiring for user {user_id} in account endpoint, refreshing...")
+                    access_token = refresh_tiktok_token(user_id, refresh_token_decrypted, db)
+                    # Refresh token object after refresh
+                    tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
+                except Exception as refresh_error:
+                    tiktok_logger.warning(f"Failed to refresh TikTok token for user {user_id} in account endpoint: {refresh_error}")
+                    # Continue with existing token - might still work
+        
         # Call TikTok creator info API with timeout (must use POST, not GET)
         # Only call API if we don't have cached display_name/username
         try:
@@ -2664,36 +2678,59 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
                 creator_info_response = client.post(
                     TIKTOK_CREATOR_INFO_URL,
                     headers={
-                        "Authorization": f"Bearer {access_token}",
+                        "Authorization": f"Bearer {access_token.strip()}",  # ROOT CAUSE FIX: Strip whitespace
                         "Content-Type": "application/json; charset=UTF-8"
                     },
                     json={}
                 )
                 
                 if creator_info_response.status_code != 200:
-                    tiktok_logger.warning(f"TikTok creator info request failed: {creator_info_response.status_code}")
-                    # ROOT CAUSE FIX: Re-check database for cached data before returning
-                    # This handles race conditions where cache might have been updated
-                    tiktok_token_refresh = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
-                    if tiktok_token_refresh and tiktok_token_refresh.extra_data:
-                        refresh_extra_data = tiktok_token_refresh.extra_data
-                        refresh_display_name = refresh_extra_data.get("display_name")
-                        refresh_username = refresh_extra_data.get("username")
-                        if refresh_display_name or refresh_username:
-                            # We have cached data - return it instead of incomplete data
-                            account_info = {}
-                            if open_id:
-                                account_info["open_id"] = open_id
-                            if refresh_display_name:
-                                account_info["display_name"] = refresh_display_name
-                            if refresh_username:
-                                account_info["username"] = refresh_username
-                            if refresh_extra_data.get("avatar_url"):
-                                account_info["avatar_url"] = refresh_extra_data.get("avatar_url")
-                            tiktok_logger.debug(f"Found cached account info after API failure, returning it")
-                            return {"account": account_info}
-                    # If no cached data with display_name/username, return None (don't return incomplete data)
-                    return {"account": None}
+                    # Check if it's a token error and try refresh
+                    error_text = creator_info_response.text
+                    if "access_token_invalid" in error_text.lower() or "invalid" in error_text.lower():
+                        refresh_token_decrypted = decrypt(tiktok_token.refresh_token) if tiktok_token.refresh_token else None
+                        if refresh_token_decrypted:
+                            try:
+                                tiktok_logger.info(f"TikTok token invalid in account endpoint, refreshing...")
+                                access_token = refresh_tiktok_token(user_id, refresh_token_decrypted, db)
+                                tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
+                                # Retry the API call
+                                creator_info_response = client.post(
+                                    TIKTOK_CREATOR_INFO_URL,
+                                    headers={
+                                        "Authorization": f"Bearer {access_token}",
+                                        "Content-Type": "application/json; charset=UTF-8"
+                                    },
+                                    json={},
+                                    timeout=5.0
+                                )
+                            except Exception as retry_error:
+                                tiktok_logger.warning(f"Failed to refresh TikTok token after invalid error for user {user_id}: {retry_error}")
+                    
+                    if creator_info_response.status_code != 200:
+                        tiktok_logger.warning(f"TikTok creator info request failed: {creator_info_response.status_code}")
+                        # ROOT CAUSE FIX: Re-check database for cached data before returning
+                        # This handles race conditions where cache might have been updated
+                        tiktok_token_refresh = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
+                        if tiktok_token_refresh and tiktok_token_refresh.extra_data:
+                            refresh_extra_data = tiktok_token_refresh.extra_data
+                            refresh_display_name = refresh_extra_data.get("display_name")
+                            refresh_username = refresh_extra_data.get("username")
+                            if refresh_display_name or refresh_username:
+                                # We have cached data - return it instead of incomplete data
+                                account_info = {}
+                                if open_id:
+                                    account_info["open_id"] = open_id
+                                if refresh_display_name:
+                                    account_info["display_name"] = refresh_display_name
+                                if refresh_username:
+                                    account_info["username"] = refresh_username
+                                if refresh_extra_data.get("avatar_url"):
+                                    account_info["avatar_url"] = refresh_extra_data.get("avatar_url")
+                                tiktok_logger.debug(f"Found cached account info after API failure, returning it")
+                                return {"account": account_info}
+                        # If no cached data with display_name/username, return None (don't return incomplete data)
+                        return {"account": None}
                 
                 creator_data = creator_info_response.json()
                 creator_info = creator_data.get("data", {})
@@ -6586,15 +6623,105 @@ def check_tiktok_rate_limit(session_id: str = None, user_id: int = None):
         raise Exception(f"TikTok rate limit exceeded. Wait {wait_time}s before trying again.")
 
 
+def refresh_tiktok_token(user_id: int, refresh_token: str, db: Session) -> str:
+    """Refresh TikTok access token using refresh token
+    
+    Args:
+        user_id: User ID
+        refresh_token: Refresh token (decrypted)
+        db: Database session
+        
+    Returns:
+        New access token (decrypted)
+        
+    Raises:
+        Exception: If refresh fails
+    """
+    if not refresh_token:
+        raise Exception("No refresh token available")
+    
+    refresh_data = {
+        "client_key": TIKTOK_CLIENT_KEY,
+        "client_secret": TIKTOK_CLIENT_SECRET,
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+    }
+    
+    tiktok_logger.info(f"Refreshing TikTok token for user {user_id}")
+    
+    response = httpx.post(
+        TIKTOK_TOKEN_URL,
+        data=refresh_data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        timeout=30.0
+    )
+    
+    if response.status_code != 200:
+        error_text = response.text
+        try:
+            error_json = response.json()
+            error_code = error_json.get("error", {}).get("code", "unknown")
+            error_message = error_json.get("error", {}).get("message", error_text)
+            tiktok_logger.error(f"TikTok token refresh failed: {error_code} - {error_message}")
+            raise Exception(f"Token refresh failed: {error_code} - {error_message}")
+        except:
+            tiktok_logger.error(f"TikTok token refresh failed: {error_text[:500]}")
+            raise Exception(f"Token refresh failed: {error_text[:500]}")
+    
+    token_json = response.json()
+    
+    if "access_token" not in token_json:
+        raise Exception("No access_token in refresh response")
+    
+    # Update token in database
+    new_access_token = token_json["access_token"]
+    new_refresh_token = token_json.get("refresh_token", refresh_token)  # Use new refresh token if provided, otherwise keep old one
+    expires_in = token_json.get("expires_in")
+    
+    expires_at = None
+    if expires_in:
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+    
+    extra_data = {
+        "open_id": token_json.get("open_id"),
+        "scope": token_json.get("scope"),
+        "token_type": token_json.get("token_type"),
+        "refresh_expires_in": token_json.get("refresh_expires_in")
+    }
+    
+    # Preserve existing extra_data (like display_name, username)
+    existing_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
+    if existing_token and existing_token.extra_data:
+        # Preserve cached account info
+        for key in ["display_name", "username", "avatar_url"]:
+            if key in existing_token.extra_data:
+                extra_data[key] = existing_token.extra_data[key]
+    
+    db_helpers.save_oauth_token(
+        user_id=user_id,
+        platform="tiktok",
+        access_token=new_access_token,
+        refresh_token=new_refresh_token,
+        expires_at=expires_at,
+        extra_data=extra_data,
+        db=db
+    )
+    
+    tiktok_logger.info(f"Successfully refreshed TikTok token for user {user_id}")
+    
+    return new_access_token
+
+
 def get_tiktok_creator_info(access_token: str):
     """Query TikTok creator info"""
-    if not access_token:
-        raise Exception("No TikTok access token")
+    # ROOT CAUSE FIX: Validate token is not None or empty string
+    if not access_token or not access_token.strip():
+        raise Exception("No TikTok access token or token is empty")
     
     response = httpx.post(
         TIKTOK_CREATOR_INFO_URL,
         headers={
-            "Authorization": f"Bearer {access_token}",
+            "Authorization": f"Bearer {access_token.strip()}",  # ROOT CAUSE FIX: Strip whitespace
             "Content-Type": "application/json; charset=UTF-8"
         },
         json={},
@@ -6750,10 +6877,68 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
     
     # Decrypt access token
     access_token = decrypt(tiktok_token.access_token)
-    if not access_token:
-        db_helpers.update_video(video_id, user_id, db=db, status="failed", error="Failed to decrypt TikTok token")
-        tiktok_logger.error("Failed to decrypt TikTok token")
+    # ROOT CAUSE FIX: Validate token is not None or empty string
+    if not access_token or not access_token.strip():
+        error_msg = "TikTok: Access token is missing or invalid. Please reconnect your TikTok account."
+        tiktok_logger.error(
+            f"❌ TikTok token is empty or invalid - User {user_id}, Video {video_id} ({video.filename})",
+            extra={
+                "user_id": user_id,
+                "video_id": video_id,
+                "video_filename": video.filename,
+                "platform": "tiktok",
+                "error_type": "EmptyToken",
+            }
+        )
+        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+        failed_uploads_gauge.inc()
         return
+    
+    # Check if token is expired and refresh if needed
+    token_expiry = db_helpers.check_token_expiration(tiktok_token)
+    if token_expiry.get("expired", False) or token_expiry.get("expires_soon", False):
+        # Token is expired or about to expire - refresh it
+        refresh_token_decrypted = decrypt(tiktok_token.refresh_token) if tiktok_token.refresh_token else None
+        if refresh_token_decrypted:
+            try:
+                tiktok_logger.info(f"TikTok token expired/expiring for user {user_id}, refreshing...")
+                access_token = refresh_tiktok_token(user_id, refresh_token_decrypted, db)
+                # ROOT CAUSE FIX: Re-fetch token from database after refresh to ensure we have latest data
+                tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
+                if not tiktok_token:
+                    raise Exception("Failed to retrieve token after refresh")
+                tiktok_logger.info(f"Successfully refreshed TikTok token for user {user_id}")
+            except Exception as refresh_error:
+                error_msg = f"TikTok: Failed to refresh access token. Please reconnect your TikTok account. Error: {str(refresh_error)}"
+                tiktok_logger.error(
+                    f"❌ TikTok token refresh FAILED - User {user_id}, Video {video_id} ({video.filename}): {refresh_error}",
+                    extra={
+                        "user_id": user_id,
+                        "video_id": video_id,
+                        "video_filename": video.filename,
+                        "platform": "tiktok",
+                        "error_type": "TokenRefreshFailed",
+                    },
+                    exc_info=True
+                )
+                db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+                failed_uploads_gauge.inc()
+                return
+        else:
+            error_msg = "TikTok: Access token expired and no refresh token available. Please reconnect your TikTok account."
+            tiktok_logger.error(
+                f"❌ TikTok token expired with no refresh token - User {user_id}, Video {video_id} ({video.filename})",
+                extra={
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "video_filename": video.filename,
+                    "platform": "tiktok",
+                    "error_type": "TokenExpiredNoRefresh",
+                }
+            )
+            db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+            failed_uploads_gauge.inc()
+            return
     
     # Get settings from database
     tiktok_settings = db_helpers.get_user_settings(user_id, "tiktok", db=db)
@@ -6766,8 +6951,76 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         # Check rate limit (use user_id if session_id not provided)
         check_tiktok_rate_limit(session_id=session_id, user_id=user_id)
         
-        # Get creator info
-        creator_info = get_tiktok_creator_info(access_token)
+        # Get creator info (with automatic retry on token error)
+        try:
+            creator_info = get_tiktok_creator_info(access_token)
+        except Exception as creator_info_error:
+            error_msg = str(creator_info_error)
+            # If token is invalid, try refreshing once more
+            if "access_token_invalid" in error_msg.lower() or "invalid" in error_msg.lower():
+                tiktok_logger.warning(f"Creator info query failed with token error, attempting refresh: {error_msg}")
+                # ROOT CAUSE FIX: Re-fetch token from database to get latest refresh token
+                tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
+                if not tiktok_token:
+                    error_msg = f"TikTok: No token found in database. Please reconnect your TikTok account."
+                    tiktok_logger.error(
+                        f"❌ TikTok token not found - User {user_id}, Video {video_id} ({video.filename})",
+                        extra={
+                            "user_id": user_id,
+                            "video_id": video_id,
+                            "video_filename": video.filename,
+                            "platform": "tiktok",
+                            "error_type": "TokenNotFound",
+                        }
+                    )
+                    db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+                    failed_uploads_gauge.inc()
+                    return
+                refresh_token_decrypted = decrypt(tiktok_token.refresh_token) if tiktok_token.refresh_token else None
+                if refresh_token_decrypted:
+                    try:
+                        access_token = refresh_tiktok_token(user_id, refresh_token_decrypted, db)
+                        # ROOT CAUSE FIX: Re-fetch token from database after refresh to ensure we have latest data
+                        tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
+                        if not tiktok_token:
+                            raise Exception("Failed to retrieve token after refresh")
+                        # Retry creator info query with new token
+                        creator_info = get_tiktok_creator_info(access_token)
+                        tiktok_logger.info(f"Successfully refreshed token and retried creator info query for user {user_id}")
+                    except Exception as retry_error:
+                        error_msg = f"TikTok: Failed to refresh access token after invalid token error. Please reconnect your TikTok account. Error: {str(retry_error)}"
+                        tiktok_logger.error(
+                            f"❌ TikTok token refresh FAILED after invalid token - User {user_id}, Video {video_id} ({video.filename}): {retry_error}",
+                            extra={
+                                "user_id": user_id,
+                                "video_id": video_id,
+                                "video_filename": video.filename,
+                                "platform": "tiktok",
+                                "error_type": "TokenRefreshFailedAfterInvalid",
+                            },
+                            exc_info=True
+                        )
+                        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+                        failed_uploads_gauge.inc()
+                        return
+                else:
+                    error_msg = f"TikTok: Access token is invalid and no refresh token available. Please reconnect your TikTok account. Error: {error_msg}"
+                    tiktok_logger.error(
+                        f"❌ TikTok invalid token with no refresh token - User {user_id}, Video {video_id} ({video.filename}): {error_msg}",
+                        extra={
+                            "user_id": user_id,
+                            "video_id": video_id,
+                            "video_filename": video.filename,
+                            "platform": "tiktok",
+                            "error_type": "InvalidTokenNoRefresh",
+                        }
+                    )
+                    db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+                    failed_uploads_gauge.inc()
+                    return
+            else:
+                # Other error - re-raise
+                raise
         
         # Check if creator can make more posts (TikTok UX requirement 1b)
         can_not_make_more_posts = creator_info.get("can_not_make_more_posts", False)
@@ -6890,30 +7143,116 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         tiktok_logger.info(f"Uploading {video.filename} ({video_size / (1024*1024):.2f} MB)")
         redis_client.set_upload_progress(user_id, video_id, 5)
         
-        # Step 1: Initialize upload
-        init_response = httpx.post(
-            TIKTOK_INIT_UPLOAD_URL,
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json; charset=UTF-8"
-            },
-            json={
-                "post_info": {
-                    "title": title,
-                    "privacy_level": tiktok_privacy,
-                    "disable_duet": not allow_duet,
-                    "disable_comment": not allow_comments,
-                    "disable_stitch": not allow_stitch
+        # Step 1: Initialize upload (with token refresh retry)
+        init_response = None
+        try:
+            init_response = httpx.post(
+                TIKTOK_INIT_UPLOAD_URL,
+                headers={
+                    "Authorization": f"Bearer {access_token.strip()}",  # ROOT CAUSE FIX: Strip whitespace
+                    "Content-Type": "application/json; charset=UTF-8"
                 },
-                "source_info": {
-                    "source": "FILE_UPLOAD",
-                    "video_size": video_size,
-                    "chunk_size": video_size,
-                    "total_chunk_count": 1
-                }
-            },
-            timeout=30.0
-        )
+                json={
+                    "post_info": {
+                        "title": title,
+                        "privacy_level": tiktok_privacy,
+                        "disable_duet": not allow_duet,
+                        "disable_comment": not allow_comments,
+                        "disable_stitch": not allow_stitch
+                    },
+                    "source_info": {
+                        "source": "FILE_UPLOAD",
+                        "video_size": video_size,
+                        "chunk_size": video_size,
+                        "total_chunk_count": 1
+                    }
+                },
+                timeout=30.0
+            )
+        except Exception as init_error:
+            # If it's a network error, re-raise
+            raise
+        
+        # Check if token error and retry with refresh
+        if init_response.status_code != 200:
+            try:
+                response_data = init_response.json()
+                error = response_data.get("error", {})
+                error_code = error.get('code', '')
+                error_message = error.get('message', '')
+                
+                # If token is invalid, try refreshing once more
+                if "access_token_invalid" in error_code.lower() or "access_token_invalid" in error_message.lower() or "invalid" in error_message.lower():
+                    tiktok_logger.warning(f"Init upload failed with token error, attempting refresh: {error_code} - {error_message}")
+                    # ROOT CAUSE FIX: Re-fetch token from database to get latest refresh token
+                    tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
+                    if not tiktok_token:
+                        error_msg = f"TikTok: No token found in database. Please reconnect your TikTok account."
+                        tiktok_logger.error(
+                            f"❌ TikTok token not found - User {user_id}, Video {video_id} ({video.filename})",
+                            extra={
+                                "user_id": user_id,
+                                "video_id": video_id,
+                                "video_filename": video.filename,
+                                "platform": "tiktok",
+                                "error_type": "TokenNotFound",
+                            }
+                        )
+                        db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+                        failed_uploads_gauge.inc()
+                        return
+                    refresh_token_decrypted = decrypt(tiktok_token.refresh_token) if tiktok_token.refresh_token else None
+                    if refresh_token_decrypted:
+                        try:
+                            access_token = refresh_tiktok_token(user_id, refresh_token_decrypted, db)
+                            # ROOT CAUSE FIX: Re-fetch token from database after refresh to ensure we have latest data
+                            tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
+                            if not tiktok_token:
+                                raise Exception("Failed to retrieve token after refresh")
+                            # Retry init upload with new token
+                            init_response = httpx.post(
+                                TIKTOK_INIT_UPLOAD_URL,
+                                headers={
+                                    "Authorization": f"Bearer {access_token.strip()}",  # ROOT CAUSE FIX: Strip whitespace
+                                    "Content-Type": "application/json; charset=UTF-8"
+                                },
+                                json={
+                                    "post_info": {
+                                        "title": title,
+                                        "privacy_level": tiktok_privacy,
+                                        "disable_duet": not allow_duet,
+                                        "disable_comment": not allow_comments,
+                                        "disable_stitch": not allow_stitch
+                                    },
+                                    "source_info": {
+                                        "source": "FILE_UPLOAD",
+                                        "video_size": video_size,
+                                        "chunk_size": video_size,
+                                        "total_chunk_count": 1
+                                    }
+                                },
+                                timeout=30.0
+                            )
+                            tiktok_logger.info(f"Successfully refreshed token and retried init upload for user {user_id}")
+                        except Exception as retry_error:
+                            error_msg = f"TikTok: Failed to refresh access token during upload. Please reconnect your TikTok account. Error: {str(retry_error)}"
+                            tiktok_logger.error(
+                                f"❌ TikTok token refresh FAILED during upload - User {user_id}, Video {video_id} ({video.filename}): {retry_error}",
+                                extra={
+                                    "user_id": user_id,
+                                    "video_id": video_id,
+                                    "video_filename": video.filename,
+                                    "platform": "tiktok",
+                                    "error_type": "TokenRefreshFailedDuringUpload",
+                                },
+                                exc_info=True
+                            )
+                            db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+                            failed_uploads_gauge.inc()
+                            return
+            except:
+                # If we can't parse the error, continue with normal error handling
+                pass
         
         if init_response.status_code != 200:
             import json as json_module
@@ -7287,7 +7626,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             
             # Per docs: Use Authorization header with Bearer token
             container_headers = {
-                "Authorization": f"Bearer {access_token}",
+                "Authorization": f"Bearer {access_token.strip()}",  # ROOT CAUSE FIX: Strip whitespace
                 "Content-Type": "application/json"
             }
             
@@ -7427,7 +7766,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
                 "fields": "status_code"
             }
             status_headers = {
-                "Authorization": f"Bearer {access_token}"
+                "Authorization": f"Bearer {access_token.strip()}"  # ROOT CAUSE FIX: Strip whitespace
             }
             
             for attempt in range(5):  # Check up to 5 times (once per minute for 5 minutes max)
@@ -7457,7 +7796,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
                 "creation_id": container_id
             }
             publish_headers = {
-                "Authorization": f"Bearer {access_token}",
+                "Authorization": f"Bearer {access_token.strip()}",  # ROOT CAUSE FIX: Strip whitespace
                 "Content-Type": "application/json"
             }
             
