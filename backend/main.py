@@ -3634,8 +3634,10 @@ def update_tiktok_settings(
 ):
     """Update TikTok upload settings"""
     if privacy_level is not None:
-        if privacy_level not in ["public", "private", "friends"]:
-            raise HTTPException(400, "Invalid privacy level")
+        # Accept both old format (public/private/friends) and new API format (PUBLIC_TO_EVERYONE/SELF_ONLY/etc)
+        valid_levels = ["public", "private", "friends", "PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "SELF_ONLY", "FOLLOWER_OF_CREATOR"]
+        if privacy_level not in valid_levels:
+            raise HTTPException(400, f"Invalid privacy level: {privacy_level}. Must be one of {valid_levels}")
         db_helpers.set_user_setting(user_id, "tiktok", "privacy_level", privacy_level, db=db)
     
     if allow_comments is not None:

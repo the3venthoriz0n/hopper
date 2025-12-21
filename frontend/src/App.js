@@ -1349,7 +1349,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     loadUploadLimits();
     
     // Check music usage confirmation for TikTok
-    if (tiktok.enabled && tiktok.connected) {
+    if (tiktok.connected) {
       axios.get(`${API}/auth/tiktok/music-usage-confirmed`)
         .then(res => {
           setMusicUsageConfirmed(res.data.confirmed);
@@ -1991,9 +1991,9 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     }
   };
 
-  const upload = async () => {
+  const upload = async (skipMusicCheck = false) => {
     // Check if TikTok is enabled and music usage not confirmed
-    if (tiktok.enabled && !musicUsageConfirmed) {
+    if (!skipMusicCheck && tiktok.enabled && !musicUsageConfirmed) {
       setConfirmDialog({
         title: 'TikTok Music Usage Confirmation',
         message: 'By posting, you agree to TikTok\'s Music Usage Confirmation',
@@ -2002,11 +2002,12 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             await axios.post(`${API}/auth/tiktok/music-usage-confirmed`);
             setMusicUsageConfirmed(true);
             setConfirmDialog(null);
-            // Retry upload after confirmation
-            upload();
+            // Retry upload after confirmation (skip music check)
+            upload(true);
           } catch (err) {
             console.error('Error confirming music usage:', err);
             setMessage('❌ Failed to confirm music usage. Please try again.');
+            setConfirmDialog(null);
           }
         },
         onCancel: () => {
@@ -2908,6 +2909,24 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         {showTiktokSettings && tiktok.connected && (
           <div className="settings-panel">
             <h3>TikTok Settings</h3>
+            
+            {musicUsageConfirmed && (
+              <div style={{
+                padding: '0.75rem',
+                background: 'rgba(34, 197, 94, 0.1)',
+                border: '1px solid rgba(34, 197, 94, 0.3)',
+                borderRadius: '6px',
+                marginBottom: '1rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                fontSize: '0.9rem',
+                color: '#22c55e'
+              }}>
+                <span style={{ fontSize: '1.2rem' }}>✓</span>
+                <span>TikTok Music Usage Confirmation accepted</span>
+              </div>
+            )}
             
             <div className="setting-group">
               <label>Privacy Level</label>
