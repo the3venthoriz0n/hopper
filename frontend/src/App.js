@@ -391,6 +391,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const [youtubeVideosTotalPages, setYoutubeVideosTotalPages] = useState(0);
   const [loadingYoutubeVideos, setLoadingYoutubeVideos] = useState(false);
   const [expandedVideos, setExpandedVideos] = useState(new Set());
+  const [expandedErrors, setExpandedErrors] = useState(new Set());
   const [tiktokSettings, setTiktokSettings] = useState({
     privacy_level: 'private',
     allow_comments: true,
@@ -3393,7 +3394,95 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         second: '2-digit'
                       })}</span>
                     ) : v.status === 'failed' ? (
-                      <span style={{ color: '#ef4444' }}>❌ Failed{v.error ? `: ${v.error.substring(0, 50)}${v.error.length > 50 ? '...' : ''}` : ''}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={{ color: '#ef4444' }}>❌ Failed</span>
+                        {v.error && (
+                          <>
+                            {!expandedErrors.has(v.id) ? (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setExpandedErrors(prev => {
+                                    const newSet = new Set(prev);
+                                    newSet.add(v.id);
+                                    return newSet;
+                                  });
+                                }}
+                                style={{
+                                  padding: '0.25rem 0.5rem',
+                                  background: 'rgba(239, 68, 68, 0.1)',
+                                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                                  borderRadius: '4px',
+                                  color: '#ef4444',
+                                  cursor: 'pointer',
+                                  fontSize: '0.75rem',
+                                  fontWeight: '500',
+                                  transition: 'all 0.2s'
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.target.style.background = 'rgba(239, 68, 68, 0.2)';
+                                  e.target.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.target.style.background = 'rgba(239, 68, 68, 0.1)';
+                                  e.target.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+                                }}
+                                title="Show full error"
+                              >
+                                Show error
+                              </button>
+                            ) : (
+                              <div style={{ 
+                                flex: '1 1 100%', 
+                                marginTop: '4px',
+                                padding: '0.5rem',
+                                background: 'rgba(239, 68, 68, 0.05)',
+                                border: '1px solid rgba(239, 68, 68, 0.2)',
+                                borderRadius: '4px',
+                                fontSize: '0.85rem',
+                                color: '#ef4444',
+                                wordBreak: 'break-word'
+                              }}>
+                                <div style={{ marginBottom: '4px' }}>
+                                  {v.error}
+                                </div>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setExpandedErrors(prev => {
+                                      const newSet = new Set(prev);
+                                      newSet.delete(v.id);
+                                      return newSet;
+                                    });
+                                  }}
+                                  style={{
+                                    padding: '0.25rem 0.5rem',
+                                    background: 'rgba(239, 68, 68, 0.1)',
+                                    border: '1px solid rgba(239, 68, 68, 0.3)',
+                                    borderRadius: '4px',
+                                    color: '#ef4444',
+                                    cursor: 'pointer',
+                                    fontSize: '0.75rem',
+                                    fontWeight: '500',
+                                    transition: 'all 0.2s'
+                                  }}
+                                  onMouseEnter={(e) => {
+                                    e.target.style.background = 'rgba(239, 68, 68, 0.2)';
+                                    e.target.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.target.style.background = 'rgba(239, 68, 68, 0.1)';
+                                    e.target.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+                                  }}
+                                  title="Hide error"
+                                >
+                                  Hide error
+                                </button>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
                     ) : (
                       <span>{v.status}</span>
                     )}
