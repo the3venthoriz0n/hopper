@@ -2909,25 +2909,28 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         {/* TikTok Settings */}
         {showTiktokSettings && tiktok.connected && (
           <div className="settings-panel">
-            <h3>TikTok Settings</h3>
-            
-            {musicUsageConfirmed && (
-              <div style={{
-                padding: '0.75rem',
-                background: 'rgba(34, 197, 94, 0.1)',
-                border: '1px solid rgba(34, 197, 94, 0.3)',
-                borderRadius: '6px',
-                marginBottom: '1rem',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                fontSize: '0.9rem',
-                color: '#22c55e'
-              }}>
-                <span style={{ fontSize: '1.2rem' }}>✓</span>
-                <span>TikTok Music Usage Confirmation accepted</span>
-              </div>
-            )}
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              TikTok Settings
+              {musicUsageConfirmed && (
+                <span 
+                  style={{ 
+                    fontSize: '1rem', 
+                    color: '#22c55e',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '20px',
+                    height: '20px',
+                    borderRadius: '50%',
+                    background: 'rgba(34, 197, 94, 0.1)',
+                    border: '1px solid rgba(34, 197, 94, 0.3)'
+                  }}
+                  title="TikTok Music Usage Confirmation accepted"
+                >
+                  ✓
+                </span>
+              )}
+            </h3>
             
             <div className="setting-group">
               <label>Privacy Level</label>
@@ -3394,95 +3397,92 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         second: '2-digit'
                       })}</span>
                     ) : v.status === 'failed' ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                        <span style={{ color: '#ef4444' }}>❌ Failed</span>
-                        {v.error && (
-                          <>
-                            {!expandedErrors.has(v.id) ? (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setExpandedErrors(prev => {
-                                    const newSet = new Set(prev);
-                                    newSet.add(v.id);
-                                    return newSet;
-                                  });
-                                }}
-                                style={{
-                                  padding: '0.25rem 0.5rem',
-                                  background: 'rgba(239, 68, 68, 0.1)',
-                                  border: '1px solid rgba(239, 68, 68, 0.3)',
-                                  borderRadius: '4px',
-                                  color: '#ef4444',
-                                  cursor: 'pointer',
-                                  fontSize: '0.75rem',
-                                  fontWeight: '500',
-                                  transition: 'all 0.2s'
-                                }}
-                                onMouseEnter={(e) => {
-                                  e.target.style.background = 'rgba(239, 68, 68, 0.2)';
-                                  e.target.style.borderColor = 'rgba(239, 68, 68, 0.5)';
-                                }}
-                                onMouseLeave={(e) => {
-                                  e.target.style.background = 'rgba(239, 68, 68, 0.1)';
-                                  e.target.style.borderColor = 'rgba(239, 68, 68, 0.3)';
-                                }}
-                                title="Show full error"
-                              >
-                                Show error
-                              </button>
-                            ) : (
-                              <div style={{ 
-                                flex: '1 1 100%', 
-                                marginTop: '4px',
-                                padding: '0.5rem',
-                                background: 'rgba(239, 68, 68, 0.05)',
-                                border: '1px solid rgba(239, 68, 68, 0.2)',
+                      v.error ? (
+                        !expandedErrors.has(v.id) ? (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setExpandedErrors(prev => {
+                                const newSet = new Set(prev);
+                                newSet.add(v.id);
+                                return newSet;
+                              });
+                            }}
+                            style={{
+                              padding: '0.25rem 0.5rem',
+                              background: 'rgba(239, 68, 68, 0.1)',
+                              border: '1px solid rgba(239, 68, 68, 0.3)',
+                              borderRadius: '4px',
+                              color: '#ef4444',
+                              cursor: 'pointer',
+                              fontSize: '0.75rem',
+                              fontWeight: '500',
+                              transition: 'all 0.2s'
+                            }}
+                            onMouseEnter={(e) => {
+                              e.target.style.background = 'rgba(239, 68, 68, 0.2)';
+                              e.target.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.target.style.background = 'rgba(239, 68, 68, 0.1)';
+                              e.target.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+                            }}
+                            title="Show full error"
+                          >
+                            Show error
+                          </button>
+                        ) : (
+                          <div style={{ 
+                            flex: '1 1 100%', 
+                            marginTop: '4px',
+                            padding: '0.5rem',
+                            background: 'rgba(239, 68, 68, 0.05)',
+                            border: '1px solid rgba(239, 68, 68, 0.2)',
+                            borderRadius: '4px',
+                            fontSize: '0.85rem',
+                            color: '#ef4444',
+                            wordBreak: 'break-word'
+                          }}>
+                            <div style={{ marginBottom: '4px' }}>
+                              {v.error}
+                            </div>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setExpandedErrors(prev => {
+                                  const newSet = new Set(prev);
+                                  newSet.delete(v.id);
+                                  return newSet;
+                                });
+                              }}
+                              style={{
+                                padding: '0.25rem 0.5rem',
+                                background: 'rgba(239, 68, 68, 0.1)',
+                                border: '1px solid rgba(239, 68, 68, 0.3)',
                                 borderRadius: '4px',
-                                fontSize: '0.85rem',
                                 color: '#ef4444',
-                                wordBreak: 'break-word'
-                              }}>
-                                <div style={{ marginBottom: '4px' }}>
-                                  {v.error}
-                                </div>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setExpandedErrors(prev => {
-                                      const newSet = new Set(prev);
-                                      newSet.delete(v.id);
-                                      return newSet;
-                                    });
-                                  }}
-                                  style={{
-                                    padding: '0.25rem 0.5rem',
-                                    background: 'rgba(239, 68, 68, 0.1)',
-                                    border: '1px solid rgba(239, 68, 68, 0.3)',
-                                    borderRadius: '4px',
-                                    color: '#ef4444',
-                                    cursor: 'pointer',
-                                    fontSize: '0.75rem',
-                                    fontWeight: '500',
-                                    transition: 'all 0.2s'
-                                  }}
-                                  onMouseEnter={(e) => {
-                                    e.target.style.background = 'rgba(239, 68, 68, 0.2)';
-                                    e.target.style.borderColor = 'rgba(239, 68, 68, 0.5)';
-                                  }}
-                                  onMouseLeave={(e) => {
-                                    e.target.style.background = 'rgba(239, 68, 68, 0.1)';
-                                    e.target.style.borderColor = 'rgba(239, 68, 68, 0.3)';
-                                  }}
-                                  title="Hide error"
-                                >
-                                  Hide error
-                                </button>
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
+                                cursor: 'pointer',
+                                fontSize: '0.75rem',
+                                fontWeight: '500',
+                                transition: 'all 0.2s'
+                              }}
+                              onMouseEnter={(e) => {
+                                e.target.style.background = 'rgba(239, 68, 68, 0.2)';
+                                e.target.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+                              }}
+                              onMouseLeave={(e) => {
+                                e.target.style.background = 'rgba(239, 68, 68, 0.1)';
+                                e.target.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+                              }}
+                              title="Hide error"
+                            >
+                              Hide error
+                            </button>
+                          </div>
+                        )
+                      ) : (
+                        <span style={{ color: '#ef4444' }}>Failed</span>
+                      )
                     ) : (
                       <span>{v.status}</span>
                     )}
