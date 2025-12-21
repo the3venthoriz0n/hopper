@@ -3293,6 +3293,64 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       <span>{v.status}</span>
                     )}
                   </div>
+                  {/* Platform Status Indicators */}
+                  {v.platform_statuses && (v.status === 'uploaded' || v.status === 'completed' || v.status === 'failed') && (
+                    <div style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: '8px', 
+                      marginTop: '4px',
+                      flexWrap: 'wrap'
+                    }}>
+                      {Object.entries(v.platform_statuses).map(([platform, status]) => {
+                        if (status === 'not_enabled') return null;
+                        
+                        const platformIcons = {
+                          youtube: '📺',
+                          tiktok: '🎵',
+                          instagram: '📷'
+                        };
+                        const platformNames = {
+                          youtube: 'YouTube',
+                          tiktok: 'TikTok',
+                          instagram: 'Instagram'
+                        };
+                        
+                        let icon, color, title;
+                        if (status === 'success') {
+                          icon = '✅';
+                          color = '#22c55e';
+                          title = `${platformNames[platform]}: Upload successful`;
+                        } else if (status === 'failed') {
+                          icon = '❌';
+                          color = '#ef4444';
+                          title = `${platformNames[platform]}: Upload failed`;
+                        } else {
+                          icon = '⏳';
+                          color = '#f59e0b';
+                          title = `${platformNames[platform]}: Pending`;
+                        }
+                        
+                        return (
+                          <span
+                            key={platform}
+                            title={title}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontSize: '0.85rem',
+                              color: color,
+                              fontWeight: '500'
+                            }}
+                          >
+                            <span>{platformIcons[platform]}</span>
+                            <span>{icon}</span>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
                   {v.status === 'uploading' && (
                     <div className="progress-bar">
                       <div 

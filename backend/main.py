@@ -6,6 +6,7 @@ import os
 import random
 import re
 import secrets
+import subprocess
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -863,6 +864,10 @@ def build_video_response(video: Video, all_settings: Dict[str, Dict], all_tokens
     
     video_dict['upload_properties'] = upload_props
     
+    # Add platform upload statuses (for UI indicators)
+    platform_statuses = get_platform_statuses(video, dest_settings, all_tokens)
+    video_dict['platform_statuses'] = platform_statuses
+    
     return video_dict
 
 
@@ -885,6 +890,74 @@ def check_upload_success(video: Video, dest_name: str) -> bool:
     elif dest_name == 'instagram':
         return bool(custom_settings.get('instagram_id') or custom_settings.get('instagram_container_id'))
     return False
+
+
+def get_platform_statuses(video: Video, dest_settings: Dict[str, Any], all_tokens: Dict[str, Optional[OAuthToken]]) -> Dict[str, str]:
+    """Get upload status for each enabled platform
+    
+    Args:
+        video: Video object to check
+        dest_settings: Destination settings dict
+        all_tokens: All OAuth tokens dict
+        
+    Returns:
+        Dictionary mapping platform names to status: 'success', 'failed', 'pending', or 'not_enabled'
+    """
+    custom_settings = video.custom_settings or {}
+    platform_statuses = {}
+    error = (video.error or '').lower()
+    
+    # Check each platform
+    platforms = {
+        'youtube': ('youtube_enabled', 'youtube_id', ['youtube', 'google']),
+        'tiktok': ('tiktok_enabled', ('tiktok_id', 'tiktok_publish_id'), ['tiktok']),
+        'instagram': ('instagram_enabled', ('instagram_id', 'instagram_container_id'), ['instagram', 'facebook'])
+    }
+    
+    for platform_name, (enabled_key, id_keys, error_keywords) in platforms.items():
+        is_enabled = dest_settings.get(enabled_key, False)
+        has_token = all_tokens.get(platform_name) is not None
+        
+        if not is_enabled or not has_token:
+            platform_statuses[platform_name] = 'not_enabled'
+            continue
+        
+        # Check if upload succeeded (has platform ID)
+        if platform_name == 'youtube':
+            has_id = bool(custom_settings.get(id_keys))
+        elif platform_name == 'tiktok':
+            has_id = bool(custom_settings.get(id_keys[0]) or custom_settings.get(id_keys[1]))
+        else:  # instagram
+            has_id = bool(custom_settings.get(id_keys[0]) or custom_settings.get(id_keys[1]))
+        
+        if has_id:
+            platform_statuses[platform_name] = 'success'
+        elif video.status == 'failed':
+            # Check if error mentions this platform
+            error_mentions_platform = any(keyword in error for keyword in error_keywords)
+            if error_mentions_platform:
+                platform_statuses[platform_name] = 'failed'
+            else:
+                # Error doesn't mention this platform - might be pending or failed silently
+                # Check if other platforms succeeded (partial success scenario)
+                other_platforms_succeeded = any(
+                    status == 'success' for p, status in platform_statuses.items() if p != platform_name
+                )
+                if other_platforms_succeeded:
+                    # Other platforms succeeded, this one likely failed
+                    platform_statuses[platform_name] = 'failed'
+                else:
+                    # Still pending or not attempted yet
+                    platform_statuses[platform_name] = 'pending'
+        elif video.status == 'uploaded' or video.status == 'completed':
+            # Video marked as uploaded/completed but no ID for this platform
+            # This means it failed for this platform (partial success scenario)
+            platform_statuses[platform_name] = 'failed'
+        else:
+            # Still pending
+            platform_statuses[platform_name] = 'pending'
+    
+    return platform_statuses
 
 
 def cleanup_video_file(video: Video) -> bool:
@@ -6544,6 +6617,60 @@ def get_tiktok_creator_info(access_token: str):
     return creator_info
 
 
+def get_video_duration(video_path: Path) -> float:
+    """Get video duration in seconds using ffprobe
+    
+    Args:
+        video_path: Path to video file
+        
+    Returns:
+        Duration in seconds as float
+        
+    Raises:
+        Exception: If ffprobe is not available or video cannot be analyzed
+    """
+    try:
+        # Use ffprobe to get duration
+        cmd = [
+            'ffprobe',
+            '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            str(video_path)
+        ]
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30.0
+        )
+        
+        if result.returncode != 0:
+            raise Exception(f"ffprobe failed: {result.stderr}")
+        
+        duration_str = result.stdout.strip()
+        if not duration_str:
+            raise Exception("ffprobe returned empty duration")
+        
+        duration = float(duration_str)
+        if duration <= 0:
+            raise Exception(f"Invalid duration: {duration}")
+        
+        return duration
+        
+    except FileNotFoundError:
+        raise Exception("ffprobe not found. Please install ffmpeg to enable video duration validation.")
+    except subprocess.TimeoutExpired:
+        raise Exception("ffprobe timed out while analyzing video")
+    except ValueError as e:
+        raise Exception(f"Failed to parse video duration: {e}")
+    except Exception as e:
+        if "ffprobe" in str(e):
+            raise
+        raise Exception(f"Failed to get video duration: {e}")
+
+
 def map_privacy_level_to_tiktok(privacy_level, creator_info):
     """Map frontend privacy level to TikTok's format"""
     mapping = {
@@ -6642,6 +6769,24 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         # Get creator info
         creator_info = get_tiktok_creator_info(access_token)
         
+        # Check if creator can make more posts (TikTok UX requirement 1b)
+        can_not_make_more_posts = creator_info.get("can_not_make_more_posts", False)
+        if can_not_make_more_posts:
+            error_msg = "TikTok: You cannot make more posts at this moment. Please try again later."
+            tiktok_logger.warning(
+                f"❌ TikTok upload BLOCKED - Creator cannot make more posts - User {user_id}, Video {video_id} ({video.filename})",
+                extra={
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "video_filename": video.filename,
+                    "platform": "tiktok",
+                    "error_type": "PostingLimitReached",
+                }
+            )
+            db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+            failed_uploads_gauge.inc()
+            raise Exception(error_msg)
+        
         # Get video file
         # ROOT CAUSE FIX: Resolve path to absolute to ensure file is found
         video_path = Path(video.path).resolve()
@@ -6678,6 +6823,44 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                 }
             )
             raise Exception(error_msg)
+        
+        # Validate video duration against max_video_post_duration_sec (TikTok UX requirement 1c)
+        max_video_post_duration_sec = creator_info.get("max_video_post_duration_sec")
+        if max_video_post_duration_sec:
+            try:
+                video_duration_seconds = get_video_duration(video_path)
+                if video_duration_seconds > max_video_post_duration_sec:
+                    error_msg = (
+                        f"TikTok: Video duration ({video_duration_seconds:.1f}s) exceeds maximum allowed duration "
+                        f"({max_video_post_duration_sec}s). Please use a shorter video."
+                    )
+                    tiktok_logger.warning(
+                        f"❌ TikTok upload BLOCKED - Video duration too long - User {user_id}, Video {video_id} ({video.filename}): "
+                        f"Duration: {video_duration_seconds:.1f}s, Max: {max_video_post_duration_sec}s",
+                        extra={
+                            "user_id": user_id,
+                            "video_id": video_id,
+                            "video_filename": video.filename,
+                            "video_duration_seconds": video_duration_seconds,
+                            "max_video_post_duration_sec": max_video_post_duration_sec,
+                            "platform": "tiktok",
+                            "error_type": "VideoDurationExceeded",
+                        }
+                    )
+                    db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+                    failed_uploads_gauge.inc()
+                    raise Exception(error_msg)
+                tiktok_logger.debug(f"Video duration validated: {video_duration_seconds:.1f}s <= {max_video_post_duration_sec}s")
+            except Exception as duration_error:
+                # If duration check fails (e.g., ffprobe not available), log warning but don't block upload
+                # This allows uploads to proceed if duration validation is not available
+                tiktok_logger.warning(
+                    f"Could not validate video duration for user {user_id}, video {video_id}: {duration_error}. "
+                    f"Upload will proceed, but duration validation is recommended."
+                )
+                # Only block if it's a clear duration exceeded error (not a tool availability issue)
+                if "exceeds maximum" in str(duration_error) or "exceeded" in str(duration_error).lower():
+                    raise
         
         # Prepare metadata
         filename_no_ext = video.filename.rsplit('.', 1)[0] if '.' in video.filename else video.filename
