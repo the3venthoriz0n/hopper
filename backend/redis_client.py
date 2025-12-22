@@ -352,3 +352,27 @@ def get_active_user_ids() -> set[int]:
             continue
     
     return active_user_ids
+
+
+def acquire_lock(lock_key: str, timeout: int = 30) -> bool:
+    """Acquire a distributed lock using Redis SET with NX and EX.
+    
+    Args:
+        lock_key: The lock key to acquire
+        timeout: Lock timeout in seconds (default 30)
+        
+    Returns:
+        True if lock was acquired, False if lock already exists
+    """
+    # SET key value NX EX timeout - atomically set if not exists with expiration
+    result = redis_client.set(lock_key, "1", nx=True, ex=timeout)
+    return result is True
+
+
+def release_lock(lock_key: str) -> None:
+    """Release a distributed lock by deleting the key.
+    
+    Args:
+        lock_key: The lock key to release
+    """
+    redis_client.delete(lock_key)
