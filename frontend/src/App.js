@@ -11,52 +11,38 @@ import AdminDashboard from './AdminDashboard';
 import Pricing from './Pricing';
 
 // Hopper Color Palette - Centralized color constants
-// White & Black Primary with Google Color Scheme
+// Custom Palette
 // Update these to change colors throughout the app (matches CSS variables)
 // 
 // SYSTEM DESIGN: RGB values stored separately for opacity support
 // Use rgba() helper function for colors with opacity
 const HOPPER_COLORS = {
-  // Primary Colors
+  // Primary Palette - Custom Colors
+  dark: '#37353E',        // Dark muted purplish-grey
+  charcoal: '#44444E',    // Dark charcoal grey with blue undertone
+  taupe: '#715A5A',       // Muted brownish-taupe
+  cream: '#D3DAD9',      // Very light pale greyish-blue
   white: '#ffffff',
-  black: '#202124',        // Google's black/dark grey
+  black: '#37353E',      // Alias for dark
+  grey: '#715A5A',        // Alias for taupe (for backward compatibility)
+  greyLight: '#D3DAD9',   // Alias for cream (for backward compatibility)
   
-  // Google Color Palette - Hex values
-  blue: '#4285F4',         // Medium blue
-  blueDark: '#174EA6',     // Dark blue
-  blueLight: '#D2E3FC',    // Light blue
-  red: '#EA4335',          // Medium red
-  redDark: '#A50E0E',      // Dark red
-  redLight: '#FAD2CF',     // Light red
-  yellow: '#FBBC04',       // Yellow
-  yellowLight: '#FEEFC3',  // Light yellow
-  green: '#34A853',        // Medium green
-  greenDark: '#0D652D',    // Dark green
-  greenLight: '#CEEAD6',   // Light green
-  orange: '#E37400',       // Orange
-  grey: '#9AA0A6',         // Medium grey
-  greyLight: '#F1F3F4',    // Light grey
-  
-  // Semantic colors (using Google's palette)
-  success: '#34A853',      // Google green
-  error: '#EA4335',        // Google red
-  warning: '#FBBC04',      // Google yellow
-  info: '#4285F4',         // Google blue
+  // Semantic colors
+  success: '#34A853',      // Green for success
+  error: '#EA4335',        // Red for errors
+  warning: '#FBBC04',      // Yellow for warnings
+  info: '#4285F4',         // Blue for info
   
   // RGB values for opacity support (matches CSS --rgb-* variables)
   rgb: {
+    dark: '55, 53, 62',
+    charcoal: '68, 68, 78',
+    taupe: '113, 90, 90',
+    cream: '211, 218, 217',
     white: '255, 255, 255',
-    black: '32, 33, 36',
-    blue: '66, 133, 244',
-    blueDark: '23, 78, 166',
-    red: '234, 67, 53',
-    redDark: '165, 14, 14',
-    yellow: '251, 188, 4',
-    green: '52, 168, 83',
-    greenDark: '13, 101, 45',
-    orange: '227, 116, 0',
-    grey: '154, 160, 166',
-    greyLight: '241, 243, 244',
+    black: '55, 53, 62',      // Alias for dark
+    grey: '113, 90, 90',      // Alias for taupe RGB
+    greyLight: '211, 218, 217',  // Alias for cream RGB
     success: '52, 168, 83',
     error: '234, 67, 53',
     warning: '251, 188, 4',
@@ -78,7 +64,7 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
           width: '48px',
           height: '48px',
           borderRadius: '50%',
-          background: `conic-gradient(from 0deg, ${HOPPER_COLORS.green} 0deg 360deg)`,
+          background: `conic-gradient(from 0deg, ${HOPPER_COLORS.success} 0deg 360deg)`,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -94,7 +80,7 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
             justifyContent: 'center',
             fontSize: '1rem',
             fontWeight: '700',
-            color: HOPPER_COLORS.green
+            color: HOPPER_COLORS.success
           }}>
             ∞
           </div>
@@ -114,7 +100,7 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
   const hasOverage = overageTokens > 0;
   
   // Color based on usage - red when in overage, amber when high usage, green otherwise
-  let progressColor = HOPPER_COLORS.green;
+  let progressColor = HOPPER_COLORS.success;
   if (hasOverage) {
     progressColor = HOPPER_COLORS.error; // red when in overage
   } else if (percentage >= 90) {
