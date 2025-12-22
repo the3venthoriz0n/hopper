@@ -2090,10 +2090,25 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       const res = await axios.post(`${API}/upload`);
       if (pollInterval) clearInterval(pollInterval);
       
-      if (res.data.uploaded !== undefined) {
+      // Final refresh to get latest video statuses
+      const videosRes = await axios.get(`${API}/videos`);
+      setVideos(videosRes.data);
+      
+      // Check if any videos were successfully uploaded to TikTok
+      // TikTok upload is successful if video has tiktok_publish_id or tiktok_id in custom_settings
+      // and the video status is 'uploaded' or TikTok platform status is 'uploaded'
+      const hasSuccessfulTiktokUploads = videosRes.data.some(video => {
+        const tiktokId = video.custom_settings?.tiktok_id;
+        const tiktokPublishId = video.custom_settings?.tiktok_publish_id;
+        const hasTiktokUpload = tiktokId || tiktokPublishId;
+        const isUploaded = video.status === 'uploaded' || video.platform_statuses?.tiktok === 'uploaded';
+        return hasTiktokUpload && isUploaded;
+      });
+      
+      if (res.data.uploaded !== undefined && res.data.uploaded > 0) {
         setMessage(`✅ Uploaded ${res.data.uploaded} videos!`);
-        // Show notification for TikTok that content may take a few minutes to process
-        if (tiktok.enabled) {
+        // Show notification for TikTok only if TikTok uploads actually succeeded
+        if (tiktok.enabled && hasSuccessfulTiktokUploads) {
           setNotification({
             type: 'info',
             title: 'Content Processing',
@@ -2104,20 +2119,11 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         }
       } else if (res.data.scheduled !== undefined) {
         setMessage(`✅ ${res.data.scheduled} videos scheduled! ${res.data.message}`);
-        // Show notification for TikTok that content may take a few minutes to process
-        if (tiktok.enabled) {
-          setNotification({
-            type: 'info',
-            title: 'Content Processing',
-            message: 'Your content has been scheduled successfully. After publishing, it may take a few minutes for the content to process and be visible on your TikTok profile.',
-          });
-          // Auto-dismiss after 15 seconds to ensure users see the important message
-          setTimeout(() => setNotification(null), 15000);
-        }
+        // Don't show processing notification for scheduled uploads - they haven't been published yet
       } else {
         setMessage(`✅ ${res.data.message || 'Success'}`);
-        // Show notification for TikTok in other success cases as well
-        if (tiktok.enabled) {
+        // Only show notification if TikTok uploads actually succeeded
+        if (tiktok.enabled && hasSuccessfulTiktokUploads) {
           setNotification({
             type: 'info',
             title: 'Content Processing',
@@ -2127,10 +2133,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           setTimeout(() => setNotification(null), 15000);
         }
       }
-      
-      // Final refresh
-      const videosRes = await axios.get(`${API}/videos`);
-      setVideos(videosRes.data);
     } catch (err) {
       if (pollInterval) clearInterval(pollInterval);
       const errorMsg = err.response?.data?.detail || err.response?.data?.message || err.message || 'Unknown error';
