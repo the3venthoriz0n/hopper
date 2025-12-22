@@ -1848,6 +1848,103 @@ button:disabled {
   background: rgba(10, 10, 10, 0.8);
 }
 
+/* Mobile responsive styles for landing page */
+@media (max-width: 480px) {
+  .landing-container {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .landing-header {
+    padding: 0.875rem 1rem;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .landing-logo {
+    font-size: 0.9rem;
+    width: 100%;
+  }
+
+  .landing-logo-icon {
+    font-size: 1.15rem;
+  }
+
+  .landing-nav {
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .landing-nav-link {
+    font-size: 0.7rem;
+    padding: 0.25rem 0.375rem;
+    white-space: nowrap;
+  }
+
+  .landing-nav-button {
+    padding: 0.5rem 0.875rem;
+    font-size: 0.75rem;
+    margin-left: auto;
+  }
+
+  .landing-main {
+    padding: 1rem 1rem;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .landing-content {
+    max-width: 100%;
+    padding: 0;
+    width: 100%;
+  }
+
+  .landing-tagline {
+    font-size: 0.6rem;
+    margin-bottom: 0.5rem;
+    letter-spacing: 0.1em;
+  }
+
+  .landing-title {
+    font-size: 1.5rem;
+    line-height: 1.25;
+    margin-bottom: 0.875rem;
+    padding: 0 0.25rem;
+  }
+
+  .landing-description {
+    font-size: 0.875rem;
+    line-height: 1.5;
+    margin: 0 auto 1.25rem auto;
+    padding: 0 0.5rem;
+  }
+
+  .landing-cta {
+    gap: 0.75rem;
+    padding: 0 0.5rem;
+  }
+
+  .landing-cta-button {
+    padding: 0.875rem 1.5rem;
+    font-size: 0.875rem;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .landing-footer {
+    padding: 1rem 1rem;
+    font-size: 0.7rem;
+    line-height: 1.4;
+  }
+}
+
 /* ============================================
    ADMIN DASHBOARD
    ============================================ */

@@ -397,6 +397,29 @@
               "user_id": "User ID"
             }
           }
+        },
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "User ID": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "User Email": {
+                "aggregations": ["lastNotNull"],
+                "operation": "aggregate"
+              },
+              "Current Time": {
+                "aggregations": ["lastNotNull"],
+                "operation": "aggregate"
+              },
+              "Last Activity": {
+                "aggregations": ["max"],
+                "operation": "aggregate"
+              }
+            }
+          }
         }
       ],
       "type": "table"
