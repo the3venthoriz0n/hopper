@@ -997,6 +997,9 @@ def cleanup_video_file(video: Video) -> bool:
     This is called after all destinations succeed. The database record
     is kept for history, but the physical file is removed to save space.
     
+    ROOT CAUSE FIX: Don't delete files if TikTok is using PULL_FROM_URL
+    (has tiktok_publish_id but no tiktok_id yet) - TikTok still needs to download it.
+    
     Args:
         video: Video object with path to file
         
@@ -1004,6 +1007,19 @@ def cleanup_video_file(video: Video) -> bool:
         True if cleanup succeeded or file already gone, False on error
     """
     try:
+        # Check if TikTok is using PULL_FROM_URL and still downloading
+        custom_settings = video.custom_settings or {}
+        tiktok_publish_id = custom_settings.get("tiktok_publish_id")
+        tiktok_id = custom_settings.get("tiktok_id")
+        
+        # If TikTok has publish_id but no video_id yet, it's still downloading via PULL_FROM_URL
+        if tiktok_publish_id and not tiktok_id:
+            upload_logger.debug(
+                f"Skipping cleanup for {video.filename} - TikTok PULL_FROM_URL still in progress "
+                f"(publish_id: {tiktok_publish_id})"
+            )
+            return True  # Don't delete yet, but return success
+        
         # ROOT CAUSE FIX: Resolve path to absolute to ensure proper file access
         video_path = Path(video.path).resolve()
         if video_path.exists():
@@ -6312,25 +6328,30 @@ def get_video_file(
     # If stored path doesn't exist, try fallback: UPLOAD_DIR / filename
     if not video_path.exists():
         fallback_path = (UPLOAD_DIR / video.filename).resolve()
-        logger.warning(
-            f"Video file not found at stored path for video_id {video_id}: {video_path}. "
-            f"Trying fallback path: {fallback_path}. "
-            f"Stored path in DB: {video.path}, filename: {video.filename}"
-        )
+        
+        # Only log once per video_id to reduce log spam
+        # Use module-level cache to track logged video_ids
+        if not hasattr(get_video_file, '_logged_404_videos'):
+            get_video_file._logged_404_videos = set()
         
         if fallback_path.exists():
-            logger.info(f"Using fallback path for video_id {video_id}: {fallback_path}")
+            if video_id not in get_video_file._logged_404_videos:
+                logger.info(f"Using fallback path for video_id {video_id}: {fallback_path} (stored path not found: {video_path})")
+                get_video_file._logged_404_videos.add(video_id)
             video_path = fallback_path
         else:
-            # Log detailed error for debugging
-            logger.error(
-                f"Video file not found for video_id {video_id}: "
-                f"Stored path: {video_path} (exists: {video_path.exists()}), "
-                f"Fallback path: {fallback_path} (exists: {fallback_path.exists()}), "
-                f"UPLOAD_DIR: {UPLOAD_DIR}, "
-                f"Filename: {video.filename}, "
-                f"Stored path in DB: {video.path}"
-            )
+            # Only log error once per video_id
+            if video_id not in get_video_file._logged_404_videos:
+                logger.error(
+                    f"Video file not found for video_id {video_id}: "
+                    f"Stored path: {video_path} (exists: False), "
+                    f"Fallback path: {fallback_path} (exists: False), "
+                    f"UPLOAD_DIR: {UPLOAD_DIR}, Filename: {video.filename}"
+                )
+                get_video_file._logged_404_videos.add(video_id)
+                # Clear cache periodically (every 1000 entries) to prevent memory growth
+                if len(get_video_file._logged_404_videos) > 1000:
+                    get_video_file._logged_404_videos.clear()
             raise HTTPException(404, f"Video file not found at {video_path} or {fallback_path}")
     
     # Return file with proper headers for TikTok
