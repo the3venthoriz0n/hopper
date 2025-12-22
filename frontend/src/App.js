@@ -3368,15 +3368,79 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             const hasYourBrand = commercialContentOn && (tiktokSettings.commercial_content_your_brand ?? false);
             const hasBrandedContent = commercialContentOn && (tiktokSettings.commercial_content_branded ?? false);
             
-            let declarationMessage = 'By posting, you agree to TikTok\'s Music Usage Confirmation';
+            const musicUsageUrl = 'https://www.tiktok.com/legal/page/global/music-usage-confirmation/en';
+            const brandedContentUrl = 'https://www.tiktok.com/legal/page/global/bc-policy/en';
+            
+            let declarationContent = (
+              <>
+                By posting, you agree to TikTok's{' '}
+                <a 
+                  href={musicUsageUrl} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  style={{ 
+                    color: '#3b82f6', 
+                    textDecoration: 'underline',
+                    fontWeight: '500'
+                  }}
+                >
+                  Music Usage Confirmation
+                </a>
+              </>
+            );
             
             if (commercialContentOn) {
               if (hasBrandedContent) {
                 // Branded Content is checked (alone or with Your Brand) - include Branded Content Policy
-                declarationMessage = 'By posting, you agree to TikTok\'s Branded Content Policy and Music Usage Confirmation';
+                declarationContent = (
+                  <>
+                    By posting, you agree to TikTok's{' '}
+                    <a 
+                      href={brandedContentUrl} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      style={{ 
+                        color: '#3b82f6', 
+                        textDecoration: 'underline',
+                        fontWeight: '500'
+                      }}
+                    >
+                      Branded Content Policy
+                    </a>
+                    {' '}and{' '}
+                    <a 
+                      href={musicUsageUrl} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      style={{ 
+                        color: '#3b82f6', 
+                        textDecoration: 'underline',
+                        fontWeight: '500'
+                      }}
+                    >
+                      Music Usage Confirmation
+                    </a>
+                  </>
+                );
               } else if (hasYourBrand) {
                 // Only "Your Brand" is checked - just Music Usage Confirmation
-                declarationMessage = 'By posting, you agree to TikTok\'s Music Usage Confirmation';
+                declarationContent = (
+                  <>
+                    By posting, you agree to TikTok's{' '}
+                    <a 
+                      href={musicUsageUrl} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      style={{ 
+                        color: '#3b82f6', 
+                        textDecoration: 'underline',
+                        fontWeight: '500'
+                      }}
+                    >
+                      Music Usage Confirmation
+                    </a>
+                  </>
+                );
               }
             }
             
@@ -3391,7 +3455,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 color: '#3b82f6',
                 textAlign: 'center'
               }}>
-                {declarationMessage}
+                {declarationContent}
               </div>
             );
           })()}
