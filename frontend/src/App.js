@@ -1215,7 +1215,9 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           ...prev,
           connected: true,
           account: res.data.account,
-          token_status: 'valid'
+          token_status: res.data.token_status || 'valid',
+          token_expired: res.data.token_expired || false,
+          token_expires_soon: res.data.token_expires_soon || false
         }));
         // Store creator_info for privacy options and interaction settings
         if (res.data.creator_info) {
