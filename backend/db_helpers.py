@@ -730,7 +730,16 @@ def save_oauth_token(user_id: int, platform: str, access_token: str,
                 token.refresh_token = encrypted_refresh
             # If encrypted_refresh is None, don't update token.refresh_token (preserve existing)
             token.expires_at = expires_at
-            token.extra_data = extra_data or {}
+            # ROOT CAUSE FIX: Merge extra_data instead of replacing to preserve legacy data
+            # This prevents first login from overwriting working legacy extra_data
+            if extra_data:
+                existing_extra_data = token.extra_data or {}
+                # Merge new data into existing, preserving existing keys unless explicitly overwritten
+                merged_extra_data = {**existing_extra_data, **extra_data}
+                token.extra_data = merged_extra_data
+            elif token.extra_data is None:
+                token.extra_data = {}
+            # If extra_data is None and token.extra_data exists, preserve existing
             token.updated_at = datetime.now(timezone.utc)
         else:
             token = OAuthToken(

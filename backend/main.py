@@ -2759,23 +2759,21 @@ def refresh_tiktok_account_data(user_id: int):
         
         # Update cache if changed
         if data_changed and (fresh_account.get("display_name") or fresh_account.get("username")):
+            # ROOT CAUSE FIX: Update extra_data in place to preserve all existing fields
+            # save_oauth_token will merge this, but we update in place to be safe
             extra_data.update({
                 "display_name": fresh_account["display_name"],
                 "username": fresh_account["username"],
                 "avatar_url": fresh_account["avatar_url"],
                 "creator_info": fresh_creator_info,
-                "last_data_refresh": datetime.utcnow().isoformat()
+                "last_data_refresh": datetime.now(timezone.utc).isoformat()
             })
             
-            db_helpers.save_oauth_token(
-                user_id=user_id,
-                platform="tiktok",
-                access_token=token_obj.access_token,
-                refresh_token=token_obj.refresh_token,
-                expires_at=token_obj.expires_at,
-                extra_data=extra_data,
-                db=db
-            )
+            # ROOT CAUSE FIX: Update token directly instead of calling save_oauth_token
+            # This prevents overwriting extra_data and preserves all existing fields
+            token_obj.extra_data = extra_data
+            db.commit()
+            db.refresh(token_obj)
             tiktok_logger.info(f"Background refresh completed - cache updated (user {user_id})")
         else:
             tiktok_logger.debug(f"Background refresh completed - no changes (user {user_id})")
@@ -2957,7 +2955,11 @@ def get_tiktok_account(
     if last_refresh and not force_refresh:
         try:
             last_refresh_dt = datetime.fromisoformat(last_refresh)
-            if datetime.utcnow() - last_refresh_dt < timedelta(seconds=DATA_REFRESH_COOLDOWN):
+            # ROOT CAUSE FIX: Use timezone-aware datetime to prevent phantom refreshes
+            # Ensure last_refresh_dt is timezone-aware (fromisoformat may return naive)
+            if last_refresh_dt.tzinfo is None:
+                last_refresh_dt = last_refresh_dt.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) - last_refresh_dt < timedelta(seconds=DATA_REFRESH_COOLDOWN):
                 should_schedule = False
                 tiktok_logger.debug(f"Skipping background refresh - too recent (user {user_id})")
         except:
@@ -6906,7 +6908,7 @@ def _parse_and_save_tiktok_token_response(
         refresh_expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(refresh_expires_in))
     
     # Build extra_data with all TikTok response fields per docs
-    extra_data = {
+    new_extra_data = {
         "open_id": token_json.get("open_id"),
         "scope": token_json.get("scope"),
         "token_type": token_json.get("token_type"),
@@ -6914,17 +6916,35 @@ def _parse_and_save_tiktok_token_response(
         "refresh_expires_at": refresh_expires_at.isoformat() if refresh_expires_at else None
     }
     
-    # Preserve existing account info if requested (for refresh operations)
-    existing_token = None
-    if preserve_account_info:
-        existing_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
-        if existing_token and existing_token.extra_data:
+    # ROOT CAUSE FIX: Always preserve existing extra_data to prevent overwriting legacy data
+    # Get existing token to merge with new OAuth fields
+    existing_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
+    if existing_token and existing_token.extra_data:
+        # Start with existing extra_data to preserve all legacy fields
+        extra_data = existing_token.extra_data.copy()
+        
+        # ROOT CAUSE FIX: Explicitly preserve open_id before update (critical for TikTok API calls)
+        # open_id is required for almost every creator info call, so it must never be dropped
+        preserved_open_id = extra_data.get("open_id")
+        
+        # Update with new OAuth response fields (these take precedence)
+        extra_data.update(new_extra_data)
+        
+        # ROOT CAUSE FIX: Restore open_id if new response doesn't have it or has None/empty
+        # This ensures open_id is never lost during refresh operations
+        if not extra_data.get("open_id") and preserved_open_id:
+            extra_data["open_id"] = preserved_open_id
+        
+        # If preserve_account_info is False (first login), don't preserve account-specific fields
+        # But still preserve other legacy fields that might exist
+        if not preserve_account_info:
+            # Remove account-specific fields so they can be refreshed from API
+            # NOTE: open_id is NOT in this list - it must always be preserved
             for key in ["display_name", "username", "avatar_url", "creator_info", "last_data_refresh"]:
-                if key in existing_token.extra_data and key not in extra_data:
-                    extra_data[key] = existing_token.extra_data[key]
-            # Preserve open_id if not in new response
-            if not extra_data.get("open_id") and existing_token.extra_data.get("open_id"):
-                extra_data["open_id"] = existing_token.extra_data["open_id"]
+                extra_data.pop(key, None)
+    else:
+        # No existing token, use new extra_data as-is
+        extra_data = new_extra_data
     
     # Save to database
     # ROOT CAUSE FIX: Pass None for refresh_token if TikTok doesn't provide a new one
@@ -7037,7 +7057,16 @@ def refresh_tiktok_token(user_id: int, refresh_token: str, db: Session) -> str:
         db.expire_all()
         
         # Re-fetch token from DB to see if it was already refreshed while we waited for lock
-        current_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
+        # Use a fresh query to bypass SQLAlchemy identity map cache
+        current_token = db.query(OAuthToken).filter(
+            OAuthToken.user_id == user_id,
+            OAuthToken.platform == "tiktok"
+        ).first()
+        
+        # ROOT CAUSE FIX: Explicitly refresh the token object to ensure we have latest data
+        if current_token:
+            db.refresh(current_token)
+        
         if current_token:
             # ROOT CAUSE FIX: Check if token was already refreshed by checking expires_at
             # If expires_at is more than 30 minutes away, the token was just refreshed
