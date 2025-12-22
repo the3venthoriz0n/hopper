@@ -1455,6 +1455,11 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const updateTiktokSettings = async (key, value) => {
     try {
       const params = new URLSearchParams();
+      // Don't send null or empty string for privacy_level - skip the parameter entirely
+      if (key === 'privacy_level' && (!value || value === 'null' || value === '')) {
+        // Skip sending empty/null privacy_level to avoid backend validation errors
+        return;
+      }
       params.append(key, value);
       const res = await axios.post(`${API}/tiktok/settings?${params.toString()}`);
       setTiktokSettings(res.data);
@@ -2072,8 +2077,28 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       
       if (res.data.uploaded !== undefined) {
         setMessage(`✅ Uploaded ${res.data.uploaded} videos!`);
+        // Show notification for TikTok that content may take a few minutes to process
+        if (tiktok.enabled) {
+          setNotification({
+            type: 'info',
+            title: 'Content Processing',
+            message: 'Your content has been uploaded successfully. It may take a few minutes for the content to process and be visible on your TikTok profile.',
+          });
+          // Auto-dismiss after 10 seconds
+          setTimeout(() => setNotification(null), 10000);
+        }
       } else if (res.data.scheduled !== undefined) {
         setMessage(`✅ ${res.data.scheduled} videos scheduled! ${res.data.message}`);
+        // Show notification for TikTok that content may take a few minutes to process
+        if (tiktok.enabled) {
+          setNotification({
+            type: 'info',
+            title: 'Content Processing',
+            message: 'Your content has been scheduled successfully. After publishing, it may take a few minutes for the content to process and be visible on your TikTok profile.',
+          });
+          // Auto-dismiss after 10 seconds
+          setTimeout(() => setNotification(null), 10000);
+        }
       } else {
         setMessage(`✅ ${res.data.message || 'Success'}`);
       }
@@ -2121,9 +2146,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             padding: '1.25rem',
             background: notification.type === 'error' 
               ? 'linear-gradient(135deg, rgba(239, 68, 68, 0.95) 0%, rgba(220, 38, 38, 0.95) 100%)'
+              : notification.type === 'info'
+              ? 'linear-gradient(135deg, rgba(59, 130, 246, 0.95) 0%, rgba(37, 99, 235, 0.95) 100%)'
               : 'linear-gradient(135deg, rgba(34, 197, 94, 0.95) 0%, rgba(22, 163, 74, 0.95) 100%)',
             border: notification.type === 'error'
               ? '2px solid rgba(239, 68, 68, 1)'
+              : notification.type === 'info'
+              ? '2px solid rgba(59, 130, 246, 1)'
               : '2px solid rgba(34, 197, 94, 1)',
             borderRadius: '12px',
             boxShadow: '0 10px 40px rgba(0, 0, 0, 0.3)',
@@ -2137,7 +2166,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
             <div style={{ display: 'flex', gap: '0.75rem', flex: 1 }}>
               <span style={{ fontSize: '1.5rem', flexShrink: 0 }}>
-                {notification.type === 'error' ? '⚠️' : '✅'}
+                {notification.type === 'error' ? '⚠️' : notification.type === 'info' ? 'ℹ️' : '✅'}
               </span>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: '1.1rem', fontWeight: '700', marginBottom: '0.5rem' }}>
@@ -3021,7 +3050,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   }}
                   className="checkbox"
                 />
-                <span>Content Disclosure (required)</span>
+                <span>Content Disclosure</span>
                 <span className="tooltip-wrapper">
                   <span className="tooltip-icon">i</span>
                   <span className="tooltip-text">Indicate whether this content promotes yourself, a brand, product or service</span>
@@ -4159,7 +4188,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                           }
                         }}
                       />
-                      <span>Content Disclosure (required)</span>
+                      <span>Content Disclosure</span>
                     </label>
                   </div>
                   

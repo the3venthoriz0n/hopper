@@ -521,6 +521,29 @@ def check_token_expiration(token: Optional[OAuthToken]) -> Dict[str, Any]:
     # Check if expired
     is_expired = token.expires_at < now
     
+    # IMPORTANT: If expires_at is in the past (manually marked as expired, e.g., due to invalid_grant),
+    # always return expired status regardless of refresh token status
+    if is_expired:
+        # Check if this is a manually expired token (invalid_grant scenario)
+        # If refresh token exists but access token is expired, it's likely invalid_grant
+        if token.refresh_token:
+            # For invalid_grant cases, we want to show "expires_soon" (yellow) instead of "expired" (red)
+            # to indicate it needs reconnection but isn't completely broken
+            # However, if expires_at is set to past, it means token refresh failed, so show as expired
+            return {
+                "expired": True,
+                "expires_soon": False,
+                "expires_at": token.expires_at,
+                "status": "expired"
+            }
+        else:
+            return {
+                "expired": True,
+                "expires_soon": False,
+                "expires_at": token.expires_at,
+                "status": "expired"
+            }
+    
     # For tokens with refresh tokens, check refresh token expiration instead
     # TikTok and Instagram tokens can be refreshed, so we should check refresh_expires_in
     if token.refresh_token and token.extra_data:
@@ -530,6 +553,17 @@ def check_token_expiration(token: Optional[OAuthToken]) -> Dict[str, Any]:
             from datetime import timedelta
             refresh_expires_at = token.updated_at + timedelta(seconds=int(refresh_expires_in)) if token.updated_at else None
             if refresh_expires_at:
+                # Check if expires_at is set to near future (likely invalid_grant scenario)
+                # If expires_at is within 7 days and not expired, show expires_soon (yellow) to indicate needs reconnection
+                time_until_expires = token.expires_at - now
+                if not is_expired and 0 < time_until_expires.total_seconds() < 604800:  # Within 7 days
+                    return {
+                        "expired": False,
+                        "expires_soon": True,
+                        "expires_at": token.expires_at,
+                        "status": "expires_soon"
+                    }
+                
                 # If refresh token is expired, token is expired
                 if refresh_expires_at < now:
                     return {
