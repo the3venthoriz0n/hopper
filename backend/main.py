@@ -7836,18 +7836,30 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
             raise Exception(error_msg)
         
         # Get video file
-        # ROOT CAUSE FIX: Resolve path to absolute to ensure file is found
-        video_path = Path(video.path).resolve()
-        if not video_path.exists():
-            error_msg = f"Video file not found: {video_path}"
+        # ROOT CAUSE FIX: Check both stored path and fallback path
+        stored_path = Path(video.path).resolve()
+        fallback_path = (UPLOAD_DIR / video.filename).resolve()
+        
+        if stored_path.exists():
+            video_path = stored_path
+        elif fallback_path.exists():
+            video_path = fallback_path
+            tiktok_logger.info(
+                f"Using fallback path for TikTok upload - User {user_id}, Video {video_id} ({video.filename}): "
+                f"Stored path not found: {stored_path}, using fallback: {fallback_path}"
+            )
+        else:
+            error_msg = f"Video file not found at {stored_path} or {fallback_path}"
             tiktok_logger.error(
                 f"❌ TikTok upload FAILED - File not found - User {user_id}, Video {video_id} ({video.filename}): "
-                f"Path: {video_path}",
+                f"Stored path: {stored_path} (exists: {stored_path.exists()}), "
+                f"Fallback path: {fallback_path} (exists: {fallback_path.exists()})",
                 extra={
                     "user_id": user_id,
                     "video_id": video_id,
                     "video_filename": video.filename,
-                    "video_path": str(video_path),
+                    "stored_path": str(stored_path),
+                    "fallback_path": str(fallback_path),
                     "platform": "tiktok",
                     "error_type": "FileNotFound",
                 }
@@ -7999,18 +8011,36 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         redis_client.set_upload_progress(user_id, video_id, 5)
         
         # Determine upload method: prefer PULL_FROM_URL, fallback to FILE_UPLOAD
+        # ROOT CAUSE FIX: Verify file exists before using PULL_FROM_URL to prevent 404 errors
         use_pull_from_url = True  # Set to False to force FILE_UPLOAD fallback
         video_url = None
         upload_method = None
-        if use_pull_from_url:
+        
+        # Check if file exists before deciding on upload method
+        stored_path = Path(video.path).resolve()
+        fallback_path = (UPLOAD_DIR / video.filename).resolve()
+        file_exists = stored_path.exists() or fallback_path.exists()
+        
+        if use_pull_from_url and file_exists:
             # Generate secure access token for video file (valid for 1 hour)
             video_access_token = generate_video_access_token(video_id, user_id, expires_in_hours=1)
             video_url = f"{BACKEND_URL.rstrip('/')}/api/videos/{video_id}/file?token={video_access_token}"
             upload_method = "PULL_FROM_URL"
+            actual_path = stored_path if stored_path.exists() else fallback_path
             tiktok_logger.info(
-                f"TikTok upload method: PULL_FROM_URL (URL) - User {user_id}, Video {video_id} ({video.filename})"
+                f"TikTok upload method: PULL_FROM_URL (URL) - User {user_id}, Video {video_id} ({video.filename}), "
+                f"file exists at: {actual_path}"
             )
         else:
+            # Fallback to FILE_UPLOAD if file doesn't exist or PULL_FROM_URL is disabled
+            if use_pull_from_url and not file_exists:
+                tiktok_logger.warning(
+                    f"TikTok upload method: PULL_FROM_URL (URL) skipped - file not found, falling back to FILE_UPLOAD (file) - "
+                    f"User {user_id}, Video {video_id} ({video.filename}). "
+                    f"Stored path: {stored_path} (exists: {stored_path.exists()}), "
+                    f"Fallback path: {fallback_path} (exists: {fallback_path.exists()})"
+                )
+            use_pull_from_url = False
             upload_method = "FILE_UPLOAD"
             tiktok_logger.info(
                 f"TikTok upload method: FILE_UPLOAD (file) - User {user_id}, Video {video_id} ({video.filename})"
