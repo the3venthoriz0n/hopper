@@ -2850,10 +2850,6 @@ def get_tiktok_account(
                             token_status = token_expiry.get("status", "valid")
                             token_expired = token_expiry.get("expired", False)
                             token_expires_soon = token_expiry.get("expires_soon", False)
-                            refresh_failed = extra_data.get("refresh_failed", False)
-                            if refresh_failed:
-                                token_status = "expires_soon"
-                                token_expires_soon = True
                         else:
                             # Another process is refreshing - wait a moment and get fresh token
                             tiktok_logger.debug(f"Another process is refreshing token for user {user_id}, waiting...")
@@ -2875,39 +2871,40 @@ def get_tiktok_account(
                                 f"TikTok refresh token is invalid/expired for user {user_id}. "
                                 f"Returning cached data. User needs to reconnect TikTok account."
                             )
-                            # Refresh token is invalid - return cached data immediately with warning status
+                            # Refresh token is invalid - return cached data with status based on access token expiration
+                            # Only show warning if access token is actually expired/expiring
                             if has_cached_data:
                                 return {
                                     "account": account_info, 
                                     "creator_info": cached_creator_info,
-                                    "token_status": "expires_soon",
-                                    "token_expired": False,
-                                    "token_expires_soon": True
+                                    "token_status": token_status,
+                                    "token_expired": token_expired,
+                                    "token_expires_soon": token_expires_soon
                                 }
                             return {
                                 "account": None, 
                                 "creator_info": None,
-                                "token_status": "expires_soon",
-                                "token_expired": False,
-                                "token_expires_soon": True
+                                "token_status": token_status,
+                                "token_expired": token_expired,
+                                "token_expires_soon": token_expires_soon
                             }
                         else:
                             tiktok_logger.warning(f"Failed to refresh TikTok token for user {user_id}: {refresh_error}")
-                            # If refresh failed but we have cached data, return it with warning status
+                            # If refresh failed but we have cached data, return it with status based on access token
                             if has_cached_data:
                                 return {
                                     "account": account_info, 
                                     "creator_info": cached_creator_info,
-                                    "token_status": "expires_soon",
-                                    "token_expired": False,
-                                    "token_expires_soon": True
+                                    "token_status": token_status,
+                                    "token_expired": token_expired,
+                                    "token_expires_soon": token_expires_soon
                                 }
                             return {
                                 "account": None, 
                                 "creator_info": None,
-                                "token_status": "expires_soon",
-                                "token_expired": False,
-                                "token_expires_soon": True
+                                "token_status": token_status,
+                                "token_expired": token_expired,
+                                "token_expires_soon": token_expires_soon
                             }
                     finally:
                         # Always release lock if we acquired it
@@ -2966,10 +2963,6 @@ def get_tiktok_account(
                                     token_status = token_expiry.get("status", "valid")
                                     token_expired = token_expiry.get("expired", False)
                                     token_expires_soon = token_expiry.get("expires_soon", False)
-                                    refresh_failed = extra_data.get("refresh_failed", False)
-                                    if refresh_failed:
-                                        token_status = "expires_soon"
-                                        token_expires_soon = True
                                     # Retry the API call with fresh token
                                     creator_info_response = client.post(
                                         TIKTOK_CREATOR_INFO_URL,
@@ -3006,21 +2999,29 @@ def get_tiktok_account(
                                         f"TikTok refresh token is invalid/expired for user {user_id}. "
                                         f"Returning cached data. User needs to reconnect TikTok account."
                                     )
-                                    # Refresh token is invalid - return cached data immediately, don't retry API
+                                    # Refresh token is invalid - return cached data with status based on access token expiration
+                                    # Recalculate token status from current token (might still be valid)
+                                    tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
+                                    if tiktok_token:
+                                        token_expiry = db_helpers.check_token_expiration(tiktok_token)
+                                        token_status = token_expiry.get("status", "valid")
+                                        token_expired = token_expiry.get("expired", False)
+                                        token_expires_soon = token_expiry.get("expires_soon", False)
+                                    # Return cached data immediately, don't retry API
                                     if has_cached_data:
                                         return {
                                             "account": account_info,
                                             "creator_info": cached_creator_info,
-                                            "token_status": "expires_soon",
-                                            "token_expired": False,
-                                            "token_expires_soon": True
+                                            "token_status": token_status,
+                                            "token_expired": token_expired,
+                                            "token_expires_soon": token_expires_soon
                                         }
                                     return {
                                         "account": None, 
                                         "creator_info": None,
-                                        "token_status": "expires_soon",
-                                        "token_expired": False,
-                                        "token_expires_soon": True
+                                        "token_status": token_status,
+                                        "token_expired": token_expired,
+                                        "token_expires_soon": token_expires_soon
                                     }
                                 else:
                                     tiktok_logger.warning(f"Failed to refresh token after invalid error: {retry_error}")
@@ -3050,21 +3051,22 @@ def get_tiktok_account(
                         )
                         
                         # Graceful degradation - return cached data if available
+                        # Use actual token status, not a generic warning
                         if has_cached_data:
                             tiktok_logger.info(f"API failed, returning cached data for user {user_id}")
                             return {
                                 "account": account_info,
                                 "creator_info": cached_creator_info,
-                                "token_status": "expires_soon",
-                                "token_expired": False,
-                                "token_expires_soon": True
+                                "token_status": token_status,
+                                "token_expired": token_expired,
+                                "token_expires_soon": token_expires_soon
                             }
                         return {
                             "account": None, 
                             "creator_info": None,
-                            "token_status": "expires_soon",
-                            "token_expired": False,
-                            "token_expires_soon": True
+                            "token_status": token_status,
+                            "token_expired": token_expired,
+                            "token_expires_soon": token_expires_soon
                         }
                 
                 creator_data = creator_info_response.json()
@@ -3181,28 +3183,34 @@ def get_tiktok_account(
                     
         except Exception as api_error:
             tiktok_logger.warning(f"Error calling TikTok API for user {user_id}: {str(api_error)}")
-            # Return cached data if available
+            # Return cached data if available with actual token status
             if has_cached_data:
                 tiktok_logger.info(f"API error - returning cached data for user {user_id}")
                 return {
                     "account": account_info,
                     "creator_info": cached_creator_info,
-                    "token_status": "expires_soon",
-                    "token_expired": False,
-                    "token_expires_soon": True
+                    "token_status": token_status,
+                    "token_expired": token_expired,
+                    "token_expires_soon": token_expires_soon
                 }
             return {
                 "account": None, 
                 "creator_info": None,
-                "token_status": "expires_soon",
-                "token_expired": False,
-                "token_expires_soon": True
+                "token_status": token_status,
+                "token_expired": token_expired,
+                "token_expires_soon": token_expires_soon
             }
         
     except Exception as e:
         tiktok_logger.error(f"Error getting TikTok account info for user {user_id}: {str(e)}", exc_info=True)
         # Try to return cached data even on exception
         try:
+            # Recalculate token status from current token
+            token_expiry = db_helpers.check_token_expiration(tiktok_token)
+            token_status = token_expiry.get("status", "valid")
+            token_expired = token_expiry.get("expired", False)
+            token_expires_soon = token_expiry.get("expires_soon", False)
+            
             extra_data = tiktok_token.extra_data or {}
             cached_display_name = extra_data.get("display_name")
             cached_username = extra_data.get("username")
@@ -3222,18 +3230,19 @@ def get_tiktok_account(
                 return {
                     "account": account_info,
                     "creator_info": cached_creator_info,
-                    "token_status": "expires_soon",
-                    "token_expired": False,
-                    "token_expires_soon": True
+                    "token_status": token_status,
+                    "token_expired": token_expired,
+                    "token_expires_soon": token_expires_soon
                 }
         except:
             pass
+        # If we can't get token status, default to expired (safest option)
         return {
             "account": None, 
             "creator_info": None,
-            "token_status": "expires_soon",
-            "token_expired": False,
-            "token_expires_soon": True
+            "token_status": "expired",
+            "token_expired": True,
+            "token_expires_soon": False
         }
 
 @app.post("/api/auth/tiktok/music-usage-confirmed")
