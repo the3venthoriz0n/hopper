@@ -346,6 +346,11 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(update_metrics_task())
     logger.info("Metrics update task started")
     
+    # Start the TikTok status polling task
+    logger.info("Starting TikTok status polling task...")
+    asyncio.create_task(tiktok_status_polling_task())
+    logger.info("TikTok status polling task started")
+    
     yield
     
     # Shutdown (if needed in the future)
@@ -684,6 +689,7 @@ TIKTOK_SCOPES = ["user.info.basic", "video.upload", "video.publish"]
 TIKTOK_API_BASE = "https://open.tiktokapis.com/v2"
 TIKTOK_CREATOR_INFO_URL = f"{TIKTOK_API_BASE}/post/publish/creator_info/query/"
 TIKTOK_INIT_UPLOAD_URL = f"{TIKTOK_API_BASE}/post/publish/video/init/"
+TIKTOK_STATUS_URL = f"{TIKTOK_API_BASE}/post/publish/video/status/fetch/"
 
 # TikTok Rate Limiting: 6 requests per minute per user
 TIKTOK_RATE_LIMIT_REQUESTS = 6
@@ -877,6 +883,20 @@ def build_video_response(video: Video, all_settings: Dict[str, Dict], all_tokens
     # Add platform upload statuses (for UI indicators)
     platform_statuses = get_platform_statuses(video, dest_settings, all_tokens)
     video_dict['platform_statuses'] = platform_statuses
+    
+    # Add TikTok publish status if available
+    tiktok_publish_id = custom_settings.get("tiktok_publish_id")
+    if tiktok_publish_id and tiktok_token:
+        # Try to fetch current status (non-blocking - if it fails, we'll get it on next poll)
+        try:
+            status_data = fetch_tiktok_publish_status(user_id, tiktok_publish_id, db=None)
+            if status_data:
+                video_dict['tiktok_publish_status'] = status_data.get("status", "UNKNOWN")
+                if status_data.get("fail_reason"):
+                    video_dict['tiktok_publish_error'] = status_data.get("fail_reason")
+        except Exception:
+            # If fetch fails, don't block the response - background task will update it
+            pass
     
     return video_dict
 
@@ -7889,6 +7909,189 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         
         # Increment failed uploads metric
         failed_uploads_gauge.inc()
+
+
+def fetch_tiktok_publish_status(user_id: int, publish_id: str, db: Session = None) -> Optional[Dict[str, Any]]:
+    """Fetch TikTok publish status for a given publish_id
+    
+    Args:
+        user_id: User ID
+        publish_id: TikTok publish_id from the upload response
+        db: Database session
+        
+    Returns:
+        Dictionary with status information, or None if error
+    """
+    try:
+        # Get TikTok access token
+        tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
+        if not tiktok_token:
+            tiktok_logger.warning(f"No TikTok token for user {user_id} when fetching status for publish_id {publish_id}")
+            return None
+        
+        access_token = decrypt(tiktok_token.access_token)
+        if not access_token:
+            tiktok_logger.warning(f"Failed to decrypt TikTok token for user {user_id}")
+            return None
+        
+        # Check if token needs refresh
+        if tiktok_token.expires_at and tiktok_token.expires_at < datetime.now(timezone.utc):
+            try:
+                refresh_token = decrypt(tiktok_token.refresh_token) if tiktok_token.refresh_token else None
+                if refresh_token:
+                    access_token = refresh_tiktok_token(user_id, refresh_token, db=db)
+                else:
+                    tiktok_logger.warning(f"No refresh token available for user {user_id}")
+                    return None
+            except Exception as refresh_err:
+                tiktok_logger.error(f"Failed to refresh TikTok token for user {user_id}: {refresh_err}")
+                return None
+        
+        # Call TikTok status API
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "publish_id": publish_id
+        }
+        
+        response = httpx.post(
+            TIKTOK_STATUS_URL,
+            headers=headers,
+            json=payload,
+            timeout=30.0
+        )
+        
+        if response.status_code != 200:
+            tiktok_logger.warning(
+                f"Failed to fetch TikTok status for publish_id {publish_id} (user {user_id}): "
+                f"HTTP {response.status_code} - {response.text[:200]}"
+            )
+            return None
+        
+        data = response.json()
+        
+        # Check for errors in response
+        if "error" in data:
+            error_info = data["error"]
+            tiktok_logger.warning(
+                f"TikTok API error for publish_id {publish_id} (user {user_id}): "
+                f"{error_info.get('code', 'unknown')} - {error_info.get('message', 'unknown error')}"
+            )
+            return None
+        
+        return data.get("data", {})
+        
+    except Exception as e:
+        tiktok_logger.error(
+            f"Exception fetching TikTok status for publish_id {publish_id} (user {user_id}): {e}",
+            exc_info=True
+        )
+        return None
+
+
+async def tiktok_status_polling_task():
+    """Background task that polls TikTok publish status for videos with tiktok_publish_id"""
+    while True:
+        try:
+            await asyncio.sleep(60)  # Poll every 60 seconds
+            
+            from models import SessionLocal, Video
+            db = SessionLocal()
+            try:
+                # Find all videos with tiktok_publish_id that are still in "uploaded" or "completed" status
+                # These are videos that have been uploaded but we haven't confirmed final publish status yet
+                # We check both "uploaded" and "completed" because a video might be completed for other platforms
+                # but still processing on TikTok
+                all_uploaded_videos = db.query(Video).filter(
+                    Video.status.in_(["uploaded", "completed"])
+                ).all()
+                
+                # Filter to only videos with tiktok_publish_id
+                videos_to_check = [
+                    v for v in all_uploaded_videos
+                    if v.custom_settings and v.custom_settings.get("tiktok_publish_id")
+                ]
+                
+                videos_checked = 0
+                videos_updated = 0
+                
+                for video in videos_to_check:
+                    custom_settings = video.custom_settings or {}
+                    publish_id = custom_settings.get("tiktok_publish_id")
+                    
+                    if not publish_id:
+                        continue
+                    
+                    videos_checked += 1
+                    
+                    try:
+                        # Fetch status from TikTok
+                        status_data = fetch_tiktok_publish_status(video.user_id, publish_id, db=db)
+                        
+                        if not status_data:
+                            # If we can't fetch status, skip this video (will retry next cycle)
+                            continue
+                        
+                        status = status_data.get("status")
+                        
+                        if status == "PUBLISHED":
+                            # Video is published - update to completed
+                            db_helpers.update_video(
+                                video.id,
+                                video.user_id,
+                                db=db,
+                                status="completed"
+                            )
+                            videos_updated += 1
+                            tiktok_logger.info(
+                                f"TikTok video {video.id} (publish_id: {publish_id}) is now PUBLISHED"
+                            )
+                        elif status == "PROCESSING":
+                            # Still processing - keep status as "uploaded", will check again
+                            tiktok_logger.debug(
+                                f"TikTok video {video.id} (publish_id: {publish_id}) is still PROCESSING"
+                            )
+                        elif status == "FAILED":
+                            # Upload failed on TikTok's side
+                            error_msg = status_data.get("fail_reason", "TikTok publish failed")
+                            db_helpers.update_video(
+                                video.id,
+                                video.user_id,
+                                db=db,
+                                status="failed",
+                                error=f"TikTok publish failed: {error_msg}"
+                            )
+                            videos_updated += 1
+                            tiktok_logger.warning(
+                                f"TikTok video {video.id} (publish_id: {publish_id}) FAILED: {error_msg}"
+                            )
+                        else:
+                            # Unknown status - log for debugging
+                            tiktok_logger.debug(
+                                f"TikTok video {video.id} (publish_id: {publish_id}) has unknown status: {status}"
+                            )
+                    
+                    except Exception as e:
+                        tiktok_logger.error(
+                            f"Error checking TikTok status for video {video.id} (publish_id: {publish_id}): {e}",
+                            exc_info=True
+                        )
+                        continue
+                
+                if videos_checked > 0:
+                    tiktok_logger.debug(
+                        f"TikTok status polling: checked {videos_checked} videos, updated {videos_updated}"
+                    )
+            
+            finally:
+                db.close()
+        
+        except Exception as e:
+            tiktok_logger.error(f"Error in TikTok status polling task: {e}", exc_info=True)
+            await asyncio.sleep(60)  # Wait before retrying
             
 async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = None):
     """Upload video to Instagram using Graph API - queries database directly"""

@@ -2084,10 +2084,10 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           setNotification({
             type: 'info',
             title: 'Content Processing',
-            message: 'Your content has been uploaded successfully. It may take a few minutes for the content to process and be visible on your TikTok profile.',
+            message: 'Your content has been published successfully. It may take a few minutes for the content to process and be visible on your TikTok profile.',
           });
-          // Auto-dismiss after 10 seconds
-          setTimeout(() => setNotification(null), 10000);
+          // Auto-dismiss after 15 seconds to ensure users see the important message
+          setTimeout(() => setNotification(null), 15000);
         }
       } else if (res.data.scheduled !== undefined) {
         setMessage(`✅ ${res.data.scheduled} videos scheduled! ${res.data.message}`);
@@ -2098,11 +2098,21 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             title: 'Content Processing',
             message: 'Your content has been scheduled successfully. After publishing, it may take a few minutes for the content to process and be visible on your TikTok profile.',
           });
-          // Auto-dismiss after 10 seconds
-          setTimeout(() => setNotification(null), 10000);
+          // Auto-dismiss after 15 seconds to ensure users see the important message
+          setTimeout(() => setNotification(null), 15000);
         }
       } else {
         setMessage(`✅ ${res.data.message || 'Success'}`);
+        // Show notification for TikTok in other success cases as well
+        if (tiktok.enabled) {
+          setNotification({
+            type: 'info',
+            title: 'Content Processing',
+            message: 'Your content has been published successfully. It may take a few minutes for the content to process and be visible on your TikTok profile.',
+          });
+          // Auto-dismiss after 15 seconds to ensure users see the important message
+          setTimeout(() => setNotification(null), 15000);
+        }
       }
       
       // Final refresh
@@ -3804,6 +3814,49 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                           </span>
                         );
                       })}
+                    </div>
+                  )}
+                  {/* TikTok Publish Status */}
+                  {v.tiktok_publish_status && (
+                    <div style={{
+                      marginTop: '6px',
+                      fontSize: '0.75rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}>
+                      <span style={{ color: '#999' }}>TikTok:</span>
+                      {v.tiktok_publish_status === 'PUBLISHED' && (
+                        <span style={{ 
+                          color: '#22c55e',
+                          fontWeight: '500'
+                        }}>Published</span>
+                      )}
+                      {v.tiktok_publish_status === 'PROCESSING' && (
+                        <span style={{ 
+                          color: '#f59e0b',
+                          fontWeight: '500'
+                        }}>Processing...</span>
+                      )}
+                      {v.tiktok_publish_status === 'FAILED' && (
+                        <span style={{ 
+                          color: '#ef4444',
+                          fontWeight: '500'
+                        }}>Failed</span>
+                      )}
+                      {!['PUBLISHED', 'PROCESSING', 'FAILED'].includes(v.tiktok_publish_status) && (
+                        <span style={{ 
+                          color: '#999',
+                          fontWeight: '500'
+                        }}>{v.tiktok_publish_status}</span>
+                      )}
+                      {v.tiktok_publish_error && (
+                        <span style={{ 
+                          color: '#ef4444',
+                          fontSize: '0.7rem',
+                          marginLeft: '4px'
+                        }} title={v.tiktok_publish_error}>({v.tiktok_publish_error})</span>
+                      )}
                     </div>
                   )}
                   {v.status === 'uploading' && (
