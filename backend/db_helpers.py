@@ -386,7 +386,11 @@ def update_video(video_id: int, user_id: int, db: Session = None, **kwargs) -> O
         custom_settings_modified = False
         
         for key, value in kwargs.items():
-            if hasattr(video, key):
+            if key == "custom_settings":
+                # custom_settings is being set directly - always flag as modified
+                setattr(video, key, value)
+                custom_settings_modified = True
+            elif hasattr(video, key):
                 # Direct attribute exists, set it
                 setattr(video, key, value)
             elif key in id_fields:
