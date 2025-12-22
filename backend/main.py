@@ -826,14 +826,16 @@ def build_video_response(video: Video, all_settings: Dict[str, Dict], all_tokens
             'made_for_kids': custom_settings.get('made_for_kids', youtube_settings.get('made_for_kids', False)),
         }
         
-        # Description
-        if 'description' in custom_settings:
-            upload_props['youtube']['description'] = custom_settings['description']
-        else:
-            desc_template = youtube_settings.get('description_template', '') or global_settings.get('description_template', '')
-            upload_props['youtube']['description'] = replace_template_placeholders(
-                desc_template, filename_no_ext, global_settings.get('wordbank', [])
-            ) if desc_template else ''
+        # Description (DRY - shared helper function)
+        upload_props['youtube']['description'] = get_video_description(
+            video=video,
+            custom_settings=custom_settings,
+            destination_settings=youtube_settings,
+            global_settings=global_settings,
+            filename_no_ext=filename_no_ext,
+            template_key='description_template',
+            default=''
+        )
         
         # Tags
         if 'tags' in custom_settings:
@@ -1599,6 +1601,61 @@ def get_video_title(
     
     # Priority 5: Filename fallback
     return filename_no_ext
+
+
+def get_video_description(
+    video,
+    custom_settings: dict,
+    destination_settings: dict,
+    global_settings: dict,
+    filename_no_ext: str,
+    template_key: str = 'description_template',
+    default: str = ''
+) -> str:
+    """
+    Get video description following consistent priority across all destinations.
+    
+    Priority order (matches title logic to prevent re-randomization):
+    1. Per-video custom description (custom_settings['description'])
+    2. Generated description (video.generated_description) - already generated once, prevents re-randomization
+    3. Destination-specific template (destination_settings[template_key])
+    4. Global template (global_settings['description_template'])
+    5. Default value (empty string or provided default)
+    
+    This ensures what you see in the GUI is what gets uploaded, preventing
+    description mismatches when templates use {random} placeholders.
+    
+    Args:
+        video: Video object with generated_description attribute
+        custom_settings: Per-video custom settings dict
+        destination_settings: Destination-specific settings (youtube/tiktok/instagram)
+        global_settings: Global settings dict
+        filename_no_ext: Filename without extension
+        template_key: Key to use for destination template (default: 'description_template')
+        default: Default value if no template is found (default: empty string)
+    
+    Returns:
+        str: The resolved description
+    """
+    # Priority 1: Per-video custom description
+    if 'description' in custom_settings:
+        return custom_settings['description']
+    
+    # Priority 2: Generated description (already generated once, prevents re-randomization)
+    if video.generated_description:
+        return video.generated_description
+    
+    # Priority 3 & 4: Destination template or global template
+    desc_template = destination_settings.get(template_key, '') or global_settings.get('description_template', '')
+    if desc_template:
+        return replace_template_placeholders(
+            desc_template,
+            filename_no_ext,
+            global_settings.get('wordbank', [])
+        )
+    
+    # Priority 5: Default fallback
+    return default
 
 
 # ============================================================================
@@ -4096,7 +4153,7 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
     # NOTE: We don't check tokens here - tokens are deducted when video is successfully uploaded to platforms
     # This allows users to queue videos and manage their uploads without immediately consuming tokens
     
-    # Generate YouTube title
+    # Generate YouTube title and description (to prevent re-randomization)
     filename_no_ext = file.filename.rsplit('.', 1)[0]
     title_template = youtube_settings.get('title_template', '') or global_settings.get('title_template', '{filename}')
     youtube_title = replace_template_placeholders(
@@ -4104,6 +4161,14 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
         filename_no_ext,
         global_settings.get('wordbank', [])
     )
+    
+    # Generate description once to prevent re-randomization when templates use {random}
+    desc_template = youtube_settings.get('description_template', '') or global_settings.get('description_template', '')
+    youtube_description = replace_template_placeholders(
+        desc_template,
+        filename_no_ext,
+        global_settings.get('wordbank', [])
+    ) if desc_template else ''
     
     # Verify file was actually written to disk
     resolved_path = path.resolve()
@@ -4137,6 +4202,7 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
         filename=file.filename,
         path=str(resolved_path),  # Ensure absolute path
         generated_title=youtube_title,
+        generated_description=youtube_description,
         file_size_bytes=file_size,
         tokens_consumed=0,  # Don't consume tokens yet - only on successful upload
         db=db
@@ -6849,16 +6915,16 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
         if len(title) > 100:
             title = title[:100]
         
-        # Priority for description: per-video custom > destination template > global template
-        if 'description' in custom_settings:
-            description = custom_settings['description']
-        else:
-            desc_template = youtube_settings.get('description_template', '') or global_settings.get('description_template', 'Uploaded via Hopper')
-            description = replace_template_placeholders(
-                desc_template,
-                filename_no_ext,
-                global_settings.get('wordbank', [])
-            )
+        # Get description using consistent priority logic (DRY - shared helper function)
+        description = get_video_description(
+            video=video,
+            custom_settings=custom_settings,
+            destination_settings=youtube_settings,
+            global_settings=global_settings,
+            filename_no_ext=filename_no_ext,
+            template_key='description_template',
+            default='Uploaded via Hopper'
+        )
         
         # Get visibility and made_for_kids: per-video custom > destination settings
         visibility = custom_settings.get('visibility', youtube_settings.get('visibility', 'private'))

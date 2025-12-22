@@ -48,6 +48,7 @@ class Video(Base):
     path = Column(String(512), nullable=False)
     status = Column(String(50), default="pending", nullable=False)  # pending, uploading, completed, failed
     generated_title = Column(Text)
+    generated_description = Column(Text)  # Generated description to prevent re-randomization
     custom_settings = Column(JSON, default=dict)  # JSON for per-video settings
     error = Column(Text)  # Error message if failed
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
