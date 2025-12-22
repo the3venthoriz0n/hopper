@@ -416,16 +416,19 @@ input:checked + .slider:before {
 
 .video {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   background: rgba(255, 255, 255, 0.05);
   padding: 1rem;
+  padding-right: 120px; /* Reserve space so buttons don't overlap short text */
   border-radius: 8px;
   margin-bottom: 0.5rem;
   cursor: grab;
   transition: background 0.2s ease, border 0.2s ease;
   border: 2px solid transparent;
-  position: relative;
+  position: relative; /* Essential for absolute child */
+  gap: 0.75rem;
+  width: 100%;
+  overflow: hidden; /* Keep everything contained */
 }
 
 .video:active {
@@ -456,6 +459,7 @@ input:checked + .slider:before {
   user-select: none;
   line-height: 1;
   transition: color 0.2s ease;
+  flex-shrink: 0;
 }
 
 .drag-handle:hover {
@@ -467,14 +471,40 @@ input:checked + .slider:before {
 }
 
 .video-actions {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0; /* Stretch to full height of card */
   display: flex;
   gap: 0.5rem;
   align-items: center;
+  padding: 0 1rem 0 2.5rem; /* Large left padding for the gradient */
+  z-index: 10;
+  
+  /* This creates a smooth fade so text doesn't clash with buttons */
+  /* Match the video card background for seamless blending */
+  background: linear-gradient(
+    to right, 
+    transparent 0%, 
+    rgba(255, 255, 255, 0.05) 15%, 
+    rgba(255, 255, 255, 0.05) 100%
+  );
+  pointer-events: none; /* Allows clicks to pass through transparent area */
+}
+
+.video-actions button, 
+.video-actions div {
+  pointer-events: auto; /* Re-enable clicks for the actual buttons */
 }
 
 .video-info-container {
   flex: 1;
-  min-width: 0;
+  min-width: 0; /* Allows text truncation to work */
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+  position: relative;
+  width: 100%;
 }
 
 .video-titles {
@@ -482,6 +512,8 @@ input:checked + .slider:before {
   flex-direction: column;
   gap: 0.25rem;
   margin-bottom: 0.25rem;
+  min-width: 0;
+  width: 100%;
 }
 
 .youtube-title {
@@ -491,6 +523,8 @@ input:checked + .slider:before {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  min-width: 0;
+  width: 100%;
 }
 
 .video-token-badge-desktop {
@@ -542,6 +576,10 @@ input:checked + .slider:before {
   font-size: 0.85rem;
   color: #666;
   margin-top: 0.25rem;
+  min-width: 0;
+  width: 100%;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .progress-bar {
@@ -1073,6 +1111,10 @@ button:disabled {
   color: #999;
   font-size: 0.9rem;
   font-weight: 500;
+}
+
+.form-group .checkbox-label {
+  margin-bottom: 0;
 }
 
 .form-group .input-text,

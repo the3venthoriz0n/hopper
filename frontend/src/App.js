@@ -1397,6 +1397,17 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     
     return () => clearInterval(pollInterval);
   }, [user, loadDestinations, loadGlobalSettings, loadYoutubeSettings, loadTiktokSettings, loadInstagramSettings, loadVideos, loadYoutubeAccount, loadTiktokAccount, loadInstagramAccount, applyOAuthStatus, loadUploadLimits]);
+
+  // Reusable style for flex text containers that extend to the right
+  const flexTextStyle = { 
+    flex: 1, 
+    minWidth: 0, 
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    display: 'block',
+    width: '100%'
+  };
   
   // Show loading state while checking auth
   if (authLoading) {
@@ -3212,24 +3223,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               />
             </div>
 
-            <div className="setting-group">
-              <label>
-                TikTok Description Template (Override)
-                <span className="tooltip-wrapper">
-                  <span className="tooltip-icon">i</span>
-                  <span className="tooltip-text">TikTok only uses the caption (title) field. Description is not supported by TikTok API.</span>
-                </span>
-              </label>
-              <textarea 
-                value={tiktokSettings.description_template || ''}
-                onChange={(e) => setTiktokSettings({...tiktokSettings, description_template: e.target.value})}
-                onBlur={(e) => updateTiktokSettings('description_template', e.target.value)}
-                placeholder="Leave empty to use global template"
-                className="textarea-text"
-                rows="3"
-                disabled
-              />
-            </div>
             
             <div className="setting-divider"></div>
             
@@ -3664,18 +3657,20 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 onDrop={(e) => handleDrop(e, v)}
               >
                 <div className="drag-handle" title="Drag to reorder">⋮⋮</div>
-                <div className="video-info-container" style={{ flex: 1 }}>
+                <div className="video-info-container">
                   <div className="video-titles">
                     <div className="youtube-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ flexShrink: 0 }}>
                         <path d="M8 5v14l11-7z" fill="currentColor"/>
                       </svg>
-                      {v.youtube_title || v.filename}
-                      {v.title_too_long && (
-                        <span className="title-warning" title={`Title truncated from ${v.title_original_length} to 100 characters`}>
-                          ⚠️ {v.title_original_length}
-                        </span>
-                      )}
+                      <span style={flexTextStyle}>
+                        {v.youtube_title || v.filename}
+                        {v.title_too_long && (
+                          <span className="title-warning" title={`Title truncated from ${v.title_original_length} to 100 characters`}>
+                            ⚠️ {v.title_original_length}
+                          </span>
+                        )}
+                      </span>
                     </div>
                     {/* Platform Status Indicators - Clickable Buttons */}
                     {v.platform_statuses && (
@@ -3790,38 +3785,40 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       alignItems: 'center',
                       gap: '4px'
                     }}>
-                      <span style={{ color: '#999' }}>TikTok:</span>
-                      {v.tiktok_publish_status === 'PUBLISHED' && (
-                        <span style={{ 
-                          color: '#22c55e',
-                          fontWeight: '500'
-                        }}>Published</span>
-                      )}
-                      {v.tiktok_publish_status === 'PROCESSING' && (
-                        <span style={{ 
-                          color: '#f59e0b',
-                          fontWeight: '500'
-                        }}>Processing...</span>
-                      )}
-                      {v.tiktok_publish_status === 'FAILED' && (
-                        <span style={{ 
-                          color: '#ef4444',
-                          fontWeight: '500'
-                        }}>Failed</span>
-                      )}
-                      {!['PUBLISHED', 'PROCESSING', 'FAILED'].includes(v.tiktok_publish_status) && (
-                        <span style={{ 
-                          color: '#999',
-                          fontWeight: '500'
-                        }}>{v.tiktok_publish_status}</span>
-                      )}
-                      {v.tiktok_publish_error && (
-                        <span style={{ 
-                          color: '#ef4444',
-                          fontSize: '0.7rem',
-                          marginLeft: '4px'
-                        }} title={v.tiktok_publish_error}>({v.tiktok_publish_error})</span>
-                      )}
+                      <span style={{ color: '#999', flexShrink: 0 }}>TikTok:</span>
+                      <span style={flexTextStyle}>
+                        {v.tiktok_publish_status === 'PUBLISHED' && (
+                          <span style={{ 
+                            color: '#22c55e',
+                            fontWeight: '500'
+                          }}>Published</span>
+                        )}
+                        {v.tiktok_publish_status === 'PROCESSING' && (
+                          <span style={{ 
+                            color: '#f59e0b',
+                            fontWeight: '500'
+                          }}>Processing...</span>
+                        )}
+                        {v.tiktok_publish_status === 'FAILED' && (
+                          <span style={{ 
+                            color: '#ef4444',
+                            fontWeight: '500'
+                          }}>Failed</span>
+                        )}
+                        {!['PUBLISHED', 'PROCESSING', 'FAILED'].includes(v.tiktok_publish_status) && (
+                          <span style={{ 
+                            color: '#999',
+                            fontWeight: '500'
+                          }}>{v.tiktok_publish_status}</span>
+                        )}
+                        {v.tiktok_publish_error && (
+                          <span style={{ 
+                            color: '#ef4444',
+                            fontSize: '0.7rem',
+                            marginLeft: '4px'
+                          }} title={v.tiktok_publish_error}>({v.tiktok_publish_error})</span>
+                        )}
+                      </span>
                     </div>
                   )}
                   {v.status === 'uploading' && (
@@ -3835,29 +3832,31 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     </div>
                   )}
                   {/* Status at bottom left */}
-                  <div className="status" style={{ marginTop: '8px' }}>
-                    {v.status === 'uploading' ? (
-                      v.upload_progress !== undefined ? (
-                        <span>Uploading {v.upload_progress}%</span>
-                      ) : v.progress !== undefined && v.progress < 100 ? (
-                        <span>Uploading to server {v.progress}%</span>
+                  <div className="status" style={{ marginTop: '8px', display: 'flex', alignItems: 'center' }}>
+                    <span style={flexTextStyle}>
+                      {v.status === 'uploading' ? (
+                        v.upload_progress !== undefined ? (
+                          <span>Uploading {v.upload_progress}%</span>
+                        ) : v.progress !== undefined && v.progress < 100 ? (
+                          <span>Uploading to server {v.progress}%</span>
+                        ) : (
+                          <span>Processing...</span>
+                        )
+                      ) : v.status === 'scheduled' && v.scheduled_time ? (
+                        <span>Scheduled for {new Date(v.scheduled_time).toLocaleString(undefined, {
+                          year: 'numeric',
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit'
+                        })}</span>
+                      ) : v.status === 'failed' ? (
+                        <span style={{ color: '#ef4444' }}>Upload Failed</span>
                       ) : (
-                        <span>Processing...</span>
-                      )
-                    ) : v.status === 'scheduled' && v.scheduled_time ? (
-                      <span>Scheduled for {new Date(v.scheduled_time).toLocaleString(undefined, {
-                        year: 'numeric',
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit'
-                      })}</span>
-                    ) : v.status === 'failed' ? (
-                      <span style={{ color: '#ef4444' }}>Failed - Click destination buttons to view errors</span>
-                    ) : (
-                      <span>{v.status}</span>
-                    )}
+                        <span>{v.status}</span>
+                      )}
+                    </span>
                   </div>
                   {isExpanded && (
                     <div className="video-expanded-details">
@@ -3998,6 +3997,14 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       }}
                       className="retry-upload-btn"
                       title="Retry failed upload"
+                      style={{
+                        height: '32px',
+                        minWidth: '32px',
+                        padding: '0.5rem 1rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}
                     >
                       🔄 Retry
                     </button>
@@ -4007,19 +4014,56 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     <div style={{
                       display: 'flex',
                       alignItems: 'center',
+                      justifyContent: 'center',
                       gap: '4px',
-                      padding: '0.25rem 0.5rem',
+                      padding: '0.5rem 0.75rem',
                       background: 'rgba(99, 102, 241, 0.15)',
                       border: '1px solid rgba(99, 102, 241, 0.3)',
                       borderRadius: '6px',
                       fontSize: '0.75rem',
                       color: '#999',
-                      fontWeight: '500'
+                      fontWeight: '500',
+                      height: '32px',
+                      minWidth: '32px'
                     }}>
                       🪙 {v.tokens_consumed || calculateTokens(v.file_size_bytes)}
                     </div>
                   )}
-                  <button onClick={() => removeVideo(v.id)} disabled={v.status === 'uploading'}>×</button>
+                  <button 
+                    onClick={() => removeVideo(v.id)} 
+                    disabled={v.status === 'uploading'}
+                    style={{
+                      height: '32px',
+                      minWidth: '32px',
+                      padding: '0',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: '1.25rem',
+                      lineHeight: '1',
+                      background: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      borderRadius: '6px',
+                      color: '#ef4444',
+                      cursor: v.status === 'uploading' ? 'not-allowed' : 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (v.status !== 'uploading') {
+                        e.target.style.background = 'rgba(239, 68, 68, 0.2)';
+                        e.target.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (v.status !== 'uploading') {
+                        e.target.style.background = 'rgba(239, 68, 68, 0.1)';
+                        e.target.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+                      }
+                    }}
+                    title="Delete video"
+                  >
+                    ×
+                  </button>
                 </div>
               </div>
             );
@@ -4438,11 +4482,9 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               overrides.made_for_kids = madeForKidsEl?.checked ?? false;
             } else if (platform === 'tiktok') {
               const titleEl = document.getElementById(`dest-override-title-${video.id}-${platform}`);
-              const descEl = document.getElementById(`dest-override-description-${video.id}-${platform}`);
               const privacyEl = document.getElementById(`dest-override-privacy-${video.id}-${platform}`);
               
               if (titleEl?.value) overrides.title = titleEl.value;
-              if (descEl?.value) overrides.description = descEl.value;
               if (privacyEl?.value) overrides.privacy_level = privacyEl.value;
             } else if (platform === 'instagram') {
               const captionEl = document.getElementById(`dest-override-caption-${video.id}-${platform}`);
@@ -4615,8 +4657,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                           <div><strong>Description:</strong> {platformData.description.substring(0, 200)}
                           {platformData.description.length > 200 && '...'}</div>
                         )}
-                        {platformData.tags && platformData.tags.length > 0 && (
-                          <div><strong>Tags:</strong> {platformData.tags.join(', ')}</div>
+                        {platformData.tags && (
+                          <div><strong>Tags:</strong> {Array.isArray(platformData.tags) ? platformData.tags.join(', ') : platformData.tags}</div>
                         )}
                         {platformData.visibility && (
                           <div><strong>Visibility:</strong> {platformData.visibility}</div>
@@ -4626,7 +4668,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     {platform === 'tiktok' && (
                       <>
                         {platformData.title && <div><strong>Title:</strong> {platformData.title}</div>}
-                        {platformData.description && <div><strong>Description:</strong> {platformData.description}</div>}
                         {video.tiktok_publish_status && (
                           <div><strong>Publish Status:</strong> {video.tiktok_publish_status}</div>
                         )}
@@ -4690,7 +4731,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                           </select>
                         </div>
                         <div className="form-group">
-                          <label className="checkbox-label">
+                          <label className="checkbox-label" style={{ gap: '1rem' }}>
                             <input
                               type="checkbox"
                               id={`dest-override-made-for-kids-${video.id}-${platform}`}
@@ -4712,16 +4753,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                             id={`dest-override-title-${video.id}-${platform}`}
                             className="input-text"
                             defaultValue={customSettings.title || ''}
-                            placeholder="Leave empty to use template"
-                          />
-                        </div>
-                        <div className="form-group">
-                          <label>Description Override</label>
-                          <textarea
-                            id={`dest-override-description-${video.id}-${platform}`}
-                            className="textarea-text"
-                            rows="4"
-                            defaultValue={customSettings.description || ''}
                             placeholder="Leave empty to use template"
                           />
                         </div>
