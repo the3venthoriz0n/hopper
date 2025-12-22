@@ -2979,20 +2979,19 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 required
               >
                 <option value="">-- Select Privacy Level --</option>
-                {Array.isArray(tiktokCreatorInfo?.privacy_level_options) && tiktokCreatorInfo.privacy_level_options.map(option => {
+                {Array.isArray(tiktokCreatorInfo?.privacy_level_options) ? tiktokCreatorInfo.privacy_level_options.map(option => {
                   const labelMap = {
                     'PUBLIC_TO_EVERYONE': 'Everyone',
                     'MUTUAL_FOLLOW_FRIENDS': 'Friends',
                     'FOLLOWER_OF_CREATOR': 'Followers',
                     'SELF_ONLY': 'Only you'
                   };
-                    return (
-                      <option key={option} value={option}>
-                        {labelMap[option] || option}
-                      </option>
-                    );
-                  });
-                })()}
+                  return (
+                    <option key={option} value={option}>
+                      {labelMap[option] || option}
+                    </option>
+                  );
+                }) : null}
               </select>
             </div>
 
@@ -3935,25 +3934,19 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       required
                     >
                       <option value="">-- Select Privacy Level --</option>
-                      {(() => {
-                        const options = tiktokCreatorInfo?.privacy_level_options;
-                        if (!Array.isArray(options)) {
-                          return null;
-                        }
-                        return options.map(option => {
+                      {Array.isArray(tiktokCreatorInfo?.privacy_level_options) ? tiktokCreatorInfo.privacy_level_options.map(option => {
                         const labelMap = {
                           'PUBLIC_TO_EVERYONE': 'Everyone',
                           'MUTUAL_FOLLOW_FRIENDS': 'Friends',
                           'FOLLOWER_OF_CREATOR': 'Followers',
                           'SELF_ONLY': 'Only you'
                         };
-                          return (
-                            <option key={option} value={option}>
-                              {labelMap[option] || option}
-                            </option>
-                          );
-                        });
-                      })()}
+                        return (
+                          <option key={option} value={option}>
+                            {labelMap[option] || option}
+                          </option>
+                        );
+                      }) : null}
                     </select>
                   </div>
                   
