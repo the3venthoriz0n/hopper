@@ -553,10 +553,10 @@ def check_token_expiration(token: Optional[OAuthToken]) -> Dict[str, Any]:
             from datetime import timedelta
             refresh_expires_at = token.updated_at + timedelta(seconds=int(refresh_expires_in)) if token.updated_at else None
             if refresh_expires_at:
-                # Check if expires_at is set to near future (likely invalid_grant scenario)
-                # If expires_at is within 7 days and not expired, show expires_soon (yellow) to indicate needs reconnection
-                time_until_expires = token.expires_at - now
-                if not is_expired and 0 < time_until_expires.total_seconds() < 604800:  # Within 7 days
+                # Check if refresh has failed (invalid_grant scenario) - show yellow status
+                # This indicates a problem but doesn't falsely mark as expired
+                if token.extra_data and token.extra_data.get("refresh_failed"):
+                    # Show expires_soon (yellow) to indicate there's an issue that needs attention
                     return {
                         "expired": False,
                         "expires_soon": True,

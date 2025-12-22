@@ -6740,7 +6740,8 @@ def refresh_tiktok_token(user_id: int, refresh_token: str, db: Session) -> str:
         Exception: If refresh fails
     """
     if not refresh_token:
-        raise Exception("No refresh token available")
+        tiktok_logger.error(f"No refresh token available for user {user_id} - token may not have been saved during OAuth")
+        raise Exception("No refresh token available. Please reconnect your TikTok account.")
     
     refresh_data = {
         "client_key": TIKTOK_CLIENT_KEY,
@@ -6767,24 +6768,33 @@ def refresh_tiktok_token(user_id: int, refresh_token: str, db: Session) -> str:
             
             # Handle invalid_grant specifically - this means refresh token is expired/invalid, user must reconnect
             if error_code == "invalid_grant" or "invalid_grant" in str(error_message).lower():
-                tiktok_logger.error(f"TikTok refresh token is invalid/expired (invalid_grant) for user {user_id}. User must reconnect TikTok account.")
-                # Mark token as expires_soon (yellow indicator) in database so frontend shows yellow status
-                # We use expires_soon instead of expired to show yellow (needs attention) rather than red (broken)
+                tiktok_logger.error(
+                    f"TikTok refresh token invalid_grant error for user {user_id}. "
+                    f"This may indicate: missing refresh token, expired token, or API issue. "
+                    f"Error: {error_message}"
+                )
+                # Set a flag in extra_data to track refresh failures, but don't modify expires_at
+                # This allows us to monitor the issue without falsely marking tokens as expired
                 try:
                     existing_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
                     if existing_token:
-                        # Set expires_at to near future (within 7 days) to trigger expires_soon status (yellow indicator)
-                        # This will make check_token_expiration return expires_soon=True
+                        extra_data = existing_token.extra_data or {}
+                        extra_data["refresh_failed"] = True
+                        extra_data["refresh_failed_at"] = datetime.now(timezone.utc).isoformat()
+                        extra_data["refresh_failed_reason"] = "invalid_grant"
+                        # Don't modify expires_at - keep original expiration
                         db_helpers.save_oauth_token(
                             user_id=user_id,
                             platform="tiktok",
                             access_token=existing_token.access_token,
                             refresh_token=existing_token.refresh_token,
-                            expires_at=datetime.now(timezone.utc) + timedelta(days=1),  # Set to 1 day in future to trigger expires_soon
-                            extra_data=existing_token.extra_data,
+                            expires_at=existing_token.expires_at,  # Keep original expiration
+                            extra_data=extra_data,
                             db=db
                         )
-                        tiktok_logger.info(f"Marked TikTok token as expires_soon (yellow) in database for user {user_id} due to invalid_grant")
+                        tiktok_logger.info(f"Recorded refresh failure flag for user {user_id} (invalid_grant)")
+                except Exception as db_error:
+                    tiktok_logger.warning(f"Failed to record refresh failure flag: {db_error}")
                 except Exception as db_error:
                     tiktok_logger.warning(f"Failed to mark token as expired in database: {db_error}")
                 
@@ -6810,30 +6820,41 @@ def refresh_tiktok_token(user_id: int, refresh_token: str, db: Session) -> str:
         error_code = token_json.get("error", {}).get("code", "unknown") if isinstance(token_json.get("error"), dict) else "unknown"
         error_message = token_json.get("error", {}).get("message", str(token_json.get("error"))) if isinstance(token_json.get("error"), dict) else str(token_json.get("error"))
         
-        # Handle invalid_grant specifically - this means refresh token is expired/invalid, user must reconnect
+        # Handle invalid_grant - this could mean:
+        # 1. Refresh token is actually expired/invalid (user needs to reconnect)
+        # 2. Refresh token wasn't provided in initial OAuth (TikTok API issue)
+        # 3. Temporary API issue or configuration problem
+        # Best practice: Don't automatically mark as expired - log error and set a flag for monitoring
         if error_code == "invalid_grant" or "invalid_grant" in str(error_message).lower():
-            tiktok_logger.error(f"TikTok refresh token is invalid/expired (invalid_grant) for user {user_id}. User must reconnect TikTok account.")
-            # Mark token as expires_soon (yellow indicator) in database so frontend shows yellow status
-            # We use expires_soon instead of expired to show yellow (needs attention) rather than red (broken)
-            try:
-                existing_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
-                if existing_token:
-                    # Set expires_at to near future (within 7 days) to trigger expires_soon status (yellow indicator)
-                    # This will make check_token_expiration return expires_soon=True
-                    db_helpers.save_oauth_token(
-                        user_id=user_id,
-                        platform="tiktok",
-                        access_token=existing_token.access_token,
-                        refresh_token=existing_token.refresh_token,
-                        expires_at=datetime.now(timezone.utc) + timedelta(days=1),  # Set to 1 day in future to trigger expires_soon
-                        extra_data=existing_token.extra_data,
-                        db=db
-                    )
-                    tiktok_logger.info(f"Marked TikTok token as expires_soon (yellow) in database for user {user_id} due to invalid_grant")
-            except Exception as db_error:
-                tiktok_logger.warning(f"Failed to mark token as expired in database: {db_error}")
-            
-            raise Exception("TikTok refresh token is expired or invalid. Please disconnect and reconnect your TikTok account.")
+                tiktok_logger.error(
+                    f"TikTok refresh token invalid_grant error for user {user_id}. "
+                    f"This may indicate: missing refresh token, expired token, or API issue. "
+                    f"Error: {error_message}"
+                )
+                # Set a flag in extra_data to track refresh failures, but don't modify expires_at
+                # This allows us to monitor the issue without falsely marking tokens as expired
+                try:
+                    existing_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
+                    if existing_token:
+                        extra_data = existing_token.extra_data or {}
+                        extra_data["refresh_failed"] = True
+                        extra_data["refresh_failed_at"] = datetime.now(timezone.utc).isoformat()
+                        extra_data["refresh_failed_reason"] = "invalid_grant"
+                        # Don't modify expires_at - keep original expiration
+                        db_helpers.save_oauth_token(
+                            user_id=user_id,
+                            platform="tiktok",
+                            access_token=existing_token.access_token,
+                            refresh_token=existing_token.refresh_token,
+                            expires_at=existing_token.expires_at,  # Keep original expiration
+                            extra_data=extra_data,
+                            db=db
+                        )
+                        tiktok_logger.info(f"Recorded refresh failure flag for user {user_id} (invalid_grant)")
+                except Exception as db_error:
+                    tiktok_logger.warning(f"Failed to record refresh failure flag: {db_error}")
+                
+                raise Exception(f"TikTok token refresh failed (invalid_grant): {error_message}. Please try reconnecting your TikTok account if this persists.")
         
         tiktok_logger.error(f"TikTok token refresh returned error: {error_code} - {error_message}")
         raise Exception(f"Token refresh failed: {error_code} - {error_message}")
