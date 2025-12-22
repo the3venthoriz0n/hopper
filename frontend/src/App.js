@@ -17,36 +17,31 @@ import Pricing from './Pricing';
 // SYSTEM DESIGN: RGB values stored separately for opacity support
 // Use rgba() helper function for colors with opacity
 const HOPPER_COLORS = {
-  // Primary Palette - Custom Colors
-  dark: '#37353E',        // Dark muted purplish-grey
-  charcoal: '#44444E',    // Dark charcoal grey with blue undertone
-  taupe: '#715A5A',       // Muted brownish-taupe
-  cream: '#D3DAD9',      // Very light pale greyish-blue
-  white: '#ffffff',
-  black: '#37353E',      // Alias for dark
-  grey: '#715A5A',        // Alias for taupe (for backward compatibility)
-  greyLight: '#D3DAD9',   // Alias for cream (for backward compatibility)
+  // Primary Palette - Deep, Slate-based tones
+  base: '#0F1115',      // Slightly deeper for better depth
+  secondary: '#1A1D23', // Clearer separation from base
+  accent: '#969D9E',    // Balanced Sage/Teal (Better contrast than #696F70)
+  light: '#E2E1D5',     // Brightened slightly for readability
+  white: '#FFFFFF',
+  black: '#0F1115', 
+
+  // Semantic colors - Refined to match the muted palette
+  success: '#43A047',   // Slightly more organic green
+  error: '#E53935',     // Vibrant but deep red
+  warning: '#FFB300',   // Amber warning
+  info: '#1E88E5',      // Clearer blue
   
-  // Semantic colors
-  success: '#34A853',      // Green for success
-  error: '#EA4335',        // Red for errors
-  warning: '#FBBC04',      // Yellow for warnings
-  info: '#4285F4',         // Blue for info
-  
-  // RGB values for opacity support (matches CSS --rgb-* variables)
+  // RGB values 
   rgb: {
-    dark: '55, 53, 62',
-    charcoal: '68, 68, 78',
-    taupe: '113, 90, 90',
-    cream: '211, 218, 217',
+    base: '15, 17, 21',
+    secondary: '26, 29, 35',
+    accent: '120, 149, 150',
+    light: '226, 225, 213',
     white: '255, 255, 255',
-    black: '55, 53, 62',      // Alias for dark
-    grey: '113, 90, 90',      // Alias for taupe RGB
-    greyLight: '211, 218, 217',  // Alias for cream RGB
-    success: '52, 168, 83',
-    error: '234, 67, 53',
-    warning: '251, 188, 4',
-    info: '66, 133, 244'
+    success: '67, 160, 71',
+    error: '229, 57, 53',
+    warning: '255, 179, 0',
+    info: '30, 136, 229'
   }
 };
 
@@ -74,7 +69,7 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
             width: '36px',
             height: '36px',
             borderRadius: '50%',
-            background: HOPPER_COLORS.white,
+            background: HOPPER_COLORS.base,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -139,6 +134,18 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
             style={{ transition: 'stroke-dashoffset 0.5s ease', opacity: isLoading ? 0.5 : 1 }}
           />
         </svg>
+        {/* Dark background circle */}
+        <div style={{
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: '36px',
+          height: '36px',
+          borderRadius: '50%',
+          background: HOPPER_COLORS.base,
+          zIndex: 1
+        }} />
         {/* Center text - show usage / monthlyTokens (starting balance) */}
         <div style={{
           position: 'absolute',
@@ -149,9 +156,10 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
-          gap: '0.05rem'
+          gap: '0.05rem',
+          zIndex: 2
         }}>
-          <div style={{ fontSize: '0.65rem', fontWeight: '700', color: isLoading ? HOPPER_COLORS.grey : HOPPER_COLORS.white, lineHeight: '1' }}>
+          <div style={{ fontSize: '0.65rem', fontWeight: '700', color: isLoading ? HOPPER_COLORS.grey : HOPPER_COLORS.light, lineHeight: '1' }}>
             {tokensUsed}
           </div>
           <div style={{ fontSize: '0.5rem', color: isLoading ? HOPPER_COLORS.grey : HOPPER_COLORS.grey, lineHeight: '1' }}>
@@ -5329,39 +5337,21 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               </div>
 
               {/* Danger Zone (collapsed by default) */}
-              <div style={{ 
-                marginTop: '1rem', 
-                padding: '1.5rem', 
-                background: 'rgba(239, 68, 68, 0.1)', 
-                border: '1px solid rgba(239, 68, 68, 0.3)',
-                borderRadius: '8px' 
-              }}>
+              <div className="danger-zone">
                 <button
                   type="button"
                   onClick={() => setShowDangerZone(!showDangerZone)}
-                  style={{
-                    width: '100%',
-                    padding: '0.6rem 0.75rem',
-                    background: 'transparent',
-                    border: '1px solid rgba(239,68,68,0.6)',
-                    borderRadius: '6px',
-                    color: '#ef4444',
-                    cursor: 'pointer',
-                    fontSize: '0.9rem',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between'
-                  }}
+                  className="danger-zone-button"
                 >
                   <span>⚠️ Delete My Account</span>
                   <span style={{ opacity: 0.7 }}>{showDangerZone ? '▴' : '▾'}</span>
                 </button>
                 {showDangerZone && (
                   <>
-                    <p style={{ color: HOPPER_COLORS.grey, marginTop: '1rem', marginBottom: '1rem', fontSize: '0.9rem', lineHeight: '1.5' }}>
+                    <p style={{ color: 'var(--text-secondary)', marginTop: '1rem', marginBottom: '1rem', fontSize: '0.9rem', lineHeight: '1.5' }}>
                       Once you delete your account, there is no going back. This will permanently delete:
                     </p>
-                    <ul style={{ color: HOPPER_COLORS.grey, marginBottom: '1rem', fontSize: '0.85rem', paddingLeft: '1.25rem', lineHeight: '1.6' }}>
+                    <ul style={{ color: 'var(--text-secondary)', marginBottom: '1rem', fontSize: '0.85rem', paddingLeft: '1.25rem', lineHeight: '1.6' }}>
                       <li>Your account and login credentials</li>
                       <li>All uploaded videos and files</li>
                       <li>All settings and preferences</li>
@@ -5369,26 +5359,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     </ul>
                     <button 
                       onClick={() => setShowDeleteConfirm(true)}
-                      style={{
-                        width: '100%',
-                        padding: '0.75rem',
-                        background: '#ef4444',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontSize: '0.95rem',
-                        fontWeight: '600',
-                        transition: 'all 0.2s'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.target.style.background = '#dc2626';
-                        e.target.style.transform = 'translateY(-2px)';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.target.style.background = '#ef4444';
-                        e.target.style.transform = 'translateY(0)';
-                      }}
+                      className="danger-zone-delete-button"
                     >
                       Delete My Account
                     </button>

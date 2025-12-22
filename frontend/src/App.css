@@ -7,10 +7,10 @@
    color variables in the :root section below.
    
    Color Palette:
-   - Dark: #37353E (rgb(55, 53, 62)) - Dark muted purplish-grey
-   - Charcoal: #44444E (rgb(68, 68, 78)) - Dark charcoal grey with blue undertone
-   - Taupe: #715A5A (rgb(113, 90, 90)) - Muted brownish-taupe
-   - Cream: #D3DAD9 (rgb(211, 218, 217)) - Very light pale greyish-blue
+   - Base: #13161B (rgb(19, 22, 27))
+   - Secondary: #1B2027 (rgb(27, 32, 39))
+   - Accent: #83A2A3 (rgb(131, 162, 163))
+   - Light: #D1D0C2 (rgb(209, 208, 194))
    
    Semantic Colors:
    - Success: #34A853 (green)
@@ -33,28 +33,26 @@
   /* ============================================
      BASE COLOR RGB VALUES (for opacity support)
      ============================================ */
-  /* Primary Palette - Custom Colors */
-  --rgb-dark: 55, 53, 62;        /* #37353E - Dark muted purplish-grey */
-  --rgb-charcoal: 68, 68, 78;    /* #44444E - Dark charcoal grey with blue undertone */
-  --rgb-taupe: 113, 90, 90;      /* #715A5A - Muted brownish-taupe */
-  --rgb-cream: 211, 218, 217;     /* #D3DAD9 - Very light pale greyish-blue */
+  /* RGB Channels */
+  --rgb-base: 15, 17, 21;
+  --rgb-secondary: 26, 29, 35;
+  --rgb-accent: 120, 149, 150;
+  --rgb-light: 226, 225, 213;
   --rgb-white: 255, 255, 255;
-  
-  /* Semantic Color RGB values */
-  --rgb-success: 52, 168, 83;    /* Green for success */
-  --rgb-error: 234, 67, 53;      /* Red for errors */
-  --rgb-warning: 251, 188, 4;    /* Yellow for warnings */
-  --rgb-info: 66, 133, 244;      /* Blue for info */
-  
-  /* ============================================
-     SOLID COLOR VALUES (hex for direct use)
-     ============================================ */
-  --color-dark: #37353E;
-  --color-charcoal: #44444E;
-  --color-taupe: #715A5A;
-  --color-cream: #D3DAD9;
+
+  /* Semantic RGB */
+  --rgb-success: 67, 160, 71;
+  --rgb-error: 229, 57, 53;
+  --rgb-warning: 255, 179, 0;
+  --rgb-info: 30, 136, 229;
+
+  /* Solid Hex Values */
+  --color-base: #0f1115;
+  --color-secondary: #1a1d23;
+  --color-accent: #969D9E;
+  --color-light: #e2e1d5;
   --color-white: #ffffff;
-  --color-black: var(--color-dark);  /* Alias for dark */
+  --color-black: var(--color-base);  /* Alias for base */
   
   /* ============================================
      OPACITY UTILITIES (for rgba() usage)
@@ -76,28 +74,28 @@
   /* ============================================
      BACKGROUND COLORS
      ============================================ */
-  --bg-primary: var(--color-dark);
-  --bg-secondary: var(--color-charcoal);
-  --bg-tertiary: rgba(var(--rgb-charcoal), var(--opacity-50));
-  --bg-card: var(--color-charcoal);
-  --bg-hover: rgba(var(--rgb-charcoal), var(--opacity-80));
-  --bg-overlay: rgba(var(--rgb-dark), var(--opacity-80));
-  --bg-overlay-light: rgba(var(--rgb-cream), var(--opacity-95));
+  --bg-primary: var(--color-base);
+  --bg-secondary: var(--color-secondary);
+  --bg-tertiary: rgba(var(--rgb-secondary), var(--opacity-50));
+  --bg-card: var(--color-secondary);
+  --bg-hover: rgba(var(--rgb-secondary), var(--opacity-80));
+  --bg-overlay: rgba(var(--rgb-base), var(--opacity-80));
+  --bg-overlay-light: rgba(var(--rgb-light), var(--opacity-95));
   
   /* ============================================
      TEXT COLORS
      ============================================ */
-  --text-primary: var(--color-cream);
-  --text-secondary: var(--color-taupe);
-  --text-tertiary: rgba(var(--rgb-taupe), var(--opacity-80));
-  --text-muted: rgba(var(--rgb-taupe), var(--opacity-60));
+  --text-primary: var(--color-light);
+  --text-secondary: var(--color-accent);
+  --text-tertiary: rgba(var(--rgb-accent), var(--opacity-80));
+  --text-muted: rgba(var(--rgb-accent), var(--opacity-60));
   
   /* ============================================
      ACCENT COLORS
      ============================================ */
-  --accent-primary: var(--color-taupe);
-  --accent-primary-hover: rgba(var(--rgb-taupe), var(--opacity-80));
-  --accent-gradient: linear-gradient(135deg, var(--color-taupe) 0%, rgba(var(--rgb-taupe), var(--opacity-80)) 100%);
+  --accent-primary: var(--color-accent);
+  --accent-primary-hover: rgba(var(--rgb-accent), var(--opacity-80));
+  --accent-gradient: linear-gradient(135deg, var(--color-accent) 0%, rgba(var(--rgb-accent), var(--opacity-80)) 100%);
   
   /* ============================================
      STATUS COLORS (Semantic)
@@ -113,10 +111,11 @@
   
   /* ============================================
      BORDER COLORS
+     Soft, reflection-like borders using light color with low opacity
      ============================================ */
-  --border-primary: rgba(var(--rgb-taupe), var(--opacity-60));
-  --border-secondary: rgba(var(--rgb-taupe), var(--opacity-40));
-  --border-accent: var(--color-taupe);
+  --border-primary: rgba(var(--rgb-light), var(--opacity-15));
+  --border-secondary: rgba(var(--rgb-light), var(--opacity-10));
+  --border-accent: rgba(var(--rgb-accent), var(--opacity-60));
   --border-success: rgba(var(--rgb-success), var(--opacity-50));
   --border-error: rgba(var(--rgb-error), var(--opacity-50));
   --border-warning: rgba(var(--rgb-warning), var(--opacity-50));
@@ -124,10 +123,10 @@
   /* ============================================
      INTERACTIVE STATES
      ============================================ */
-  --interactive-bg: rgba(var(--rgb-taupe), var(--opacity-20));
-  --interactive-bg-hover: rgba(var(--rgb-taupe), var(--opacity-30));
-  --interactive-border: var(--color-taupe);
-  --interactive-color: var(--color-taupe);
+  --interactive-bg: rgba(var(--rgb-accent), var(--opacity-20));
+  --interactive-bg-hover: rgba(var(--rgb-accent), var(--opacity-30));
+  --interactive-border: var(--color-accent);
+  --interactive-color: var(--color-accent);
   
   /* ============================================
      SPACING
@@ -152,12 +151,12 @@
   /* ============================================
      SHADOWS (using RGB for opacity)
      ============================================ */
-  --shadow-sm: 0 1px 2px rgba(var(--rgb-dark), var(--opacity-40));
-  --shadow-md: 0 4px 12px rgba(var(--rgb-dark), var(--opacity-50));
-  --shadow-lg: 0 10px 24px rgba(var(--rgb-dark), var(--opacity-60));
-  --shadow-xl: 0 20px 40px rgba(var(--rgb-dark), var(--opacity-70));
-  --shadow-accent: 0 4px 12px rgba(var(--rgb-taupe), var(--opacity-30));
-  --shadow-accent-glow: 0 0 20px rgba(var(--rgb-taupe), var(--opacity-20));
+  --shadow-sm: 0 1px 2px rgba(var(--rgb-base), var(--opacity-40));
+  --shadow-md: 0 4px 12px rgba(var(--rgb-base), var(--opacity-50));
+  --shadow-lg: 0 10px 24px rgba(var(--rgb-base), var(--opacity-60));
+  --shadow-xl: 0 20px 40px rgba(var(--rgb-base), var(--opacity-70));
+  --shadow-accent: 0 4px 12px rgba(var(--rgb-accent), var(--opacity-30));
+  --shadow-accent-glow: 0 0 20px rgba(var(--rgb-accent), var(--opacity-20));
   
   /* ============================================
      TYPOGRAPHY
@@ -186,6 +185,18 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   letter-spacing: -0.01em;
+}
+
+/* Global link styles - ensure all links use color scheme */
+a {
+  color: var(--accent-primary);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+a:hover {
+  color: var(--accent-primary-hover);
+  text-decoration: underline;
 }
 
 /* ============================================
@@ -317,12 +328,6 @@ h3 {
   margin: var(--spacing-lg) 0;
   border: 1px solid var(--border-primary);
   backdrop-filter: blur(10px);
-  transition: all 0.3s ease;
-}
-
-.card:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-accent);
 }
 
 .card-header {
@@ -354,7 +359,7 @@ h3 {
   font-size: 1.1rem;
   font-weight: 600;
   background: var(--interactive-bg);
-  border: 1px solid var(--border-accent);
+  border: 1px solid rgba(var(--rgb-accent), var(--opacity-30));
   border-radius: var(--radius-md);
   color: var(--text-primary);
   cursor: pointer;
@@ -368,7 +373,7 @@ h3 {
 
 .global-settings-button:hover {
   background: var(--interactive-bg-hover);
-  border-color: var(--accent-primary);
+  border-color: rgba(var(--rgb-accent), var(--opacity-50));
   transform: translateY(-2px);
   box-shadow: var(--shadow-md);
   filter: brightness(1.1);
@@ -410,7 +415,7 @@ h3 {
 
 .settings-toggle {
   background: var(--interactive-bg);
-  border: 1px solid var(--interactive-border);
+  border: 1px solid rgba(var(--rgb-accent), var(--opacity-30));
   color: var(--interactive-color);
   padding: 0.5rem 0.75rem;
   border-radius: 6px;
@@ -436,12 +441,6 @@ h3 {
   gap: 0.75rem;
   margin-bottom: 0.75rem;
   border: 1px solid var(--border-primary);
-  transition: border-color 0.2s ease, background 0.2s ease;
-}
-
-.destination:hover {
-  border-color: var(--border-accent);
-  background: var(--bg-hover);
 }
 
 .destination:last-child {
@@ -482,7 +481,7 @@ h3 {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(var(--rgb-taupe), var(--opacity-30));
+  background: rgba(var(--rgb-accent), var(--opacity-30));
   border-radius: 24px;
   transition: 0.3s;
 }
@@ -539,7 +538,6 @@ input:checked + .slider:before {
   padding-right: 120px; /* Reserve space so buttons don't overlap short text */
   border-radius: 8px;
   margin-bottom: 0.5rem;
-  transition: background 0.2s ease, border 0.2s ease;
   border: 1px solid var(--border-primary);
   position: relative; /* Essential for absolute child */
   gap: 0.75rem;
@@ -557,12 +555,6 @@ input:checked + .slider:before {
   border-color: var(--accent-primary);
   border-width: 2px;
   transform: scale(0.98);
-}
-
-.video:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-accent);
-  border-width: 1px;
 }
 
 
@@ -836,7 +828,7 @@ button {
 
 button:hover:not(:disabled) {
   background: var(--bg-hover);
-  border-color: var(--border-accent);
+  border-color: rgba(var(--rgb-accent), var(--opacity-40));
   transform: translateY(-1px);
 }
 
@@ -858,7 +850,7 @@ button:disabled {
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.3s ease;
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0px 4px 20px rgba(var(--rgb-accent), 0.2);
   letter-spacing: -0.01em;
 }
 
@@ -879,7 +871,7 @@ button:disabled {
   padding: 1rem 1.5rem;
   font-size: 1rem;
   background: transparent;
-  border: 1px solid var(--accent-error);
+  border: 1px solid rgba(var(--rgb-error), var(--opacity-50));
   color: var(--accent-error);
   margin-bottom: 1.5rem;
   cursor: pointer;
@@ -932,7 +924,7 @@ button:disabled {
 
 .btn-disconnect:hover {
   background: var(--bg-secondary);
-  border-color: var(--text-tertiary);
+  border-color: rgba(var(--rgb-accent), var(--opacity-40));
   color: var(--text-primary);
   transform: none;
 }
@@ -947,7 +939,7 @@ button:disabled {
 
 .btn-settings:hover {
   background: var(--bg-secondary);
-  border-color: var(--text-tertiary);
+  border-color: rgba(var(--rgb-accent), var(--opacity-40));
   transform: none;
 }
 
@@ -1130,7 +1122,7 @@ button:disabled {
   gap: 0.5rem;
   margin-top: 0.75rem;
   padding: 0.75rem;
-  background: rgba(var(--rgb-black), var(--opacity-20));
+  background: rgba(var(--rgb-base), var(--opacity-20));
   border-radius: 6px;
   max-height: 200px;
   overflow-y: auto;
@@ -1146,12 +1138,6 @@ button:disabled {
   border: 1px solid rgba(var(--rgb-blue), var(--opacity-30));
   border-radius: 4px;
   font-size: 0.9rem;
-  transition: 0.2s;
-}
-
-.wordbank-item:hover {
-  background: rgba(var(--rgb-blue), var(--opacity-30));
-  border-color: rgba(var(--rgb-blue), var(--opacity-50));
 }
 
 .btn-remove-word {
@@ -1173,7 +1159,7 @@ button:disabled {
 .btn-clear-wordbank {
   padding: 0.3rem 0.75rem;
   background: transparent;
-  border: 1px solid var(--accent-error);
+  border: 1px solid rgba(var(--rgb-error), var(--opacity-50));
   color: var(--accent-error);
   border-radius: 4px;
   cursor: pointer;
@@ -1384,6 +1370,62 @@ button:disabled {
   transform: translateY(-1px);
   box-shadow: var(--shadow-md);
   filter: brightness(1.1);
+}
+
+/* ============================================
+   DANGER ZONE SECTION
+   ============================================ */
+.danger-zone {
+  margin-top: 1rem;
+  padding: 1.5rem;
+  background: rgba(var(--rgb-error), var(--opacity-10));
+  border: 1px solid rgba(var(--rgb-error), var(--opacity-30));
+  border-radius: 8px;
+}
+
+.danger-zone-button {
+  width: 100%;
+  padding: 0.6rem 0.75rem;
+  background: transparent;
+  border: 1px solid rgba(var(--rgb-error), var(--opacity-60));
+  border-radius: 6px;
+  color: var(--accent-error);
+  cursor: pointer;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: all 0.2s ease;
+}
+
+.danger-zone-button:hover {
+  background: rgba(var(--rgb-error), var(--opacity-10));
+  border-color: rgba(var(--rgb-error), var(--opacity-80));
+}
+
+.danger-zone-delete-button {
+  width: 100%;
+  padding: 0.75rem;
+  background: var(--accent-error);
+  color: var(--color-white);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.danger-zone-delete-button:hover:not(:disabled) {
+  background: rgba(var(--rgb-error), var(--opacity-80));
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.danger-zone-delete-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
 }
 
 /* Tooltip styles */
@@ -1861,7 +1903,7 @@ button:disabled {
 .login-tab {
   padding: var(--spacing-sm) var(--spacing-md);
   background: transparent;
-  border: 1px solid var(--border-accent);
+  border: 1px solid rgba(var(--rgb-accent), var(--opacity-30));
   color: var(--text-primary);
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -2034,7 +2076,7 @@ button:disabled {
 .google-button {
   width: 100%;
   padding: 0.75rem;
-  background: var(--color-white);
+  background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
   color: var(--text-primary);
@@ -2065,7 +2107,7 @@ button:disabled {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: radial-gradient(circle at top, rgba(var(--rgb-grey), var(--opacity-10)) 0%, rgba(var(--rgb-black), var(--opacity-05)) 45%, var(--bg-primary) 100%);
+  background: radial-gradient(circle at top, rgba(var(--rgb-accent), var(--opacity-10)) 0%, rgba(var(--rgb-base), var(--opacity-05)) 45%, var(--bg-primary) 100%);
   color: var(--text-primary);
   position: relative;
   overflow-x: hidden;
@@ -2097,7 +2139,7 @@ button:disabled {
   padding: 1.5rem var(--spacing-2xl);
   border-bottom: 1px solid var(--border-primary);
   backdrop-filter: blur(10px);
-  background: var(--bg-overlay-light);
+  background: var(--bg-secondary);
 }
 
 .landing-logo {
@@ -2145,7 +2187,7 @@ button:disabled {
 
 .landing-nav-button:hover {
   background: rgba(15, 23, 42, 0.8);
-  border-color: var(--border-accent);
+  border-color: rgba(var(--rgb-accent), var(--opacity-40));
   transform: translateY(-1px);
 }
 
@@ -2211,7 +2253,7 @@ button:disabled {
 
 .landing-cta-button-secondary:hover {
   background: var(--bg-hover);
-  border-color: var(--border-accent);
+  border-color: rgba(var(--rgb-accent), var(--opacity-40));
   transform: translateY(-1px);
 }
 
@@ -2474,18 +2516,18 @@ button:disabled {
 
 .admin-button:hover {
   background: var(--bg-hover);
-  border-color: var(--border-accent);
+  border-color: rgba(var(--rgb-accent), var(--opacity-40));
 }
 
 .admin-button-primary {
   background: var(--accent-primary);
-  border-color: var(--accent-primary);
+  border-color: rgba(var(--rgb-accent), var(--opacity-60));
   color: var(--color-white);
 }
 
 .admin-button-primary:hover {
   background: var(--accent-primary-hover);
-  border-color: var(--accent-primary-hover);
+  border-color: rgba(var(--rgb-accent), var(--opacity-70));
 }
 
 .admin-button-danger {
@@ -2584,9 +2626,6 @@ button:disabled {
   color: var(--text-primary);
 }
 
-.admin-table tr:hover {
-  background: var(--bg-tertiary);
-}
 
 /* ============================================
    PRICING PAGE
