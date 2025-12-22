@@ -390,7 +390,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const [youtubeVideosTotalPages, setYoutubeVideosTotalPages] = useState(0);
   const [loadingYoutubeVideos, setLoadingYoutubeVideos] = useState(false);
   const [expandedVideos, setExpandedVideos] = useState(new Set());
-  const [expandedErrors, setExpandedErrors] = useState(new Set());
   const [tiktokSettings, setTiktokSettings] = useState({
     privacy_level: '',
     allow_comments: false,
@@ -439,6 +438,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const [notification, setNotification] = useState(null); // For popup notifications
   const [confirmDialog, setConfirmDialog] = useState(null); // For confirmation dialogs
   const [destinationModal, setDestinationModal] = useState(null); // { videoId, platform, video }
+  const [expandedDestinationErrors, setExpandedDestinationErrors] = useState(new Set()); // Track which destination errors are expanded
 
   // Check for Google login callback
   useEffect(() => {
@@ -3677,225 +3677,110 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         </span>
                       )}
                     </div>
-                    {/* Token count - desktop only */}
-                    {v.file_size_bytes && (
-                      <div className="video-token-badge-desktop">
-                        🪙 {v.tokens_consumed || calculateTokens(v.file_size_bytes)}
+                    {/* Platform Status Indicators - Clickable Buttons */}
+                    {v.platform_statuses && (
+                      <div style={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        gap: '6px', 
+                        marginTop: '4px',
+                        flexWrap: 'wrap'
+                      }}>
+                        {Object.entries(v.platform_statuses).map(([platform, status]) => {
+                          if (status === 'not_enabled') return null;
+                          
+                          const platformNames = {
+                            youtube: 'YouTube',
+                            tiktok: 'TikTok',
+                            instagram: 'Instagram'
+                          };
+                          
+                          // Get SVG icon for platform
+                          let platformIcon;
+                          if (platform === 'youtube') {
+                            platformIcon = (
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" fill="#FF0000"/>
+                              </svg>
+                            );
+                          } else if (platform === 'tiktok') {
+                            platformIcon = (
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z" fill="#FFFFFF"/>
+                              </svg>
+                            );
+                          } else if (platform === 'instagram') {
+                            platformIcon = (
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" fill="#E4405F"/>
+                              </svg>
+                            );
+                          }
+                          
+                          // Determine border color based on status
+                          let borderColor, backgroundColor, title;
+                          if (status === 'success') {
+                            borderColor = '#22c55e'; // Green
+                            backgroundColor = 'rgba(34, 197, 94, 0.1)';
+                            title = `${platformNames[platform]}: Upload successful - Click to view/edit`;
+                          } else if (status === 'failed') {
+                            borderColor = '#ef4444'; // Red
+                            backgroundColor = 'rgba(239, 68, 68, 0.1)';
+                            title = `${platformNames[platform]}: Upload failed - Click to view errors/edit`;
+                          } else {
+                            // Pending
+                            borderColor = 'rgba(255, 255, 255, 0.2)';
+                            backgroundColor = 'rgba(255, 255, 255, 0.05)';
+                            title = `${platformNames[platform]}: Will upload to this platform - Click to configure`;
+                          }
+                          
+                          return (
+                            <button
+                              key={platform}
+                              className="destination-status-button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDestinationModal({ videoId: v.id, platform, video: v });
+                              }}
+                              title={title}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                padding: '4px 6px',
+                                border: `2px solid ${borderColor}`,
+                                borderRadius: '6px',
+                                background: backgroundColor,
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease',
+                                opacity: status === 'pending' ? 0.7 : 1,
+                                minWidth: '32px',
+                                height: '28px'
+                              }}
+                              onMouseEnter={(e) => {
+                                if (status === 'pending') {
+                                  e.currentTarget.style.opacity = '1';
+                                  e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.5)';
+                                } else {
+                                  e.currentTarget.style.transform = 'scale(1.05)';
+                                }
+                              }}
+                              onMouseLeave={(e) => {
+                                if (status === 'pending') {
+                                  e.currentTarget.style.opacity = '0.7';
+                                  e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                                } else {
+                                  e.currentTarget.style.transform = 'scale(1)';
+                                }
+                              }}
+                            >
+                              {platformIcon}
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
-                  <div className="status">
-                    {v.status === 'uploading' ? (
-                      v.upload_progress !== undefined ? (
-                        <span>Uploading {v.upload_progress}%</span>
-                      ) : v.progress !== undefined && v.progress < 100 ? (
-                        <span>Uploading to server {v.progress}%</span>
-                      ) : (
-                        <span>Processing...</span>
-                      )
-                    ) : v.status === 'scheduled' && v.scheduled_time ? (
-                      <span>Scheduled for {new Date(v.scheduled_time).toLocaleString(undefined, {
-                        year: 'numeric',
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit'
-                      })}</span>
-                    ) : v.status === 'failed' ? (
-                      v.error ? (
-                        !expandedErrors.has(v.id) ? (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setExpandedErrors(prev => {
-                                const newSet = new Set(prev);
-                                newSet.add(v.id);
-                                return newSet;
-                              });
-                            }}
-                            style={{
-                              padding: '0.25rem 0.5rem',
-                              background: 'rgba(239, 68, 68, 0.1)',
-                              border: '1px solid rgba(239, 68, 68, 0.3)',
-                              borderRadius: '4px',
-                              color: '#ef4444',
-                              cursor: 'pointer',
-                              fontSize: '0.75rem',
-                              fontWeight: '500',
-                              transition: 'all 0.2s'
-                            }}
-                            onMouseEnter={(e) => {
-                              e.target.style.background = 'rgba(239, 68, 68, 0.2)';
-                              e.target.style.borderColor = 'rgba(239, 68, 68, 0.5)';
-                            }}
-                            onMouseLeave={(e) => {
-                              e.target.style.background = 'rgba(239, 68, 68, 0.1)';
-                              e.target.style.borderColor = 'rgba(239, 68, 68, 0.3)';
-                            }}
-                            title="Show full error"
-                          >
-                            Show error
-                          </button>
-                        ) : (
-                          <div style={{ 
-                            flex: '1 1 100%', 
-                            marginTop: '4px',
-                            padding: '0.5rem',
-                            background: 'rgba(239, 68, 68, 0.05)',
-                            border: '1px solid rgba(239, 68, 68, 0.2)',
-                            borderRadius: '4px',
-                            fontSize: '0.85rem',
-                            color: '#ef4444',
-                            wordBreak: 'break-word'
-                          }}>
-                            <div style={{ marginBottom: '4px' }}>
-                              {v.error}
-                            </div>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setExpandedErrors(prev => {
-                                  const newSet = new Set(prev);
-                                  newSet.delete(v.id);
-                                  return newSet;
-                                });
-                              }}
-                              style={{
-                                padding: '0.25rem 0.5rem',
-                                background: 'rgba(239, 68, 68, 0.1)',
-                                border: '1px solid rgba(239, 68, 68, 0.3)',
-                                borderRadius: '4px',
-                                color: '#ef4444',
-                                cursor: 'pointer',
-                                fontSize: '0.75rem',
-                                fontWeight: '500',
-                                transition: 'all 0.2s'
-                              }}
-                              onMouseEnter={(e) => {
-                                e.target.style.background = 'rgba(239, 68, 68, 0.2)';
-                                e.target.style.borderColor = 'rgba(239, 68, 68, 0.5)';
-                              }}
-                              onMouseLeave={(e) => {
-                                e.target.style.background = 'rgba(239, 68, 68, 0.1)';
-                                e.target.style.borderColor = 'rgba(239, 68, 68, 0.3)';
-                              }}
-                              title="Hide error"
-                            >
-                              Hide error
-                            </button>
-                          </div>
-                        )
-                      ) : (
-                        <span style={{ color: '#ef4444' }}>Failed</span>
-                      )
-                    ) : (
-                      <span>{v.status}</span>
-                    )}
-                  </div>
-                  {/* Platform Status Indicators - Clickable Buttons */}
-                  {v.platform_statuses && (
-                    <div style={{ 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      gap: '6px', 
-                      marginTop: '4px',
-                      flexWrap: 'wrap'
-                    }}>
-                      {Object.entries(v.platform_statuses).map(([platform, status]) => {
-                        if (status === 'not_enabled') return null;
-                        
-                        const platformNames = {
-                          youtube: 'YouTube',
-                          tiktok: 'TikTok',
-                          instagram: 'Instagram'
-                        };
-                        
-                        // Get SVG icon for platform
-                        let platformIcon;
-                        if (platform === 'youtube') {
-                          platformIcon = (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                              <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" fill="#FF0000"/>
-                            </svg>
-                          );
-                        } else if (platform === 'tiktok') {
-                          platformIcon = (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                              <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z" fill="#FFFFFF"/>
-                            </svg>
-                          );
-                        } else if (platform === 'instagram') {
-                          platformIcon = (
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                              <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z" fill="#E4405F"/>
-                            </svg>
-                          );
-                        }
-                        
-                        // Determine border color based on status
-                        let borderColor, backgroundColor, title;
-                        if (status === 'success') {
-                          borderColor = '#22c55e'; // Green
-                          backgroundColor = 'rgba(34, 197, 94, 0.1)';
-                          title = `${platformNames[platform]}: Upload successful - Click to view/edit`;
-                        } else if (status === 'failed') {
-                          borderColor = '#ef4444'; // Red
-                          backgroundColor = 'rgba(239, 68, 68, 0.1)';
-                          title = `${platformNames[platform]}: Upload failed - Click to view errors/edit`;
-                        } else {
-                          // Pending
-                          borderColor = 'rgba(255, 255, 255, 0.2)';
-                          backgroundColor = 'rgba(255, 255, 255, 0.05)';
-                          title = `${platformNames[platform]}: Will upload to this platform - Click to configure`;
-                        }
-                        
-                        return (
-                          <button
-                            key={platform}
-                            className="destination-status-button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDestinationModal({ videoId: v.id, platform, video: v });
-                            }}
-                            title={title}
-                            style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              padding: '4px 6px',
-                              border: `2px solid ${borderColor}`,
-                              borderRadius: '6px',
-                              background: backgroundColor,
-                              cursor: 'pointer',
-                              transition: 'all 0.2s ease',
-                              opacity: status === 'pending' ? 0.7 : 1,
-                              minWidth: '32px',
-                              height: '28px'
-                            }}
-                            onMouseEnter={(e) => {
-                              if (status === 'pending') {
-                                e.currentTarget.style.opacity = '1';
-                                e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.5)';
-                              } else {
-                                e.currentTarget.style.transform = 'scale(1.05)';
-                              }
-                            }}
-                            onMouseLeave={(e) => {
-                              if (status === 'pending') {
-                                e.currentTarget.style.opacity = '0.7';
-                                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
-                              } else {
-                                e.currentTarget.style.transform = 'scale(1)';
-                              }
-                            }}
-                          >
-                            {platformIcon}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
                   {/* TikTok Publish Status */}
                   {v.tiktok_publish_status && (
                     <div style={{
@@ -3949,6 +3834,31 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       ></div>
                     </div>
                   )}
+                  {/* Status at bottom left */}
+                  <div className="status" style={{ marginTop: '8px' }}>
+                    {v.status === 'uploading' ? (
+                      v.upload_progress !== undefined ? (
+                        <span>Uploading {v.upload_progress}%</span>
+                      ) : v.progress !== undefined && v.progress < 100 ? (
+                        <span>Uploading to server {v.progress}%</span>
+                      ) : (
+                        <span>Processing...</span>
+                      )
+                    ) : v.status === 'scheduled' && v.scheduled_time ? (
+                      <span>Scheduled for {new Date(v.scheduled_time).toLocaleString(undefined, {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit'
+                      })}</span>
+                    ) : v.status === 'failed' ? (
+                      <span style={{ color: '#ef4444' }}>Failed - Click destination buttons to view errors</span>
+                    ) : (
+                      <span>{v.status}</span>
+                    )}
+                  </div>
                   {isExpanded && (
                     <div className="video-expanded-details">
                       {/* File Info Section */}
@@ -4074,65 +3984,40 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   )}
                 </div>
                 <div className="video-actions">
-                  {v.status !== 'uploading' && v.status !== 'uploaded' && (
-                    <>
-                      <button 
-                        onClick={() => {
-                          const newExpanded = new Set(expandedVideos);
-                          if (isExpanded) {
-                            newExpanded.delete(v.id);
-                          } else {
-                            newExpanded.add(v.id);
-                          }
-                          setExpandedVideos(newExpanded);
-                        }}
-                        className="btn-edit" 
-                        title={isExpanded ? "Collapse properties" : "Expand properties"}
-                        style={{ 
-                          marginRight: '4px', 
-                          fontSize: '1rem',
-                          width: '24px',
-                          height: '24px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          padding: 0,
-                          lineHeight: '1'
-                        }}
-                      >
-                        <span style={{ display: 'inline-block', width: '12px', textAlign: 'center' }}>
-                          {isExpanded ? '▼' : '▾'}
-                        </span>
-                      </button>
-                      <button onClick={() => {
-                        setEditingVideo(v);
-                        setEditTitleLength((v.custom_settings?.title || v.youtube_title || '').length);
-                        setEditCommercialContentDisclosure(v.custom_settings?.commercial_content_disclosure ?? false);
-                        setEditCommercialContentYourBrand(v.custom_settings?.commercial_content_your_brand ?? false);
-                        setEditCommercialContentBranded(v.custom_settings?.commercial_content_branded ?? false);
-                        setEditTiktokPrivacy(v.custom_settings?.privacy_level || '');
-                      }} className="btn-edit" title="Edit video settings">
-                        ✏️
-                      </button>
-                      {v.status === 'failed' && (
-                        <button 
-                          onClick={async () => {
-                            try {
-                              await axios.post(`${API}/videos/${v.id}/retry`);
-                              setMessage('🔄 Retrying upload...');
-                              // Refresh videos to show updated status
-                              loadVideos();
-                            } catch (err) {
-                              setMessage(`❌ ${err.response?.data?.detail || err.message || 'Failed to retry upload'}`);
-                            }
-                          }}
-                          className="retry-upload-btn"
-                          title="Retry failed upload"
-                        >
-                          🔄 Retry
-                        </button>
-                      )}
-                    </>
+                  {v.status === 'failed' && (
+                    <button 
+                      onClick={async () => {
+                        try {
+                          await axios.post(`${API}/videos/${v.id}/retry`);
+                          setMessage('🔄 Retrying upload...');
+                          // Refresh videos to show updated status
+                          loadVideos();
+                        } catch (err) {
+                          setMessage(`❌ ${err.response?.data?.detail || err.message || 'Failed to retry upload'}`);
+                        }
+                      }}
+                      className="retry-upload-btn"
+                      title="Retry failed upload"
+                    >
+                      🔄 Retry
+                    </button>
+                  )}
+                  {/* Token amount */}
+                  {v.file_size_bytes && (
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      padding: '0.25rem 0.5rem',
+                      background: 'rgba(99, 102, 241, 0.15)',
+                      border: '1px solid rgba(99, 102, 241, 0.3)',
+                      borderRadius: '6px',
+                      fontSize: '0.75rem',
+                      color: '#999',
+                      fontWeight: '500'
+                    }}>
+                      🪙 {v.tokens_consumed || calculateTokens(v.file_size_bytes)}
+                    </div>
                   )}
                   <button onClick={() => removeVideo(v.id)} disabled={v.status === 'uploading'}>×</button>
                 </div>
@@ -4524,7 +4409,15 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         
         const platformData = video.upload_properties?.[platform] || {};
         const platformStatus = video.platform_statuses?.[platform] || 'pending';
-        const platformError = platformData.error || (platform === 'tiktok' && video.tiktok_publish_error) || null;
+        // Get error from multiple possible sources
+        let platformError = platformData.error || null;
+        if (!platformError && platform === 'tiktok') {
+          platformError = video.tiktok_publish_error || null;
+        }
+        // If no platform-specific error but video failed, show general error
+        if (!platformError && platformStatus === 'failed' && video.error) {
+          platformError = video.error;
+        }
         const customSettings = video.custom_settings || {};
         
         const handleSaveOverrides = async () => {
@@ -4605,7 +4498,46 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               <div className="modal-body">
                 {/* Upload Status */}
                 <div className="setting-group">
-                  <label>Upload Status</label>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <label>Upload Status</label>
+                    {platformStatus === 'failed' && (
+                      <button
+                        onClick={() => {
+                          const errorKey = `${video.id}-${platform}`;
+                          setExpandedDestinationErrors(prev => {
+                            const newSet = new Set(prev);
+                            if (newSet.has(errorKey)) {
+                              newSet.delete(errorKey);
+                            } else {
+                              newSet.add(errorKey);
+                            }
+                            return newSet;
+                          });
+                        }}
+                        style={{
+                          padding: '0.375rem 0.75rem',
+                          background: 'rgba(239, 68, 68, 0.1)',
+                          border: '1px solid rgba(239, 68, 68, 0.3)',
+                          borderRadius: '6px',
+                          color: '#ef4444',
+                          cursor: 'pointer',
+                          fontSize: '0.85rem',
+                          fontWeight: '500',
+                          transition: 'all 0.2s'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.target.style.background = 'rgba(239, 68, 68, 0.2)';
+                          e.target.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.target.style.background = 'rgba(239, 68, 68, 0.1)';
+                          e.target.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+                        }}
+                      >
+                        {expandedDestinationErrors.has(`${video.id}-${platform}`) ? 'Hide Error' : 'Show Error'}
+                      </button>
+                    )}
+                  </div>
                   <div style={{
                     padding: '0.75rem',
                     background: platformStatus === 'success' 
@@ -4634,10 +4566,10 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   </div>
                 </div>
                 
-                {/* Error Display */}
-                {platformError && (
+                {/* Destination-Specific Error Display */}
+                {platformStatus === 'failed' && expandedDestinationErrors.has(`${video.id}-${platform}`) && (
                   <div className="setting-group">
-                    <label>Error Details</label>
+                    <label>{platformNames[platform]} Upload Error</label>
                     <div style={{
                       padding: '0.75rem',
                       background: 'rgba(239, 68, 68, 0.1)',
@@ -4647,7 +4579,18 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       fontSize: '0.9rem',
                       wordBreak: 'break-word'
                     }}>
-                      {platformError}
+                      {platformError ? (
+                        platformError
+                      ) : (
+                        <div style={{ fontStyle: 'italic', opacity: 0.8 }}>
+                          No detailed error message available. The upload failed but no specific error was captured.
+                          {video.error && (
+                            <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid rgba(239, 68, 68, 0.2)' }}>
+                              <strong>General error:</strong> {video.error}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
