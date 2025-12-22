@@ -1389,6 +1389,10 @@ async def security_middleware(request: Request, call_next):
             path == "/metrics"  # Prometheus metrics endpoint
         )
         
+        # Video file endpoint uses token-based auth (HMAC-signed), so skip origin/referer validation
+        # TikTok's servers don't send Origin/Referer headers when fetching videos
+        is_video_file_endpoint = path.startswith("/api/videos/") and path.endswith("/file")
+        
         # Get session ID if available
         session_id = request.cookies.get("session_id")
         
@@ -1418,7 +1422,8 @@ async def security_middleware(request: Request, call_next):
             
             # Origin/Referer validation (skip for OPTIONS/CORS preflight, GET requests in dev, and public endpoints)
             # Note: OAuth callbacks are already excluded by the outer if not is_callback block
-            if not is_public_endpoint and request.method != "OPTIONS" and (request.method != "GET" or ENVIRONMENT == "production"):
+            # Also skip for video file endpoints (token-authenticated, TikTok doesn't send Origin/Referer)
+            if not is_public_endpoint and not is_video_file_endpoint and request.method != "OPTIONS" and (request.method != "GET" or ENVIRONMENT == "production"):
                 if not validate_origin_referer(request):
                     client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
                     if not client_ip:
