@@ -2616,15 +2616,42 @@ async def auth_tiktok_callback(
         return RedirectResponse(f"{FRONTEND_URL}/app?error=tiktok_auth_failed")
 
 
-def refresh_tiktok_account_data(user_id: int, access_token: str, db: Session):
-    """Background task to refresh TikTok account data and update cache"""
+def refresh_tiktok_account_data(user_id: int, db: Session):
+    """Background task to refresh TikTok account data and update cache
+    Runs immediately after the HTTP response is sent (typically <1ms delay)
+    
+    Root cause fix: Always get fresh token from database, don't rely on passed token
+    """
     try:
+        tiktok_logger.debug(f"Background refresh started for user {user_id}")
         tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
         if not tiktok_token:
+            tiktok_logger.warning(f"Background refresh: No token found for user {user_id}")
+            return
+        
+        # Always get fresh access token from database (decrypted)
+        access_token = decrypt(tiktok_token.access_token)
+        if not access_token:
+            tiktok_logger.warning(f"Background refresh: Failed to decrypt token for user {user_id}")
             return
         
         extra_data = tiktok_token.extra_data or {}
         cached_creator_info = extra_data.get("creator_info")
+        
+        # Check if token is expired and refresh if needed
+        token_expiry = db_helpers.check_token_expiration(tiktok_token)
+        if token_expiry.get("expired", False) or token_expiry.get("expires_soon", False):
+            refresh_token_decrypted = decrypt(tiktok_token.refresh_token) if tiktok_token.refresh_token else None
+            if refresh_token_decrypted:
+                try:
+                    tiktok_logger.debug(f"Background refresh: Token expired/expiring for user {user_id}, refreshing...")
+                    access_token = refresh_tiktok_token(user_id, refresh_token_decrypted, db)
+                    # Refresh token object after refresh
+                    tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
+                    extra_data = tiktok_token.extra_data or {} if tiktok_token else {}
+                except Exception as refresh_error:
+                    tiktok_logger.warning(f"Background refresh: Failed to refresh token for user {user_id}: {refresh_error}")
+                    return  # Can't proceed without valid token
         
         # Fetch fresh data from API
         with httpx.Client(timeout=5.0) as client:
@@ -2636,6 +2663,28 @@ def refresh_tiktok_account_data(user_id: int, access_token: str, db: Session):
                 },
                 json={}
             )
+            
+            # If 401, try refreshing token and retry once
+            if creator_info_response.status_code == 401:
+                tiktok_logger.debug(f"Background refresh: Got 401 for user {user_id}, attempting token refresh...")
+                refresh_token_decrypted = decrypt(tiktok_token.refresh_token) if tiktok_token and tiktok_token.refresh_token else None
+                if refresh_token_decrypted:
+                    try:
+                        access_token = refresh_tiktok_token(user_id, refresh_token_decrypted, db)
+                        tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
+                        extra_data = tiktok_token.extra_data or {} if tiktok_token else {}
+                        # Retry the API call
+                        creator_info_response = client.post(
+                            TIKTOK_CREATOR_INFO_URL,
+                            headers={
+                                "Authorization": f"Bearer {access_token.strip()}",
+                                "Content-Type": "application/json; charset=UTF-8"
+                            },
+                            json={},
+                            timeout=5.0
+                        )
+                    except Exception as retry_error:
+                        tiktok_logger.warning(f"Background refresh: Failed to refresh token after 401 for user {user_id}: {retry_error}")
             
             if creator_info_response.status_code == 200:
                 creator_data = creator_info_response.json()
@@ -2694,6 +2743,10 @@ def refresh_tiktok_account_data(user_id: int, access_token: str, db: Session):
                         db=db
                     )
                     tiktok_logger.info(f"Background refresh: Updated TikTok cache for user {user_id}")
+                else:
+                    tiktok_logger.debug(f"Background refresh: No changes detected for user {user_id}")
+            else:
+                tiktok_logger.warning(f"Background refresh: API call failed for user {user_id} (status {creator_info_response.status_code})")
     except Exception as e:
         tiktok_logger.warning(f"Background refresh failed for user {user_id}: {str(e)}")
 
@@ -2743,12 +2796,11 @@ def get_tiktok_account(
             # Return cached data immediately for fast response
             # Then refresh in background for next request
             if open_id:
-                # Get access token for background refresh
-                access_token = decrypt(tiktok_token.access_token)
-                if access_token:
-                    # Schedule background task to refresh data
-                    background_tasks.add_task(refresh_tiktok_account_data, user_id, access_token, db)
-                    tiktok_logger.debug(f"Returning cached data immediately for user {user_id}, refreshing in background")
+                # Schedule background task to refresh data
+                # Root cause fix: Background task will get fresh token from DB itself
+                # FastAPI BackgroundTasks run immediately after response is sent (very fast, <1ms delay)
+                background_tasks.add_task(refresh_tiktok_account_data, user_id, db)
+                tiktok_logger.debug(f"Returning cached data immediately for user {user_id}, background refresh scheduled (runs immediately after response)")
             
             return {
                 "account": account_info,
