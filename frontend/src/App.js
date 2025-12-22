@@ -393,10 +393,10 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const [expandedVideos, setExpandedVideos] = useState(new Set());
   const [expandedErrors, setExpandedErrors] = useState(new Set());
   const [tiktokSettings, setTiktokSettings] = useState({
-    privacy_level: 'private',
-    allow_comments: true,
-    allow_duet: true,
-    allow_stitch: true,
+    privacy_level: '',
+    allow_comments: false,
+    allow_duet: false,
+    allow_stitch: false,
     title_template: '',
     description_template: ''
   });
@@ -1213,18 +1213,31 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         }));
         // Store creator_info for privacy options and interaction settings
         if (res.data.creator_info) {
+          console.log('TikTok creator_info received:', res.data.creator_info);
+          console.log('privacy_level_options:', res.data.creator_info.privacy_level_options);
           setTiktokCreatorInfo(res.data.creator_info);
         } else {
+          console.warn('No creator_info in TikTok account response');
           setTiktokCreatorInfo(null);
+        }
+        // Load music usage confirmation status
+        try {
+          const musicRes = await axios.get(`${API}/auth/tiktok/music-usage-confirmed`);
+          setMusicUsageConfirmed(musicRes.data.confirmed);
+        } catch (musicErr) {
+          console.error('Error checking music usage confirmation:', musicErr);
+          setMusicUsageConfirmed(false);
         }
       } else {
         setTiktok(prev => ({ ...prev, connected: false }));
         setTiktokCreatorInfo(null);
+        setMusicUsageConfirmed(false);
       }
     } catch (err) {
       console.error('Error loading TikTok account:', err);
       setTiktok(prev => ({ ...prev, connected: false }));
       setTiktokCreatorInfo(null);
+      setMusicUsageConfirmed(false);
     }
   }, [API]);
 
@@ -2854,26 +2867,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z" fill="#FFFFFF"/>
               </svg>
               TikTok
-              {tiktok.connected && musicUsageConfirmed && (
-                <span 
-                  style={{ 
-                    fontSize: '0.875rem', 
-                    color: '#22c55e',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    width: '18px',
-                    height: '18px',
-                    borderRadius: '50%',
-                    background: 'rgba(34, 197, 94, 0.1)',
-                    border: '1px solid rgba(34, 197, 94, 0.3)',
-                    marginLeft: '4px'
-                  }}
-                  title="TikTok Music Usage Confirmation accepted"
-                >
-                  ✓
-                </span>
-              )}
             </span>
             <div style={{ 
               width: '10px', 
@@ -2931,23 +2924,51 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           <div className="settings-panel">
             <h3>TikTok Settings</h3>
             
-            {musicUsageConfirmed && (
-              <div style={{
-                padding: '0.5rem 0.75rem',
-                background: 'rgba(34, 197, 94, 0.1)',
-                border: '1px solid rgba(34, 197, 94, 0.3)',
-                borderRadius: '6px',
-                marginBottom: '1rem',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                fontSize: '0.85rem',
-                color: '#22c55e'
-              }}>
-                <span style={{ fontSize: '1rem', fontWeight: 'bold' }}>✓</span>
-                <span>Music Usage Confirmation accepted</span>
+            <div style={{
+              padding: '0.5rem 0.75rem',
+              background: musicUsageConfirmed ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+              border: musicUsageConfirmed ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
+              borderRadius: '6px',
+              marginBottom: '1rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '0.5rem',
+              fontSize: '0.85rem',
+              color: musicUsageConfirmed ? '#22c55e' : '#ef4444'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '1rem', fontWeight: 'bold' }}>{musicUsageConfirmed ? '✓' : '✗'}</span>
+                <span>Music Usage Confirmation: {musicUsageConfirmed ? 'Accepted' : 'Not Accepted'}</span>
               </div>
-            )}
+              {!musicUsageConfirmed && (
+                <button
+                  onClick={async () => {
+                    try {
+                      await axios.post(`${API}/auth/tiktok/music-usage-confirmed`);
+                      setMusicUsageConfirmed(true);
+                      setMessage('✅ Music usage confirmation accepted');
+                    } catch (err) {
+                      console.error('Error confirming music usage:', err);
+                      setMessage('❌ Failed to confirm music usage. Please try again.');
+                    }
+                  }}
+                  style={{
+                    padding: '0.4rem 0.8rem',
+                    background: 'rgba(34, 197, 94, 0.2)',
+                    border: '1px solid rgba(34, 197, 94, 0.4)',
+                    borderRadius: '4px',
+                    color: '#22c55e',
+                    cursor: 'pointer',
+                    fontSize: '0.85rem',
+                    fontWeight: '500',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  Accept
+                </button>
+              )}
+            </div>
             
             <div className="setting-group">
               <label>Privacy Level</label>
@@ -2958,20 +2979,20 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 required
               >
                 <option value="">-- Select Privacy Level --</option>
-                {tiktokCreatorInfo?.privacy_level_options?.map(option => {
-                  // Map API values to display labels
+                {Array.isArray(tiktokCreatorInfo?.privacy_level_options) && tiktokCreatorInfo.privacy_level_options.map(option => {
                   const labelMap = {
                     'PUBLIC_TO_EVERYONE': 'Everyone',
                     'MUTUAL_FOLLOW_FRIENDS': 'Friends',
-                    'SELF_ONLY': 'Only Me',
-                    'FOLLOWER_OF_CREATOR': 'Followers'
+                    'FOLLOWER_OF_CREATOR': 'Followers',
+                    'SELF_ONLY': 'Only you'
                   };
-                  return (
-                    <option key={option} value={option}>
-                      {labelMap[option] || option}
-                    </option>
-                  );
-                })}
+                    return (
+                      <option key={option} value={option}>
+                        {labelMap[option] || option}
+                      </option>
+                    );
+                  });
+                })()}
               </select>
             </div>
 
@@ -2979,7 +3000,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               <label className="checkbox-label">
                 <input 
                   type="checkbox"
-                  checked={tiktokSettings.allow_comments || false}
+                  checked={tiktokSettings.allow_comments ?? false}
                   onChange={(e) => updateTiktokSettings('allow_comments', e.target.checked)}
                   className="checkbox"
                   disabled={tiktokCreatorInfo?.disable_comment || tiktokCreatorInfo?.comment_disabled}
@@ -2996,7 +3017,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               <label className="checkbox-label">
                 <input 
                   type="checkbox"
-                  checked={tiktokSettings.allow_duet || false}
+                  checked={tiktokSettings.allow_duet ?? false}
                   onChange={(e) => updateTiktokSettings('allow_duet', e.target.checked)}
                   className="checkbox"
                   disabled={tiktokCreatorInfo?.disable_duet || tiktokCreatorInfo?.duet_disabled}
@@ -3013,7 +3034,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               <label className="checkbox-label">
                 <input 
                   type="checkbox"
-                  checked={tiktokSettings.allow_stitch || false}
+                  checked={tiktokSettings.allow_stitch ?? false}
                   onChange={(e) => updateTiktokSettings('allow_stitch', e.target.checked)}
                   className="checkbox"
                   disabled={tiktokCreatorInfo?.disable_stitch || tiktokCreatorInfo?.stitch_disabled}
@@ -3908,25 +3929,31 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   <div className="form-group">
                     <label>TikTok Privacy Level</label>
                     <select 
-                      defaultValue={editingVideo.custom_settings?.privacy_level || tiktokSettings.privacy_level || ''}
+                      defaultValue={editingVideo.custom_settings?.privacy_level || ''}
                       id="edit-tiktok-privacy"
                       className="select"
                       required
                     >
                       <option value="">-- Select Privacy Level --</option>
-                      {tiktokCreatorInfo?.privacy_level_options?.map(option => {
+                      {(() => {
+                        const options = tiktokCreatorInfo?.privacy_level_options;
+                        if (!Array.isArray(options)) {
+                          return null;
+                        }
+                        return options.map(option => {
                         const labelMap = {
                           'PUBLIC_TO_EVERYONE': 'Everyone',
                           'MUTUAL_FOLLOW_FRIENDS': 'Friends',
-                          'SELF_ONLY': 'Only Me',
-                          'FOLLOWER_OF_CREATOR': 'Followers'
+                          'FOLLOWER_OF_CREATOR': 'Followers',
+                          'SELF_ONLY': 'Only you'
                         };
-                        return (
-                          <option key={option} value={option}>
-                            {labelMap[option] || option}
-                          </option>
-                        );
-                      })}
+                          return (
+                            <option key={option} value={option}>
+                              {labelMap[option] || option}
+                            </option>
+                          );
+                        });
+                      })()}
                     </select>
                   </div>
                   
@@ -3934,7 +3961,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     <label className="checkbox-label">
                       <input 
                         type="checkbox"
-                        defaultChecked={editingVideo.custom_settings?.allow_comments ?? tiktokSettings.allow_comments ?? false}
+                        defaultChecked={editingVideo.custom_settings?.allow_comments ?? false}
                         id="edit-tiktok-allow-comments"
                         className="checkbox"
                         disabled={tiktokCreatorInfo?.disable_comment || tiktokCreatorInfo?.comment_disabled}
@@ -3951,7 +3978,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     <label className="checkbox-label">
                       <input 
                         type="checkbox"
-                        defaultChecked={editingVideo.custom_settings?.allow_duet ?? tiktokSettings.allow_duet ?? false}
+                        defaultChecked={editingVideo.custom_settings?.allow_duet ?? false}
                         id="edit-tiktok-allow-duet"
                         className="checkbox"
                         disabled={tiktokCreatorInfo?.disable_duet || tiktokCreatorInfo?.duet_disabled}
@@ -3968,7 +3995,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     <label className="checkbox-label">
                       <input 
                         type="checkbox"
-                        defaultChecked={editingVideo.custom_settings?.allow_stitch ?? tiktokSettings.allow_stitch ?? false}
+                        defaultChecked={editingVideo.custom_settings?.allow_stitch ?? false}
                         id="edit-tiktok-allow-stitch"
                         className="checkbox"
                         disabled={tiktokCreatorInfo?.disable_stitch || tiktokCreatorInfo?.stitch_disabled}
@@ -3996,14 +4023,31 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   const madeForKids = document.getElementById('edit-made-for-kids').checked;
                   const scheduledTime = document.getElementById('edit-scheduled-time').value;
                   
-                  updateVideoSettings(editingVideo.id, {
+                  const settings = {
                     title: title || null,
                     description: description || null,
                     tags: tags || null,
                     visibility,
                     made_for_kids: madeForKids,
                     scheduled_time: scheduledTime ? new Date(scheduledTime).toISOString() : ''
-                  });
+                  };
+                  
+                  // Add TikTok settings if TikTok is enabled and connected
+                  if (tiktok.enabled && tiktok.connected) {
+                    const tiktokPrivacy = document.getElementById('edit-tiktok-privacy').value;
+                    const tiktokAllowComments = document.getElementById('edit-tiktok-allow-comments').checked;
+                    const tiktokAllowDuet = document.getElementById('edit-tiktok-allow-duet').checked;
+                    const tiktokAllowStitch = document.getElementById('edit-tiktok-allow-stitch').checked;
+                    
+                    if (tiktokPrivacy) {
+                      settings.privacy_level = tiktokPrivacy;
+                    }
+                    settings.allow_comments = tiktokAllowComments;
+                    settings.allow_duet = tiktokAllowDuet;
+                    settings.allow_stitch = tiktokAllowStitch;
+                  }
+                  
+                  updateVideoSettings(editingVideo.id, settings);
                 }}
                 className="btn-save"
               >

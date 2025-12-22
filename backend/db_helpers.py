@@ -82,10 +82,10 @@ def get_user_settings(user_id: int, category: str = "global", db: Session = None
             result = {**defaults, **settings_dict}
         elif category == "tiktok":
             defaults = {
-                "privacy_level": "private",
-                "allow_comments": True,
-                "allow_duet": True,
-                "allow_stitch": True,
+                "privacy_level": "",
+                "allow_comments": False,
+                "allow_duet": False,
+                "allow_stitch": False,
                 "title_template": "",
                 "description_template": ""
             }
@@ -182,10 +182,10 @@ def get_all_user_settings(user_id: int, db: Session = None) -> Dict[str, Dict[st
         
         # TikTok settings
         tiktok_defaults = {
-            "privacy_level": "private",
-            "allow_comments": True,
-            "allow_duet": True,
-            "allow_stitch": True,
+            "privacy_level": "",
+            "allow_comments": False,
+            "allow_duet": False,
+            "allow_stitch": False,
             "title_template": "",
             "description_template": ""
         }

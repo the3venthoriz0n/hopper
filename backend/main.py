@@ -835,10 +835,10 @@ def build_video_response(video: Video, all_settings: Dict[str, Dict], all_tokens
         
         upload_props['tiktok'] = {
             'title': tiktok_title[:2200] if len(tiktok_title) > 2200 else tiktok_title,
-            'privacy_level': custom_settings.get('privacy_level', tiktok_settings.get('privacy_level', 'public')),
-            'allow_comments': custom_settings.get('allow_comments', tiktok_settings.get('allow_comments', True)),
-            'allow_duet': custom_settings.get('allow_duet', tiktok_settings.get('allow_duet', True)),
-            'allow_stitch': custom_settings.get('allow_stitch', tiktok_settings.get('allow_stitch', True))
+            'privacy_level': custom_settings.get('privacy_level', tiktok_settings.get('privacy_level', '')),
+            'allow_comments': custom_settings.get('allow_comments', tiktok_settings.get('allow_comments', False)),
+            'allow_duet': custom_settings.get('allow_duet', tiktok_settings.get('allow_duet', False)),
+            'allow_stitch': custom_settings.get('allow_stitch', tiktok_settings.get('allow_stitch', False))
         }
         video_dict['tiktok_title'] = tiktok_title[:2200] if len(tiktok_title) > 2200 else tiktok_title
     else:
@@ -2641,20 +2641,16 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
         if cached_avatar_url:
             account_info["avatar_url"] = cached_avatar_url
         
-        # ROOT CAUSE FIX: If we have cached account info with display_name or username,
-        # ALWAYS return it immediately and NEVER call the API.
-        # This prevents the account name from being lost when API fails.
-        if cached_display_name or cached_username:
-            tiktok_logger.debug(f"Returning cached TikTok account info and creator_info for user {user_id}")
-            return {
-                "account": account_info,
-                "creator_info": cached_creator_info
-            }
-        
-        # If no cached display_name/username but we have open_id, try to fetch from API
+        # Always fetch fresh creator_info from API (don't use cached creator_info)
+        # But preserve cached account info (display_name, username, avatar_url) for display
         if not open_id:
             tiktok_logger.warning(f"No open_id found for user {user_id}")
-            # Return None if we don't have open_id (can't identify account)
+            # Return cached account info if we have it, but no creator_info
+            if cached_display_name or cached_username:
+                return {
+                    "account": account_info,
+                    "creator_info": None
+                }
             return {"account": None, "creator_info": None}
         
         # Get access token (decrypted)
@@ -2746,6 +2742,9 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
                 creator_data = creator_info_response.json()
                 creator_info = creator_data.get("data", {})
                 
+                # creator_info contains privacy_level_options array from /creator_info/query/ API
+                # We pass this through exactly as returned - no filtering or modification
+                
                 # Extract account information
                 if "creator_nickname" in creator_info:
                     account_info["display_name"] = creator_info["creator_nickname"]
@@ -2791,8 +2790,9 @@ def get_tiktok_account(user_id: int = Depends(require_auth), db: Session = Depen
                     
         except Exception as api_error:
             tiktok_logger.warning(f"Error calling TikTok API for user {user_id}: {str(api_error)}")
-            # Return cached account info only if it's complete (has display_name or username)
+            # Return cached account info if available, but log that creator_info is stale
             if account_info.get("display_name") or account_info.get("username"):
+                tiktok_logger.warning(f"Using cached creator_info due to API error - may be stale")
                 return {
                     "account": account_info,
                     "creator_info": cached_creator_info
@@ -6133,7 +6133,11 @@ def update_video(
     tags: str = None,
     visibility: str = None,
     made_for_kids: bool = None,
-    scheduled_time: str = None
+    scheduled_time: str = None,
+    privacy_level: str = None,
+    allow_comments: bool = None,
+    allow_duet: bool = None,
+    allow_stitch: bool = None
 ):
     """Update video settings"""
     # Get video
@@ -6164,6 +6168,23 @@ def update_video(
     
     if made_for_kids is not None:
         custom_settings["made_for_kids"] = made_for_kids
+    
+    # TikTok-specific settings
+    if privacy_level is not None:
+        # Accept both old format (public/private/friends) and new API format (PUBLIC_TO_EVERYONE/SELF_ONLY/etc)
+        valid_levels = ["public", "private", "friends", "PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "SELF_ONLY", "FOLLOWER_OF_CREATOR"]
+        if privacy_level not in valid_levels:
+            raise HTTPException(400, f"Invalid privacy level: {privacy_level}. Must be one of {valid_levels}")
+        custom_settings["privacy_level"] = privacy_level
+    
+    if allow_comments is not None:
+        custom_settings["allow_comments"] = allow_comments
+    
+    if allow_duet is not None:
+        custom_settings["allow_duet"] = allow_duet
+    
+    if allow_stitch is not None:
+        custom_settings["allow_stitch"] = allow_stitch
     
     # Build update dict
     update_data = {"custom_settings": custom_settings}
@@ -6835,22 +6856,39 @@ def get_video_duration(video_path: Path) -> float:
 
 
 def map_privacy_level_to_tiktok(privacy_level, creator_info):
-    """Map frontend privacy level to TikTok's format"""
-    mapping = {
-        "public": "PUBLIC_TO_EVERYONE",
-        "private": "SELF_ONLY",
-        "friends": "MUTUAL_FOLLOW_FRIENDS"
-    }
+    """Map frontend privacy level to TikTok's format
     
-    # Normalize and map
-    privacy_level = str(privacy_level).lower().strip() if privacy_level else "public"
-    tiktok_privacy = mapping.get(privacy_level, "PUBLIC_TO_EVERYONE")
+    Handles both old format (public/private/friends) and new API format (PUBLIC_TO_EVERYONE/SELF_ONLY/etc)
+    Raises exception if privacy_level is not set.
+    """
+    # Get available options from creator_info
+    available_options = creator_info.get("privacy_level_options", [])
+    
+    if not privacy_level or str(privacy_level).strip() == '':
+        raise Exception("Privacy level is required. Please select a privacy level in the video settings.")
+    
+    privacy_level_str = str(privacy_level).strip()
+    
+    # Check if it's already in TikTok API format (uppercase with underscores)
+    if privacy_level_str in ["PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "SELF_ONLY", "FOLLOWER_OF_CREATOR"]:
+        tiktok_privacy = privacy_level_str
+    else:
+        # Map old format to new format
+        mapping = {
+            "public": "PUBLIC_TO_EVERYONE",
+            "private": "SELF_ONLY",
+            "friends": "MUTUAL_FOLLOW_FRIENDS"
+        }
+        privacy_level_lower = privacy_level_str.lower()
+        tiktok_privacy = mapping.get(privacy_level_lower)
+        
+        if not tiktok_privacy:
+            raise Exception(f"Invalid privacy level: {privacy_level_str}. Must be one of: {list(mapping.keys())} or {['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'SELF_ONLY', 'FOLLOWER_OF_CREATOR']}")
     
     # Validate against available options
-    available_options = creator_info.get("privacy_level_options", [])
-    if available_options and tiktok_privacy not in available_options:
-        tiktok_logger.warning(f"Privacy '{tiktok_privacy}' not available, using '{available_options[0]}'")
-        tiktok_privacy = available_options[0]
+    if available_options:
+        if tiktok_privacy not in available_options:
+            raise Exception(f"Privacy level '{tiktok_privacy}' is not available for your account. Available options: {available_options}")
     
     return tiktok_privacy
 
@@ -7170,14 +7208,48 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         title = (title or filename_no_ext)[:2200]  # TikTok limit
         
         # Get settings: per-video custom > destination settings
-        privacy_level = custom_settings.get('privacy_level', tiktok_settings.get('privacy_level', 'public'))
-        tiktok_privacy = map_privacy_level_to_tiktok(privacy_level, creator_info)
+        # Privacy level is required - no default value allowed
+        privacy_level = custom_settings.get('privacy_level') or tiktok_settings.get('privacy_level')
+        if not privacy_level:
+            error_msg = "TikTok privacy level is required. Please set a privacy level in the video settings or TikTok destination settings."
+            tiktok_logger.error(
+                f"❌ TikTok upload FAILED - Privacy level not set - User {user_id}, Video {video_id} ({video.filename})",
+                extra={
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "video_filename": video.filename,
+                    "platform": "tiktok",
+                    "error_type": "PrivacyLevelRequired",
+                }
+            )
+            db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+            failed_uploads_gauge.inc()
+            return
+        
+        try:
+            tiktok_privacy = map_privacy_level_to_tiktok(privacy_level, creator_info)
+            tiktok_logger.debug(f"Using privacy_level: {tiktok_privacy} (from input: {privacy_level})")
+        except Exception as privacy_error:
+            error_msg = f"TikTok privacy level error: {str(privacy_error)}"
+            tiktok_logger.error(
+                f"❌ TikTok upload FAILED - Privacy level error - User {user_id}, Video {video_id} ({video.filename}): {error_msg}",
+                extra={
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "video_filename": video.filename,
+                    "platform": "tiktok",
+                    "error_type": "PrivacyLevelError",
+                }
+            )
+            db_helpers.update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+            failed_uploads_gauge.inc()
+            return
         
         # Check creator_info for disabled interactions
         # If interaction is disabled in creator_info, it cannot be enabled
-        allow_comments_setting = custom_settings.get('allow_comments', tiktok_settings.get('allow_comments', True))
-        allow_duet_setting = custom_settings.get('allow_duet', tiktok_settings.get('allow_duet', True))
-        allow_stitch_setting = custom_settings.get('allow_stitch', tiktok_settings.get('allow_stitch', True))
+        allow_comments_setting = custom_settings.get('allow_comments', tiktok_settings.get('allow_comments', False))
+        allow_duet_setting = custom_settings.get('allow_duet', tiktok_settings.get('allow_duet', False))
+        allow_stitch_setting = custom_settings.get('allow_stitch', tiktok_settings.get('allow_stitch', False))
         
         # Check if interactions are disabled in creator_info
         # creator_info may have fields like "disable_comment", "disable_duet", "disable_stitch"
