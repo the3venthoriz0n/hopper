@@ -398,7 +398,10 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     allow_duet: false,
     allow_stitch: false,
     title_template: '',
-    description_template: ''
+    description_template: '',
+    commercial_content_disclosure: false,
+    commercial_content_your_brand: false,
+    commercial_content_branded: false
   });
   const [instagramSettings, setInstagramSettings] = useState({
     caption_template: '',
@@ -415,6 +418,9 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const [editingVideo, setEditingVideo] = useState(null);
   const [draggedVideo, setDraggedVideo] = useState(null);
   const [editTitleLength, setEditTitleLength] = useState(0);
+  const [editCommercialContentDisclosure, setEditCommercialContentDisclosure] = useState(false);
+  const [editCommercialContentYourBrand, setEditCommercialContentYourBrand] = useState(false);
+  const [editCommercialContentBranded, setEditCommercialContentBranded] = useState(false);
   const [newWord, setNewWord] = useState('');
   const [wordbankExpanded, setWordbankExpanded] = useState(false);
   const [showGlobalSettings, setShowGlobalSettings] = useState(false);
@@ -1473,6 +1479,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       
       if (key === 'privacy_level') {
         setMessage(`✅ Privacy level set to ${value}`);
+      } else if (key.startsWith('commercial_content')) {
+        setMessage(`✅ Commercial content settings updated`);
       } else {
         setMessage(`✅ TikTok settings updated`);
       }
@@ -1880,6 +1888,9 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const closeEditModal = () => {
     setEditingVideo(null);
     setEditTitleLength(0);
+    setEditCommercialContentDisclosure(false);
+    setEditCommercialContentYourBrand(false);
+    setEditCommercialContentBranded(false);
   };
 
   const updateVideoSettings = async (videoId, settings) => {
@@ -2029,6 +2040,17 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         }
       });
       return;
+    }
+    
+    // Check commercial content disclosure validation
+    if (tiktok.enabled && tiktokSettings.commercial_content_disclosure) {
+      const hasYourBrand = tiktokSettings.commercial_content_your_brand ?? false;
+      const hasBranded = tiktokSettings.commercial_content_branded ?? false;
+      
+      if (!hasYourBrand && !hasBranded) {
+        setMessage('❌ You need to indicate if your content promotes yourself, a third party, or both.');
+        return;
+      }
     }
     
     if (!youtube.enabled && !tiktok.enabled && !instagram.enabled) {
@@ -3047,6 +3069,97 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             </div>
 
             <div className="setting-group">
+              <label className="checkbox-label">
+                <input 
+                  type="checkbox"
+                  checked={tiktokSettings.commercial_content_disclosure ?? false}
+                  onChange={(e) => {
+                    const newValue = e.target.checked;
+                    setTiktokSettings({...tiktokSettings, commercial_content_disclosure: newValue});
+                    updateTiktokSettings('commercial_content_disclosure', newValue);
+                    // Reset checkboxes when toggle is turned off
+                    if (!newValue) {
+                      setTiktokSettings(prev => ({...prev, commercial_content_your_brand: false, commercial_content_branded: false}));
+                      updateTiktokSettings('commercial_content_your_brand', false);
+                      updateTiktokSettings('commercial_content_branded', false);
+                    }
+                  }}
+                  className="checkbox"
+                />
+                <span>Content Disclosure Setting</span>
+                <span className="tooltip-wrapper">
+                  <span className="tooltip-icon">i</span>
+                  <span className="tooltip-text">Indicate whether this content promotes yourself, a brand, product or service</span>
+                </span>
+              </label>
+            </div>
+
+            {tiktokSettings.commercial_content_disclosure && (
+              <>
+                <div className="setting-group" style={{ marginLeft: '1.5rem' }}>
+                  <label className="checkbox-label">
+                    <input 
+                      type="checkbox"
+                      checked={tiktokSettings.commercial_content_your_brand ?? false}
+                      onChange={(e) => {
+                        const newValue = e.target.checked;
+                        setTiktokSettings({...tiktokSettings, commercial_content_your_brand: newValue});
+                        updateTiktokSettings('commercial_content_your_brand', newValue);
+                      }}
+                      className="checkbox"
+                    />
+                    <span>Your Brand</span>
+                    <span className="tooltip-wrapper">
+                      <span className="tooltip-icon">i</span>
+                      <span className="tooltip-text">You are promoting yourself or your own business. This content will be classified as Brand Organic.</span>
+                    </span>
+                  </label>
+                </div>
+
+                <div className="setting-group" style={{ marginLeft: '1.5rem' }}>
+                  <label className="checkbox-label">
+                    <input 
+                      type="checkbox"
+                      checked={tiktokSettings.commercial_content_branded ?? false}
+                      onChange={(e) => {
+                        const newValue = e.target.checked;
+                        setTiktokSettings({...tiktokSettings, commercial_content_branded: newValue});
+                        updateTiktokSettings('commercial_content_branded', newValue);
+                      }}
+                      className="checkbox"
+                    />
+                    <span>Branded Content</span>
+                    <span className="tooltip-wrapper">
+                      <span className="tooltip-icon">i</span>
+                      <span className="tooltip-text">You are promoting another brand or a third party. This content will be classified as Branded Content.</span>
+                    </span>
+                  </label>
+                </div>
+
+                {/* Show appropriate prompt based on selection */}
+                {tiktokSettings.commercial_content_your_brand || tiktokSettings.commercial_content_branded ? (
+                  <div className="setting-group" style={{ marginLeft: '1.5rem', marginTop: '0.5rem' }}>
+                    <div style={{
+                      padding: '0.75rem',
+                      background: 'rgba(59, 130, 246, 0.1)',
+                      border: '1px solid rgba(59, 130, 246, 0.3)',
+                      borderRadius: '6px',
+                      fontSize: '0.85rem',
+                      color: '#3b82f6'
+                    }}>
+                      {tiktokSettings.commercial_content_your_brand && tiktokSettings.commercial_content_branded
+                        ? "Your photo/video will be labeled as 'Paid partnership'"
+                        : tiktokSettings.commercial_content_branded
+                        ? "Your photo/video will be labeled as 'Paid partnership'"
+                        : "Your photo/video will be labeled as 'Promotional content'"
+                      }
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            )}
+
+            <div className="setting-group">
               <label>
                 TikTok Title Template (Caption) (Override) <span className="char-counter">{tiktokSettings.title_template?.length || 0}/2200</span>
                 <span className="tooltip-wrapper">
@@ -3273,7 +3386,30 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       {/* Upload Button */}
       {videos.length > 0 && (youtube.enabled || tiktok.enabled || instagram.enabled) && (
         <>
-          <button className="upload-btn" onClick={upload} disabled={isUploading}>
+          <button 
+            className="upload-btn" 
+            onClick={upload} 
+            disabled={
+              isUploading || 
+              (tiktok.enabled && 
+               tiktokSettings.commercial_content_disclosure && 
+               !(tiktokSettings.commercial_content_your_brand || tiktokSettings.commercial_content_branded))
+            }
+            title={
+              tiktok.enabled && 
+              tiktokSettings.commercial_content_disclosure && 
+              !(tiktokSettings.commercial_content_your_brand || tiktokSettings.commercial_content_branded)
+                ? "You need to indicate if your content promotes yourself, a third party, or both."
+                : undefined
+            }
+            style={{
+              cursor: (
+                tiktok.enabled && 
+                tiktokSettings.commercial_content_disclosure && 
+                !(tiktokSettings.commercial_content_your_brand || tiktokSettings.commercial_content_branded)
+              ) ? 'not-allowed' : undefined
+            }}
+          >
             {isUploading ? 'Uploading...' : 
              globalSettings.upload_immediately ? 'Upload' : 'Schedule Videos'}
           </button>
@@ -3764,6 +3900,9 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       <button onClick={() => {
                         setEditingVideo(v);
                         setEditTitleLength((v.custom_settings?.title || v.youtube_title || '').length);
+                        setEditCommercialContentDisclosure(v.custom_settings?.commercial_content_disclosure ?? false);
+                        setEditCommercialContentYourBrand(v.custom_settings?.commercial_content_your_brand ?? false);
+                        setEditCommercialContentBranded(v.custom_settings?.commercial_content_branded ?? false);
                       }} className="btn-edit" title="Edit video settings">
                         ✏️
                       </button>
@@ -4000,6 +4139,77 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       </span>
                     </label>
                   </div>
+                  
+                  <div className="form-group">
+                    <label className="checkbox-label">
+                      <input 
+                        type="checkbox"
+                        checked={editCommercialContentDisclosure}
+                        id="edit-tiktok-commercial-content-disclosure"
+                        className="checkbox"
+                        onChange={(e) => {
+                          const newValue = e.target.checked;
+                          setEditCommercialContentDisclosure(newValue);
+                          if (!newValue) {
+                            // Reset checkboxes when toggle is turned off
+                            setEditCommercialContentYourBrand(false);
+                            setEditCommercialContentBranded(false);
+                          }
+                        }}
+                      />
+                      <span>Content Disclosure Setting</span>
+                    </label>
+                  </div>
+                  
+                  {editCommercialContentDisclosure && (
+                    <>
+                      <div className="form-group" style={{ marginLeft: '1.5rem' }}>
+                        <label className="checkbox-label">
+                          <input 
+                            type="checkbox"
+                            checked={editCommercialContentYourBrand}
+                            id="edit-tiktok-commercial-content-your-brand"
+                            className="checkbox"
+                            onChange={(e) => setEditCommercialContentYourBrand(e.target.checked)}
+                          />
+                          <span>Your Brand</span>
+                        </label>
+                      </div>
+                      
+                      <div className="form-group" style={{ marginLeft: '1.5rem' }}>
+                        <label className="checkbox-label">
+                          <input 
+                            type="checkbox"
+                            checked={editCommercialContentBranded}
+                            id="edit-tiktok-commercial-content-branded"
+                            className="checkbox"
+                            onChange={(e) => setEditCommercialContentBranded(e.target.checked)}
+                          />
+                          <span>Branded Content</span>
+                        </label>
+                      </div>
+                      
+                      {(editCommercialContentYourBrand || editCommercialContentBranded) && (
+                        <div className="form-group" style={{ marginLeft: '1.5rem', marginTop: '0.5rem' }}>
+                          <div style={{
+                            padding: '0.75rem',
+                            background: 'rgba(59, 130, 246, 0.1)',
+                            border: '1px solid rgba(59, 130, 246, 0.3)',
+                            borderRadius: '6px',
+                            fontSize: '0.85rem',
+                            color: '#3b82f6'
+                          }}>
+                            {editCommercialContentYourBrand && editCommercialContentBranded
+                              ? "Your photo/video will be labeled as 'Paid partnership'"
+                              : editCommercialContentBranded
+                              ? "Your photo/video will be labeled as 'Paid partnership'"
+                              : "Your photo/video will be labeled as 'Promotional content'"
+                            }
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </>
               )}
             </div>
@@ -4031,6 +4241,9 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     const tiktokAllowComments = document.getElementById('edit-tiktok-allow-comments').checked;
                     const tiktokAllowDuet = document.getElementById('edit-tiktok-allow-duet').checked;
                     const tiktokAllowStitch = document.getElementById('edit-tiktok-allow-stitch').checked;
+                    const tiktokCommercialContentDisclosure = editCommercialContentDisclosure;
+                    const tiktokCommercialContentYourBrand = editCommercialContentYourBrand;
+                    const tiktokCommercialContentBranded = editCommercialContentBranded;
                     
                     if (tiktokPrivacy) {
                       settings.privacy_level = tiktokPrivacy;
@@ -4038,6 +4251,9 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     settings.allow_comments = tiktokAllowComments;
                     settings.allow_duet = tiktokAllowDuet;
                     settings.allow_stitch = tiktokAllowStitch;
+                    settings.commercial_content_disclosure = tiktokCommercialContentDisclosure;
+                    settings.commercial_content_your_brand = tiktokCommercialContentYourBrand;
+                    settings.commercial_content_branded = tiktokCommercialContentBranded;
                   }
                   
                   updateVideoSettings(editingVideo.id, settings);

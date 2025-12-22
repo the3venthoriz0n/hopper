@@ -838,7 +838,10 @@ def build_video_response(video: Video, all_settings: Dict[str, Dict], all_tokens
             'privacy_level': custom_settings.get('privacy_level', tiktok_settings.get('privacy_level', '')),
             'allow_comments': custom_settings.get('allow_comments', tiktok_settings.get('allow_comments', False)),
             'allow_duet': custom_settings.get('allow_duet', tiktok_settings.get('allow_duet', False)),
-            'allow_stitch': custom_settings.get('allow_stitch', tiktok_settings.get('allow_stitch', False))
+            'allow_stitch': custom_settings.get('allow_stitch', tiktok_settings.get('allow_stitch', False)),
+            'commercial_content_disclosure': custom_settings.get('commercial_content_disclosure', tiktok_settings.get('commercial_content_disclosure', False)),
+            'commercial_content_your_brand': custom_settings.get('commercial_content_your_brand', tiktok_settings.get('commercial_content_your_brand', False)),
+            'commercial_content_branded': custom_settings.get('commercial_content_branded', tiktok_settings.get('commercial_content_branded', False))
         }
         video_dict['tiktok_title'] = tiktok_title[:2200] if len(tiktok_title) > 2200 else tiktok_title
     else:
@@ -3630,7 +3633,10 @@ def update_tiktok_settings(
     allow_duet: bool = None,
     allow_stitch: bool = None,
     title_template: str = None,
-    description_template: str = None
+    description_template: str = None,
+    commercial_content_disclosure: bool = None,
+    commercial_content_your_brand: bool = None,
+    commercial_content_branded: bool = None
 ):
     """Update TikTok upload settings"""
     if privacy_level is not None:
@@ -3656,6 +3662,15 @@ def update_tiktok_settings(
     
     if description_template is not None:
         db_helpers.set_user_setting(user_id, "tiktok", "description_template", description_template, db=db)
+    
+    if commercial_content_disclosure is not None:
+        db_helpers.set_user_setting(user_id, "tiktok", "commercial_content_disclosure", commercial_content_disclosure, db=db)
+    
+    if commercial_content_your_brand is not None:
+        db_helpers.set_user_setting(user_id, "tiktok", "commercial_content_your_brand", commercial_content_your_brand, db=db)
+    
+    if commercial_content_branded is not None:
+        db_helpers.set_user_setting(user_id, "tiktok", "commercial_content_branded", commercial_content_branded, db=db)
     
     return db_helpers.get_user_settings(user_id, "tiktok", db=db)
 
