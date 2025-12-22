@@ -1000,6 +1000,15 @@ def cleanup_video_file(video: Video) -> bool:
     ROOT CAUSE FIX: Don't delete files if TikTok is using PULL_FROM_URL
     (has tiktok_publish_id but no tiktok_id yet) - TikTok still needs to download it.
     
+    Upload Flow:
+    1. User uploads file to hopper → saved to disk
+    2. Hopper uploads to TikTok using PULL_FROM_URL (preferred method)
+    3. TikTok API accepts URL → returns publish_id → status="uploaded"
+    4. Cleanup runs here → BUT TikTok is still downloading the file!
+    5. TikTok downloads file (status="PROCESSING")
+    6. TikTok publishes video (status="PUBLISHED") → tiktok_id set
+    7. Only then can we safely delete the file
+    
     Args:
         video: Video object with path to file
         
@@ -1013,10 +1022,12 @@ def cleanup_video_file(video: Video) -> bool:
         tiktok_id = custom_settings.get("tiktok_id")
         
         # If TikTok has publish_id but no video_id yet, it's still downloading via PULL_FROM_URL
+        # publish_id = TikTok accepted the URL (status="uploaded")
+        # tiktok_id = TikTok finished downloading and published (status="completed")
         if tiktok_publish_id and not tiktok_id:
             upload_logger.debug(
                 f"Skipping cleanup for {video.filename} - TikTok PULL_FROM_URL still in progress "
-                f"(publish_id: {tiktok_publish_id})"
+                f"(publish_id: {tiktok_publish_id}, waiting for tiktok_id)"
             )
             return True  # Don't delete yet, but return success
         
