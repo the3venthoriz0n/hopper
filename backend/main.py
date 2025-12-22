@@ -7278,6 +7278,17 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         allow_duet = allow_duet_setting and not duet_disabled
         allow_stitch = allow_stitch_setting and not stitch_disabled
         
+        # Get commercial content disclosure settings (priority: custom_settings > tiktok_settings)
+        commercial_content_disclosure = custom_settings.get('commercial_content_disclosure', tiktok_settings.get('commercial_content_disclosure', False))
+        commercial_content_your_brand = custom_settings.get('commercial_content_your_brand', tiktok_settings.get('commercial_content_your_brand', False))
+        commercial_content_branded = custom_settings.get('commercial_content_branded', tiktok_settings.get('commercial_content_branded', False))
+        
+        # Map to TikTok API fields
+        # brand_organic_toggle: true if promoting creator's own business
+        # brand_content_toggle: true if promoting a third-party business
+        brand_organic_toggle = commercial_content_disclosure and commercial_content_your_brand
+        brand_content_toggle = commercial_content_disclosure and commercial_content_branded
+        
         tiktok_logger.info(f"Uploading {video.filename} ({video_size / (1024*1024):.2f} MB)")
         redis_client.set_upload_progress(user_id, video_id, 5)
         
@@ -7296,7 +7307,9 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                         "privacy_level": tiktok_privacy,
                         "disable_duet": not allow_duet,
                         "disable_comment": not allow_comments,
-                        "disable_stitch": not allow_stitch
+                        "disable_stitch": not allow_stitch,
+                        "brand_organic_toggle": brand_organic_toggle,
+                        "brand_content_toggle": brand_content_toggle
                     },
                     "source_info": {
                         "source": "FILE_UPLOAD",
@@ -7360,7 +7373,9 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                                         "privacy_level": tiktok_privacy,
                                         "disable_duet": not allow_duet,
                                         "disable_comment": not allow_comments,
-                                        "disable_stitch": not allow_stitch
+                                        "disable_stitch": not allow_stitch,
+                                        "brand_organic_toggle": brand_organic_toggle,
+                                        "brand_content_toggle": brand_content_toggle
                                     },
                                     "source_info": {
                                         "source": "FILE_UPLOAD",
