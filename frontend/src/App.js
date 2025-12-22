@@ -421,6 +421,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const [editCommercialContentDisclosure, setEditCommercialContentDisclosure] = useState(false);
   const [editCommercialContentYourBrand, setEditCommercialContentYourBrand] = useState(false);
   const [editCommercialContentBranded, setEditCommercialContentBranded] = useState(false);
+  const [editTiktokPrivacy, setEditTiktokPrivacy] = useState('');
   const [newWord, setNewWord] = useState('');
   const [wordbankExpanded, setWordbankExpanded] = useState(false);
   const [showGlobalSettings, setShowGlobalSettings] = useState(false);
@@ -1891,6 +1892,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     setEditCommercialContentDisclosure(false);
     setEditCommercialContentYourBrand(false);
     setEditCommercialContentBranded(false);
+    setEditTiktokPrivacy('');
   };
 
   const updateVideoSettings = async (videoId, settings) => {
@@ -2019,9 +2021,23 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const upload = async (skipMusicCheck = false) => {
     // Check if TikTok is enabled and music usage not confirmed
     if (!skipMusicCheck && tiktok.enabled && !musicUsageConfirmed) {
+      // Determine the confirmation message based on commercial content selection
+      const hasBrandedContent = tiktokSettings.commercial_content_disclosure && tiktokSettings.commercial_content_branded;
+      const hasYourBrand = tiktokSettings.commercial_content_disclosure && tiktokSettings.commercial_content_your_brand;
+      
+      let confirmationMessage = 'By posting, you agree to TikTok\'s Music Usage Confirmation';
+      
+      if (hasBrandedContent) {
+        // If branded content is selected (alone or with your brand), include Branded Content Policy
+        confirmationMessage = 'By posting, you agree to TikTok\'s Branded Content Policy and Music Usage Confirmation';
+      } else if (hasYourBrand) {
+        // Only "Your Brand" selected - just Music Usage Confirmation
+        confirmationMessage = 'By posting, you agree to TikTok\'s Music Usage Confirmation';
+      }
+      
       setConfirmDialog({
         title: 'TikTok Music Usage Confirmation',
-        message: 'By posting, you agree to TikTok\'s Music Usage Confirmation',
+        message: confirmationMessage,
         onConfirm: async () => {
           try {
             await axios.post(`${API}/auth/tiktok/music-usage-confirmed`);
@@ -2999,6 +3015,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 onChange={(e) => updateTiktokSettings('privacy_level', e.target.value || null)}
                 className="select"
                 required
+                title={
+                  tiktokSettings.commercial_content_disclosure && 
+                  tiktokSettings.commercial_content_branded && 
+                  tiktokSettings.privacy_level === 'SELF_ONLY'
+                    ? "Branded content visibility cannot be set to private."
+                    : undefined
+                }
               >
                 <option value="">-- Select Privacy Level --</option>
                 {Array.isArray(tiktokCreatorInfo?.privacy_level_options) ? tiktokCreatorInfo.privacy_level_options.map(option => {
@@ -3008,13 +3031,27 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     'FOLLOWER_OF_CREATOR': 'Followers',
                     'SELF_ONLY': 'Only you'
                   };
+                  const isPrivate = option === 'SELF_ONLY';
+                  const brandedContentSelected = tiktokSettings.commercial_content_disclosure && tiktokSettings.commercial_content_branded;
+                  const isDisabled = isPrivate && brandedContentSelected;
+                  
                   return (
-                    <option key={option} value={option}>
+                    <option 
+                      key={option} 
+                      value={option}
+                      disabled={isDisabled}
+                      title={isDisabled ? "Branded content visibility cannot be set to private." : undefined}
+                    >
                       {labelMap[option] || option}
                     </option>
                   );
                 }) : null}
               </select>
+              {tiktokSettings.commercial_content_disclosure && tiktokSettings.commercial_content_branded && (
+                <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#f59e0b' }}>
+                  ⚠️ Branded content requires public or friends visibility
+                </div>
+              )}
             </div>
 
             <div className="setting-group">
@@ -3086,7 +3123,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   }}
                   className="checkbox"
                 />
-                <span>Content Disclosure Setting</span>
+                <span>Content Disclosure (required)</span>
                 <span className="tooltip-wrapper">
                   <span className="tooltip-icon">i</span>
                   <span className="tooltip-text">Indicate whether this content promotes yourself, a brand, product or service</span>
@@ -3127,11 +3164,20 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         updateTiktokSettings('commercial_content_branded', newValue);
                       }}
                       className="checkbox"
+                      disabled={tiktokSettings.privacy_level === 'SELF_ONLY' && !tiktokSettings.commercial_content_branded}
                     />
-                    <span>Branded Content</span>
+                    <span style={{
+                      opacity: (tiktokSettings.privacy_level === 'SELF_ONLY' && !tiktokSettings.commercial_content_branded) ? 0.5 : 1
+                    }}>
+                      Branded Content
+                    </span>
                     <span className="tooltip-wrapper">
                       <span className="tooltip-icon">i</span>
-                      <span className="tooltip-text">You are promoting another brand or a third party. This content will be classified as Branded Content.</span>
+                      <span className="tooltip-text">
+                        {tiktokSettings.privacy_level === 'SELF_ONLY' && !tiktokSettings.commercial_content_branded
+                          ? "Branded content visibility cannot be set to private. Please change privacy level to public or friends first."
+                          : "You are promoting another brand or a third party. This content will be classified as Branded Content."}
+                      </span>
                     </span>
                   </label>
                 </div>
@@ -3903,6 +3949,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         setEditCommercialContentDisclosure(v.custom_settings?.commercial_content_disclosure ?? false);
                         setEditCommercialContentYourBrand(v.custom_settings?.commercial_content_your_brand ?? false);
                         setEditCommercialContentBranded(v.custom_settings?.commercial_content_branded ?? false);
+                        setEditTiktokPrivacy(v.custom_settings?.privacy_level || '');
                       }} className="btn-edit" title="Edit video settings">
                         ✏️
                       </button>
@@ -4067,10 +4114,18 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   <div className="form-group">
                     <label>TikTok Privacy Level</label>
                     <select 
-                      defaultValue={editingVideo.custom_settings?.privacy_level || ''}
+                      value={editTiktokPrivacy}
                       id="edit-tiktok-privacy"
                       className="select"
                       required
+                      onChange={(e) => setEditTiktokPrivacy(e.target.value)}
+                      title={
+                        editCommercialContentDisclosure && 
+                        editCommercialContentBranded && 
+                        editTiktokPrivacy === 'SELF_ONLY'
+                          ? "Branded content visibility cannot be set to private."
+                          : undefined
+                      }
                     >
                       <option value="">-- Select Privacy Level --</option>
                       {Array.isArray(tiktokCreatorInfo?.privacy_level_options) ? tiktokCreatorInfo.privacy_level_options.map(option => {
@@ -4080,13 +4135,27 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                           'FOLLOWER_OF_CREATOR': 'Followers',
                           'SELF_ONLY': 'Only you'
                         };
+                        const isPrivate = option === 'SELF_ONLY';
+                        const brandedContentSelected = editCommercialContentDisclosure && editCommercialContentBranded;
+                        const isDisabled = isPrivate && brandedContentSelected;
+                        
                         return (
-                          <option key={option} value={option}>
+                          <option 
+                            key={option} 
+                            value={option}
+                            disabled={isDisabled}
+                            title={isDisabled ? "Branded content visibility cannot be set to private." : undefined}
+                          >
                             {labelMap[option] || option}
                           </option>
                         );
                       }) : null}
                     </select>
+                    {editCommercialContentDisclosure && editCommercialContentBranded && (
+                      <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#f59e0b' }}>
+                        ⚠️ Branded content requires public or friends visibility
+                      </div>
+                    )}
                   </div>
                   
                   <div className="form-group">
@@ -4157,7 +4226,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                           }
                         }}
                       />
-                      <span>Content Disclosure Setting</span>
+                      <span>Content Disclosure (required)</span>
                     </label>
                   </div>
                   
@@ -4184,8 +4253,21 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                             id="edit-tiktok-commercial-content-branded"
                             className="checkbox"
                             onChange={(e) => setEditCommercialContentBranded(e.target.checked)}
+                            disabled={editTiktokPrivacy === 'SELF_ONLY' && !editCommercialContentBranded}
                           />
-                          <span>Branded Content</span>
+                          <span style={{
+                            opacity: (editTiktokPrivacy === 'SELF_ONLY' && !editCommercialContentBranded) ? 0.5 : 1
+                          }}>
+                            Branded Content
+                          </span>
+                          <span className="tooltip-wrapper">
+                            <span className="tooltip-icon">i</span>
+                            <span className="tooltip-text">
+                              {editTiktokPrivacy === 'SELF_ONLY' && !editCommercialContentBranded
+                                ? "Branded content visibility cannot be set to private. Please change privacy level to public or friends first."
+                                : "You are promoting another brand or a third party. This content will be classified as Branded Content."}
+                            </span>
+                          </span>
                         </label>
                       </div>
                       
@@ -4237,7 +4319,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   
                   // Add TikTok settings if TikTok is enabled and connected
                   if (tiktok.enabled && tiktok.connected) {
-                    const tiktokPrivacy = document.getElementById('edit-tiktok-privacy').value;
+                    const tiktokPrivacy = editTiktokPrivacy || document.getElementById('edit-tiktok-privacy')?.value;
                     const tiktokAllowComments = document.getElementById('edit-tiktok-allow-comments').checked;
                     const tiktokAllowDuet = document.getElementById('edit-tiktok-allow-duet').checked;
                     const tiktokAllowStitch = document.getElementById('edit-tiktok-allow-stitch').checked;
