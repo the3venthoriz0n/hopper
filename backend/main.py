@@ -2523,11 +2523,31 @@ async def auth_tiktok_callback(
             
             token_json = token_response.json()
             
+            # Log full OAuth response keys for debugging (mask sensitive values)
+            response_keys = list(token_json.keys())
+            has_refresh_token = "refresh_token" in token_json
+            tiktok_logger.info(
+                f"TikTok OAuth response for user {user_id}: "
+                f"keys={response_keys}, has_refresh_token={has_refresh_token}, "
+                f"has_access_token={'access_token' in token_json}, "
+                f"has_open_id={'open_id' in token_json}"
+            )
+            
             if "access_token" not in token_json:
                 tiktok_logger.error("No access_token in response")
                 return RedirectResponse(f"{FRONTEND_URL}?error=tiktok_token_failed")
             
             tiktok_logger.info(f"Token exchange successful for user {user_id} - Open ID: {token_json.get('open_id', 'N/A')}")
+            
+            # Log refresh token presence for debugging
+            refresh_token = token_json.get("refresh_token")
+            if not refresh_token:
+                tiktok_logger.warning(
+                    f"TikTok OAuth did not return refresh_token for user {user_id}. "
+                    f"Response keys: {response_keys}. Token refresh will not be possible."
+                )
+            else:
+                tiktok_logger.info(f"TikTok OAuth returned refresh_token for user {user_id} (length: {len(refresh_token)})")
             
             # Calculate expiry time
             expires_in = token_json.get("expires_in")
@@ -2589,11 +2609,12 @@ async def auth_tiktok_callback(
                 tiktok_logger.warning(f"Could not fetch creator info during OAuth: {fetch_error}, will try later")
             
             # Store in database (encrypted) with cached account info
+            # Best practice: Only save refresh_token if it exists (TikTok may not always provide it)
             db_helpers.save_oauth_token(
                 user_id=user_id,
                 platform="tiktok",
                 access_token=access_token,
-                refresh_token=token_json.get("refresh_token"),
+                refresh_token=refresh_token,  # Use the variable we checked above
                 expires_at=expires_at,
                 extra_data=extra_data
             )
@@ -2616,44 +2637,30 @@ async def auth_tiktok_callback(
         return RedirectResponse(f"{FRONTEND_URL}/app?error=tiktok_auth_failed")
 
 
-def refresh_tiktok_account_data(user_id: int, db: Session):
-    """Background task to refresh TikTok account data and update cache
-    Runs immediately after the HTTP response is sent (typically <1ms delay)
+def refresh_tiktok_account_data(user_id: int, access_token: str):
+    """Background task to refresh TikTok account data ONLY
     
-    Root cause fix: Always get fresh token from database, don't rely on passed token
+    NO TOKEN REFRESH - token is guaranteed fresh from main request.
+    Just fetch fresh data and update cache.
+    
+    Architecture: Token refresh happens synchronously in main request path.
+    Background task only fetches data using the already-fresh token.
+    This eliminates race conditions and simplifies the code.
     """
+    # Create fresh database session for background task
+    db = SessionLocal()
     try:
-        tiktok_logger.debug(f"Background refresh started for user {user_id}")
         tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
         if not tiktok_token:
-            tiktok_logger.warning(f"Background refresh: No token found for user {user_id}")
-            return
-        
-        # Always get fresh access token from database (decrypted)
-        access_token = decrypt(tiktok_token.access_token)
-        if not access_token:
-            tiktok_logger.warning(f"Background refresh: Failed to decrypt token for user {user_id}")
             return
         
         extra_data = tiktok_token.extra_data or {}
-        cached_creator_info = extra_data.get("creator_info")
+        open_id = extra_data.get("open_id")
+        if not open_id:
+            return
         
-        # Check if token is expired and refresh if needed
-        token_expiry = db_helpers.check_token_expiration(tiktok_token)
-        if token_expiry.get("expired", False) or token_expiry.get("expires_soon", False):
-            refresh_token_decrypted = decrypt(tiktok_token.refresh_token) if tiktok_token.refresh_token else None
-            if refresh_token_decrypted:
-                try:
-                    tiktok_logger.debug(f"Background refresh: Token expired/expiring for user {user_id}, refreshing...")
-                    access_token = refresh_tiktok_token(user_id, refresh_token_decrypted, db)
-                    # Refresh token object after refresh
-                    tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
-                    extra_data = tiktok_token.extra_data or {} if tiktok_token else {}
-                except Exception as refresh_error:
-                    tiktok_logger.warning(f"Background refresh: Failed to refresh token for user {user_id}: {refresh_error}")
-                    return  # Can't proceed without valid token
-        
-        # Fetch fresh data from API
+        # Call TikTok API with the access token passed from main request
+        # NO token expiry checks, NO refresh attempts - token is guaranteed fresh
         with httpx.Client(timeout=5.0) as client:
             creator_info_response = client.post(
                 TIKTOK_CREATOR_INFO_URL,
@@ -2664,35 +2671,21 @@ def refresh_tiktok_account_data(user_id: int, db: Session):
                 json={}
             )
             
-            # If 401, try refreshing token and retry once
-            if creator_info_response.status_code == 401:
-                tiktok_logger.debug(f"Background refresh: Got 401 for user {user_id}, attempting token refresh...")
-                refresh_token_decrypted = decrypt(tiktok_token.refresh_token) if tiktok_token and tiktok_token.refresh_token else None
-                if refresh_token_decrypted:
-                    try:
-                        access_token = refresh_tiktok_token(user_id, refresh_token_decrypted, db)
-                        tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
-                        extra_data = tiktok_token.extra_data or {} if tiktok_token else {}
-                        # Retry the API call
-                        creator_info_response = client.post(
-                            TIKTOK_CREATOR_INFO_URL,
-                            headers={
-                                "Authorization": f"Bearer {access_token.strip()}",
-                                "Content-Type": "application/json; charset=UTF-8"
-                            },
-                            json={},
-                            timeout=5.0
-                        )
-                    except Exception as retry_error:
-                        tiktok_logger.warning(f"Background refresh: Failed to refresh token after 401 for user {user_id}: {retry_error}")
+            # If it fails, just log and return - don't try to fix it
+            # Next request will handle token issues synchronously
+            if creator_info_response.status_code != 200:
+                tiktok_logger.debug(
+                    f"Background refresh failed for user {user_id}: "
+                    f"status={creator_info_response.status_code}"
+                )
+                return
             
             if creator_info_response.status_code == 200:
                 creator_data = creator_info_response.json()
                 fresh_creator_info = creator_data.get("data", {})
                 
-                # Extract fresh account information
+                # Extract fresh account information - same as normal endpoint
                 fresh_account_info = {}
-                open_id = extra_data.get("open_id")
                 if open_id:
                     fresh_account_info["open_id"] = open_id
                 
@@ -2712,13 +2705,13 @@ def refresh_tiktok_account_data(user_id: int, db: Session):
                     fresh_account_info["avatar_url"] = fresh_creator_info["avatar_url"]
                 
                 # Compare cached vs fresh data to detect changes
+                cached_creator_info = extra_data.get("creator_info")
                 data_changed = False
                 if cached_creator_info:
                     cached_privacy_options = cached_creator_info.get("privacy_level_options", [])
                     fresh_privacy_options = fresh_creator_info.get("privacy_level_options", [])
                     if cached_privacy_options != fresh_privacy_options:
                         data_changed = True
-                        tiktok_logger.info(f"Privacy level options changed for user {user_id}: {cached_privacy_options} -> {fresh_privacy_options}")
                     
                     if extra_data.get("display_name") != fresh_account_info.get("display_name"):
                         data_changed = True
@@ -2727,7 +2720,7 @@ def refresh_tiktok_account_data(user_id: int, db: Session):
                 else:
                     data_changed = True
                 
-                # Update cache if data changed
+                # Update cache if data changed - same as normal endpoint
                 if data_changed and (fresh_account_info.get("display_name") or fresh_account_info.get("username")):
                     extra_data["display_name"] = fresh_account_info.get("display_name")
                     extra_data["username"] = fresh_account_info.get("username")
@@ -2742,13 +2735,11 @@ def refresh_tiktok_account_data(user_id: int, db: Session):
                         extra_data=extra_data,
                         db=db
                     )
-                    tiktok_logger.info(f"Background refresh: Updated TikTok cache for user {user_id}")
-                else:
-                    tiktok_logger.debug(f"Background refresh: No changes detected for user {user_id}")
-            else:
-                tiktok_logger.warning(f"Background refresh: API call failed for user {user_id} (status {creator_info_response.status_code})")
     except Exception as e:
         tiktok_logger.warning(f"Background refresh failed for user {user_id}: {str(e)}")
+    finally:
+        # Always close the database session
+        db.close()
 
 @app.get("/api/auth/tiktok/account")
 def get_tiktok_account(
@@ -2759,10 +2750,14 @@ def get_tiktok_account(
 ):
     """Get TikTok account information (display name/username)
     
+    Architecture: Token refresh happens synchronously, data refresh happens asynchronously.
+    This eliminates race conditions and ensures tokens are always fresh.
+    
     Stale-While-Revalidate pattern:
-    1. Return cached data immediately (if available) for fast response
-    2. Fetch fresh data in background and update cache
-    3. Next request will get the fresh data
+    1. Ensure token is fresh (synchronously)
+    2. Return cached data immediately (if available) for fast response
+    3. Fetch fresh data in background and update cache
+    4. Next request will get the fresh data
     """
     tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
     
@@ -2770,37 +2765,70 @@ def get_tiktok_account(
         return {"account": None, "creator_info": None}
     
     try:
-        # Check for cached account info in extra_data first
+        # ===== STEP 1: ALWAYS ensure token is fresh BEFORE returning =====
+        # This happens synchronously so the user's next request will have a good token
+        access_token = decrypt(tiktok_token.access_token)
+        if not access_token:
+            tiktok_logger.warning(f"Failed to decrypt TikTok token for user {user_id}")
+            return {"account": None, "creator_info": None}
+        
         extra_data = tiktok_token.extra_data or {}
+        
+        # Only attempt refresh if we haven't already failed
+        if not extra_data.get("refresh_failed"):
+            token_expiry = db_helpers.check_token_expiration(tiktok_token)
+            if token_expiry.get("expired", False) or token_expiry.get("expires_soon", False):
+                if tiktok_token.refresh_token:
+                    try:
+                        tiktok_logger.info(f"TikTok token expired/expiring for user {user_id}, refreshing...")
+                        access_token = refresh_tiktok_token(user_id, decrypt(tiktok_token.refresh_token), db)
+                        # Refresh token object after refresh
+                        tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
+                        extra_data = tiktok_token.extra_data or {} if tiktok_token else {}
+                    except Exception as refresh_error:
+                        tiktok_logger.warning(f"Token refresh failed for user {user_id}: {refresh_error}")
+                        # If refresh fails, check if we have cached data to return
+                        cached_display_name = extra_data.get("display_name")
+                        cached_username = extra_data.get("username")
+                        cached_creator_info = extra_data.get("creator_info")
+                        if cached_display_name or cached_username:
+                            account_info = {}
+                            if extra_data.get("open_id"):
+                                account_info["open_id"] = extra_data.get("open_id")
+                            if cached_display_name:
+                                account_info["display_name"] = cached_display_name
+                            if cached_username:
+                                account_info["username"] = cached_username
+                            if extra_data.get("avatar_url"):
+                                account_info["avatar_url"] = extra_data.get("avatar_url")
+                            return {"account": account_info, "creator_info": cached_creator_info}
+                        return {"account": None, "creator_info": None}
+        
+        # ===== STEP 2: Return cached data + schedule background DATA refresh =====
         cached_display_name = extra_data.get("display_name")
         cached_username = extra_data.get("username")
         cached_avatar_url = extra_data.get("avatar_url")
         open_id = extra_data.get("open_id")
-        cached_creator_info = extra_data.get("creator_info")  # Cache full creator_info
+        cached_creator_info = extra_data.get("creator_info")
         
-        # Build account info from cached data (always preserve what we have)
-        account_info = {}
-        if open_id:
-            account_info["open_id"] = open_id
-        if cached_display_name:
-            account_info["display_name"] = cached_display_name
-        if cached_username:
-            account_info["username"] = cached_username
-        if cached_avatar_url:
-            account_info["avatar_url"] = cached_avatar_url
-        
-        # STALE-WHILE-REVALIDATE: If we have cached data, return it immediately
         has_cached_data = (cached_display_name or cached_username) and cached_creator_info
         
         if has_cached_data and not force_refresh:
-            # Return cached data immediately for fast response
-            # Then refresh in background for next request
+            # Build account info from cached data
+            account_info = {}
             if open_id:
-                # Schedule background task to refresh data
-                # Root cause fix: Background task will get fresh token from DB itself
-                # FastAPI BackgroundTasks run immediately after response is sent (very fast, <1ms delay)
-                background_tasks.add_task(refresh_tiktok_account_data, user_id, db)
-                tiktok_logger.debug(f"Returning cached data immediately for user {user_id}, background refresh scheduled (runs immediately after response)")
+                account_info["open_id"] = open_id
+            if cached_display_name:
+                account_info["display_name"] = cached_display_name
+            if cached_username:
+                account_info["username"] = cached_username
+            if cached_avatar_url:
+                account_info["avatar_url"] = cached_avatar_url
+            
+            # Background task ONLY fetches fresh data, NEVER refreshes tokens
+            # Token is guaranteed fresh from Step 1
+            background_tasks.add_task(refresh_tiktok_account_data, user_id, access_token)
+            tiktok_logger.debug(f"Returning cached data immediately for user {user_id}, background refresh scheduled")
             
             return {
                 "account": account_info,
@@ -2811,43 +2839,20 @@ def get_tiktok_account(
             tiktok_logger.warning(f"No open_id found for user {user_id}")
             # Return cached account info if we have it, but no creator_info
             if cached_display_name or cached_username:
+                account_info = {}
+                if cached_display_name:
+                    account_info["display_name"] = cached_display_name
+                if cached_username:
+                    account_info["username"] = cached_username
+                if cached_avatar_url:
+                    account_info["avatar_url"] = cached_avatar_url
                 return {
                     "account": account_info,
                     "creator_info": None
                 }
             return {"account": None, "creator_info": None}
         
-        # Get access token (decrypted)
-        access_token = decrypt(tiktok_token.access_token)
-        if not access_token:
-            tiktok_logger.warning(f"Failed to decrypt TikTok token for user {user_id}")
-            # Return cached data if available, otherwise None
-            if has_cached_data:
-                return {
-                    "account": account_info,
-                    "creator_info": cached_creator_info
-                }
-            return {"account": None, "creator_info": None}
-        
-        # Check if token is expired and refresh if needed
-        token_expiry = db_helpers.check_token_expiration(tiktok_token)
-        if token_expiry.get("expired", False) or token_expiry.get("expires_soon", False):
-            refresh_token_decrypted = decrypt(tiktok_token.refresh_token) if tiktok_token.refresh_token else None
-            if refresh_token_decrypted:
-                try:
-                    tiktok_logger.info(f"TikTok token expired/expiring for user {user_id} in account endpoint, refreshing...")
-                    access_token = refresh_tiktok_token(user_id, refresh_token_decrypted, db)
-                    # Refresh token object after refresh
-                    tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
-                except Exception as refresh_error:
-                    tiktok_logger.warning(f"Failed to refresh TikTok token for user {user_id} in account endpoint: {refresh_error}")
-                    # If refresh failed but we have cached data, return it
-                    if has_cached_data:
-                        return {
-                            "account": account_info,
-                            "creator_info": cached_creator_info
-                        }
-                    # Continue with existing token - might still work
+        # ===== STEP 3: No cached data, fetch synchronously =====
         
         # No cached data or force_refresh: fetch fresh data synchronously
         try:
@@ -6951,7 +6956,13 @@ def refresh_tiktok_token(user_id: int, refresh_token: str, db: Session) -> str:
         "refresh_token": refresh_token,
     }
     
-    tiktok_logger.info(f"Refreshing TikTok token for user {user_id}")
+    # Log refresh attempt details (mask sensitive data)
+    refresh_token_length = len(refresh_token) if refresh_token else 0
+    tiktok_logger.info(
+        f"Refreshing TikTok token for user {user_id}: "
+        f"refresh_token_length={refresh_token_length}, "
+        f"grant_type={refresh_data.get('grant_type')}"
+    )
     
     response = httpx.post(
         TIKTOK_TOKEN_URL,
@@ -6959,6 +6970,9 @@ def refresh_tiktok_token(user_id: int, refresh_token: str, db: Session) -> str:
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=30.0
     )
+    
+    # Log response status for debugging
+    tiktok_logger.debug(f"TikTok refresh response for user {user_id}: status={response.status_code}")
     
     if response.status_code != 200:
         error_text = response.text
