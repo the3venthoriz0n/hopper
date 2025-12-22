@@ -8121,7 +8121,10 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
             raise Exception(f"Upload failed: {upload_response.status_code} - {error_msg}")
         
         # Success - update video in database
-        db_helpers.update_video(video_id, user_id, db=db, status="uploaded", tiktok_publish_id=publish_id, tiktok_id=publish_id)
+        # ROOT CAUSE FIX: Only store tiktok_publish_id here, not tiktok_id.
+        # tiktok_id (the actual video_id) will be set when status polling confirms PUBLISHED status.
+        # This allows the polling task to distinguish between uploaded (has publish_id) and published (has video_id).
+        db_helpers.update_video(video_id, user_id, db=db, status="uploaded", tiktok_publish_id=publish_id)
         redis_client.set_upload_progress(user_id, video_id, 100)
         tiktok_logger.info(f"Success! publish_id: {publish_id}")
         
@@ -8268,7 +8271,16 @@ def fetch_tiktok_publish_status(user_id: int, publish_id: str, db: Session = Non
             timeout=30.0
         )
         
-        if response.status_code != 200:
+        if response.status_code == 404:
+            # ROOT CAUSE FIX: 404 typically means the publish_id is no longer valid for status checking.
+            # This usually happens when the video has already been published. If we have a tiktok_id,
+            # we can assume it's published. Otherwise, log and return None (will retry next cycle).
+            tiktok_logger.debug(
+                f"TikTok status API returned 404 for publish_id {publish_id} (user {user_id}). "
+                f"This usually means the video was already published and publish_id is no longer valid for status checking."
+            )
+            return None
+        elif response.status_code != 200:
             tiktok_logger.warning(
                 f"Failed to fetch TikTok status for publish_id {publish_id} (user {user_id}): "
                 f"HTTP {response.status_code} - {response.text[:200]}"
@@ -8297,7 +8309,12 @@ def fetch_tiktok_publish_status(user_id: int, publish_id: str, db: Session = Non
 
 
 async def tiktok_status_polling_task():
-    """Background task that polls TikTok publish status for videos with tiktok_publish_id"""
+    """Background task that polls TikTok publish status for videos with tiktok_publish_id
+    
+    ROOT CAUSE FIX: Only poll videos with status "uploaded" (not "completed"). Once a video
+    is completed, we should stop polling. Also skip videos that already have tiktok_id set,
+    as that indicates successful publication.
+    """
     while True:
         try:
             await asyncio.sleep(60)  # Poll every 60 seconds
@@ -8305,18 +8322,22 @@ async def tiktok_status_polling_task():
             from models import SessionLocal, Video
             db = SessionLocal()
             try:
-                # Find all videos with tiktok_publish_id that are still in "uploaded" or "completed" status
-                # These are videos that have been uploaded but we haven't confirmed final publish status yet
-                # We check both "uploaded" and "completed" because a video might be completed for other platforms
-                # but still processing on TikTok
+                # ROOT CAUSE FIX: Only check videos with status "uploaded" (not "completed")
+                # Once a video is "completed", we should stop polling. Videos can be "completed"
+                # for other platforms but still processing on TikTok, but if TikTok status is
+                # already "completed", we shouldn't poll anymore.
                 all_uploaded_videos = db.query(Video).filter(
-                    Video.status.in_(["uploaded", "completed"])
+                    Video.status == "uploaded"
                 ).all()
                 
-                # Filter to only videos with tiktok_publish_id
+                # Filter to only videos with tiktok_publish_id but without tiktok_id
+                # ROOT CAUSE FIX: Skip videos that already have tiktok_id set, as that indicates
+                # successful publication (publish_id may no longer be valid for status checking)
                 videos_to_check = [
                     v for v in all_uploaded_videos
-                    if v.custom_settings and v.custom_settings.get("tiktok_publish_id")
+                    if v.custom_settings 
+                    and v.custom_settings.get("tiktok_publish_id")
+                    and not v.custom_settings.get("tiktok_id")  # Skip if already has tiktok_id
                 ]
                 
                 videos_checked = 0
@@ -8336,18 +8357,31 @@ async def tiktok_status_polling_task():
                         status_data = fetch_tiktok_publish_status(video.user_id, publish_id, db=db)
                         
                         if not status_data:
-                            # If we can't fetch status, skip this video (will retry next cycle)
+                            # If we can't fetch status (e.g., 404 - publish_id no longer valid),
+                            # skip this video (will retry next cycle)
+                            # Note: We already filter out videos with tiktok_id, so if status fetch
+                            # fails repeatedly, the video may have been published but we didn't
+                            # capture the video_id. In that case, we'll keep retrying until timeout.
                             continue
                         
                         status = status_data.get("status")
                         
                         if status == "PUBLISHED":
-                            # Video is published - update to completed
+                            # Video is published - update to completed and store video_id if provided
+                            custom_settings = video.custom_settings or {}
+                            update_data = {"status": "completed"}
+                            
+                            # Store video_id from status response if available (different from publish_id)
+                            video_id_from_status = status_data.get("video_id")
+                            if video_id_from_status:
+                                custom_settings["tiktok_id"] = video_id_from_status
+                                update_data["custom_settings"] = custom_settings
+                            
                             db_helpers.update_video(
                                 video.id,
                                 video.user_id,
                                 db=db,
-                                status="completed"
+                                **update_data
                             )
                             videos_updated += 1
                             tiktok_logger.info(
