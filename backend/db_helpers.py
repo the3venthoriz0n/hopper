@@ -723,7 +723,12 @@ def save_oauth_token(user_id: int, platform: str, access_token: str,
         
         if token:
             token.access_token = encrypted_access
-            token.refresh_token = encrypted_refresh
+            # ROOT CAUSE FIX: Only update refresh_token if a new one is provided
+            # If refresh_token parameter is None, preserve the existing refresh_token
+            # This prevents losing the refresh token when TikTok doesn't return a new one in refresh responses
+            if encrypted_refresh is not None:
+                token.refresh_token = encrypted_refresh
+            # If encrypted_refresh is None, don't update token.refresh_token (preserve existing)
             token.expires_at = expires_at
             token.extra_data = extra_data or {}
             token.updated_at = datetime.now(timezone.utc)

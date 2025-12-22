@@ -376,3 +376,32 @@ def release_lock(lock_key: str) -> None:
         lock_key: The lock key to release
     """
     redis_client.delete(lock_key)
+
+
+def set_token_check_cooldown(user_id: int, platform: str, ttl: int = 30) -> None:
+    """Set a cooldown flag to prevent multiple token expiration checks within a time window.
+    
+    This prevents the "thundering herd" problem where multiple requests simultaneously
+    check token expiration and trigger refresh cycles.
+    
+    Args:
+        user_id: User ID
+        platform: Platform name (e.g., "tiktok")
+        ttl: Time-to-live in seconds (default 30)
+    """
+    key = f"token_check_cooldown:{user_id}:{platform}"
+    redis_client.setex(key, ttl, "1")
+
+
+def get_token_check_cooldown(user_id: int, platform: str) -> bool:
+    """Check if token expiration check is in cooldown period.
+    
+    Args:
+        user_id: User ID
+        platform: Platform name (e.g., "tiktok")
+        
+    Returns:
+        True if in cooldown (should skip expiration check), False otherwise
+    """
+    key = f"token_check_cooldown:{user_id}:{platform}"
+    return redis_client.get(key) is not None

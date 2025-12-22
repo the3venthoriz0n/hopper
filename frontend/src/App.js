@@ -1213,7 +1213,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       if (res.data.account) {
         setTiktok(prev => ({
           ...prev,
-          connected: true,
+          // Don't update connected status - it comes from loadDestinations
           account: res.data.account,
           token_status: res.data.token_status || 'valid',
           token_expired: res.data.token_expired || false,
@@ -1229,13 +1229,26 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           setTiktokCreatorInfo(null);
         }
       } else {
-        setTiktok(prev => ({ ...prev, connected: false }));
+        // Only update account info and token status, don't change connection status
+        setTiktok(prev => ({
+          ...prev,
+          account: null,
+          token_status: res.data.token_status || prev.token_status || 'valid',
+          token_expired: res.data.token_expired || false,
+          token_expires_soon: res.data.token_expires_soon || false
+        }));
         setTiktokCreatorInfo(null);
       }
     } catch (err) {
       console.error('Error loading TikTok account:', err);
-      setTiktok(prev => ({ ...prev, connected: false }));
-      setTiktokCreatorInfo(null);
+      // Keep existing account info and connection status on error - don't disconnect
+      // Only update token status if available in error response
+      setTiktok(prev => ({
+        ...prev,
+        token_status: err.response?.data?.token_status || prev.token_status || 'valid',
+        token_expired: err.response?.data?.token_expired || prev.token_expired || false,
+        token_expires_soon: err.response?.data?.token_expires_soon || prev.token_expires_soon || false
+      }));
     }
   }, [API]);
 

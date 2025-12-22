@@ -2684,17 +2684,25 @@ def disconnect_tiktok(user_id: int = Depends(require_csrf_new)):
 # PUBLIC API: refresh_tiktok_account_data (SAME NAME, NEW IMPLEMENTATION)
 # ============================================================================
 
-def refresh_tiktok_account_data(user_id: int, access_token: str):
+def refresh_tiktok_account_data(user_id: int):
     """Background task to refresh TikTok account data
     
-    NO TOKEN REFRESH - token is guaranteed fresh from main request.
+    ROOT CAUSE FIX: Fetch token from DB at execution time to avoid using stale token strings.
+    This prevents race conditions where a token refresh happens between when the task is scheduled
+    and when it executes.
     
     Args:
         user_id: User ID
-        access_token: Fresh access token from main request
     """
     db = SessionLocal()
     try:
+        # ROOT CAUSE FIX: Fetch fresh token from DB at execution time, not from parameter
+        # This ensures we always use the latest token, even if it was refreshed after task was scheduled
+        access_token = _ensure_fresh_token(user_id, db)
+        if not access_token:
+            tiktok_logger.warning(f"Could not get fresh token for background refresh (user {user_id})")
+            return
+        
         token_obj = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
         if not token_obj:
             return
@@ -2704,8 +2712,9 @@ def refresh_tiktok_account_data(user_id: int, access_token: str):
         if not open_id:
             return
         
-        # Fetch fresh data
-        fresh_creator_info = _fetch_creator_info_safe(access_token, user_id)
+        # Fetch fresh data using token fetched from DB
+        # ROOT CAUSE FIX: Pass db session so retry logic can re-fetch token if needed
+        fresh_creator_info = _fetch_creator_info_safe(access_token, user_id, db=db)
         if not fresh_creator_info:
             return
         
@@ -2877,7 +2886,8 @@ def get_tiktok_account(
         }
     
     # ===== STEP 2: Fetch fresh privacy_level_options (always) =====
-    fresh_creator_info = _fetch_creator_info_safe(access_token, user_id)
+    # ROOT CAUSE FIX: Pass db session so retry logic can re-fetch token if needed
+    fresh_creator_info = _fetch_creator_info_safe(access_token, user_id, db=db)
     
     if not fresh_creator_info:
         # API failed - return cached data
@@ -2954,7 +2964,9 @@ def get_tiktok_account(
             pass
     
     if should_schedule:
-        background_tasks.add_task(refresh_tiktok_account_data, user_id, access_token)
+        # ROOT CAUSE FIX: Don't pass access_token string to background task
+        # The task will fetch it fresh from DB to avoid race conditions
+        background_tasks.add_task(refresh_tiktok_account_data, user_id)
         tiktok_logger.debug(f"Background refresh scheduled (user {user_id})")
     
     # ===== STEP 5: Return merged data =====
@@ -6903,6 +6915,7 @@ def _parse_and_save_tiktok_token_response(
     }
     
     # Preserve existing account info if requested (for refresh operations)
+    existing_token = None
     if preserve_account_info:
         existing_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
         if existing_token and existing_token.extra_data:
@@ -6914,12 +6927,15 @@ def _parse_and_save_tiktok_token_response(
                 extra_data["open_id"] = existing_token.extra_data["open_id"]
     
     # Save to database
+    # ROOT CAUSE FIX: Pass None for refresh_token if TikTok doesn't provide a new one
+    # save_oauth_token will preserve the existing refresh_token when refresh_token=None
     # CRITICAL: Always use new_refresh_token if provided (TikTok may rotate it)
+    # If not provided (None), save_oauth_token will preserve existing refresh_token
     db_helpers.save_oauth_token(
         user_id=user_id,
         platform="tiktok",
         access_token=access_token,
-        refresh_token=new_refresh_token,  # Use new token if provided, None if not
+        refresh_token=new_refresh_token,  # New token if provided, None if not (will preserve existing)
         expires_at=expires_at,
         extra_data=extra_data,
         db=db
@@ -7016,13 +7032,33 @@ def refresh_tiktok_token(user_id: int, refresh_token: str, db: Session) -> str:
             tiktok_logger.error(f"Concurrent refresh failed to produce valid token (user {user_id})")
             raise Exception("Token refresh in progress failed. Please try again.")
         
-        # We have the lock - check if token was already refreshed
+        # ROOT CAUSE FIX: Double-Check Locking - Refresh DB session to get latest data
+        # SQLAlchemy might serve stale data from its identity map, so we force a fresh read
+        db.expire_all()
+        
+        # Re-fetch token from DB to see if it was already refreshed while we waited for lock
         current_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
         if current_token:
+            # ROOT CAUSE FIX: Check if token was already refreshed by checking expires_at
+            # If expires_at is more than 30 minutes away, the token was just refreshed
+            now = datetime.now(timezone.utc)
+            if current_token.expires_at:
+                time_until_expiry = current_token.expires_at - now
+                if time_until_expiry > timedelta(minutes=30):
+                    # Token was already refreshed - return it without calling TikTok API
+                    tiktok_logger.info(
+                        f"Token already refreshed by another process (user {user_id}). "
+                        f"Expires in {time_until_expiry.total_seconds() / 3600:.1f} hours"
+                    )
+                    new_access = decrypt(current_token.access_token)
+                    if new_access:
+                        return new_access
+            
+            # Also check if refresh_token changed (backup check)
             current_refresh = decrypt(current_token.refresh_token) if current_token.refresh_token else None
             if current_refresh and refresh_token and current_refresh != refresh_token:
                 # Token was refreshed between check and lock acquisition
-                tiktok_logger.info(f"Token already refreshed by another process (user {user_id})")
+                tiktok_logger.info(f"Token already refreshed by another process (refresh_token changed, user {user_id})")
                 new_access = decrypt(current_token.access_token)
                 if new_access:
                     return new_access
@@ -7213,6 +7249,14 @@ def _ensure_fresh_token(user_id: int, db: Session) -> Optional[str]:
     """Internal helper to ensure user has a fresh access token
     
     Automatically refreshes if needed using distributed locking.
+    
+    ROOT CAUSE FIX: For TikTok, check access token expiration (24 hours) separately
+    from refresh token expiration (365 days). check_token_expiration only checks
+    refresh token expiration for TikTok, so we need to check access token expiration here.
+    
+    Implements:
+    - 30-minute grace period: Only refresh if token expires within 30 minutes
+    - 30-second cooldown: Prevents thundering herd from multiple simultaneous requests
     """
     token_obj = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
     if not token_obj:
@@ -7222,14 +7266,38 @@ def _ensure_fresh_token(user_id: int, db: Session) -> Optional[str]:
     if not access_token:
         return None
     
-    # Check if token needs refresh
-    token_expiry = db_helpers.check_token_expiration(token_obj)
-    needs_refresh = token_expiry.get("expired", False) or token_expiry.get("expires_soon", False)
-    
-    if not needs_refresh:
+    # ROOT CAUSE FIX: UI-Driven Sync Check - 30-second cooldown to prevent thundering herd
+    # If another request recently checked/refreshed, skip expiration check and use cached token
+    if redis_client.get_token_check_cooldown(user_id, "tiktok"):
+        tiktok_logger.debug(f"Token check in cooldown, using cached token (user {user_id})")
         return access_token
     
-    # Token needs refresh
+    # ROOT CAUSE FIX: For TikTok, access tokens expire every 24 hours and must be refreshed
+    # even if the refresh token is still valid. check_token_expiration only checks
+    # refresh token expiration for TikTok, so we check access token expiration here.
+    now = datetime.now(timezone.utc)
+    access_token_expired = False
+    if token_obj.expires_at:
+        # ROOT CAUSE FIX: 30-minute grace period - only refresh if token expires within 30 minutes
+        # This prevents refreshing tokens that expire in 23 hours (thundering herd prevention)
+        buffer = timedelta(minutes=30)
+        access_token_expired = token_obj.expires_at < (now + buffer)
+    
+    # Also check refresh token expiration (for connection status)
+    token_expiry = db_helpers.check_token_expiration(token_obj)
+    refresh_token_expired = token_expiry.get("expired", False)
+    
+    # Refresh if access token is expired/expiring OR refresh token is expired
+    needs_refresh = access_token_expired or refresh_token_expired
+    
+    if not needs_refresh:
+        # Set cooldown to prevent other requests from checking expiration unnecessarily
+        redis_client.set_token_check_cooldown(user_id, "tiktok", ttl=30)
+        return access_token
+    
+    # Token needs refresh - set cooldown before attempting refresh
+    redis_client.set_token_check_cooldown(user_id, "tiktok", ttl=30)
+    
     if not token_obj.refresh_token:
         tiktok_logger.warning(f"Token expired but no refresh token (user {user_id})")
         return None
@@ -7252,16 +7320,64 @@ def _ensure_fresh_token(user_id: int, db: Session) -> Optional[str]:
 # INTERNAL HELPER: Fetch creator info with error handling
 # ============================================================================
 
-def _fetch_creator_info_safe(access_token: str, user_id: int) -> Optional[Dict]:
+def _fetch_creator_info_safe(access_token: str, user_id: int, db: Session = None) -> Optional[Dict]:
     """Internal helper to fetch creator info with error handling
     
-    Returns None on failure instead of raising exception.
+    ROOT CAUSE FIX: Add retry logic to handle token invalidation race conditions.
+    If the token is invalid (likely due to concurrent refresh), re-fetch from DB and retry once.
+    
+    Args:
+        access_token: Access token to use (may be stale)
+        user_id: User ID
+        db: Database session (optional, will create if needed)
+    
+    Returns:
+        Dict with creator info, or None on failure
     """
+    should_close_db = False
+    if db is None:
+        from models import SessionLocal
+        db = SessionLocal()
+        should_close_db = True
+    
     try:
-        return get_tiktok_creator_info(access_token)
-    except Exception as e:
-        tiktok_logger.warning(f"Failed to fetch creator info (user {user_id}): {str(e)}")
-        return None
+        # First attempt with provided token
+        try:
+            return get_tiktok_creator_info(access_token)
+        except Exception as e:
+            error_msg = str(e).lower()
+            # Check if error is due to invalid token (race condition with concurrent refresh)
+            is_token_error = (
+                "access_token_invalid" in error_msg or
+                "invalid" in error_msg and "token" in error_msg or
+                "401" in error_msg or
+                "unauthorized" in error_msg
+            )
+            
+            if not is_token_error:
+                # Not a token error, log and return None
+                tiktok_logger.warning(f"Failed to fetch creator info (user {user_id}): {str(e)}")
+                return None
+            
+            # ROOT CAUSE FIX: Token error detected - likely stale token due to concurrent refresh
+            # Re-fetch fresh token from DB and retry once
+            tiktok_logger.info(f"Token invalid during creator info fetch (user {user_id}), re-fetching from DB and retrying...")
+            
+            # Get fresh token from DB (will auto-refresh if needed)
+            fresh_access_token = _ensure_fresh_token(user_id, db)
+            if not fresh_access_token:
+                tiktok_logger.warning(f"Could not get fresh token for retry (user {user_id})")
+                return None
+            
+            # Retry with fresh token
+            try:
+                return get_tiktok_creator_info(fresh_access_token)
+            except Exception as retry_error:
+                tiktok_logger.warning(f"Retry failed to fetch creator info (user {user_id}): {str(retry_error)}")
+                return None
+    finally:
+        if should_close_db:
+            db.close()
 
 
 
