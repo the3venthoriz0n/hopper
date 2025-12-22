@@ -6580,7 +6580,8 @@ def update_video(
     privacy_level: str = None,
     allow_comments: bool = None,
     allow_duet: bool = None,
-    allow_stitch: bool = None
+    allow_stitch: bool = None,
+    caption: str = None
 ):
     """Update video settings"""
     # Get video
@@ -6628,6 +6629,12 @@ def update_video(
     
     if allow_stitch is not None:
         custom_settings["allow_stitch"] = allow_stitch
+    
+    # Instagram-specific settings
+    if caption is not None:
+        if len(caption) > 2200:
+            raise HTTPException(400, "Caption must be 2200 characters or less")
+        custom_settings["caption"] = caption
     
     # Build update dict
     update_data = {"custom_settings": custom_settings}

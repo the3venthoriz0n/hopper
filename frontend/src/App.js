@@ -438,6 +438,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const [loadingPlanKey, setLoadingPlanKey] = useState(null); // Track which specific plan is loading
   const [notification, setNotification] = useState(null); // For popup notifications
   const [confirmDialog, setConfirmDialog] = useState(null); // For confirmation dialogs
+  const [destinationModal, setDestinationModal] = useState(null); // { videoId, platform, video }
 
   // Check for Google login callback
   useEffect(() => {
@@ -1919,6 +1920,30 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     }
   };
 
+  // Reusable function for saving destination-specific overrides (DRY)
+  const saveDestinationOverrides = async (videoId, platform, overrides) => {
+    try {
+      const params = new URLSearchParams();
+      Object.entries(overrides).forEach(([key, value]) => {
+        if (value !== null && value !== undefined) {
+          params.append(key, value);
+        }
+      });
+      
+      await axios.patch(`${API}/videos/${videoId}?${params.toString()}`);
+      
+      // Reload videos to get updated data
+      await loadVideos();
+      
+      setMessage(`✅ ${platform === 'youtube' ? 'YouTube' : platform === 'tiktok' ? 'TikTok' : 'Instagram'} overrides saved`);
+      return true;
+    } catch (err) {
+      setMessage(`❌ Failed to save overrides: ${err.response?.data?.detail || err.message}`);
+      console.error('Error saving destination overrides:', err);
+      return false;
+    }
+  };
+
   const recomputeVideoTitle = async (videoId) => {
     try {
       await axios.post(`${API}/videos/${videoId}/recompute-title`);
@@ -2163,6 +2188,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       {/* Notification Popup */}
       {notification && (
         <div
+          className="notification-popup"
           style={{
             position: 'fixed',
             top: '20px',
@@ -2291,6 +2317,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           }}
         >
           <div
+            className="confirm-dialog"
             style={{
               background: 'linear-gradient(135deg, rgba(30, 30, 30, 0.98) 0%, rgba(20, 20, 20, 0.98) 100%)',
               border: '2px solid rgba(239, 68, 68, 0.5)',
@@ -2375,13 +2402,14 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         </div>
       )}
       
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-        <h1>{appTitle}</h1>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+      <div className="app-header">
+        <h1 className="app-title">{appTitle}</h1>
+        <div className="app-header-right">
           {/* Admin Dashboard Link */}
           {isAdmin && (
             <Link
               to="/admin"
+              className="admin-button-link"
               style={{
                 padding: '0.5rem 1rem',
                 background: 'rgba(239, 68, 68, 0.15)',
@@ -2411,6 +2439,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           )}
           {/* Token Balance Indicator - always rendered, shows loading state if not yet loaded */}
           <div 
+              className="token-balance-indicator"
               style={{
                 padding: '0.4rem 0.8rem',
                 background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%)',
@@ -2443,10 +2472,11 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               />
           </div>
           
-          <span style={{ color: '#999', fontSize: '0.9rem' }}>
+          <span className="user-email" style={{ color: '#999', fontSize: '0.9rem' }}>
             {user.email}
           </span>
           <button 
+            className="settings-button"
             onClick={() => setShowAccountSettings(true)}
             style={{
               padding: '0.5rem',
@@ -2480,9 +2510,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       
       {/* Global Settings - Collapsible, no + button */}
       <div className="card">
-        <div className="card-header" onClick={() => setShowGlobalSettings(!showGlobalSettings)}>
-          <h2>⚙️ Global Settings</h2>
-        </div>
+        <button 
+          className="global-settings-button"
+          onClick={() => setShowGlobalSettings(!showGlobalSettings)}
+          type="button"
+        >
+          ⚙️ Global Settings {showGlobalSettings ? '▼' : '▶'}
+        </button>
         {showGlobalSettings && (
           <div className="settings-panel">
           <div className="setting-group">
@@ -3759,7 +3793,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       <span>{v.status}</span>
                     )}
                   </div>
-                  {/* Platform Status Indicators */}
+                  {/* Platform Status Indicators - Clickable Buttons */}
                   {v.platform_statuses && (
                     <div style={{ 
                       display: 'flex', 
@@ -3799,34 +3833,65 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                           );
                         }
                         
-                        // Status indicator (checkmark or X)
-                        let statusIndicator, title;
+                        // Determine border color based on status
+                        let borderColor, backgroundColor, title;
                         if (status === 'success') {
-                          statusIndicator = <span style={{ color: '#22c55e', fontSize: '12px', lineHeight: '1' }}>✓</span>;
-                          title = `${platformNames[platform]}: Upload successful`;
+                          borderColor = '#22c55e'; // Green
+                          backgroundColor = 'rgba(34, 197, 94, 0.1)';
+                          title = `${platformNames[platform]}: Upload successful - Click to view/edit`;
                         } else if (status === 'failed') {
-                          statusIndicator = <span style={{ color: '#ef4444', fontSize: '12px', lineHeight: '1', fontWeight: 'bold' }}>✕</span>;
-                          title = `${platformNames[platform]}: Upload failed`;
+                          borderColor = '#ef4444'; // Red
+                          backgroundColor = 'rgba(239, 68, 68, 0.1)';
+                          title = `${platformNames[platform]}: Upload failed - Click to view errors/edit`;
                         } else {
-                          // Pending - no status indicator, just show the icon
-                          statusIndicator = null;
-                          title = `${platformNames[platform]}: Will upload to this platform`;
+                          // Pending
+                          borderColor = 'rgba(255, 255, 255, 0.2)';
+                          backgroundColor = 'rgba(255, 255, 255, 0.05)';
+                          title = `${platformNames[platform]}: Will upload to this platform - Click to configure`;
                         }
                         
                         return (
-                          <span
+                          <button
                             key={platform}
+                            className="destination-status-button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDestinationModal({ videoId: v.id, platform, video: v });
+                            }}
                             title={title}
                             style={{
                               display: 'flex',
                               alignItems: 'center',
-                              gap: '3px',
-                              opacity: status === 'pending' ? 0.6 : 1
+                              justifyContent: 'center',
+                              padding: '4px 6px',
+                              border: `2px solid ${borderColor}`,
+                              borderRadius: '6px',
+                              background: backgroundColor,
+                              cursor: 'pointer',
+                              transition: 'all 0.2s ease',
+                              opacity: status === 'pending' ? 0.7 : 1,
+                              minWidth: '32px',
+                              height: '28px'
+                            }}
+                            onMouseEnter={(e) => {
+                              if (status === 'pending') {
+                                e.currentTarget.style.opacity = '1';
+                                e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.5)';
+                              } else {
+                                e.currentTarget.style.transform = 'scale(1.05)';
+                              }
+                            }}
+                            onMouseLeave={(e) => {
+                              if (status === 'pending') {
+                                e.currentTarget.style.opacity = '0.7';
+                                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                              } else {
+                                e.currentTarget.style.transform = 'scale(1)';
+                              }
                             }}
                           >
                             {platformIcon}
-                            {statusIndicator}
-                          </span>
+                          </button>
                         );
                       })}
                     </div>
@@ -4444,6 +4509,343 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           </div>
         </div>
       )}
+      
+      {/* Destination Details Modal */}
+      {destinationModal && (() => {
+        const video = videos.find(v => v.id === destinationModal.videoId);
+        if (!video) return null;
+        
+        const platform = destinationModal.platform;
+        const platformNames = {
+          youtube: 'YouTube',
+          tiktok: 'TikTok',
+          instagram: 'Instagram'
+        };
+        
+        const platformData = video.upload_properties?.[platform] || {};
+        const platformStatus = video.platform_statuses?.[platform] || 'pending';
+        const platformError = platformData.error || (platform === 'tiktok' && video.tiktok_publish_error) || null;
+        const customSettings = video.custom_settings || {};
+        
+        const handleSaveOverrides = async () => {
+          try {
+            const overrides = {};
+            
+            if (platform === 'youtube') {
+              const titleEl = document.getElementById(`dest-override-title-${video.id}-${platform}`);
+              const descEl = document.getElementById(`dest-override-description-${video.id}-${platform}`);
+              const tagsEl = document.getElementById(`dest-override-tags-${video.id}-${platform}`);
+              const visibilityEl = document.getElementById(`dest-override-visibility-${video.id}-${platform}`);
+              const madeForKidsEl = document.getElementById(`dest-override-made-for-kids-${video.id}-${platform}`);
+              
+              if (titleEl?.value) overrides.title = titleEl.value;
+              if (descEl?.value) overrides.description = descEl.value;
+              if (tagsEl?.value) overrides.tags = tagsEl.value;
+              if (visibilityEl?.value) overrides.visibility = visibilityEl.value;
+              overrides.made_for_kids = madeForKidsEl?.checked ?? false;
+            } else if (platform === 'tiktok') {
+              const titleEl = document.getElementById(`dest-override-title-${video.id}-${platform}`);
+              const descEl = document.getElementById(`dest-override-description-${video.id}-${platform}`);
+              const privacyEl = document.getElementById(`dest-override-privacy-${video.id}-${platform}`);
+              
+              if (titleEl?.value) overrides.title = titleEl.value;
+              if (descEl?.value) overrides.description = descEl.value;
+              if (privacyEl?.value) overrides.privacy_level = privacyEl.value;
+            } else if (platform === 'instagram') {
+              const captionEl = document.getElementById(`dest-override-caption-${video.id}-${platform}`);
+              
+              if (captionEl?.value) overrides.caption = captionEl.value;
+            }
+            
+            const success = await saveDestinationOverrides(video.id, platform, overrides);
+            if (success) {
+              setDestinationModal(null);
+            }
+          } catch (err) {
+            console.error('Error saving destination overrides:', err);
+          }
+        };
+        
+        return (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.7)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 10000,
+              padding: '1rem'
+            }}
+            onClick={() => setDestinationModal(null)}
+          >
+            <div
+              className="modal"
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                maxWidth: '700px',
+                width: '100%',
+                maxHeight: '90vh',
+                overflowY: 'auto'
+              }}
+            >
+              <div className="modal-header">
+                <h2>
+                  {platformNames[platform]} Upload Details
+                  {platformStatus === 'success' && <span style={{ color: '#22c55e', marginLeft: '8px' }}>✓</span>}
+                  {platformStatus === 'failed' && <span style={{ color: '#ef4444', marginLeft: '8px' }}>✕</span>}
+                </h2>
+                <button className="btn-close" onClick={() => setDestinationModal(null)}>×</button>
+              </div>
+              
+              <div className="modal-body">
+                {/* Upload Status */}
+                <div className="setting-group">
+                  <label>Upload Status</label>
+                  <div style={{
+                    padding: '0.75rem',
+                    background: platformStatus === 'success' 
+                      ? 'rgba(34, 197, 94, 0.1)' 
+                      : platformStatus === 'failed'
+                      ? 'rgba(239, 68, 68, 0.1)'
+                      : 'rgba(255, 255, 255, 0.05)',
+                    border: `1px solid ${
+                      platformStatus === 'success'
+                        ? '#22c55e'
+                        : platformStatus === 'failed'
+                        ? '#ef4444'
+                        : 'rgba(255, 255, 255, 0.2)'
+                    }`,
+                    borderRadius: '6px',
+                    color: platformStatus === 'success'
+                      ? '#22c55e'
+                      : platformStatus === 'failed'
+                      ? '#ef4444'
+                      : '#999',
+                    fontWeight: '500'
+                  }}>
+                    {platformStatus === 'success' && '✓ Upload Successful'}
+                    {platformStatus === 'failed' && '✕ Upload Failed'}
+                    {platformStatus === 'pending' && '⏳ Pending Upload'}
+                  </div>
+                </div>
+                
+                {/* Error Display */}
+                {platformError && (
+                  <div className="setting-group">
+                    <label>Error Details</label>
+                    <div style={{
+                      padding: '0.75rem',
+                      background: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      borderRadius: '6px',
+                      color: '#ef4444',
+                      fontSize: '0.9rem',
+                      wordBreak: 'break-word'
+                    }}>
+                      {platformError}
+                    </div>
+                  </div>
+                )}
+                
+                {/* Upload Metadata */}
+                <div className="setting-group">
+                  <label>Current Upload Metadata</label>
+                  <div style={{ 
+                    display: 'flex', 
+                    flexDirection: 'column', 
+                    gap: '0.5rem',
+                    padding: '0.75rem',
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    borderRadius: '6px',
+                    fontSize: '0.9rem'
+                  }}>
+                    {platform === 'youtube' && (
+                      <>
+                        <div><strong>Title:</strong> {video.youtube_title || video.filename}</div>
+                        {platformData.description && (
+                          <div><strong>Description:</strong> {platformData.description.substring(0, 200)}
+                          {platformData.description.length > 200 && '...'}</div>
+                        )}
+                        {platformData.tags && platformData.tags.length > 0 && (
+                          <div><strong>Tags:</strong> {platformData.tags.join(', ')}</div>
+                        )}
+                        {platformData.visibility && (
+                          <div><strong>Visibility:</strong> {platformData.visibility}</div>
+                        )}
+                      </>
+                    )}
+                    {platform === 'tiktok' && (
+                      <>
+                        {platformData.title && <div><strong>Title:</strong> {platformData.title}</div>}
+                        {platformData.description && <div><strong>Description:</strong> {platformData.description}</div>}
+                        {video.tiktok_publish_status && (
+                          <div><strong>Publish Status:</strong> {video.tiktok_publish_status}</div>
+                        )}
+                      </>
+                    )}
+                    {platform === 'instagram' && (
+                      <>
+                        {platformData.caption && <div><strong>Caption:</strong> {platformData.caption}</div>}
+                      </>
+                    )}
+                  </div>
+                </div>
+                
+                {/* Override Configuration */}
+                <div className="setting-group">
+                  <label>Destination-Specific Overrides</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    {platform === 'youtube' && (
+                      <>
+                        <div className="form-group">
+                          <label>Title Override</label>
+                          <input
+                            type="text"
+                            id={`dest-override-title-${video.id}-${platform}`}
+                            className="input-text"
+                            defaultValue={customSettings.title || ''}
+                            placeholder="Leave empty to use template"
+                            maxLength="100"
+                          />
+                        </div>
+                        <div className="form-group">
+                          <label>Description Override</label>
+                          <textarea
+                            id={`dest-override-description-${video.id}-${platform}`}
+                            className="textarea-text"
+                            rows="4"
+                            defaultValue={customSettings.description || ''}
+                            placeholder="Leave empty to use template"
+                          />
+                        </div>
+                        <div className="form-group">
+                          <label>Tags Override</label>
+                          <input
+                            type="text"
+                            id={`dest-override-tags-${video.id}-${platform}`}
+                            className="input-text"
+                            defaultValue={customSettings.tags || ''}
+                            placeholder="Comma-separated tags"
+                          />
+                        </div>
+                        <div className="form-group">
+                          <label>Visibility</label>
+                          <select
+                            id={`dest-override-visibility-${video.id}-${platform}`}
+                            className="select"
+                            defaultValue={customSettings.visibility || youtubeSettings.visibility}
+                          >
+                            <option value="private">Private</option>
+                            <option value="unlisted">Unlisted</option>
+                            <option value="public">Public</option>
+                          </select>
+                        </div>
+                        <div className="form-group">
+                          <label className="checkbox-label">
+                            <input
+                              type="checkbox"
+                              id={`dest-override-made-for-kids-${video.id}-${platform}`}
+                              className="checkbox"
+                              defaultChecked={customSettings.made_for_kids ?? youtubeSettings.made_for_kids}
+                            />
+                            <span>Made for Kids</span>
+                          </label>
+                        </div>
+                      </>
+                    )}
+                    
+                    {platform === 'tiktok' && (
+                      <>
+                        <div className="form-group">
+                          <label>Title Override</label>
+                          <input
+                            type="text"
+                            id={`dest-override-title-${video.id}-${platform}`}
+                            className="input-text"
+                            defaultValue={customSettings.title || ''}
+                            placeholder="Leave empty to use template"
+                          />
+                        </div>
+                        <div className="form-group">
+                          <label>Description Override</label>
+                          <textarea
+                            id={`dest-override-description-${video.id}-${platform}`}
+                            className="textarea-text"
+                            rows="4"
+                            defaultValue={customSettings.description || ''}
+                            placeholder="Leave empty to use template"
+                          />
+                        </div>
+                        <div className="form-group">
+                          <label>Privacy Level</label>
+                          <select
+                            id={`dest-override-privacy-${video.id}-${platform}`}
+                            className="select"
+                            defaultValue={customSettings.privacy_level || ''}
+                          >
+                            <option value="">Use default</option>
+                            {Array.isArray(tiktokCreatorInfo?.privacy_level_options) && 
+                              tiktokCreatorInfo.privacy_level_options.map(option => {
+                                const labelMap = {
+                                  'PUBLIC_TO_EVERYONE': 'Everyone',
+                                  'MUTUAL_FOLLOW_FRIENDS': 'Friends',
+                                  'FOLLOWER_OF_CREATOR': 'Followers',
+                                  'SELF_ONLY': 'Only you'
+                                };
+                                return (
+                                  <option key={option} value={option}>
+                                    {labelMap[option] || option}
+                                  </option>
+                                );
+                              })
+                            }
+                          </select>
+                        </div>
+                      </>
+                    )}
+                    
+                    {platform === 'instagram' && (
+                      <>
+                        <div className="form-group">
+                          <label>Caption Override</label>
+                          <textarea
+                            id={`dest-override-caption-${video.id}-${platform}`}
+                            className="textarea-text"
+                            rows="4"
+                            defaultValue={customSettings.caption || ''}
+                            placeholder="Leave empty to use template"
+                          />
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+              
+              <div className="modal-footer">
+                <button
+                  onClick={() => setDestinationModal(null)}
+                  className="btn-cancel"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveOverrides}
+                  className="btn-save"
+                >
+                  Save Overrides
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       
       {/* Account Settings Modal */}
       {showAccountSettings && (
