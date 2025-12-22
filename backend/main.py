@@ -70,6 +70,7 @@ from auth import (
     verify_password,
 )
 from encryption import decrypt, encrypt
+from video_tokens import generate_video_access_token, verify_video_access_token
 
 # Local imports - Token & Stripe
 from stripe_config import (
@@ -3856,7 +3857,10 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
     # because Content-Length includes the entire request (boundaries, field names, etc.), not just the file.
     # FastAPI's UploadFile.size may also not be set. We validate during streaming instead.
     
-    upload_logger.info(f"Starting upload for user {user_id}: {file.filename} (Content-Type: {file.content_type})")
+    upload_logger.info(
+        f"Video upload method: FILE_UPLOAD (file) - Starting upload for user {user_id}: "
+        f"{file.filename} (Content-Type: {file.content_type})"
+    )
     
     # Get user settings
     global_settings = db_helpers.get_user_settings(user_id, "global", db=db)
@@ -4008,6 +4012,23 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
         global_settings.get('wordbank', [])
     )
     
+    # Verify file was actually written to disk
+    resolved_path = path.resolve()
+    if not resolved_path.exists():
+        upload_logger.error(
+            f"CRITICAL: File upload appeared to succeed for user {user_id}: {file.filename} "
+            f"but file does not exist at {resolved_path}. File size reported: {file_size} bytes"
+        )
+        raise HTTPException(500, f"File upload failed: file was not saved to disk")
+    
+    # Verify file size matches what we wrote
+    actual_file_size = resolved_path.stat().st_size
+    if actual_file_size != file_size:
+        upload_logger.warning(
+            f"File size mismatch for user {user_id}: {file.filename}. "
+            f"Expected: {file_size} bytes, Actual: {actual_file_size} bytes"
+        )
+    
     # Add to database with file size and tokens
     # ROOT CAUSE FIX: Store absolute path to prevent path resolution issues
     # 
@@ -4021,7 +4042,7 @@ async def add_video(file: UploadFile = File(...), user_id: int = Depends(require
     video = db_helpers.add_user_video(
         user_id=user_id,
         filename=file.filename,
-        path=str(path.resolve()),  # Ensure absolute path
+        path=str(resolved_path),  # Ensure absolute path
         generated_title=youtube_title,
         file_size_bytes=file_size,
         tokens_consumed=0,  # Don't consume tokens yet - only on successful upload
@@ -6242,6 +6263,96 @@ def delete_video(video_id: int, user_id: int = Depends(require_csrf_new), db: Se
     
     return {"ok": True}
 
+@app.get("/api/videos/{video_id}/file")
+def get_video_file(
+    video_id: int,
+    token: str = Query(..., description="Access token for video file"),
+    db: Session = Depends(get_db)
+):
+    """Serve video file for TikTok PULL_FROM_URL
+    
+    This endpoint requires a signed token to prevent unauthorized access.
+    The token is time-limited (1 hour) and includes video_id + user_id verification.
+    
+    Security features:
+    - HMAC-signed token prevents tampering
+    - Time-limited (expires after 1 hour)
+    - Video ID and user ID verification
+    - Constant-time comparison prevents timing attacks
+    
+    Args:
+        video_id: Video ID
+        token: Signed access token (generated during upload)
+        db: Database session
+    
+    Returns:
+        Video file with proper headers for TikTok
+    
+    Raises:
+        HTTPException 404: Video not found
+        HTTPException 403: Invalid or expired token
+    """
+    # Get video to verify it exists and get user_id
+    # Query all videos to find this one (we need user_id for token verification)
+    all_videos = db.query(Video).filter(Video.id == video_id).all()
+    if not all_videos:
+        logger.warning(f"Video file request for non-existent video_id: {video_id}")
+        raise HTTPException(404, "Video not found")
+    
+    video = all_videos[0]
+    
+    # Verify token
+    if not verify_video_access_token(token, video_id, video.user_id):
+        logger.warning(f"Invalid or expired token for video_id: {video_id}, user_id: {video.user_id}")
+        raise HTTPException(403, "Invalid or expired access token")
+    
+    # Try the stored path first
+    video_path = Path(video.path).resolve()
+    
+    # If stored path doesn't exist, try fallback: UPLOAD_DIR / filename
+    if not video_path.exists():
+        fallback_path = (UPLOAD_DIR / video.filename).resolve()
+        logger.warning(
+            f"Video file not found at stored path for video_id {video_id}: {video_path}. "
+            f"Trying fallback path: {fallback_path}. "
+            f"Stored path in DB: {video.path}, filename: {video.filename}"
+        )
+        
+        if fallback_path.exists():
+            logger.info(f"Using fallback path for video_id {video_id}: {fallback_path}")
+            video_path = fallback_path
+        else:
+            # Log detailed error for debugging
+            logger.error(
+                f"Video file not found for video_id {video_id}: "
+                f"Stored path: {video_path} (exists: {video_path.exists()}), "
+                f"Fallback path: {fallback_path} (exists: {fallback_path.exists()}), "
+                f"UPLOAD_DIR: {UPLOAD_DIR}, "
+                f"Filename: {video.filename}, "
+                f"Stored path in DB: {video.path}"
+            )
+            raise HTTPException(404, f"Video file not found at {video_path} or {fallback_path}")
+    
+    # Return file with proper headers for TikTok
+    from fastapi.responses import FileResponse
+    
+    file_ext = video.filename.rsplit('.', 1)[-1].lower() if '.' in video.filename else 'mp4'
+    media_type = {
+        'mp4': 'video/mp4',
+        'mov': 'video/quicktime',
+        'webm': 'video/webm'
+    }.get(file_ext, 'video/mp4')
+    
+    return FileResponse(
+        path=str(video_path),
+        media_type=media_type,
+        filename=video.filename,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "public, max-age=3600"  # Cache for 1 hour
+        }
+    )
+
 @app.post("/api/videos/{video_id}/recompute-title")
 def recompute_video_title(video_id: int, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Recompute video title from current template"""
@@ -7887,9 +7998,42 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         tiktok_logger.info(f"Uploading {video.filename} ({video_size / (1024*1024):.2f} MB)")
         redis_client.set_upload_progress(user_id, video_id, 5)
         
+        # Determine upload method: prefer PULL_FROM_URL, fallback to FILE_UPLOAD
+        use_pull_from_url = True  # Set to False to force FILE_UPLOAD fallback
+        video_url = None
+        upload_method = None
+        if use_pull_from_url:
+            # Generate secure access token for video file (valid for 1 hour)
+            video_access_token = generate_video_access_token(video_id, user_id, expires_in_hours=1)
+            video_url = f"{BACKEND_URL.rstrip('/')}/api/videos/{video_id}/file?token={video_access_token}"
+            upload_method = "PULL_FROM_URL"
+            tiktok_logger.info(
+                f"TikTok upload method: PULL_FROM_URL (URL) - User {user_id}, Video {video_id} ({video.filename})"
+            )
+        else:
+            upload_method = "FILE_UPLOAD"
+            tiktok_logger.info(
+                f"TikTok upload method: FILE_UPLOAD (file) - User {user_id}, Video {video_id} ({video.filename})"
+            )
+        
         # Step 1: Initialize upload (with token refresh retry)
         init_response = None
         try:
+            if use_pull_from_url and video_url:
+                # Use PULL_FROM_URL method
+                source_info = {
+                    "source": "PULL_FROM_URL",
+                    "video_url": video_url
+                }
+            else:
+                # Fallback to FILE_UPLOAD
+                source_info = {
+                    "source": "FILE_UPLOAD",
+                    "video_size": video_size,
+                    "chunk_size": video_size,
+                    "total_chunk_count": 1
+                }
+            
             init_response = httpx.post(
                 TIKTOK_INIT_UPLOAD_URL,
                 headers={
@@ -7906,18 +8050,53 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                         "brand_organic_toggle": brand_organic_toggle,
                         "brand_content_toggle": brand_content_toggle
                     },
-                    "source_info": {
-                        "source": "FILE_UPLOAD",
-                        "video_size": video_size,
-                        "chunk_size": video_size,
-                        "total_chunk_count": 1
-                    }
+                    "source_info": source_info
                 },
                 timeout=30.0
             )
         except Exception as init_error:
-            # If it's a network error, re-raise
-            raise
+            # If PULL_FROM_URL fails, fallback to FILE_UPLOAD
+            if use_pull_from_url and video_url:
+                tiktok_logger.warning(
+                    f"TikTok upload method changed: PULL_FROM_URL (URL) failed, falling back to FILE_UPLOAD (file) - "
+                    f"User {user_id}, Video {video_id} ({video.filename}): {init_error}"
+                )
+                use_pull_from_url = False
+                upload_method = "FILE_UPLOAD"
+                # Retry with FILE_UPLOAD
+                source_info = {
+                    "source": "FILE_UPLOAD",
+                    "video_size": video_size,
+                    "chunk_size": video_size,
+                    "total_chunk_count": 1
+                }
+                try:
+                    init_response = httpx.post(
+                        TIKTOK_INIT_UPLOAD_URL,
+                        headers={
+                            "Authorization": f"Bearer {access_token.strip()}",
+                            "Content-Type": "application/json; charset=UTF-8"
+                        },
+                        json={
+                            "post_info": {
+                                "title": title,
+                                "privacy_level": tiktok_privacy,
+                                "disable_duet": not allow_duet,
+                                "disable_comment": not allow_comments,
+                                "disable_stitch": not allow_stitch,
+                                "brand_organic_toggle": brand_organic_toggle,
+                                "brand_content_toggle": brand_content_toggle
+                            },
+                            "source_info": source_info
+                        },
+                        timeout=30.0
+                    )
+                except Exception as retry_error:
+                    # If retry also fails, re-raise the original error
+                    raise init_error
+            else:
+                # If it's a network error or already using FILE_UPLOAD, re-raise
+                raise
         
         # Check if token error and retry with refresh
         if init_response.status_code != 200:
@@ -7955,7 +8134,20 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                             tiktok_token = db_helpers.get_oauth_token(user_id, "tiktok", db=db)
                             if not tiktok_token:
                                 raise Exception("Failed to retrieve token after refresh")
-                            # Retry init upload with new token
+                            # Retry init upload with new token (use same source_info method)
+                            if use_pull_from_url and video_url:
+                                retry_source_info = {
+                                    "source": "PULL_FROM_URL",
+                                    "video_url": video_url
+                                }
+                            else:
+                                retry_source_info = {
+                                    "source": "FILE_UPLOAD",
+                                    "video_size": video_size,
+                                    "chunk_size": video_size,
+                                    "total_chunk_count": 1
+                                }
+                            
                             init_response = httpx.post(
                                 TIKTOK_INIT_UPLOAD_URL,
                                 headers={
@@ -7972,12 +8164,7 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                                         "brand_organic_toggle": brand_organic_toggle,
                                         "brand_content_toggle": brand_content_toggle
                                     },
-                                    "source_info": {
-                                        "source": "FILE_UPLOAD",
-                                        "video_size": video_size,
-                                        "chunk_size": video_size,
-                                        "total_chunk_count": 1
-                                    }
+                                    "source_info": retry_source_info
                                 },
                                 timeout=30.0
                             )
@@ -8057,68 +8244,85 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         
         init_data = init_response.json()
         publish_id = init_data["data"]["publish_id"]
-        upload_url = init_data["data"]["upload_url"]
         
         tiktok_logger.info(f"Initialized, publish_id: {publish_id}")
         redis_client.set_upload_progress(user_id, video_id, 10)
         
-        # Step 2: Upload video file
-        tiktok_logger.info("Uploading video file...")
-        
-        file_ext = video.filename.rsplit('.', 1)[-1].lower() if '.' in video.filename else 'mp4'
-        content_type = {'mp4': 'video/mp4', 'mov': 'video/quicktime', 'webm': 'video/webm'}.get(file_ext, 'video/mp4')
-        
-        with open(video_path, 'rb') as f:
-            upload_response = httpx.put(
-                upload_url,
-                headers={
-                    "Content-Range": f"bytes 0-{video_size - 1}/{video_size}",
-                    "Content-Type": content_type
-                },
-                content=f.read(),
-                timeout=300.0
-            )
-        
-        if upload_response.status_code not in [200, 201]:
-            import json as json_module
-            import json as json_module
-            error_context = {
-                "user_id": user_id,
-                "video_id": video_id,
-                "video_filename": video.filename,
-                "platform": "tiktok",
-                "http_status": upload_response.status_code,
-                "stage": "file_upload",
-                "publish_id": publish_id if 'publish_id' in locals() else None,
-                "video_size": video_size if 'video_size' in locals() else None,
-            }
+        # Step 2: Upload video file (only for FILE_UPLOAD method)
+        if not use_pull_from_url:
+            # FILE_UPLOAD method: Upload file chunks to TikTok
+            upload_url = init_data["data"].get("upload_url")
+            if not upload_url:
+                raise Exception("TikTok did not return upload_url for FILE_UPLOAD method")
             
-            try:
-                response_data = upload_response.json()
-                # Convert dict to JSON string for OpenTelemetry compatibility
-                error_context["response_data"] = json_module.dumps(response_data)
-                error = response_data.get("error", {})
-                error_msg = error.get("message", upload_response.text)
-                error_context["error_code"] = error.get('code')
-                error_context["error_message"] = error_msg
+            tiktok_logger.info(
+                f"TikTok uploading video file using FILE_UPLOAD (file) method - "
+                f"User {user_id}, Video {video_id} ({video.filename})"
+            )
+            
+            file_ext = video.filename.rsplit('.', 1)[-1].lower() if '.' in video.filename else 'mp4'
+            content_type = {'mp4': 'video/mp4', 'mov': 'video/quicktime', 'webm': 'video/webm'}.get(file_ext, 'video/mp4')
+            
+            with open(video_path, 'rb') as f:
+                upload_response = httpx.put(
+                    upload_url,
+                    headers={
+                        "Content-Range": f"bytes 0-{video_size - 1}/{video_size}",
+                        "Content-Type": content_type
+                    },
+                    content=f.read(),
+                    timeout=300.0
+                )
+            
+            if upload_response.status_code not in [200, 201]:
+                import json as json_module
+                error_context = {
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "video_filename": video.filename,
+                    "platform": "tiktok",
+                    "http_status": upload_response.status_code,
+                    "stage": "file_upload",
+                    "publish_id": publish_id if 'publish_id' in locals() else None,
+                    "video_size": video_size if 'video_size' in locals() else None,
+                }
                 
-                tiktok_logger.error(
-                    f"❌ TikTok upload FAILED - File upload error - User {user_id}, Video {video_id} ({video.filename}): "
-                    f"HTTP {upload_response.status_code} - {error_msg}",
-                    extra=error_context
-                )
-                tiktok_logger.error(f"Full upload response: {json_module.dumps(response_data, indent=2)}")
-            except Exception as parse_error:
-                error_context["raw_response"] = upload_response.text
-                error_context["parse_error"] = str(parse_error)
-                error_msg = upload_response.text
-                tiktok_logger.error(
-                    f"❌ TikTok upload FAILED - File upload error (parse failed) - User {user_id}, Video {video_id} ({video.filename}): "
-                    f"HTTP {upload_response.status_code}",
-                    extra=error_context
-                )
-                tiktok_logger.error(f"Raw upload response: {upload_response.text}")
-            raise Exception(f"Upload failed: {upload_response.status_code} - {error_msg}")
+                try:
+                    response_data = upload_response.json()
+                    # Convert dict to JSON string for OpenTelemetry compatibility
+                    error_context["response_data"] = json_module.dumps(response_data)
+                    error = response_data.get("error", {})
+                    error_msg = error.get("message", upload_response.text)
+                    error_context["error_code"] = error.get('code')
+                    error_context["error_message"] = error_msg
+                    
+                    tiktok_logger.error(
+                        f"❌ TikTok upload FAILED - File upload error - User {user_id}, Video {video_id} ({video.filename}): "
+                        f"HTTP {upload_response.status_code} - {error_msg}",
+                        extra=error_context
+                    )
+                    tiktok_logger.error(f"Full upload response: {json_module.dumps(response_data, indent=2)}")
+                except Exception as parse_error:
+                    error_context["raw_response"] = upload_response.text
+                    error_context["parse_error"] = str(parse_error)
+                    error_msg = upload_response.text
+                    tiktok_logger.error(
+                        f"❌ TikTok upload FAILED - File upload error (parse failed) - User {user_id}, Video {video_id} ({video.filename}): "
+                        f"HTTP {upload_response.status_code}",
+                        extra=error_context
+                    )
+                    tiktok_logger.error(f"Raw upload response: {upload_response.text}")
+                raise Exception(f"Upload failed: {upload_response.status_code} - {error_msg}")
+            
+            tiktok_logger.info("File upload completed")
+        else:
+            # PULL_FROM_URL method: TikTok will download the file automatically
+            # No file upload step needed - just wait for TikTok to process
+            tiktok_logger.info(
+                f"TikTok using PULL_FROM_URL (URL) method - TikTok will download the file automatically - "
+                f"User {user_id}, Video {video_id} ({video.filename})"
+            )
+            redis_client.set_upload_progress(user_id, video_id, 50)  # Indicate progress
         
         # Success - update video in database
         # ROOT CAUSE FIX: Only store tiktok_publish_id here, not tiktok_id.
@@ -8126,7 +8330,11 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         # This allows the polling task to distinguish between uploaded (has publish_id) and published (has video_id).
         db_helpers.update_video(video_id, user_id, db=db, status="uploaded", tiktok_publish_id=publish_id)
         redis_client.set_upload_progress(user_id, video_id, 100)
-        tiktok_logger.info(f"Success! publish_id: {publish_id}")
+        final_method = upload_method if 'upload_method' in locals() else ("PULL_FROM_URL" if use_pull_from_url else "FILE_UPLOAD")
+        tiktok_logger.info(
+            f"TikTok upload successful using {final_method} method - "
+            f"User {user_id}, Video {video_id} ({video.filename}), publish_id: {publish_id}"
+        )
         
         # Increment successful uploads counter
         successful_uploads_counter.inc()
