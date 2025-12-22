@@ -509,8 +509,51 @@ def check_token_expiration(token: Optional[OAuthToken]) -> Dict[str, Any]:
     
     now = datetime.now(timezone.utc)
     
-    # If no expiration time, assume it's valid (some tokens don't expire)
-    if not token.expires_at:
+    # For TikTok: Always check refresh token expiration, ignore access token expiration
+    # Access tokens expire every 24 hours but can be auto-refreshed
+    # Only refresh token expiration (365 days) should affect connection status
+    # Access tokens expire every 24 hours but can be auto-refreshed
+    # Only refresh token expiration (365 days) should affect connection status
+    if token.platform == "tiktok" and token.refresh_token and token.extra_data:
+        # Use stored refresh_expires_at if available (more accurate)
+        refresh_expires_at = None
+        if token.extra_data.get("refresh_expires_at"):
+            try:
+                refresh_expires_at = datetime.fromisoformat(token.extra_data["refresh_expires_at"])
+            except (ValueError, TypeError):
+                pass
+        
+        # Fallback: Calculate from refresh_expires_in if refresh_expires_at not available
+        if not refresh_expires_at:
+            refresh_expires_in = token.extra_data.get("refresh_expires_in")
+            if refresh_expires_in and token.updated_at:
+                from datetime import timedelta
+                refresh_expires_at = token.updated_at + timedelta(seconds=int(refresh_expires_in))
+        
+        if refresh_expires_at:
+            # Check if refresh token is expired
+            if refresh_expires_at < now:
+                return {
+                    "expired": True,
+                    "expires_soon": False,
+                    "expires_at": refresh_expires_at,
+                    "status": "expired"
+                }
+            
+            # If refresh token expires within 30 days, show expires_soon (yellow/orange)
+            # This gives user time to reconnect before it fully expires
+            time_until_refresh_expiry = refresh_expires_at - now
+            expires_soon = time_until_refresh_expiry.total_seconds() < 2592000  # 30 days
+            status = "expires_soon" if expires_soon else "valid"
+            return {
+                "expired": False,
+                "expires_soon": expires_soon,
+                "expires_at": refresh_expires_at,
+                "status": status
+            }
+        
+        # If we have refresh token but no expiration info, assume valid
+        # (refresh token should last 365 days per TikTok docs)
         return {
             "expired": False,
             "expires_soon": False,
@@ -518,33 +561,7 @@ def check_token_expiration(token: Optional[OAuthToken]) -> Dict[str, Any]:
             "status": "valid"
         }
     
-    # Check if expired
-    is_expired = token.expires_at < now
-    
-    # IMPORTANT: If expires_at is in the past (manually marked as expired, e.g., due to invalid_grant),
-    # always return expired status regardless of refresh token status
-    if is_expired:
-        # Check if this is a manually expired token (invalid_grant scenario)
-        # If refresh token exists but access token is expired, it's likely invalid_grant
-        if token.refresh_token:
-            # For invalid_grant cases, we want to show "expires_soon" (yellow) instead of "expired" (red)
-            # to indicate it needs reconnection but isn't completely broken
-            # However, if expires_at is set to past, it means token refresh failed, so show as expired
-            return {
-                "expired": True,
-                "expires_soon": False,
-                "expires_at": token.expires_at,
-                "status": "expired"
-            }
-        else:
-            return {
-                "expired": True,
-                "expires_soon": False,
-                "expires_at": token.expires_at,
-                "status": "expired"
-            }
-    
-    # For tokens with refresh tokens, check refresh token expiration instead
+    # For tokens with refresh tokens (non-TikTok), check refresh token expiration
     # TikTok and Instagram tokens can be refreshed, so we should check refresh_expires_in
     if token.refresh_token and token.extra_data:
         refresh_expires_in = token.extra_data.get("refresh_expires_in")
@@ -585,15 +602,41 @@ def check_token_expiration(token: Optional[OAuthToken]) -> Dict[str, Any]:
     
     # For tokens without refresh tokens or if refresh_expires_in not available,
     # check access token expiration
-    # TikTok access tokens expire in 1-2 hours, so use shorter threshold
+    # TikTok should never reach here (handled above), but keep for other platforms
+    if not token.expires_at:
+        return {
+            "expired": False,
+            "expires_soon": False,
+            "expires_at": None,
+            "status": "valid"
+        }
+    
+    # Check if expired
+    is_expired = token.expires_at < now
+    
+    # IMPORTANT: If expires_at is in the past (manually marked as expired, e.g., due to invalid_grant),
+    # always return expired status regardless of refresh token status
+    if is_expired:
+        return {
+            "expired": True,
+            "expires_soon": False,
+            "expires_at": token.expires_at,
+            "status": "expired"
+        }
+    
     time_until_expiry = token.expires_at - now
     if token.platform == "tiktok":
-        # TikTok access tokens expire quickly, but can be refreshed
-        # Only show "expires soon" if access token expires in less than 1 hour AND no refresh token
-        expires_soon = not is_expired and not token.refresh_token and time_until_expiry.total_seconds() < 3600  # 1 hour
+        # TikTok should never reach here (refresh token check above handles it)
+        # But if we do, assume valid since access tokens can be refreshed
+        return {
+            "expired": False,
+            "expires_soon": False,
+            "expires_at": token.expires_at,
+            "status": "valid"
+        }
     else:
         # For other platforms, use 24 hour threshold
-        expires_soon = not is_expired and time_until_expiry.total_seconds() < 86400  # 24 hours
+        expires_soon = time_until_expiry.total_seconds() < 86400  # 24 hours
     
     status = "expired" if is_expired else ("expires_soon" if expires_soon else "valid")
     
