@@ -217,6 +217,15 @@ except ValueError:
     scheduled_uploads_detail_gauge = REGISTRY._names_to_collectors.get('hopper_scheduled_uploads_detail')
 
 try:
+    active_users_detail_gauge = Gauge(
+        'hopper_active_users_detail',
+        'Active users with email and last activity time',
+        ['user_id', 'user_email', 'last_activity']
+    )
+except ValueError:
+    active_users_detail_gauge = REGISTRY._names_to_collectors.get('hopper_active_users_detail')
+
+try:
     orphaned_videos_gauge = Gauge(
         'hopper_orphaned_videos',
         'Number of orphaned video files (files without database records)'
@@ -9515,6 +9524,35 @@ async def update_metrics_task():
                         created_at=created_at_str,
                         status=status or "scheduled"
                     ).set(1)
+                
+                # Get active users detail for table view
+                try:
+                    active_users_detail_gauge.clear()
+                except AttributeError:
+                    pass
+                
+                # Get active user IDs from Redis activity keys
+                import redis_client as redis_module
+                active_user_ids = redis_module.get_active_user_ids()
+                
+                if active_user_ids:
+                    # Query database for user emails
+                    active_users = db.query(
+                        User.id,
+                        User.email
+                    ).filter(User.id.in_(active_user_ids)).all()
+                    
+                    # Get current time for last_activity (activity keys have 1-hour TTL)
+                    current_time = datetime.now(timezone.utc)
+                    last_activity_str = current_time.isoformat()
+                    
+                    # Set metrics for each active user
+                    for user_id, user_email in active_users:
+                        active_users_detail_gauge.labels(
+                            user_id=str(user_id),
+                            user_email=user_email or f"user_{user_id}",
+                            last_activity=last_activity_str
+                        ).set(1)
                 
             except Exception as e:
                 logger.error(f"Error updating metrics: {e}", exc_info=True)
