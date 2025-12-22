@@ -11,19 +11,62 @@ import AdminDashboard from './AdminDashboard';
 import Pricing from './Pricing';
 
 // Hopper Color Palette - Centralized color constants
+// White & Black Primary with Google Color Scheme
 // Update these to change colors throughout the app (matches CSS variables)
+// 
+// SYSTEM DESIGN: RGB values stored separately for opacity support
+// Use rgba() helper function for colors with opacity
 const HOPPER_COLORS = {
-  dark: '#222831',        // rgb(34, 40, 49)
-  charcoal: '#393E46',    // rgb(57, 62, 70)
-  taupe: '#948979',       // rgb(148, 137, 121)
-  cream: '#DFD0B8',       // rgb(223, 208, 184)
+  // Primary Colors
   white: '#ffffff',
-  // Semantic colors
-  success: '#10b981',
-  error: '#ef4444',
-  warning: '#f59e0b',
-  info: '#3b82f6'
+  black: '#202124',        // Google's black/dark grey
+  
+  // Google Color Palette - Hex values
+  blue: '#4285F4',         // Medium blue
+  blueDark: '#174EA6',     // Dark blue
+  blueLight: '#D2E3FC',    // Light blue
+  red: '#EA4335',          // Medium red
+  redDark: '#A50E0E',      // Dark red
+  redLight: '#FAD2CF',     // Light red
+  yellow: '#FBBC04',       // Yellow
+  yellowLight: '#FEEFC3',  // Light yellow
+  green: '#34A853',        // Medium green
+  greenDark: '#0D652D',    // Dark green
+  greenLight: '#CEEAD6',   // Light green
+  orange: '#E37400',       // Orange
+  grey: '#9AA0A6',         // Medium grey
+  greyLight: '#F1F3F4',    // Light grey
+  
+  // Semantic colors (using Google's palette)
+  success: '#34A853',      // Google green
+  error: '#EA4335',        // Google red
+  warning: '#FBBC04',      // Google yellow
+  info: '#4285F4',         // Google blue
+  
+  // RGB values for opacity support (matches CSS --rgb-* variables)
+  rgb: {
+    white: '255, 255, 255',
+    black: '32, 33, 36',
+    blue: '66, 133, 244',
+    blueDark: '23, 78, 166',
+    red: '234, 67, 53',
+    redDark: '165, 14, 14',
+    yellow: '251, 188, 4',
+    green: '52, 168, 83',
+    greenDark: '13, 101, 45',
+    orange: '227, 116, 0',
+    grey: '154, 160, 166',
+    greyLight: '241, 243, 244',
+    success: '52, 168, 83',
+    error: '234, 67, 53',
+    warning: '251, 188, 4',
+    info: '66, 133, 244'
+  }
 };
+
+// Helper function for rgba colors with opacity
+// Usage: rgba(HOPPER_COLORS.rgb.blue, 0.5) => 'rgba(66, 133, 244, 0.5)'
+const rgba = (rgb, opacity) => `rgba(${rgb}, ${opacity})`;
 
 // Circular Progress Component for Token Usage
 // monthlyTokens tracks starting balance (plan allocation + granted tokens)
@@ -35,7 +78,7 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
           width: '48px',
           height: '48px',
           borderRadius: '50%',
-          background: 'conic-gradient(from 0deg, #10b981 0deg 360deg)',
+          background: `conic-gradient(from 0deg, ${HOPPER_COLORS.green} 0deg 360deg)`,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -45,18 +88,18 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
             width: '36px',
             height: '36px',
             borderRadius: '50%',
-            background: HOPPER_COLORS.dark,
+            background: HOPPER_COLORS.white,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             fontSize: '1rem',
             fontWeight: '700',
-            color: HOPPER_COLORS.success
+            color: HOPPER_COLORS.green
           }}>
             ∞
           </div>
         </div>
-        <div style={{ fontSize: '0.6rem', color: HOPPER_COLORS.taupe, textAlign: 'center' }}>Unlimited</div>
+        <div style={{ fontSize: '0.6rem', color: HOPPER_COLORS.grey, textAlign: 'center' }}>Unlimited</div>
       </div>
     );
   }
@@ -71,11 +114,11 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
   const hasOverage = overageTokens > 0;
   
   // Color based on usage - red when in overage, amber when high usage, green otherwise
-  let progressColor = '#10b981'; // green
+  let progressColor = HOPPER_COLORS.green;
   if (hasOverage) {
-    progressColor = '#ef4444'; // red when in overage
+    progressColor = HOPPER_COLORS.error; // red when in overage
   } else if (percentage >= 90) {
-    progressColor = '#f59e0b'; // amber when 90% or more used
+    progressColor = HOPPER_COLORS.warning; // amber when 90% or more used
   }
   
   // Calculate stroke-dasharray for the circle
@@ -93,7 +136,7 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
             cy="24"
             r={radius}
             fill="none"
-            stroke="rgba(255, 255, 255, 0.1)"
+            stroke={rgba(HOPPER_COLORS.rgb.white, 0.1)}
             strokeWidth="3"
           />
           {/* Progress circle */}
@@ -122,10 +165,10 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
           alignItems: 'center',
           gap: '0.05rem'
         }}>
-          <div style={{ fontSize: '0.65rem', fontWeight: '700', color: isLoading ? '#666' : '#fff', lineHeight: '1' }}>
+          <div style={{ fontSize: '0.65rem', fontWeight: '700', color: isLoading ? HOPPER_COLORS.grey : HOPPER_COLORS.white, lineHeight: '1' }}>
             {tokensUsed}
           </div>
-          <div style={{ fontSize: '0.5rem', color: isLoading ? '#444' : '#999', lineHeight: '1' }}>
+          <div style={{ fontSize: '0.5rem', color: isLoading ? HOPPER_COLORS.grey : HOPPER_COLORS.grey, lineHeight: '1' }}>
             / {effectiveMonthlyTokens}
           </div>
         </div>
@@ -222,8 +265,8 @@ function LoadingScreen() {
       justifyContent: 'center',
       alignItems: 'center',
       minHeight: '100vh',
-      background: HOPPER_COLORS.charcoal,
-      color: HOPPER_COLORS.cream
+      background: HOPPER_COLORS.white,
+      color: HOPPER_COLORS.black
     }}>
       <div>Loading...</div>
     </div>
@@ -343,15 +386,15 @@ function NotFound() {
       flexDirection: 'column',
       justifyContent: 'center',
       alignItems: 'center',
-      background: HOPPER_COLORS.charcoal,
-      color: HOPPER_COLORS.cream
+      background: HOPPER_COLORS.white,
+      color: HOPPER_COLORS.black
     }}>
       <h1 style={{ fontSize: '3rem', marginBottom: '1rem' }}>404</h1>
       <p style={{ fontSize: '1.2rem', marginBottom: '2rem' }}>Page Not Found</p>
       <Link 
         to="/" 
         style={{ 
-          color: HOPPER_COLORS.taupe, 
+          color: HOPPER_COLORS.grey, 
           textDecoration: 'none',
           fontSize: '1.1rem'
         }}
@@ -1432,8 +1475,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         justifyContent: 'center',
         alignItems: 'center',
         minHeight: '100vh',
-        background: HOPPER_COLORS.charcoal,
-        color: HOPPER_COLORS.cream
+        background: HOPPER_COLORS.white,
+        color: HOPPER_COLORS.black
       }}>
         <div>Loading...</div>
       </div>
@@ -2224,17 +2267,17 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             maxWidth: '500px',
             padding: '1.25rem',
             background: notification.type === 'error' 
-              ? 'linear-gradient(135deg, rgba(239, 68, 68, 0.95) 0%, rgba(220, 38, 38, 0.95) 100%)'
+              ? `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.error, 0.95)} 0%, ${rgba(HOPPER_COLORS.rgb.redDark, 0.95)} 100%)`
               : notification.type === 'info'
-              ? 'linear-gradient(135deg, rgba(59, 130, 246, 0.95) 0%, rgba(37, 99, 235, 0.95) 100%)'
-              : 'linear-gradient(135deg, rgba(34, 197, 94, 0.95) 0%, rgba(22, 163, 74, 0.95) 100%)',
+              ? `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.info, 0.95)} 0%, ${rgba(HOPPER_COLORS.rgb.blueDark, 0.95)} 100%)`
+              : `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.success, 0.95)} 0%, ${rgba(HOPPER_COLORS.rgb.greenDark, 0.95)} 100%)`,
             border: notification.type === 'error'
-              ? '2px solid rgba(239, 68, 68, 1)'
+              ? `2px solid ${HOPPER_COLORS.error}`
               : notification.type === 'info'
-              ? '2px solid rgba(59, 130, 246, 1)'
-              : '2px solid rgba(34, 197, 94, 1)',
+              ? `2px solid ${HOPPER_COLORS.info}`
+              : `2px solid ${HOPPER_COLORS.success}`,
             borderRadius: '12px',
-            boxShadow: '0 10px 40px rgba(0, 0, 0, 0.3)',
+            boxShadow: `0 10px 40px ${rgba(HOPPER_COLORS.rgb.black, 0.3)}`,
             color: 'white',
             animation: 'slideInRight 0.3s ease-out',
             display: 'flex',
@@ -2264,8 +2307,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             <button
               onClick={() => setNotification(null)}
               style={{
-                background: 'rgba(255, 255, 255, 0.2)',
-                border: '1px solid rgba(255, 255, 255, 0.3)',
+                background: rgba(HOPPER_COLORS.rgb.white, 0.2),
+                border: `1px solid ${rgba(HOPPER_COLORS.rgb.white, 0.3)}`,
                 borderRadius: '6px',
                 color: 'white',
                 cursor: 'pointer',
@@ -2276,10 +2319,10 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 flexShrink: 0
               }}
               onMouseEnter={(e) => {
-                e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+                e.target.style.background = rgba(HOPPER_COLORS.rgb.white, 0.3);
               }}
               onMouseLeave={(e) => {
-                e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+                e.target.style.background = rgba(HOPPER_COLORS.rgb.white, 0.2);
               }}
             >
               ×
@@ -2294,8 +2337,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               style={{
                 marginTop: '0.5rem',
                 padding: '0.75rem 1rem',
-                background: 'rgba(255, 255, 255, 0.2)',
-                border: '1px solid rgba(255, 255, 255, 0.4)',
+                background: rgba(HOPPER_COLORS.rgb.white, 0.2),
+                border: `1px solid ${rgba(HOPPER_COLORS.rgb.white, 0.4)}`,
                 borderRadius: '8px',
                 color: 'white',
                 cursor: 'pointer',
@@ -2305,12 +2348,12 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 width: '100%'
               }}
               onMouseEnter={(e) => {
-                e.target.style.background = 'rgba(255, 255, 255, 0.3)';
-                e.target.style.borderColor = 'rgba(255, 255, 255, 0.6)';
+                e.target.style.background = rgba(HOPPER_COLORS.rgb.white, 0.3);
+                e.target.style.borderColor = rgba(HOPPER_COLORS.rgb.white, 0.6);
               }}
               onMouseLeave={(e) => {
-                e.target.style.background = 'rgba(255, 255, 255, 0.2)';
-                e.target.style.borderColor = 'rgba(255, 255, 255, 0.4)';
+                e.target.style.background = rgba(HOPPER_COLORS.rgb.white, 0.2);
+                e.target.style.borderColor = rgba(HOPPER_COLORS.rgb.white, 0.4);
               }}
             >
               🪙 View Subscription & Tokens
@@ -2328,7 +2371,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             left: 0,
             right: 0,
             bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.6)',
+            backgroundColor: rgba(HOPPER_COLORS.rgb.black, 0.6),
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -2345,13 +2388,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           <div
             className="confirm-dialog"
             style={{
-              background: 'linear-gradient(135deg, rgba(30, 30, 30, 0.98) 0%, rgba(20, 20, 20, 0.98) 100%)',
-              border: '2px solid rgba(239, 68, 68, 0.5)',
+              background: `linear-gradient(135deg, rgba(${HOPPER_COLORS.rgb.black}, 0.98) 0%, rgba(${HOPPER_COLORS.rgb.black}, 0.98) 100%)`,
+              border: `2px solid ${rgba(HOPPER_COLORS.rgb.error, 0.5)}`,
               borderRadius: '16px',
               padding: '2rem',
               minWidth: '400px',
               maxWidth: '500px',
-              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.5)',
+              boxShadow: `0 20px 60px ${rgba(HOPPER_COLORS.rgb.black, 0.5)}`,
               color: 'white',
               animation: 'scaleIn 0.2s ease-out',
               display: 'flex',
@@ -2376,8 +2419,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 onClick={confirmDialog.onCancel}
                 style={{
                   padding: '0.75rem 1.5rem',
-                  background: 'rgba(156, 163, 175, 0.2)',
-                  border: '1px solid rgba(156, 163, 175, 0.4)',
+                  background: rgba(HOPPER_COLORS.rgb.grey, 0.2),
+                  border: `1px solid ${rgba(HOPPER_COLORS.rgb.grey, 0.4)}`,
                   borderRadius: '8px',
                   color: 'white',
                   cursor: 'pointer',
@@ -2386,12 +2429,12 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   transition: 'all 0.2s'
                 }}
                 onMouseEnter={(e) => {
-                  e.target.style.background = 'rgba(156, 163, 175, 0.3)';
-                  e.target.style.borderColor = 'rgba(156, 163, 175, 0.6)';
+                  e.target.style.background = rgba(HOPPER_COLORS.rgb.grey, 0.3);
+                  e.target.style.borderColor = rgba(HOPPER_COLORS.rgb.grey, 0.6);
                 }}
                 onMouseLeave={(e) => {
-                  e.target.style.background = 'rgba(156, 163, 175, 0.2)';
-                  e.target.style.borderColor = 'rgba(156, 163, 175, 0.4)';
+                  e.target.style.background = rgba(HOPPER_COLORS.rgb.grey, 0.2);
+                  e.target.style.borderColor = rgba(HOPPER_COLORS.rgb.grey, 0.4);
                 }}
               >
                 Cancel
@@ -2400,8 +2443,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 onClick={confirmDialog.onConfirm}
                 style={{
                   padding: '0.75rem 1.5rem',
-                  background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.9) 0%, rgba(220, 38, 38, 0.9) 100%)',
-                  border: '1px solid rgba(239, 68, 68, 1)',
+                  background: `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.error, 0.9)} 0%, ${rgba(HOPPER_COLORS.rgb.redDark, 0.9)} 100%)`,
+                  border: `1px solid ${HOPPER_COLORS.error}`,
                   borderRadius: '8px',
                   color: 'white',
                   cursor: 'pointer',
@@ -2498,7 +2541,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               />
           </div>
           
-          <span className="user-email" style={{ color: HOPPER_COLORS.taupe, fontSize: '0.9rem' }}>
+          <span className="user-email" style={{ color: HOPPER_COLORS.grey, fontSize: '0.9rem' }}>
             {user.email}
           </span>
           <button 
@@ -2509,7 +2552,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               background: 'transparent',
               border: '1px solid #ddd',
               borderRadius: '4px',
-              color: HOPPER_COLORS.taupe,
+              color: HOPPER_COLORS.grey,
               cursor: 'pointer',
               fontSize: '1.1rem',
               display: 'flex',
@@ -2801,7 +2844,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               flexShrink: 0
             }}></div>
             {youtube.connected && (
-              <span className="account-info" style={{ fontSize: '0.9em', color: HOPPER_COLORS.taupe, marginLeft: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
+              <span className="account-info" style={{ fontSize: '0.9em', color: HOPPER_COLORS.grey, marginLeft: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
                 {youtube.account ? (
                   youtube.account.channel_name ? 
                     youtube.account.channel_name + (youtube.account.email ? ` (${youtube.account.email})` : '') : 
@@ -2975,7 +3018,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               flexShrink: 0
             }}></div>
             {tiktok.connected && (
-              <span className="account-info" style={{ fontSize: '0.9em', color: HOPPER_COLORS.taupe, marginLeft: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
+              <span className="account-info" style={{ fontSize: '0.9em', color: HOPPER_COLORS.grey, marginLeft: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
                 {tiktok.account ? (
                   tiktok.account.display_name ? 
                     tiktok.account.display_name + (tiktok.account.username ? ` (@${tiktok.account.username})` : '') : 
@@ -3287,7 +3330,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               flexShrink: 0
             }}></div>
             {instagram.connected && (
-              <span className="account-info" style={{ fontSize: '0.9em', color: HOPPER_COLORS.taupe, marginLeft: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
+              <span className="account-info" style={{ fontSize: '0.9em', color: HOPPER_COLORS.grey, marginLeft: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
                 {instagram.account ? (
                   instagram.account.username ? 
                     `@${instagram.account.username}` : 
@@ -3573,7 +3616,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       >
         <p>Drop videos here</p>
         {maxFileSize && (
-          <p style={{ fontSize: '0.85rem', color: '#999', marginTop: '0.5rem' }}>
+          <p style={{ fontSize: '0.85rem', color: HOPPER_COLORS.grey, marginTop: '0.5rem' }}>
             Maximum file size: {maxFileSize.max_file_size_display}
           </p>
         )}
@@ -3803,7 +3846,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       alignItems: 'center',
                       gap: '4px'
                     }}>
-                      <span style={{ color: HOPPER_COLORS.taupe, flexShrink: 0 }}>TikTok:</span>
+                      <span style={{ color: HOPPER_COLORS.grey, flexShrink: 0 }}>TikTok:</span>
                       <span style={flexTextStyle}>
                         {v.tiktok_publish_status === 'PUBLISHED' && (
                           <span style={{ 
@@ -3825,7 +3868,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         )}
                         {!['PUBLISHED', 'PROCESSING', 'FAILED'].includes(v.tiktok_publish_status) && (
                           <span style={{ 
-                            color: HOPPER_COLORS.taupe,
+                            color: HOPPER_COLORS.grey,
                             fontWeight: '500'
                           }}>{v.tiktok_publish_status}</span>
                         )}
@@ -4040,7 +4083,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       border: '1px solid rgba(99, 102, 241, 0.3)',
                       borderRadius: '6px',
                       fontSize: '0.75rem',
-                      color: '#999',
+                      color: HOPPER_COLORS.grey,
                       fontWeight: '500',
                       height: '32px',
                       minWidth: '32px',
@@ -4860,7 +4903,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 borderRadius: '8px',
                 border: '1px solid rgba(255, 255, 255, 0.1)'
               }}>
-                <div style={{ fontSize: '0.85rem', color: '#999', marginBottom: '0.25rem' }}>Logged in as</div>
+                <div style={{ fontSize: '0.85rem', color: HOPPER_COLORS.grey, marginBottom: '0.25rem' }}>Logged in as</div>
                 <div style={{ 
                   display: 'flex', 
                   justifyContent: 'space-between', 
@@ -4891,7 +4934,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         <p style={{ color: '#22c55e', fontSize: '0.85rem', marginBottom: '0.25rem' }}>
                           ✅ Password reset email sent to <strong>{user.email}</strong>
                         </p>
-                        <p style={{ color: '#999', fontSize: '0.8rem', marginBottom: '0.25rem' }}>
+                        <p style={{ color: HOPPER_COLORS.grey, fontSize: '0.8rem', marginBottom: '0.25rem' }}>
                           Check your email and click the reset link to set a new password. The link will take you to the login screen.
                         </p>
                         <button
@@ -4905,7 +4948,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                             background: 'transparent',
                             borderRadius: '6px',
                             border: '1px solid rgba(255,255,255,0.25)',
-                            color: '#fff',
+                            color: HOPPER_COLORS.white,
                             cursor: 'pointer',
                             fontSize: '0.9rem'
                           }}
@@ -4915,7 +4958,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       </>
                     ) : (
                       <>
-                        <p style={{ color: '#999', fontSize: '0.85rem', marginBottom: '0.25rem' }}>
+                        <p style={{ color: HOPPER_COLORS.grey, fontSize: '0.85rem', marginBottom: '0.25rem' }}>
                           We'll send a password reset link to <strong>{user.email}</strong>. Click the link in the email to set a new password.
                         </p>
                         <button
@@ -4944,7 +4987,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                             background: sendingResetEmail ? 'rgba(34, 197, 94, 0.3)' : 'rgba(34, 197, 94, 0.4)',
                             borderRadius: '6px',
                             border: '1px solid rgba(34,197,94,0.7)',
-                            color: '#fff',
+                            color: HOPPER_COLORS.white,
                             cursor: sendingResetEmail ? 'not-allowed' : 'pointer',
                             fontSize: '0.9rem',
                             fontWeight: 500,
@@ -4964,7 +5007,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                             background: 'transparent',
                             borderRadius: '6px',
                             border: '1px solid rgba(255,255,255,0.25)',
-                            color: HOPPER_COLORS.taupe,
+                            color: HOPPER_COLORS.grey,
                             cursor: 'pointer',
                             fontSize: '0.9rem'
                           }}
@@ -4981,9 +5024,9 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     width: '100%',
                     padding: '0.75rem',
                     background: 'transparent',
-                    border: '1px solid #666',
+                    border: `1px solid ${HOPPER_COLORS.grey}`,
                     borderRadius: '6px',
-                    color: '#999',
+                    color: HOPPER_COLORS.grey,
                     cursor: 'pointer',
                     fontSize: '1rem',
                     fontWeight: '500',
@@ -4991,12 +5034,12 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   }}
                   onMouseEnter={(e) => {
                     e.target.style.background = 'rgba(255, 255, 255, 0.05)';
-                    e.target.style.borderColor = '#999';
+                    e.target.style.borderColor = HOPPER_COLORS.grey;
                     e.target.style.color = 'white';
                   }}
                   onMouseLeave={(e) => {
                     e.target.style.background = 'transparent';
-                    e.target.style.borderColor = '#666';
+                    e.target.style.borderColor = HOPPER_COLORS.grey;
                     e.target.style.color = '#999';
                   }}
                 >
@@ -5066,7 +5109,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   alignItems: 'center',
                   gap: '0.6rem'
                 }}>
-                  <div style={{ fontSize: '0.75rem', color: '#999', textAlign: 'center' }}>Token Usage</div>
+                  <div style={{ fontSize: '0.75rem', color: HOPPER_COLORS.grey, textAlign: 'center' }}>Token Usage</div>
                   <CircularTokenProgress
                     tokensRemaining={tokenBalance?.tokens_remaining}
                     tokensUsed={tokenBalance?.tokens_used_this_period || 0}
@@ -5076,7 +5119,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     isLoading={!tokenBalance}
                   />
                   {tokenBalance && !tokenBalance.unlimited && tokenBalance.period_end && (
-                    <div style={{ fontSize: '0.65rem', color: '#666', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.65rem', color: HOPPER_COLORS.grey, textAlign: 'center' }}>
                       Resets: {new Date(tokenBalance.period_end).toLocaleDateString()}
                     </div>
                   )}
@@ -5088,7 +5131,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     {/* Available Plans */}
                     {availablePlans.length > 0 && (
                       <div id="subscription-plans" style={{ marginBottom: '1rem' }}>
-                        <div style={{ fontSize: '0.85rem', color: '#999', marginBottom: '0.75rem' }}>
+                        <div style={{ fontSize: '0.85rem', color: HOPPER_COLORS.grey, marginBottom: '0.75rem' }}>
                           Available Plans
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -5166,7 +5209,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                       </span>
                                     )}
                                   </div>
-                                  <div style={{ fontSize: '0.75rem', color: '#999' }}>
+                                  <div style={{ fontSize: '0.75rem', color: HOPPER_COLORS.grey }}>
                                     {plan.monthly_tokens === -1 ? 'Unlimited tokens' : `${plan.monthly_tokens} tokens/month`}
                                   </div>
                                 </div>
@@ -5293,7 +5336,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     )}
                   </>
                 ) : (
-                  <div style={{ textAlign: 'center', padding: '1rem', color: '#999' }}>
+                  <div style={{ textAlign: 'center', padding: '1rem', color: HOPPER_COLORS.grey }}>
                     Loading subscription info...
                   </div>
                 )}
@@ -5329,10 +5372,10 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 </button>
                 {showDangerZone && (
                   <>
-                    <p style={{ color: '#999', marginTop: '1rem', marginBottom: '1rem', fontSize: '0.9rem', lineHeight: '1.5' }}>
+                    <p style={{ color: HOPPER_COLORS.grey, marginTop: '1rem', marginBottom: '1rem', fontSize: '0.9rem', lineHeight: '1.5' }}>
                       Once you delete your account, there is no going back. This will permanently delete:
                     </p>
-                    <ul style={{ color: '#999', marginBottom: '1rem', fontSize: '0.85rem', paddingLeft: '1.25rem', lineHeight: '1.6' }}>
+                    <ul style={{ color: HOPPER_COLORS.grey, marginBottom: '1rem', fontSize: '0.85rem', paddingLeft: '1.25rem', lineHeight: '1.6' }}>
                       <li>Your account and login credentials</li>
                       <li>All uploaded videos and files</li>
                       <li>All settings and preferences</li>
@@ -5384,7 +5427,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               <p style={{ marginBottom: '1rem', fontSize: '1rem', lineHeight: '1.6', color: 'white' }}>
                 Are you absolutely sure you want to delete your account?
               </p>
-              <p style={{ marginBottom: '1.5rem', fontSize: '0.9rem', color: '#999', lineHeight: '1.6' }}>
+              <p style={{ marginBottom: '1.5rem', fontSize: '0.9rem', color: HOPPER_COLORS.grey, lineHeight: '1.6' }}>
                 This action <strong style={{ color: '#ef4444' }}>cannot be undone</strong>. All your data will be permanently deleted.
               </p>
               
@@ -5433,13 +5476,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         padding: '1.5rem',
         textAlign: 'center',
         borderTop: '1px solid #eee',
-        color: '#666',
+        color: HOPPER_COLORS.grey,
         fontSize: '0.9rem'
       }}>
         <Link 
           to="/terms" 
           style={{ 
-            color: '#666', 
+            color: HOPPER_COLORS.grey, 
             textDecoration: 'none', 
             marginRight: '1rem',
             transition: 'color 0.2s'
@@ -5453,7 +5496,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         <Link 
           to="/privacy" 
           style={{ 
-            color: '#666', 
+            color: HOPPER_COLORS.grey, 
             textDecoration: 'none', 
             margin: '0 1rem',
             transition: 'color 0.2s'
@@ -5467,7 +5510,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         <Link 
           to="/help"
           style={{ 
-            color: '#666', 
+            color: HOPPER_COLORS.grey, 
             textDecoration: 'none', 
             margin: '0 1rem',
             transition: 'color 0.2s'
@@ -5481,7 +5524,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         <Link 
           to="/delete-your-data"
           style={{ 
-            color: '#666', 
+            color: HOPPER_COLORS.grey, 
             textDecoration: 'none', 
             marginLeft: '1rem',
             transition: 'color 0.2s'
@@ -5491,13 +5534,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         >
           Delete Your Data
         </Link>
-        <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#999' }}>
+        <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: HOPPER_COLORS.grey }}>
           <a 
             href="https://github.com/the3venthoriz0n/hopper" 
             target="_blank" 
             rel="noopener noreferrer"
             style={{ 
-              color: '#999', 
+              color: HOPPER_COLORS.grey, 
               textDecoration: 'none',
               transition: 'color 0.2s'
             }}

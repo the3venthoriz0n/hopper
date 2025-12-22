@@ -6,11 +6,14 @@
    To update colors across the entire application, modify the base
    color variables in the :root section below.
    
-   Color Palette:
-   - --color-dark (#222831): Primary background
-   - --color-charcoal (#393E46): Secondary background/cards
-   - --color-taupe (#948979): Accent/secondary text
-   - --color-cream (#DFD0B8): Primary text/light elements
+   Color Scheme:
+   - Primary: White (#ffffff) and Black (#202124)
+   - Accents: Google's Color Palette
+     * Blue: #4285F4 (primary accent)
+     * Red: #EA4335 (errors)
+     * Green: #34A853 (success)
+     * Yellow: #FBBC04 (warnings)
+     * Grey: #9AA0A6 (secondary text)
    
    All other colors are derived from these base colors using
    semantic naming (--bg-*, --text-*, --accent-*, etc.)
@@ -18,56 +21,132 @@
 
 :root {
   /* ============================================
-     HOPPER COLOR PALETTE - Base Colors
-     Update these 4 colors to change the entire theme
+     HOPPER COLOR PALETTE - White & Black Primary
+     Google Color Scheme for Accents
+     
+     SYSTEM DESIGN: All colors use RGB components for opacity support
+     Update base RGB values here to change entire theme
      ============================================ */
-  --color-dark: #222831;      /* rgb(34, 40, 49) - Dark blue/black */
-  --color-charcoal: #393E46;   /* rgb(57, 62, 70) - Dark charcoal gray */
-  --color-taupe: #948979;     /* rgb(148, 137, 121) - Muted taupe/grayish-brown */
-  --color-cream: #DFD0B8;     /* rgb(223, 208, 184) - Light beige/cream */
   
-  /* Background Colors - Derived from palette */
-  --bg-primary: var(--color-dark);
-  --bg-secondary: rgba(57, 62, 70, 0.3);        /* Charcoal with opacity */
-  --bg-tertiary: rgba(57, 62, 70, 0.2);         /* Lighter charcoal */
-  --bg-card: var(--color-charcoal);
-  --bg-hover: rgba(57, 62, 70, 0.5);            /* Charcoal hover state */
-  --bg-overlay: rgba(34, 40, 49, 0.9);          /* Dark overlay */
+  /* ============================================
+     BASE COLOR RGB VALUES (for opacity support)
+     ============================================ */
+  /* Primary Colors */
+  --rgb-white: 255, 255, 255;
+  --rgb-black: 32, 33, 36;
   
-  /* Text Colors - Derived from palette */
-  --text-primary: var(--color-cream);
-  --text-secondary: var(--color-taupe);
-  --text-tertiary: rgba(148, 137, 121, 0.7);     /* Taupe with reduced opacity */
-  --text-muted: rgba(148, 137, 121, 0.5);       /* Taupe more muted */
+  /* Google Color Palette - RGB values */
+  --rgb-blue: 66, 133, 244;
+  --rgb-blue-dark: 23, 78, 166;
+  --rgb-blue-light: 210, 227, 252;
+  --rgb-red: 234, 67, 53;
+  --rgb-red-dark: 165, 14, 14;
+  --rgb-red-light: 250, 210, 207;
+  --rgb-yellow: 251, 188, 4;
+  --rgb-yellow-light: 254, 239, 195;
+  --rgb-green: 52, 168, 83;
+  --rgb-green-dark: 13, 101, 45;
+  --rgb-green-light: 206, 234, 214;
+  --rgb-orange: 227, 116, 0;
+  --rgb-grey: 154, 160, 166;
+  --rgb-grey-light: 241, 243, 244;
   
-  /* Accent Colors - Using taupe as base with variations */
-  --accent-primary: var(--color-taupe);
-  --accent-primary-hover: rgba(148, 137, 121, 0.8);
-  --accent-gradient: linear-gradient(135deg, rgba(148, 137, 121, 0.9), rgba(148, 137, 121, 0.7));
-  
-  /* Status Colors - Semantic colors that work with the palette */
-  --accent-success: #10b981;   /* Green for success */
-  --accent-error: #ef4444;      /* Red for errors */
-  --accent-warning: #f59e0b;    /* Amber for warnings */
-  
-  /* Border Colors - Derived from palette */
-  --border-primary: rgba(148, 137, 121, 0.2);   /* Taupe borders */
-  --border-secondary: rgba(148, 137, 121, 0.1);  /* Lighter taupe */
-  --border-accent: rgba(148, 137, 121, 0.4);     /* Stronger taupe for accents */
-  
-  /* Additional Semantic Colors - For specific UI elements */
+  /* ============================================
+     SOLID COLOR VALUES (hex for direct use)
+     ============================================ */
   --color-white: #ffffff;
-  --color-gray-light: var(--text-tertiary);
-  --color-gray-medium: var(--text-secondary);
-  --color-gray-dark: var(--text-muted);
+  --color-black: #202124;
+  --google-blue: #4285F4;
+  --google-blue-dark: #174EA6;
+  --google-blue-light: #D2E3FC;
+  --google-red: #EA4335;
+  --google-red-dark: #A50E0E;
+  --google-red-light: #FAD2CF;
+  --google-yellow: #FBBC04;
+  --google-yellow-light: #FEEFC3;
+  --google-green: #34A853;
+  --google-green-dark: #0D652D;
+  --google-green-light: #CEEAD6;
+  --google-orange: #E37400;
+  --google-grey: #9AA0A6;
+  --google-grey-light: #F1F3F4;
   
-  /* Interactive States - Derived from palette */
-  --interactive-bg: rgba(148, 137, 121, 0.2);
-  --interactive-bg-hover: rgba(148, 137, 121, 0.3);
-  --interactive-border: var(--border-accent);
-  --interactive-color: var(--accent-primary);
+  /* ============================================
+     OPACITY UTILITIES (for rgba() usage)
+     ============================================ */
+  --opacity-05: 0.05;
+  --opacity-10: 0.1;
+  --opacity-15: 0.15;
+  --opacity-20: 0.2;
+  --opacity-25: 0.25;
+  --opacity-30: 0.3;
+  --opacity-40: 0.4;
+  --opacity-50: 0.5;
+  --opacity-60: 0.6;
+  --opacity-70: 0.7;
+  --opacity-80: 0.8;
+  --opacity-90: 0.9;
+  --opacity-95: 0.95;
   
-  /* Spacing - More generous */
+  /* ============================================
+     BACKGROUND COLORS
+     ============================================ */
+  --bg-primary: var(--color-white);
+  --bg-secondary: var(--google-grey-light);
+  --bg-tertiary: rgba(var(--rgb-grey-light), var(--opacity-50));
+  --bg-card: var(--color-white);
+  --bg-hover: var(--google-grey-light);
+  --bg-overlay: rgba(var(--rgb-black), var(--opacity-80));
+  --bg-overlay-light: rgba(var(--rgb-white), var(--opacity-95));
+  
+  /* ============================================
+     TEXT COLORS
+     ============================================ */
+  --text-primary: var(--color-black);
+  --text-secondary: var(--google-grey);
+  --text-tertiary: rgba(var(--rgb-grey), var(--opacity-80));
+  --text-muted: rgba(var(--rgb-grey), var(--opacity-60));
+  
+  /* ============================================
+     ACCENT COLORS
+     ============================================ */
+  --accent-primary: var(--google-blue);
+  --accent-primary-hover: var(--google-blue-dark);
+  --accent-gradient: linear-gradient(135deg, var(--google-blue) 0%, var(--google-blue-dark) 100%);
+  
+  /* ============================================
+     STATUS COLORS (Semantic)
+     ============================================ */
+  --accent-success: var(--google-green);
+  --accent-success-rgb: var(--rgb-green);
+  --accent-error: var(--google-red);
+  --accent-error-rgb: var(--rgb-red);
+  --accent-warning: var(--google-yellow);
+  --accent-warning-rgb: var(--rgb-yellow);
+  --accent-info: var(--google-blue);
+  --accent-info-rgb: var(--rgb-blue);
+  
+  /* ============================================
+     BORDER COLORS
+     ============================================ */
+  --border-primary: var(--google-grey-light);
+  --border-secondary: rgba(var(--rgb-grey), var(--opacity-30));
+  --border-accent: var(--google-blue);
+  --border-success: rgba(var(--rgb-green), var(--opacity-30));
+  --border-error: rgba(var(--rgb-red), var(--opacity-30));
+  --border-warning: rgba(var(--rgb-yellow), var(--opacity-30));
+  
+  /* ============================================
+     INTERACTIVE STATES
+     ============================================ */
+  --interactive-bg: var(--google-blue-light);
+  --interactive-bg-hover: rgba(var(--rgb-blue), var(--opacity-20));
+  --interactive-border: var(--google-blue);
+  --interactive-color: var(--google-blue);
+  
+  /* ============================================
+     SPACING
+     ============================================ */
   --spacing-xs: 0.25rem;
   --spacing-sm: 0.5rem;
   --spacing-md: 1rem;
@@ -76,20 +155,28 @@
   --spacing-2xl: 3rem;
   --spacing-3xl: 4rem;
   
-  /* Border Radius - Softer */
+  /* ============================================
+     BORDER RADIUS
+     ============================================ */
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 16px;
   --radius-xl: 24px;
   --radius-full: 9999px;
   
-  /* Shadows - Using dark color from palette */
-  --shadow-sm: 0 1px 2px rgba(34, 40, 49, 0.4);
-  --shadow-md: 0 4px 12px rgba(34, 40, 49, 0.5);
-  --shadow-lg: 0 10px 24px rgba(34, 40, 49, 0.6);
-  --shadow-xl: 0 20px 40px rgba(34, 40, 49, 0.7);
+  /* ============================================
+     SHADOWS (using RGB for opacity)
+     ============================================ */
+  --shadow-sm: 0 1px 2px rgba(var(--rgb-black), var(--opacity-10));
+  --shadow-md: 0 4px 12px rgba(var(--rgb-black), var(--opacity-15));
+  --shadow-lg: 0 10px 24px rgba(var(--rgb-black), var(--opacity-20));
+  --shadow-xl: 0 20px 40px rgba(var(--rgb-black), var(--opacity-25));
+  --shadow-blue: 0 4px 12px rgba(var(--rgb-blue), var(--opacity-30));
+  --shadow-blue-glow: 0 0 20px rgba(var(--rgb-blue), var(--opacity-20));
   
-  /* Typography */
+  /* ============================================
+     TYPOGRAPHY
+     ============================================ */
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-mono: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, monospace;
 }
@@ -281,7 +368,7 @@ h3 {
   margin: 0 auto 1.5rem auto;
   font-size: 1.1rem;
   font-weight: 600;
-  background: rgba(148, 137, 121, 0.2);
+  background: var(--interactive-bg);
   border: 1px solid var(--border-accent);
   border-radius: var(--radius-md);
   color: var(--text-primary);
@@ -295,7 +382,7 @@ h3 {
 }
 
 .global-settings-button:hover {
-  background: rgba(148, 137, 121, 0.3);
+  background: var(--interactive-bg-hover);
   border-color: var(--accent-primary);
   transform: translateY(-2px);
   box-shadow: var(--shadow-md);
@@ -319,7 +406,7 @@ h3 {
   padding: 4px 6px;
   border: 2px solid;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--rgb-white), var(--opacity-05));
   cursor: pointer;
   transition: all 0.2s ease;
   min-width: 32px;
@@ -332,7 +419,7 @@ h3 {
 }
 
 .destination-status-button:focus {
-  outline: 2px solid rgba(99, 102, 241, 0.5);
+  outline: 2px solid rgba(var(--rgb-blue), var(--opacity-50));
   outline-offset: 2px;
 }
 
@@ -403,7 +490,7 @@ h3 {
   left: 0;
   right: 0;
   bottom: 0;
-  background: var(--color-charcoal);
+  background: var(--google-grey-light);
   border-radius: 24px;
   transition: 0.3s;
 }
@@ -729,7 +816,7 @@ input:checked + .slider:before {
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--accent-primary), rgba(148, 137, 121, 0.7));
+  background: linear-gradient(90deg, var(--accent-primary), var(--google-blue-dark));
   border-radius: 2px;
   transition: width 0.3s ease;
 }
@@ -831,7 +918,7 @@ button:disabled {
 
 .retry-upload-btn:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(148, 137, 121, 0.4), 0 0 20px rgba(148, 137, 121, 0.3);
+  box-shadow: var(--shadow-blue), var(--shadow-blue-glow);
   filter: brightness(1.1);
 }
 
@@ -994,7 +1081,7 @@ button:disabled {
 
 .btn-add-word:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(148, 137, 121, 0.4);
+  box-shadow: var(--shadow-blue);
 }
 
 .btn-add-word:disabled {
@@ -1020,7 +1107,7 @@ button:disabled {
 .wordbank-caret {
   cursor: pointer;
   font-size: 0.75rem;
-  color: #8b5cf6;
+  color: var(--accent-primary);
   transition: transform 0.2s ease;
   user-select: none;
   padding: 0.25rem;
@@ -1030,7 +1117,7 @@ button:disabled {
 }
 
 .wordbank-caret:hover {
-  color: #ec4899;
+  color: var(--accent-error);
   transform: scale(1.2);
 }
 
@@ -1048,7 +1135,7 @@ button:disabled {
   gap: 0.5rem;
   margin-top: 0.75rem;
   padding: 0.75rem;
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(var(--rgb-black), var(--opacity-20));
   border-radius: 6px;
   max-height: 200px;
   overflow-y: auto;
@@ -1060,22 +1147,22 @@ button:disabled {
   align-items: center;
   gap: 0.5rem;
   padding: 0.4rem 0.75rem;
-  background: rgba(139, 92, 246, 0.2);
-  border: 1px solid rgba(139, 92, 246, 0.3);
+  background: rgba(var(--rgb-blue), var(--opacity-20));
+  border: 1px solid rgba(var(--rgb-blue), var(--opacity-30));
   border-radius: 4px;
   font-size: 0.9rem;
   transition: 0.2s;
 }
 
 .wordbank-item:hover {
-  background: rgba(139, 92, 246, 0.3);
-  border-color: rgba(139, 92, 246, 0.5);
+  background: rgba(var(--rgb-blue), var(--opacity-30));
+  border-color: rgba(var(--rgb-blue), var(--opacity-50));
 }
 
 .btn-remove-word {
   background: none;
   border: none;
-  color: #ff6b6b;
+  color: var(--accent-error);
   font-size: 1.2rem;
   cursor: pointer;
   padding: 0;
@@ -1084,15 +1171,15 @@ button:disabled {
 }
 
 .btn-remove-word:hover {
-  color: #ff5252;
+  color: var(--accent-error);
   transform: scale(1.2);
 }
 
 .btn-clear-wordbank {
   padding: 0.3rem 0.75rem;
   background: transparent;
-  border: 1px solid #ef4444;
-  color: #ef4444;
+  border: 1px solid var(--accent-error);
+  color: var(--accent-error);
   border-radius: 4px;
   cursor: pointer;
   font-size: 0.8rem;
@@ -1891,14 +1978,14 @@ button:disabled {
 }
 
 .login-message.success {
-  background: rgba(34, 197, 94, 0.1);
-  border-color: rgba(34, 197, 94, 0.3);
+  background: rgba(var(--accent-success-rgb), var(--opacity-10));
+  border-color: rgba(var(--accent-success-rgb), var(--opacity-30));
   color: var(--accent-success);
 }
 
 .login-message.error {
-  background: rgba(239, 68, 68, 0.1);
-  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(var(--accent-error-rgb), var(--opacity-10));
+  border-color: rgba(var(--accent-error-rgb), var(--opacity-30));
   color: var(--accent-error);
 }
 
@@ -1951,10 +2038,10 @@ button:disabled {
 .google-button {
   width: 100%;
   padding: 0.75rem;
-  background: white;
-  border: 1px solid #dadce0;
+  background: var(--color-white);
+  border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
-  color: #3c4043;
+  color: var(--text-primary);
   font-size: 1rem;
   font-weight: 500;
   cursor: pointer;
@@ -1982,7 +2069,7 @@ button:disabled {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: radial-gradient(circle at top, rgba(57, 62, 70, 0.4) 0%, rgba(34, 40, 49, 0.6) 45%, var(--bg-primary) 100%);
+  background: radial-gradient(circle at top, rgba(var(--rgb-grey), var(--opacity-10)) 0%, rgba(var(--rgb-black), var(--opacity-05)) 45%, var(--bg-primary) 100%);
   color: var(--text-primary);
   position: relative;
   overflow-x: hidden;
@@ -1996,8 +2083,8 @@ button:disabled {
   right: 0;
   bottom: 0;
   background: 
-    radial-gradient(circle at 20% 50%, rgba(148, 137, 121, 0.1) 0%, transparent 50%),
-    radial-gradient(circle at 80% 80%, rgba(148, 137, 121, 0.1) 0%, transparent 50%);
+    radial-gradient(circle at 20% 50%, rgba(var(--rgb-blue), var(--opacity-05)) 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, rgba(var(--rgb-green), var(--opacity-05)) 0%, transparent 50%);
   pointer-events: none;
   z-index: 0;
 }
@@ -2014,7 +2101,7 @@ button:disabled {
   padding: 1.5rem var(--spacing-2xl);
   border-bottom: 1px solid var(--border-primary);
   backdrop-filter: blur(10px);
-  background: rgba(34, 40, 49, 0.8);
+  background: var(--bg-overlay-light);
 }
 
 .landing-logo {
