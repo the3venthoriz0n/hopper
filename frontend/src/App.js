@@ -10,6 +10,21 @@ import Login from './Login';
 import AdminDashboard from './AdminDashboard';
 import Pricing from './Pricing';
 
+// Hopper Color Palette - Centralized color constants
+// Update these to change colors throughout the app (matches CSS variables)
+const HOPPER_COLORS = {
+  dark: '#222831',        // rgb(34, 40, 49)
+  charcoal: '#393E46',    // rgb(57, 62, 70)
+  taupe: '#948979',       // rgb(148, 137, 121)
+  cream: '#DFD0B8',       // rgb(223, 208, 184)
+  white: '#ffffff',
+  // Semantic colors
+  success: '#10b981',
+  error: '#ef4444',
+  warning: '#f59e0b',
+  info: '#3b82f6'
+};
+
 // Circular Progress Component for Token Usage
 // monthlyTokens tracks starting balance (plan allocation + granted tokens)
 const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, overageTokens, unlimited, isLoading }) => {
@@ -30,18 +45,18 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
             width: '36px',
             height: '36px',
             borderRadius: '50%',
-            background: '#0a0a0a',
+            background: HOPPER_COLORS.dark,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             fontSize: '1rem',
             fontWeight: '700',
-            color: '#10b981'
+            color: HOPPER_COLORS.success
           }}>
             ∞
           </div>
         </div>
-        <div style={{ fontSize: '0.6rem', color: '#999', textAlign: 'center' }}>Unlimited</div>
+        <div style={{ fontSize: '0.6rem', color: HOPPER_COLORS.taupe, textAlign: 'center' }}>Unlimited</div>
       </div>
     );
   }
@@ -207,8 +222,8 @@ function LoadingScreen() {
       justifyContent: 'center',
       alignItems: 'center',
       minHeight: '100vh',
-      background: '#1a1a2e',
-      color: 'white'
+      background: HOPPER_COLORS.charcoal,
+      color: HOPPER_COLORS.cream
     }}>
       <div>Loading...</div>
     </div>
@@ -328,15 +343,15 @@ function NotFound() {
       flexDirection: 'column',
       justifyContent: 'center',
       alignItems: 'center',
-      background: '#1a1a2e',
-      color: 'white'
+      background: HOPPER_COLORS.charcoal,
+      color: HOPPER_COLORS.cream
     }}>
       <h1 style={{ fontSize: '3rem', marginBottom: '1rem' }}>404</h1>
       <p style={{ fontSize: '1.2rem', marginBottom: '2rem' }}>Page Not Found</p>
       <Link 
         to="/" 
         style={{ 
-          color: '#0066cc', 
+          color: HOPPER_COLORS.taupe, 
           textDecoration: 'none',
           fontSize: '1.1rem'
         }}
@@ -1417,8 +1432,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         justifyContent: 'center',
         alignItems: 'center',
         minHeight: '100vh',
-        background: '#1a1a2e',
-        color: 'white'
+        background: HOPPER_COLORS.charcoal,
+        color: HOPPER_COLORS.cream
       }}>
         <div>Loading...</div>
       </div>
@@ -2483,7 +2498,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               />
           </div>
           
-          <span className="user-email" style={{ color: '#999', fontSize: '0.9rem' }}>
+          <span className="user-email" style={{ color: HOPPER_COLORS.taupe, fontSize: '0.9rem' }}>
             {user.email}
           </span>
           <button 
@@ -2494,7 +2509,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               background: 'transparent',
               border: '1px solid #ddd',
               borderRadius: '4px',
-              color: '#666',
+              color: HOPPER_COLORS.taupe,
               cursor: 'pointer',
               fontSize: '1.1rem',
               display: 'flex',
@@ -2786,7 +2801,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               flexShrink: 0
             }}></div>
             {youtube.connected && (
-              <span className="account-info" style={{ fontSize: '0.9em', color: '#999', marginLeft: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
+              <span className="account-info" style={{ fontSize: '0.9em', color: HOPPER_COLORS.taupe, marginLeft: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
                 {youtube.account ? (
                   youtube.account.channel_name ? 
                     youtube.account.channel_name + (youtube.account.email ? ` (${youtube.account.email})` : '') : 
@@ -2797,12 +2812,12 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               </span>
             )}
             {youtube.connected && youtube.token_expired && (
-              <span style={{ fontSize: '0.85em', color: '#ef4444', marginLeft: '8px', fontWeight: '500' }}>
+              <span style={{ fontSize: '0.85em', color: HOPPER_COLORS.error, marginLeft: '8px', fontWeight: '500' }}>
                 ⚠️ Token expired - reconnect required
               </span>
             )}
             {youtube.connected && !youtube.token_expired && youtube.token_expires_soon && (
-              <span style={{ fontSize: '0.85em', color: '#f59e0b', marginLeft: '8px', fontWeight: '500' }}>
+              <span style={{ fontSize: '0.85em', color: HOPPER_COLORS.warning, marginLeft: '8px', fontWeight: '500' }}>
                 ⚠️ Token expires soon
               </span>
             )}
@@ -2960,7 +2975,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               flexShrink: 0
             }}></div>
             {tiktok.connected && (
-              <span className="account-info" style={{ fontSize: '0.9em', color: '#999', marginLeft: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
+              <span className="account-info" style={{ fontSize: '0.9em', color: HOPPER_COLORS.taupe, marginLeft: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
                 {tiktok.account ? (
                   tiktok.account.display_name ? 
                     tiktok.account.display_name + (tiktok.account.username ? ` (@${tiktok.account.username})` : '') : 
@@ -2971,12 +2986,12 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               </span>
             )}
             {tiktok.connected && tiktok.token_expired && (
-              <span style={{ fontSize: '0.85em', color: '#ef4444', marginLeft: '8px', fontWeight: '500' }}>
+              <span style={{ fontSize: '0.85em', color: HOPPER_COLORS.error, marginLeft: '8px', fontWeight: '500' }}>
                 ⚠️ Token expired - reconnect required
               </span>
             )}
             {tiktok.connected && !tiktok.token_expired && tiktok.token_expires_soon && (
-              <span style={{ fontSize: '0.85em', color: '#f59e0b', marginLeft: '8px', fontWeight: '500' }}>
+              <span style={{ fontSize: '0.85em', color: HOPPER_COLORS.warning, marginLeft: '8px', fontWeight: '500' }}>
                 ⚠️ Token expires soon
               </span>
             )}
@@ -3272,7 +3287,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               flexShrink: 0
             }}></div>
             {instagram.connected && (
-              <span className="account-info" style={{ fontSize: '0.9em', color: '#999', marginLeft: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
+              <span className="account-info" style={{ fontSize: '0.9em', color: HOPPER_COLORS.taupe, marginLeft: '4px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '200px' }}>
                 {instagram.account ? (
                   instagram.account.username ? 
                     `@${instagram.account.username}` : 
@@ -3284,12 +3299,12 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               </span>
             )}
             {instagram.connected && instagram.token_expired && (
-              <span style={{ fontSize: '0.85em', color: '#ef4444', marginLeft: '8px', fontWeight: '500' }}>
+              <span style={{ fontSize: '0.85em', color: HOPPER_COLORS.error, marginLeft: '8px', fontWeight: '500' }}>
                 ⚠️ Token expired - reconnect required
               </span>
             )}
             {instagram.connected && !instagram.token_expired && instagram.token_expires_soon && (
-              <span style={{ fontSize: '0.85em', color: '#f59e0b', marginLeft: '8px', fontWeight: '500' }}>
+              <span style={{ fontSize: '0.85em', color: HOPPER_COLORS.warning, marginLeft: '8px', fontWeight: '500' }}>
                 ⚠️ Token expires soon
               </span>
             )}
@@ -3788,7 +3803,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       alignItems: 'center',
                       gap: '4px'
                     }}>
-                      <span style={{ color: '#999', flexShrink: 0 }}>TikTok:</span>
+                      <span style={{ color: HOPPER_COLORS.taupe, flexShrink: 0 }}>TikTok:</span>
                       <span style={flexTextStyle}>
                         {v.tiktok_publish_status === 'PUBLISHED' && (
                           <span style={{ 
@@ -3798,25 +3813,25 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         )}
                         {v.tiktok_publish_status === 'PROCESSING' && (
                           <span style={{ 
-                            color: '#f59e0b',
+                            color: HOPPER_COLORS.warning,
                             fontWeight: '500'
                           }}>Processing...</span>
                         )}
                         {v.tiktok_publish_status === 'FAILED' && (
                           <span style={{ 
-                            color: '#ef4444',
+                            color: HOPPER_COLORS.error,
                             fontWeight: '500'
                           }}>Failed</span>
                         )}
                         {!['PUBLISHED', 'PROCESSING', 'FAILED'].includes(v.tiktok_publish_status) && (
                           <span style={{ 
-                            color: '#999',
+                            color: HOPPER_COLORS.taupe,
                             fontWeight: '500'
                           }}>{v.tiktok_publish_status}</span>
                         )}
                         {v.tiktok_publish_error && (
                           <span style={{ 
-                            color: '#ef4444',
+                            color: HOPPER_COLORS.error,
                             fontSize: '0.7rem',
                             marginLeft: '4px'
                           }} title={v.tiktok_publish_error}>({v.tiktok_publish_error})</span>
@@ -3855,7 +3870,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                           second: '2-digit'
                         })}</span>
                       ) : v.status === 'failed' ? (
-                        <span style={{ color: '#ef4444' }}>Upload Failed</span>
+                        <span style={{ color: HOPPER_COLORS.error }}>Upload Failed</span>
                       ) : (
                         <span>{v.status}</span>
                       )}
@@ -4949,7 +4964,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                             background: 'transparent',
                             borderRadius: '6px',
                             border: '1px solid rgba(255,255,255,0.25)',
-                            color: '#999',
+                            color: HOPPER_COLORS.taupe,
                             cursor: 'pointer',
                             fontSize: '0.9rem'
                           }}
@@ -5188,7 +5203,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                           background: 'rgba(239, 68, 68, 0.2)',
                                           border: '1px solid rgba(239, 68, 68, 0.5)',
                                           borderRadius: '4px',
-                                          color: '#ef4444',
+                                          color: HOPPER_COLORS.error,
                                           cursor: loadingSubscription ? 'not-allowed' : 'pointer',
                                           fontSize: '0.75rem',
                                           fontWeight: '600',
