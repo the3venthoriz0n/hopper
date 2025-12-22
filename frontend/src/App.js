@@ -363,7 +363,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const [youtube, setYoutube] = useState({ connected: false, enabled: false, account: null, token_status: 'valid' });
   const [tiktok, setTiktok] = useState({ connected: false, enabled: false, account: null, token_status: 'valid' });
   const [tiktokCreatorInfo, setTiktokCreatorInfo] = useState(null);
-  const [musicUsageConfirmed, setMusicUsageConfirmed] = useState(false);
   const [instagram, setInstagram] = useState({ connected: false, enabled: false, account: null, token_status: 'valid' });
   const [videos, setVideos] = useState([]);
   const [message, setMessage] = useState('');
@@ -1227,24 +1226,14 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           console.warn('No creator_info in TikTok account response');
           setTiktokCreatorInfo(null);
         }
-        // Load music usage confirmation status
-        try {
-          const musicRes = await axios.get(`${API}/auth/tiktok/music-usage-confirmed`);
-          setMusicUsageConfirmed(musicRes.data.confirmed);
-        } catch (musicErr) {
-          console.error('Error checking music usage confirmation:', musicErr);
-          setMusicUsageConfirmed(false);
-        }
       } else {
         setTiktok(prev => ({ ...prev, connected: false }));
         setTiktokCreatorInfo(null);
-        setMusicUsageConfirmed(false);
       }
     } catch (err) {
       console.error('Error loading TikTok account:', err);
       setTiktok(prev => ({ ...prev, connected: false }));
       setTiktokCreatorInfo(null);
-      setMusicUsageConfirmed(false);
     }
   }, [API]);
 
@@ -1369,14 +1358,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     loadVideos();
     loadUploadLimits();
     
-    // Check music usage confirmation for TikTok
-    if (tiktok.connected) {
-      axios.get(`${API}/auth/tiktok/music-usage-confirmed`)
-        .then(res => {
-          setMusicUsageConfirmed(res.data.confirmed);
-        })
-        .catch(err => console.error('Error checking music usage confirmation:', err));
-    }
     
     // Check OAuth callbacks - use consistent pattern for all platforms
     if (window.location.search.includes('connected=youtube')) {
@@ -2018,45 +1999,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     }
   };
 
-  const upload = async (skipMusicCheck = false) => {
-    // Check if TikTok is enabled and music usage not confirmed
-    if (!skipMusicCheck && tiktok.enabled && !musicUsageConfirmed) {
-      // Determine the confirmation message based on commercial content selection
-      const hasBrandedContent = tiktokSettings.commercial_content_disclosure && tiktokSettings.commercial_content_branded;
-      const hasYourBrand = tiktokSettings.commercial_content_disclosure && tiktokSettings.commercial_content_your_brand;
-      
-      let confirmationMessage = 'By posting, you agree to TikTok\'s Music Usage Confirmation';
-      
-      if (hasBrandedContent) {
-        // If branded content is selected (alone or with your brand), include Branded Content Policy
-        confirmationMessage = 'By posting, you agree to TikTok\'s Branded Content Policy and Music Usage Confirmation';
-      } else if (hasYourBrand) {
-        // Only "Your Brand" selected - just Music Usage Confirmation
-        confirmationMessage = 'By posting, you agree to TikTok\'s Music Usage Confirmation';
-      }
-      
-      setConfirmDialog({
-        title: 'TikTok Music Usage Confirmation',
-        message: confirmationMessage,
-        onConfirm: async () => {
-          try {
-            await axios.post(`${API}/auth/tiktok/music-usage-confirmed`);
-            setMusicUsageConfirmed(true);
-            setConfirmDialog(null);
-            // Retry upload after confirmation (skip music check)
-            upload(true);
-          } catch (err) {
-            console.error('Error confirming music usage:', err);
-            setMessage('❌ Failed to confirm music usage. Please try again.');
-            setConfirmDialog(null);
-          }
-        },
-        onCancel: () => {
-          setConfirmDialog(null);
-        }
-      });
-      return;
-    }
+  const upload = async () => {
     
     // Check commercial content disclosure validation
     if (tiktok.enabled && tiktokSettings.commercial_content_disclosure) {
@@ -2962,51 +2905,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           <div className="settings-panel">
             <h3>TikTok Settings</h3>
             
-            <div style={{
-              padding: '0.5rem 0.75rem',
-              background: musicUsageConfirmed ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-              border: musicUsageConfirmed ? '1px solid rgba(34, 197, 94, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
-              borderRadius: '6px',
-              marginBottom: '1rem',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '0.5rem',
-              fontSize: '0.85rem',
-              color: musicUsageConfirmed ? '#22c55e' : '#ef4444'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <span style={{ fontSize: '1rem', fontWeight: 'bold' }}>{musicUsageConfirmed ? '✓' : '✗'}</span>
-                <span>Music Usage Confirmation: {musicUsageConfirmed ? 'Accepted' : 'Not Accepted'}</span>
-              </div>
-              {!musicUsageConfirmed && (
-                <button
-                  onClick={async () => {
-                    try {
-                      await axios.post(`${API}/auth/tiktok/music-usage-confirmed`);
-                      setMusicUsageConfirmed(true);
-                      setMessage('✅ Music usage confirmation accepted');
-                    } catch (err) {
-                      console.error('Error confirming music usage:', err);
-                      setMessage('❌ Failed to confirm music usage. Please try again.');
-                    }
-                  }}
-                  style={{
-                    padding: '0.4rem 0.8rem',
-                    background: 'rgba(34, 197, 94, 0.2)',
-                    border: '1px solid rgba(34, 197, 94, 0.4)',
-                    borderRadius: '4px',
-                    color: '#22c55e',
-                    cursor: 'pointer',
-                    fontSize: '0.85rem',
-                    fontWeight: '500',
-                    whiteSpace: 'nowrap'
-                  }}
-                >
-                  Accept
-                </button>
-              )}
-            </div>
             
             <div className="setting-group">
               <label>Privacy Level</label>
@@ -3432,6 +3330,41 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       {/* Upload Button */}
       {videos.length > 0 && (youtube.enabled || tiktok.enabled || instagram.enabled) && (
         <>
+          {/* TikTok Compliance Declaration */}
+          {tiktok.enabled && (() => {
+            // Determine the declaration message based on commercial content selection
+            const commercialContentOn = tiktokSettings.commercial_content_disclosure ?? false;
+            const hasYourBrand = commercialContentOn && (tiktokSettings.commercial_content_your_brand ?? false);
+            const hasBrandedContent = commercialContentOn && (tiktokSettings.commercial_content_branded ?? false);
+            
+            let declarationMessage = 'By posting, you agree to TikTok\'s Music Usage Confirmation';
+            
+            if (commercialContentOn) {
+              if (hasBrandedContent) {
+                // Branded Content is checked (alone or with Your Brand) - include Branded Content Policy
+                declarationMessage = 'By posting, you agree to TikTok\'s Branded Content Policy and Music Usage Confirmation';
+              } else if (hasYourBrand) {
+                // Only "Your Brand" is checked - just Music Usage Confirmation
+                declarationMessage = 'By posting, you agree to TikTok\'s Music Usage Confirmation';
+              }
+            }
+            
+            return (
+              <div style={{
+                padding: '0.75rem 1rem',
+                background: 'rgba(59, 130, 246, 0.1)',
+                border: '1px solid rgba(59, 130, 246, 0.3)',
+                borderRadius: '6px',
+                marginBottom: '1rem',
+                fontSize: '0.9rem',
+                color: '#3b82f6',
+                textAlign: 'center'
+              }}>
+                {declarationMessage}
+              </div>
+            );
+          })()}
+          
           <button 
             className="upload-btn" 
             onClick={upload} 
