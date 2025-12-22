@@ -167,7 +167,7 @@ class TestStripeFunctionality:
         mock_user.stripe_customer_id = None
         mock_db.query.return_value.filter.return_value.first.return_value = mock_user
         
-        result = create_stripe_customer("test@example.com", 1, mock_db)
+        result = create_stripe_customer("test@hopper-unit-test.com", 1, mock_db)
         
         assert result == 'cus_test123'
         assert mock_user.stripe_customer_id == 'cus_test123'
@@ -182,7 +182,7 @@ class TestStripeFunctionality:
         from sqlalchemy.orm import Session
         
         mock_db = Mock(spec=Session)
-        result = create_stripe_customer("test@example.com", 1, mock_db)
+        result = create_stripe_customer("test@hopper-unit-test.com", 1, mock_db)
         
         assert result is None
         mock_stripe.Customer.create.assert_not_called()
@@ -206,7 +206,7 @@ class TestStripeFunctionality:
         mock_user.stripe_customer_id = 'cus_existing123'
         mock_db.query.return_value.filter.return_value.first.return_value = mock_user
         
-        result = create_stripe_customer("test@example.com", 1, mock_db)
+        result = create_stripe_customer("test@hopper-unit-test.com", 1, mock_db)
         
         assert result == 'cus_existing123'
         mock_stripe.Customer.create.assert_not_called()
