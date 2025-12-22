@@ -422,7 +422,6 @@ input:checked + .slider:before {
   padding-right: 120px; /* Reserve space so buttons don't overlap short text */
   border-radius: 8px;
   margin-bottom: 0.5rem;
-  cursor: grab;
   transition: background 0.2s ease, border 0.2s ease;
   border: 2px solid transparent;
   position: relative; /* Essential for absolute child */
@@ -447,9 +446,6 @@ input:checked + .slider:before {
   border-color: rgba(139, 92, 246, 0.3);
 }
 
-.video[draggable="true"] {
-  cursor: move;
-}
 
 .drag-handle {
   color: #666;
@@ -460,6 +456,10 @@ input:checked + .slider:before {
   line-height: 1;
   transition: color 0.2s ease;
   flex-shrink: 0;
+  align-self: center; /* Center vertically */
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .drag-handle:hover {
@@ -470,31 +470,128 @@ input:checked + .slider:before {
   cursor: grabbing;
 }
 
+.video-info-container {
+  position: relative;
+}
+
 .video-actions {
   position: absolute;
   top: 0;
   right: 0;
   bottom: 0; /* Stretch to full height of card */
   display: flex;
-  gap: 0.5rem;
+  gap: 0.5rem; /* Consistent gap between all buttons */
   align-items: center;
-  padding: 0 1rem 0 2.5rem; /* Large left padding for the gradient */
-  z-index: 10;
-  
-  /* This creates a smooth fade so text doesn't clash with buttons */
-  /* Match the video card background for seamless blending */
-  background: linear-gradient(
-    to right, 
-    transparent 0%, 
-    rgba(255, 255, 255, 0.05) 15%, 
-    rgba(255, 255, 255, 0.05) 100%
-  );
+  padding: 0 1rem;
+  z-index: 10; /* Above gradient and text */
   pointer-events: none; /* Allows clicks to pass through transparent area */
 }
 
 .video-actions button, 
 .video-actions div {
   pointer-events: auto; /* Re-enable clicks for the actual buttons */
+}
+
+/* Mobile styles to prevent button overlap */
+@media (max-width: 768px) {
+  .video {
+    padding-right: 90px; /* Reduce reserved space on tablets */
+  }
+  
+  .video-actions {
+    padding: 0 0.75rem 0 1.5rem; /* Reduce padding on tablets */
+    gap: 0.375rem; /* Smaller gap between buttons */
+  }
+}
+
+@media (max-width: 480px) {
+  .video {
+    flex-wrap: wrap; /* Allow wrapping */
+    padding-right: 1rem; /* Normal padding on mobile */
+    padding-bottom: 1rem; /* Normal padding */
+    align-items: flex-start; /* Align items to start */
+    position: relative; /* For absolute positioning of drag handle */
+  }
+  
+  .drag-handle {
+    position: absolute; /* Position absolutely to extend full height */
+    left: 0;
+    top: 0;
+    bottom: 0;
+    align-self: stretch; /* Extend full height on mobile */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1; /* Above content but below actions */
+  }
+  
+  .video-info-container {
+    margin-left: 2rem; /* Make room for absolutely positioned drag handle */
+  }
+  
+  .video-info-container {
+    flex: 1;
+    min-width: 0;
+  }
+  
+  .video-actions {
+    position: static; /* Move to normal flow, below status */
+    order: 10; /* Force to appear after video-info-container */
+    flex-basis: 100%; /* Take full width on new line */
+    margin-top: 0.75rem;
+    padding: 0;
+    justify-content: center; /* Center all buttons */
+    align-items: center;
+    background: transparent; /* Remove background overlay */
+    border-radius: 0;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    min-height: auto;
+    width: 100%; /* Full width on mobile */
+  }
+  
+  .video-actions button,
+  .video-actions div {
+    flex-shrink: 0;
+    min-width: auto;
+    font-size: 0.75rem; /* Smaller text on mobile */
+    padding: 0.375rem 0.75rem; /* Consistent padding */
+    height: 32px; /* Consistent height */
+  }
+  
+  /* Retry button - keep consistent styling */
+  .video-actions .retry-upload-btn {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.75rem;
+    height: 32px;
+  }
+  
+  /* Token badge - keep consistent styling */
+  .video-actions div[style*="🪙"] {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.75rem;
+    height: 32px;
+  }
+  
+  /* Delete button - keep consistent styling */
+  .video-actions button[title="Delete video"] {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.75rem;
+    height: 32px;
+    width: 32px;
+  }
+  
+  /* Platform status buttons full width on mobile */
+  .platform-status-buttons {
+    max-width: 100% !important;
+    padding-right: 0 !important;
+  }
+}
+
+/* Desktop: prevent platform status buttons from overlapping video-actions */
+.platform-status-buttons {
+  max-width: calc(100% - 140px);
+  padding-right: 0.5rem;
 }
 
 .video-info-container {
@@ -511,7 +608,7 @@ input:checked + .slider:before {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
-  margin-bottom: 0.25rem;
+  margin-bottom: 0.5rem; /* Increased padding below title */
   min-width: 0;
   width: 100%;
 }
@@ -575,11 +672,13 @@ input:checked + .slider:before {
 .status {
   font-size: 0.85rem;
   color: #666;
-  margin-top: 0.25rem;
+  margin-top: 0.5rem; /* Consistent with video-titles margin-bottom */
   min-width: 0;
   width: 100%;
   word-break: break-word;
   overflow-wrap: break-word;
+  display: flex;
+  align-items: center;
 }
 
 .progress-bar {
@@ -679,9 +778,8 @@ button:disabled {
 }
 
 .retry-upload-btn {
-  margin-right: 4px;
-  font-size: 0.9rem;
-  padding: 0.5rem 1rem;
+  font-size: 0.75rem;
+  padding: 0.5rem 0.75rem; /* Consistent with other video action buttons */
   background: var(--accent-gradient);
   border: none;
   border-radius: var(--radius-md);
@@ -691,6 +789,7 @@ button:disabled {
   transition: all 0.3s ease;
   box-shadow: var(--shadow-sm);
   letter-spacing: -0.01em;
+  box-sizing: border-box;
 }
 
 .retry-upload-btn:hover:not(:disabled) {

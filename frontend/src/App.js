@@ -3650,13 +3650,16 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               <div 
                 key={v.id} 
                 className={`video ${draggedVideo?.id === v.id ? 'dragging' : ''}`}
-                draggable={v.status !== 'uploading'}
-                onDragStart={(e) => handleDragStart(e, v)}
-                onDragEnd={handleDragEnd}
                 onDragOver={handleDragOver}
                 onDrop={(e) => handleDrop(e, v)}
               >
-                <div className="drag-handle" title="Drag to reorder">⋮⋮</div>
+                <div 
+                  className="drag-handle" 
+                  title="Drag to reorder"
+                  draggable={v.status !== 'uploading'}
+                  onDragStart={(e) => handleDragStart(e, v)}
+                  onDragEnd={handleDragEnd}
+                >⋮⋮</div>
                 <div className="video-info-container">
                   <div className="video-titles">
                     <div className="youtube-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -3674,7 +3677,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     </div>
                     {/* Platform Status Indicators - Clickable Buttons */}
                     {v.platform_statuses && (
-                      <div style={{ 
+                      <div className="platform-status-buttons" style={{ 
                         display: 'flex', 
                         alignItems: 'center', 
                         gap: '6px', 
@@ -3832,7 +3835,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     </div>
                   )}
                   {/* Status at bottom left */}
-                  <div className="status" style={{ marginTop: '8px', display: 'flex', alignItems: 'center' }}>
+                  <div className="status">
                     <span style={flexTextStyle}>
                       {v.status === 'uploading' ? (
                         v.upload_progress !== undefined ? (
@@ -4000,10 +4003,11 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       style={{
                         height: '32px',
                         minWidth: '32px',
-                        padding: '0.5rem 1rem',
+                        padding: '0.5rem 0.75rem',
                         display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'center'
+                        justifyContent: 'center',
+                        boxSizing: 'border-box'
                       }}
                     >
                       🔄 Retry
@@ -4024,7 +4028,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       color: '#999',
                       fontWeight: '500',
                       height: '32px',
-                      minWidth: '32px'
+                      minWidth: '32px',
+                      boxSizing: 'border-box'
                     }}>
                       🪙 {v.tokens_consumed || calculateTokens(v.file_size_bytes)}
                     </div>
@@ -4035,6 +4040,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     style={{
                       height: '32px',
                       minWidth: '32px',
+                      width: '32px',
                       padding: '0',
                       display: 'flex',
                       alignItems: 'center',
@@ -4046,7 +4052,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       borderRadius: '6px',
                       color: '#ef4444',
                       cursor: v.status === 'uploading' ? 'not-allowed' : 'pointer',
-                      transition: 'all 0.2s'
+                      transition: 'all 0.2s',
+                      boxSizing: 'border-box'
                     }}
                     onMouseEnter={(e) => {
                       if (v.status !== 'uploading') {
