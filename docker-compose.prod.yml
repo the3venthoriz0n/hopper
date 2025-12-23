@@ -60,6 +60,7 @@ services:
     image: ${GHCR_IMAGE_BACKEND}
     container_name: prod-hopper-backend
     pull_policy: always
+    # Note: Uses Dockerfile CMD which runs: uvicorn app.main:app (new modular structure)
     ports:
       - "8001:8000"
     volumes:

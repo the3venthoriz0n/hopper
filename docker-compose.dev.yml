@@ -67,7 +67,7 @@ services:
       - backend_sessions:/app/sessions
       # Hot reload: mount synced code from Unraid
       - /mnt/y/Misc/_DevRemote/hopper_sync/backend:/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app
+    # Note: Uses Dockerfile CMD which auto-enables reload when ENVIRONMENT=development
     depends_on:
       - postgres
       - redis
