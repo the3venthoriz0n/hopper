@@ -260,19 +260,35 @@ def change_password(
 
 
 @router.get("/csrf")
-def get_csrf_token(request: Request):
-    """Get CSRF token for authenticated session"""
-    session_id = request.cookies.get("session_id")
-    if not session_id:
-        raise HTTPException(401, "Not authenticated")
-    
+def get_csrf_token(request: Request, response: Response):
+    """Get or generate CSRF token for the session"""
     from app.db.redis import get_csrf_token, set_csrf_token
+    from app.core.config import ENVIRONMENT
     
+    session_id = request.cookies.get("session_id")
+    
+    # 1. Ensure a session_id exists
+    if not session_id:
+        session_id = secrets.token_urlsafe(32)
+        # Set the cookie so subsequent requests (including the POST) send it back
+        response.set_cookie(
+            key="session_id",
+            value=session_id,
+            httponly=True,
+            secure=True, # Always use True if you are on HTTPS (dunkbox.net)
+            samesite="lax",
+            max_age=3600 * 24 # 24 hours
+        )
+    
+    # 2. Check Redis for existing token
     csrf_token = get_csrf_token(session_id)
+    
+    # 3. If no token in Redis, create one
     if not csrf_token:
         csrf_token = secrets.token_urlsafe(32)
         set_csrf_token(session_id, csrf_token)
     
+    # 4. Return it. The frontend MUST put this in the 'X-CSRF-Token' header.
     return {"csrf_token": csrf_token}
 
 

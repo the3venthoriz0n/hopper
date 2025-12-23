@@ -61,14 +61,14 @@ test:
 		echo "🧪 Building backend image (to ensure pytest is installed)..."; \
 		$(COMPOSE) build backend; \
 		echo "🧪 Running unit tests..."; \
-		$(COMPOSE) run --rm backend python -m pytest /app/test_main.py -v; \
+		$(COMPOSE) run --rm backend python -m pytest /app/test_main.py -v --tb=short; \
 		echo "✅ All tests passed!"; \
 	fi
 
 test-security: 
 	@echo "🔒 Running security tests (requires API to be running)..."
 	@echo "⚠️  Make sure backend is running: make up ENV=$(ENV)"
-	@$(COMPOSE) run --rm -e TEST_BASE_URL=http://backend:8000 backend python -m pytest /app/test_security.py -v
+	@$(COMPOSE) run --rm -e TEST_BASE_URL=http://backend:8000 backend python -m pytest /app/test_security.py -v --tb=short
 	@echo "✅ Security tests passed!"
 
 up: sync

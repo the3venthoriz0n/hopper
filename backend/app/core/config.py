@@ -1,8 +1,13 @@
 """Application configuration using Pydantic BaseSettings"""
 import os
-from pydantic_settings import BaseSettings
+import logging
+import secrets
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
 from pathlib import Path
 
+# Setup logging
+logger = logging.getLogger("config")
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
@@ -49,9 +54,11 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str = ""
     
     # Security
-    SECRET_KEY: str = ""  # For session encryption
-    CSRF_SECRET: str = ""  # For CSRF tokens
-    ENCRYPTION_KEY: str = ""  # For OAuth token encryption
+    # Note: Using ENCRYPTION_KEY for Fernet (Database encryption).
+    # SECRET_KEY and CSRF_SECRET are kept as optional strings to avoid startup errors.
+    SECRET_KEY: str = ""      
+    CSRF_SECRET: str = ""     
+    ENCRYPTION_KEY: str = ""  
     
     # File uploads
     UPLOAD_DIR: Path = Path("uploads").resolve()
@@ -72,20 +79,30 @@ class Settings(BaseSettings):
     # Redis locking
     TOKEN_REFRESH_LOCK_TIMEOUT: int = 10  # seconds
     DATA_REFRESH_COOLDOWN: int = 60  # seconds
-    
-    class Config:
-        # Pydantic will check these in order.
-        # Environment variables set in Docker Compose ALWAYS override these files.
-        env_file = ".env", f".env.{os.getenv('ENVIRONMENT', 'dev')}"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
-        extra = "ignore"  # Prevents crashing if there are extra variables in your .env
 
+    # Pydantic V2 Config
+    model_config = SettingsConfigDict(
+        # Load .env first, then environment-specific .env
+        env_file=(".env", f".env.{os.getenv('ENVIRONMENT', 'development')}"),
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore"
+    )
+
+    @field_validator("ENCRYPTION_KEY")
+    @classmethod
+    def check_encryption_key(cls, v):
+        if not v or v.strip() == "":
+            # Critical because database decryption will fail without this
+            print("❌ ERROR: ENCRYPTION_KEY is missing! Database decryption will fail.")
+            return v
+        return v
 
 # Create global settings instance
 settings = Settings()
 
-# Export Settings class attributes as module-level constants for convenience
+# --- Module-level Constants (Extracted from settings) ---
+ENVIRONMENT = settings.ENVIRONMENT
 TIKTOK_AUTH_URL = settings.TIKTOK_AUTH_URL
 TIKTOK_TOKEN_URL = settings.TIKTOK_TOKEN_URL
 TIKTOK_RATE_LIMIT_REQUESTS = settings.TIKTOK_RATE_LIMIT_REQUESTS
@@ -105,4 +122,3 @@ INSTAGRAM_SCOPES = [
     "pages_read_engagement",
     "pages_show_list"
 ]
-

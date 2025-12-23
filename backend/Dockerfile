@@ -2,6 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Set PYTHONPATH so app module can be imported
+ENV PYTHONPATH=/app
+
 # Install ffmpeg (includes ffprobe) for video duration validation
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
