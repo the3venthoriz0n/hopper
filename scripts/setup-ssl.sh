@@ -7,7 +7,7 @@ set -e
 DOMAINS=(
     "hopper.dunkbox.net"
     "api.dunkbox.net"
-    "hopper-grafana-prod.dunkbox.net"
+    "prod-hopper-grafana.dunkbox.net"
 )
 
 EMAIL="${CERTBOT_EMAIL:-your-email@example.com}"  # Set CERTBOT_EMAIL env var or edit here
