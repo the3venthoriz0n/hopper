@@ -1,4 +1,4 @@
-.PHONY: help sync up down rebuild logs shell clean test test-security rebuild-grafana clear-grafana-cache setup-stripe
+.PHONY: help sync up down rebuild logs shell clean test test-security rebuild-grafana clear-grafana-cache setup-stripe backup-db restore-db list-backups
 
 # Default environment (can be overridden: make up ENV=prod)
 ENV ?= dev
@@ -29,6 +29,9 @@ help:
 	@echo "  rebuild-grafana Rebuild Grafana service (clears cache and restarts)"
 	@echo "  clear-grafana-cache Clear Grafana database volume (forces dashboard reload)"
 	@echo "  setup-stripe  Run Stripe product/price/webhook setup (ENV=dev|prod)"
+	@echo "  backup-db     Backup PostgreSQL database (keeps last 7 days)"
+	@echo "  restore-db    Restore PostgreSQL database (requires BACKUP_FILE)"
+	@echo "  list-backups  List available database backups"
 	@echo "  logs          Follow logs (add LINES=N for tail)"
 	@echo "  shell         Open backend shell"
 	@echo "  clean         Remove stopped containers and unused images"
@@ -147,3 +150,19 @@ setup-stripe:
 	@echo "🔄 Syncing to remote..."
 	@$(MAKE) sync
 	@echo "✅ Stripe setup completed and synced."
+
+backup-db:
+	@bash scripts/backup-db.sh
+
+restore-db:
+	@if [ -z "$(BACKUP_FILE)" ]; then \
+		echo "❌ Usage: make restore-db BACKUP_FILE=/root/backups/db_YYYYMMDD_HHMMSS.sql.gz"; \
+		echo "Available backups:"; \
+		ls -lh /root/backups/db_*.sql.gz 2>/dev/null | tail -20 || echo "  (no backups found)"; \
+		exit 1; \
+	fi
+	@bash scripts/restore-db.sh $(BACKUP_FILE)
+
+list-backups:
+	@echo "📦 Available database backups:"
+	@ls -lh /root/backups/db_*.sql.gz 2>/dev/null | tail -20 || echo "  (no backups found)"

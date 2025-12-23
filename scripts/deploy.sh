@@ -203,6 +203,32 @@ if [ $HEALTH_CHECK_FAILED -eq 1 ]; then
     exit 1
 fi
 
+# Setup database backup cron job (only for prod)
+if [ "$ENV" == "prod" ]; then
+    echo ""
+    echo "📦 Setting up database backup cron job..."
+    BACKUP_SCRIPT="$APP_DIR/scripts/backup-db.sh"
+    
+    # Make sure backup script is executable
+    if [ -f "$BACKUP_SCRIPT" ]; then
+        chmod +x "$BACKUP_SCRIPT"
+        
+        # Check if cron job already exists
+        if ! crontab -l 2>/dev/null | grep -q "$BACKUP_SCRIPT"; then
+            # Add cron job for daily backup at 2 AM
+            (crontab -l 2>/dev/null; echo "0 2 * * * $BACKUP_SCRIPT >> /var/log/hopper-db-backup.log 2>&1") | crontab -
+            echo "✅ Database backup cron job added (daily at 2 AM)"
+        else
+            echo "ℹ️  Database backup cron job already exists"
+        fi
+        
+        # Create backup directory if it doesn't exist
+        mkdir -p /root/backups
+    else
+        echo "⚠️  Backup script not found: $BACKUP_SCRIPT (cron job not set up)"
+    fi
+fi
+
 echo ""
 echo "✅ Deployment complete! All critical services are healthy."
 echo ""
@@ -210,4 +236,8 @@ echo "📋 Useful commands:"
 echo "   View logs: docker compose -p $PROJECT_NAME -f $COMPOSE_FILE logs -f"
 echo "   Check status: docker compose -p $PROJECT_NAME -f $COMPOSE_FILE ps"
 echo "   Rollback to previous version: Run ./deploy.sh $ENV <previous-tag> (e.g., ./deploy.sh prod v5.0.4)"
+if [ "$ENV" == "prod" ]; then
+    echo "   Backup database: cd $APP_DIR && make backup-db"
+    echo "   List backups: cd $APP_DIR && make list-backups"
+fi
 

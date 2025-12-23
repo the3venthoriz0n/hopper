@@ -412,6 +412,12 @@ jobs:
           scp $SSH_OPTS scripts/deploy.sh $SSH_USER@$SSH_HOST:$APP_DIR/
           scp $SSH_OPTS makefile $SSH_USER@$SSH_HOST:$APP_DIR/
           
+          # Copy backup scripts
+          echo "📦 Copying backup scripts..."
+          ssh $SSH_OPTS $SSH_USER@$SSH_HOST "mkdir -p $APP_DIR/scripts"
+          scp $SSH_OPTS scripts/backup-db.sh $SSH_USER@$SSH_HOST:$APP_DIR/scripts/
+          scp $SSH_OPTS scripts/restore-db.sh $SSH_USER@$SSH_HOST:$APP_DIR/scripts/
+          
           # Copy nginx config and SSL deployment script for prod only
           if [ "$ENV" == "prod" ]; then
             scp $SSH_OPTS nginx/prod-hopper.conf $SSH_USER@$SSH_HOST:$APP_DIR/nginx/
