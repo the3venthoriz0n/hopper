@@ -379,15 +379,21 @@ def get_active_users_with_timestamps() -> Dict[int, str]:
             if data_str:
                 try:
                     data = json.loads(data_str)
-                    timestamp = data.get("timestamp")
-                    if timestamp:
-                        active_users[user_id] = timestamp
+                    # Check if data is a dict (new format) or just an int/string (old format)
+                    if isinstance(data, dict):
+                        timestamp = data.get("timestamp")
+                        if timestamp:
+                            active_users[user_id] = timestamp
+                        else:
+                            # Fallback: if no timestamp in dict, use current time
+                            from datetime import datetime, timezone
+                            active_users[user_id] = datetime.now(timezone.utc).isoformat()
                     else:
-                        # Fallback: if no timestamp, use current time (for backward compatibility)
+                        # Old format (just "1" or integer) - use current time as fallback
                         from datetime import datetime, timezone
                         active_users[user_id] = datetime.now(timezone.utc).isoformat()
-                except (json.JSONDecodeError, TypeError):
-                    # Old format (just "1") - use current time as fallback
+                except (json.JSONDecodeError, TypeError, AttributeError):
+                    # Old format or invalid JSON - use current time as fallback
                     from datetime import datetime, timezone
                     active_users[user_id] = datetime.now(timezone.utc).isoformat()
             else:
