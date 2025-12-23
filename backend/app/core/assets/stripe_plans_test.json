@@ -1,0 +1,53 @@
+{
+  "free": {
+    "name": "Free",
+    "monthly_tokens": 10,
+    "stripe_product_id": "prod_TbxHlGihnNIHVP",
+    "stripe_price_id_monthly": "price_1QqJ8aF8qJ8aF8qJ8aF8qJ8a",
+    "stripe_price_id_yearly": null,
+    "features": [
+      "10 uploads per month",
+      "Basic support"
+    ]
+  },
+  "starter": {
+    "name": "Starter",
+    "monthly_tokens": 100,
+    "stripe_product_id": "prod_TbxHlGihnNIHVQ",
+    "stripe_price_id_monthly": "price_1QqJ8bF8qJ8aF8qJ8aF8qJ8b",
+    "stripe_price_id_yearly": "price_1QqJ8cF8qJ8aF8qJ8aF8qJ8c",
+    "features": [
+      "100 uploads per month",
+      "Priority support",
+      "Scheduled uploads"
+    ]
+  },
+  "creator": {
+    "name": "Creator",
+    "monthly_tokens": 500,
+    "stripe_product_id": "prod_TbxHlGihnNIHVR",
+    "stripe_price_id_monthly": "price_1QqJ8dF8qJ8aF8qJ8aF8qJ8d",
+    "stripe_price_id_yearly": "price_1QqJ8eF8qJ8aF8qJ8aF8qJ8e",
+    "features": [
+      "500 uploads per month",
+      "Priority support",
+      "Scheduled uploads",
+      "Advanced analytics"
+    ]
+  },
+  "unlimited": {
+    "name": "Unlimited",
+    "monthly_tokens": -1,
+    "stripe_product_id": "prod_TbxHlGihnNIHVS",
+    "stripe_price_id_monthly": "price_1QqJ8fF8qJ8aF8qJ8aF8qJ8f",
+    "stripe_price_id_yearly": "price_1QqJ8gF8qJ8aF8qJ8aF8qJ8g",
+    "features": [
+      "Unlimited uploads",
+      "Priority support",
+      "Scheduled uploads",
+      "Advanced analytics",
+      "Custom integrations"
+    ]
+  }
+}
+
