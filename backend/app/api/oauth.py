@@ -1482,48 +1482,52 @@ destinations_router = APIRouter(prefix="/api/destinations", tags=["destinations"
 @destinations_router.get("")
 def get_destinations(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
     """Get destination status for current user"""
-    # Batch load OAuth tokens and settings to prevent N+1 queries
-    all_tokens = get_all_oauth_tokens(user_id, db=db)
-    settings = get_user_settings(user_id, "destinations", db=db)
-    
-    # Extract OAuth tokens
-    youtube_token = all_tokens.get("youtube")
-    tiktok_token = all_tokens.get("tiktok")
-    instagram_token = all_tokens.get("instagram")
-    
-    # Check token expiration status
-    youtube_expiry = check_token_expiration(youtube_token)
-    tiktok_expiry = check_token_expiration(tiktok_token)
-    instagram_expiry = check_token_expiration(instagram_token)
-    
-    # Get scheduled video count
-    videos = get_user_videos(user_id, db=db)
-    scheduled_count = len([v for v in videos if v.status == 'scheduled'])
-    
-    return {
-        "youtube": {
-            "connected": youtube_token is not None,
-            "enabled": settings.get("youtube_enabled", False),
-            "token_status": youtube_expiry["status"],
-            "token_expired": youtube_expiry["expired"],
-            "token_expires_soon": youtube_expiry["expires_soon"]
-        },
-        "tiktok": {
-            "connected": tiktok_token is not None,
-            "enabled": settings.get("tiktok_enabled", False),
-            "token_status": tiktok_expiry["status"],
-            "token_expired": tiktok_expiry["expired"],
-            "token_expires_soon": tiktok_expiry["expires_soon"]
-        },
-        "instagram": {
-            "connected": instagram_token is not None,
-            "enabled": settings.get("instagram_enabled", False),
-            "token_status": instagram_expiry["status"],
-            "token_expired": instagram_expiry["expired"],
-            "token_expires_soon": instagram_expiry["expires_soon"]
-        },
-        "scheduled_videos": scheduled_count
-    }
+    try:
+        # Batch load OAuth tokens and settings to prevent N+1 queries
+        all_tokens = get_all_oauth_tokens(user_id, db=db)
+        settings = get_user_settings(user_id, "destinations", db=db)
+        
+        # Extract OAuth tokens
+        youtube_token = all_tokens.get("youtube")
+        tiktok_token = all_tokens.get("tiktok")
+        instagram_token = all_tokens.get("instagram")
+        
+        # Check token expiration status
+        youtube_expiry = check_token_expiration(youtube_token)
+        tiktok_expiry = check_token_expiration(tiktok_token)
+        instagram_expiry = check_token_expiration(instagram_token)
+        
+        # Get scheduled video count
+        videos = get_user_videos(user_id, db=db)
+        scheduled_count = len([v for v in videos if v.status == 'scheduled'])
+        
+        return {
+            "youtube": {
+                "connected": youtube_token is not None,
+                "enabled": settings.get("youtube_enabled", False),
+                "token_status": youtube_expiry["status"],
+                "token_expired": youtube_expiry["expired"],
+                "token_expires_soon": youtube_expiry["expires_soon"]
+            },
+            "tiktok": {
+                "connected": tiktok_token is not None,
+                "enabled": settings.get("tiktok_enabled", False),
+                "token_status": tiktok_expiry["status"],
+                "token_expired": tiktok_expiry["expired"],
+                "token_expires_soon": tiktok_expiry["expires_soon"]
+            },
+            "instagram": {
+                "connected": instagram_token is not None,
+                "enabled": settings.get("instagram_enabled", False),
+                "token_status": instagram_expiry["status"],
+                "token_expired": instagram_expiry["expired"],
+                "token_expires_soon": instagram_expiry["expires_soon"]
+            },
+            "scheduled_videos": scheduled_count
+        }
+    except Exception as e:
+        logger.error(f"Error getting destinations for user {user_id}: {e}", exc_info=True)
+        raise HTTPException(500, f"Failed to load destinations: {str(e)}")
 
 
 @destinations_router.post("/youtube/toggle")

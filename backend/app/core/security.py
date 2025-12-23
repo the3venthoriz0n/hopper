@@ -43,9 +43,12 @@ async def require_csrf_new(
     session_id = request.cookies.get("session_id")
     
     # Get CSRF token from header or form data
+    # Note: We don't read JSON body here as it would consume it
+    # Frontend should send CSRF token in X-CSRF-Token header (standard practice)
     csrf_token = x_csrf_token
     if not csrf_token:
         try:
+            # Try form data (for form submissions)
             form_data = await request.form()
             csrf_token = form_data.get("csrf_token")
         except Exception:
