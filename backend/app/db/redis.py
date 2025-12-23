@@ -14,10 +14,17 @@ SESSION_TTL = 30 * 24 * 60 * 60
 ACTIVITY_TTL = 60 * 60
 
 # Rate limiting configuration
-RATE_LIMIT_WINDOW = 60  # seconds
-RATE_LIMIT_REQUESTS = 100  # requests per window
-RATE_LIMIT_STRICT_WINDOW = 60  # seconds
-RATE_LIMIT_STRICT_REQUESTS = 20  # requests per window for state-changing operations
+# In development, use more lenient limits
+if settings.ENVIRONMENT == "development":
+    RATE_LIMIT_WINDOW = 60  # seconds
+    RATE_LIMIT_REQUESTS = 1000  # requests per window (very lenient for dev)
+    RATE_LIMIT_STRICT_WINDOW = 60  # seconds
+    RATE_LIMIT_STRICT_REQUESTS = 1000  # requests per window for state-changing operations (very lenient for dev)
+else:
+    RATE_LIMIT_WINDOW = 60  # seconds
+    RATE_LIMIT_REQUESTS = 100  # requests per window
+    RATE_LIMIT_STRICT_WINDOW = 60  # seconds
+    RATE_LIMIT_STRICT_REQUESTS = 20  # requests per window for state-changing operations
 
 # Cache TTLs
 SETTINGS_CACHE_TTL = 5 * 60  # 5 minutes
