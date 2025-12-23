@@ -89,36 +89,33 @@ function Pricing() {
   const appTitle = isProduction ? '🐸 hopper' : '🐸 DEV hopper';
 
   return (
-    <div className="pricing-container">
-      <header className="pricing-header">
-        <Link to="/" className="pricing-logo">
-          <span className="pricing-logo-icon">🐸</span>
+    <div className="landing-container">
+      <header className="landing-header">
+        <Link to="/" className="landing-logo">
+          <span className="landing-logo-icon">🐸</span>
           <span>{appTitle.replace('🐸 ', '')}</span>
         </Link>
-        <nav className="pricing-nav">
-          <Link to="/privacy" className="pricing-nav-link">
-            Privacy
-          </Link>
-          <Link to="/terms" className="pricing-nav-link">
-            Terms
-          </Link>
-          <Link to="/help" className="pricing-nav-link">
+        <nav className="landing-nav">
+          <Link to="/help" className="landing-nav-link">
             Help
           </Link>
-          <Link to="/login" className="pricing-nav-button">
+          <Link to="/login" className="landing-nav-button">
             Login
           </Link>
         </nav>
       </header>
 
-      <main className="pricing-main">
-        <div className="pricing-content">
-          <div className="pricing-intro">
-            <h1 className="pricing-title">Pricing Coming Soon</h1>
-            <p className="pricing-description">
-              We're working on our pricing plans. Check back soon!
-            </p>
-            <Link to="/login" className="pricing-cta-button">
+      <main className="landing-main">
+        <div className="landing-content">
+          <p className="landing-tagline">
+            Pricing
+          </p>
+          <h1 className="landing-title">Pricing Coming Soon</h1>
+          <p className="landing-description">
+            We're working on our pricing plans. Check back soon!
+          </p>
+          <div className="landing-cta">
+            <Link to="/login" className="landing-cta-button">
               Get Started
             </Link>
           </div>
