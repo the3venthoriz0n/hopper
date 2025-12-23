@@ -236,29 +236,25 @@ def get_all_user_settings(user_id: int, db: Session = None) -> Dict[str, Dict[st
 
 def get_all_oauth_tokens(user_id: int, db: Session = None) -> Dict[str, Optional[OAuthToken]]:
     """Get all OAuth tokens for a user, decrypted
-    Uses Redis caching with 1 minute TTL.
+    Optimized to prevent N+1 queries.
     
     Returns:
         Dict mapping platform name to OAuthToken object (or None if not connected)
     """
-    # Try cache first
-    cached = get_cached_oauth_token(user_id, "all")
-    if cached is not None:
-        # Reconstruct OAuthToken objects from cached data
-        # This is a simplified version - full implementation would properly deserialize
-        return cached
-    
     should_close = False
     if db is None:
         db = SessionLocal()
         should_close = True
     
     try:
-        tokens = db.query(OAuthToken).filter(OAuthToken.user_id == user_id).all()
+        # Load all OAuth tokens for this user in one query
+        all_tokens = db.query(OAuthToken).filter(
+            OAuthToken.user_id == user_id
+        ).all()
         
-        # Build dict by platform
-        tokens_dict = {}
-        for token in tokens:
+        # Create a dictionary keyed by platform
+        tokens_by_platform = {}
+        for token in all_tokens:
             # Decrypt tokens
             try:
                 token.access_token = decrypt(token.access_token) if token.access_token else None
@@ -266,17 +262,16 @@ def get_all_oauth_tokens(user_id: int, db: Session = None) -> Dict[str, Optional
             except Exception as e:
                 logger.warning(f"Failed to decrypt token for user {user_id}, platform {token.platform}: {e}")
             
-            tokens_dict[token.platform] = token
+            tokens_by_platform[token.platform] = token
         
-        # Cache the result (serialize for caching)
-        cache_data = {platform: {
-            'id': token.id,
-            'platform': token.platform,
-            'expires_at': token.expires_at.isoformat() if token.expires_at else None,
-        } for platform, token in tokens_dict.items() if token}
-        set_cached_oauth_token(user_id, "all", cache_data)
+        # Return dict with all platforms (None if not found)
+        result = {
+            "youtube": tokens_by_platform.get("youtube"),
+            "tiktok": tokens_by_platform.get("tiktok"),
+            "instagram": tokens_by_platform.get("instagram")
+        }
         
-        return tokens_dict
+        return result
     finally:
         if should_close:
             db.close()

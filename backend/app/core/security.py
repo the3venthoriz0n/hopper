@@ -13,7 +13,10 @@ api_access_logger = logging.getLogger("api_access")
 
 
 def require_auth(request: Request) -> int:
-    """Dependency: Require authentication, return user_id"""
+    """Dependency: Require authentication, return user_id
+    
+    Note: Rate limiting is handled in middleware, not here, to avoid duplication.
+    """
     session_id = request.cookies.get("session_id")
     
     if not session_id:
@@ -22,15 +25,6 @@ def require_auth(request: Request) -> int:
     user_id = get_session(session_id)
     if not user_id:
         raise HTTPException(401, "Session expired. Please log in again.")
-    
-    # Apply rate limiting
-    identifier = get_client_identifier(request, session_id)
-    if not check_rate_limit(identifier, strict=False):
-        security_logger.warning(
-            f"Rate limit exceeded - User: {user_id}, "
-            f"IP: {request.client.host if request.client else 'unknown'}"
-        )
-        raise HTTPException(429, "Too many requests. Please try again later.")
     
     # Track user activity (heartbeat) - simple and extensible
     # This updates the activity key with TTL, so we can count active users
@@ -51,44 +45,16 @@ async def require_csrf_new(
     """Dependency: Require auth + valid CSRF token, return user_id"""
     session_id = request.cookies.get("session_id")
     
-    # Validate Origin/Referer for state-changing requests
-    if not validate_origin_referer(request):
-        security_logger.warning(
-            f"Invalid origin/referer - User: {user_id}, "
-            f"IP: {request.client.host if request.client else 'unknown'}, "
-            f"Origin: {request.headers.get('Origin', 'none')}, "
-            f"Referer: {request.headers.get('Referer', 'none')}"
-        )
-        raise HTTPException(403, "Invalid origin")
-    
-    # Apply strict rate limiting for state-changing operations
-    identifier = get_client_identifier(request, session_id)
-    if not check_rate_limit(identifier, strict=True):
-        security_logger.warning(
-            f"Rate limit exceeded (strict) - User: {user_id}, "
-            f"IP: {request.client.host if request.client else 'unknown'}"
-        )
-        raise HTTPException(429, "Too many requests. Please try again later.")
-    
-    # Get CSRF token from header first (preferred method)
+    # Get CSRF token from header or form data
+    # Note: We don't read JSON body here as it would consume it
+    # Frontend should send CSRF token in X-CSRF-Token header (standard practice)
     csrf_token = x_csrf_token
-    
-    # If not in header, check content-type and extract accordingly
     if not csrf_token:
-        content_type = request.headers.get("content-type", "").lower()
-        
-        if "application/json" in content_type:
-            try:
-                body = await request.json()
-                csrf_token = body.get("csrf_token")
-            except Exception:
-                pass
-        elif "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
-            try:
-                form_data = await request.form()
-                csrf_token = form_data.get("csrf_token")
-            except Exception:
-                pass
+        try:
+            form_data = await request.form()
+            csrf_token = form_data.get("csrf_token")
+        except Exception:
+            pass
     
     # Get expected CSRF token from Redis
     expected_csrf = get_csrf_token(session_id)
@@ -99,14 +65,6 @@ async def require_csrf_new(
             f"Path: {request.url.path}"
         )
         raise HTTPException(403, "Invalid or missing CSRF token")
-    
-    # Rotate CSRF token after successful validation (prevents replay attacks)
-    try:
-        new_csrf_token = secrets.token_urlsafe(32)
-        set_csrf_token(session_id, new_csrf_token)
-    except Exception as e:
-        security_logger.error(f"Failed to rotate CSRF token: {e}")
-        # Don't fail the request if rotation fails, but log it
     
     return user_id
 
