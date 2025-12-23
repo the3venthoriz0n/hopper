@@ -9437,6 +9437,7 @@ async def update_metrics_task():
             try:
                 # Active users: count unique users with active sessions in Redis
                 # Use shared helper so login/logout and background task stay consistent
+                # This ensures hopper_active_users gauge matches hopper_active_users_detail
                 try:
                     active_users = update_active_users_gauge_from_sessions()
                     cleanup_logger.debug(
@@ -9533,28 +9534,34 @@ async def update_metrics_task():
                     ).set(1)
                 
                 # Get active users detail for table view
+                # Use the same source as hopper_active_users gauge for consistency
                 try:
                     active_users_detail_gauge.clear()
                 except AttributeError:
                     pass
                 
-                # Get active user IDs from Redis activity keys
+                # Get active user IDs with timestamps from Redis activity keys
+                # This ensures both metrics use the exact same data source
                 import redis_client as redis_module
-                active_user_ids = redis_module.get_active_user_ids()
+                active_users_with_timestamps = redis_module.get_active_users_with_timestamps()
                 
-                if active_user_ids:
+                if active_users_with_timestamps:
+                    active_user_ids = set(active_users_with_timestamps.keys())
+                    
                     # Query database for user emails
                     active_users = db.query(
                         User.id,
                         User.email
                     ).filter(User.id.in_(active_user_ids)).all()
                     
-                    # Get current time for last_activity (activity keys have 1-hour TTL)
-                    current_time = datetime.now(timezone.utc)
-                    last_activity_str = current_time.isoformat()
-                    
-                    # Set metrics for each active user
+                    # Set metrics for each active user with actual last activity timestamp
                     for user_id, user_email in active_users:
+                        # Get the timestamp from Redis (stored when activity was set)
+                        last_activity_str = active_users_with_timestamps.get(user_id)
+                        if not last_activity_str:
+                            # Fallback to current time if timestamp not found
+                            last_activity_str = datetime.now(timezone.utc).isoformat()
+                        
                         active_users_detail_gauge.labels(
                             user_id=str(user_id),
                             user_email=user_email or f"user_{user_id}",

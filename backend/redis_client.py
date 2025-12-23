@@ -320,16 +320,21 @@ def delete_password_reset_token(token: str) -> None:
 
 
 def set_user_activity(user_id: int) -> None:
-    """Track user activity - sets a heartbeat key with TTL.
+    """Track user activity - sets a heartbeat key with TTL and timestamp.
     
     This is used to track users who are currently active (using the site).
     The key automatically expires after ACTIVITY_TTL, so only recent activity is counted.
+    Stores timestamp so we can show actual last login time.
     
     Args:
         user_id: User ID to track activity for
     """
+    from datetime import datetime, timezone
     key = f"activity:{user_id}"
-    redis_client.setex(key, ACTIVITY_TTL, "1")  # Value doesn't matter, just existence
+    # Store timestamp as JSON so we can retrieve it later
+    timestamp = datetime.now(timezone.utc).isoformat()
+    data = {"timestamp": timestamp}
+    redis_client.setex(key, ACTIVITY_TTL, json.dumps(data))
 
 
 def get_active_user_ids() -> set[int]:
@@ -352,6 +357,48 @@ def get_active_user_ids() -> set[int]:
             continue
     
     return active_user_ids
+
+
+def get_active_users_with_timestamps() -> Dict[int, str]:
+    """Get active user IDs with their last activity timestamps.
+    
+    Returns:
+        Dictionary mapping user_id to ISO timestamp string
+    """
+    activity_keys = redis_client.keys("activity:*")
+    active_users = {}
+    
+    for key in activity_keys:
+        try:
+            # Extract user_id from key format "activity:{user_id}"
+            user_id_str = key.split(":", 1)[1]
+            user_id = int(user_id_str)
+            
+            # Get the stored data (should be JSON with timestamp)
+            data_str = redis_client.get(key)
+            if data_str:
+                try:
+                    data = json.loads(data_str)
+                    timestamp = data.get("timestamp")
+                    if timestamp:
+                        active_users[user_id] = timestamp
+                    else:
+                        # Fallback: if no timestamp, use current time (for backward compatibility)
+                        from datetime import datetime, timezone
+                        active_users[user_id] = datetime.now(timezone.utc).isoformat()
+                except (json.JSONDecodeError, TypeError):
+                    # Old format (just "1") - use current time as fallback
+                    from datetime import datetime, timezone
+                    active_users[user_id] = datetime.now(timezone.utc).isoformat()
+            else:
+                # Key exists but no value - shouldn't happen, but handle gracefully
+                from datetime import datetime, timezone
+                active_users[user_id] = datetime.now(timezone.utc).isoformat()
+        except (ValueError, IndexError):
+            # Skip invalid keys
+            continue
+    
+    return active_users
 
 
 def acquire_lock(lock_key: str, timeout: int = 30) -> bool:

@@ -333,7 +333,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Last Activity"
+              "options": "Last Login"
             },
             "properties": [
               {
@@ -361,7 +361,7 @@
         "sortBy": [
           {
             "desc": true,
-            "displayName": "Last Activity"
+            "displayName": "Last Login"
           }
         ]
       },
@@ -392,7 +392,7 @@
             },
             "renameByName": {
               "Time": "Current Time",
-              "last_activity": "Last Activity",
+              "last_activity": "Last Login",
               "user_email": "User Email",
               "user_id": "User ID"
             }
@@ -418,7 +418,7 @@
                 ],
                 "operation": "aggregate"
               },
-              "Last Activity": {
+              "Last Login": {
                 "aggregations": [
                   "max"
                 ],
