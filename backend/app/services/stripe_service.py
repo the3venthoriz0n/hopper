@@ -180,6 +180,59 @@ def get_plan_overage_price_id(plan_type: str) -> Optional[str]:
     return None
 
 
+def get_price_info(price_id: str) -> Optional[Dict[str, Any]]:
+    """Get price information from Stripe API
+    
+    Args:
+        price_id: Stripe price ID
+        
+    Returns:
+        Dictionary with price information or None if not found
+    """
+    if not settings.STRIPE_SECRET_KEY:
+        logger.warning("Cannot get price info: STRIPE_SECRET_KEY not set")
+        return None
+    
+    if not price_id:
+        return None
+    
+    try:
+        price = stripe.Price.retrieve(price_id)
+        
+        # Extract price information
+        amount = price.unit_amount or 0
+        currency = price.currency or 'usd'
+        amount_dollars = amount / 100.0
+        
+        # Format price string
+        if amount == 0:
+            formatted = "Free"
+        else:
+            formatted = f"${amount_dollars:.2f}"
+            if price.recurring:
+                interval = price.recurring.interval
+                if interval == 'month':
+                    formatted += "/month"
+                elif interval == 'year':
+                    formatted += "/year"
+        
+        return {
+            "amount": amount,
+            "amount_dollars": amount_dollars,
+            "currency": currency.upper(),
+            "formatted": formatted
+        }
+    except stripe.error.InvalidRequestError as e:
+        if 'No such price' in str(e):
+            logger.warning(f"Price {price_id} not found in Stripe")
+        else:
+            logger.error(f"Stripe error retrieving price {price_id}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error retrieving price {price_id}: {e}", exc_info=True)
+        return None
+
+
 def create_stripe_customer(email: str, user_id: int, db: Session) -> Optional[str]:
     """Create a Stripe customer for a user"""
     if not settings.STRIPE_SECRET_KEY:
@@ -525,6 +578,232 @@ def record_token_usage_to_stripe(
     except Exception as e:
         logger.error(f"Error recording token usage to Stripe for user {user_id}: {e}", exc_info=True)
         return False
+
+
+def cancel_subscription_with_invoice(stripe_subscription_id: str, invoice_now: bool = True) -> bool:
+    """
+    Cancel a Stripe subscription, optionally creating a final invoice for overage.
+    
+    Uses stripe.Subscription.cancel() which supports invoice_now and prorate parameters.
+    When invoice_now=True:
+    - Creates a final invoice for any pending metered usage (overage)
+    - Does NOT prorate the subscription cost (prorate=False - user keeps tokens they paid for)
+    - Then cancels the subscription
+    
+    Args:
+        stripe_subscription_id: Stripe subscription ID to cancel
+        invoice_now: If True, create final invoice before canceling (default: True)
+        
+    Returns:
+        True if canceled successfully, False otherwise
+    """
+    if not settings.STRIPE_SECRET_KEY:
+        logger.warning("Cannot cancel subscription: STRIPE_SECRET_KEY not set")
+        return False
+    
+    try:
+        # Use stripe.Subscription.cancel() which supports invoice_now and prorate parameters
+        # invoice_now=True: Generates a final invoice for any un-invoiced metered usage
+        # prorate=False: Don't prorate subscription cost - user keeps tokens they paid for
+        stripe.Subscription.cancel(
+            stripe_subscription_id,
+            invoice_now=invoice_now,
+            prorate=False  # Don't prorate - user paid for full period, keep tokens
+        )
+        
+        if invoice_now:
+            logger.info(f"Canceled subscription {stripe_subscription_id} with final invoice (overage invoiced, tokens preserved)")
+        else:
+            logger.info(f"Canceled subscription {stripe_subscription_id} without final invoice")
+        
+        return True
+        
+    except stripe.error.InvalidRequestError as e:
+        if 'already been canceled' in str(e).lower():
+            logger.info(f"Subscription {stripe_subscription_id} was already canceled")
+            return True
+        logger.warning(f"Error canceling subscription {stripe_subscription_id}: {e}")
+        return False
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error canceling subscription {stripe_subscription_id}: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Error canceling subscription {stripe_subscription_id}: {e}", exc_info=True)
+        return False
+
+
+def cancel_all_user_subscriptions(user_id: int, db: Session, verify_cancellation: bool = True, invoice_now: bool = True) -> bool:
+    """
+    Cancel ALL active subscriptions for a user.
+    
+    Best practice: Call this BEFORE creating a new subscription when you control creation.
+    This ensures only one subscription exists at a time.
+    
+    Args:
+        user_id: User ID
+        db: Database session
+        verify_cancellation: Whether to verify cancellation (legacy parameter, kept for compatibility)
+        invoice_now: If True, create final invoice for overage before canceling (default: True)
+    """
+    if not settings.STRIPE_SECRET_KEY:
+        logger.warning("Cannot cancel subscriptions: STRIPE_SECRET_KEY not set")
+        return False
+    
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            logger.error(f"User {user_id} not found")
+            return True
+        
+        customer_id = user.stripe_customer_id
+        if not customer_id:
+            db_subscriptions = db.query(Subscription).filter(Subscription.user_id == user_id).all()
+            for sub in db_subscriptions:
+                db.delete(sub)
+            if db_subscriptions:
+                db.commit()
+                logger.info(f"Deleted {len(db_subscriptions)} orphaned subscription(s)")
+            return True
+        
+        # Cancel in Stripe first with invoice_now to finalize overage charges
+        try:
+            stripe_subscriptions = stripe.Subscription.list(customer=customer_id, status='all', limit=100)
+            for stripe_sub in stripe_subscriptions.data:
+                if stripe_sub.status not in ('canceled', 'incomplete_expired'):
+                    cancel_subscription_with_invoice(stripe_sub.id, invoice_now=invoice_now)
+        except stripe.error.StripeError as e:
+            logger.warning(f"Error listing Stripe subscriptions: {e}")
+        
+        # Delete from database
+        db_subscriptions = db.query(Subscription).filter(Subscription.user_id == user_id).all()
+        for sub in db_subscriptions:
+            db.delete(sub)
+        if db_subscriptions:
+            db.commit()
+            logger.info(f"Canceled and deleted {len(db_subscriptions)} subscription(s) for user {user_id}")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error canceling all subscriptions for user {user_id}: {e}", exc_info=True)
+        db.rollback()
+        return False
+
+
+def delete_stripe_customer(customer_id: str, user_id: Optional[int] = None) -> bool:
+    """Delete a Stripe customer (admin only)"""
+    if not settings.STRIPE_SECRET_KEY:
+        logger.warning("Cannot delete customer: STRIPE_SECRET_KEY not set")
+        return False
+    
+    try:
+        stripe.Customer.delete(customer_id)
+        logger.info(f"Deleted Stripe customer {customer_id}" + (f" for user {user_id}" if user_id else ""))
+        return True
+    except stripe.error.InvalidRequestError as e:
+        if 'No such customer' in str(e):
+            logger.info(f"Customer {customer_id} already deleted in Stripe")
+            return True
+        logger.warning(f"Error deleting Stripe customer {customer_id}: {e}")
+        return False
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error deleting customer {customer_id}: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Error deleting Stripe customer {customer_id}: {e}", exc_info=True)
+        return False
+
+
+def create_unlimited_subscription(user_id: int, preserved_tokens: int, db: Session) -> Optional[Subscription]:
+    """
+    Create an unlimited subscription for a user via Stripe (admin only).
+    
+    Args:
+        user_id: User ID
+        preserved_tokens: Token balance to preserve when creating subscription
+        db: Database session
+        
+    Returns:
+        Subscription object or None if creation failed
+    """
+    if not settings.STRIPE_SECRET_KEY:
+        logger.error("Cannot create unlimited subscription: STRIPE_SECRET_KEY not set")
+        return None
+    
+    try:
+        # Cancel all existing subscriptions first
+        cancel_all_user_subscriptions(user_id, db, verify_cancellation=True)
+        
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            logger.error(f"User {user_id} not found")
+            return None
+        
+        customer_id = ensure_stripe_customer_exists(user_id, db)
+        if not customer_id:
+            logger.error(f"Failed to create Stripe customer for user {user_id}")
+            return None
+        
+        # Get unlimited plan price ID
+        price_id = get_plan_price_id('unlimited')
+        if not price_id:
+            logger.error("Unlimited plan price ID not configured")
+            return None
+        
+        # Create subscription in Stripe
+        subscription = stripe.Subscription.create(
+            customer=customer_id,
+            items=[{'price': price_id}],
+            metadata={'user_id': str(user_id)},
+        )
+        
+        # Create subscription record in database
+        from app.services.token_service import reset_tokens_for_subscription
+        
+        db_subscription = Subscription(
+            user_id=user_id,
+            stripe_subscription_id=subscription.id,
+            stripe_customer_id=customer_id,
+            plan_type='unlimited',
+            status=subscription.status,
+            current_period_start=datetime.fromtimestamp(subscription.current_period_start, tz=timezone.utc),
+            current_period_end=datetime.fromtimestamp(subscription.current_period_end, tz=timezone.utc),
+            cancel_at_period_end=False,
+            preserved_tokens_balance=preserved_tokens  # Store preserved tokens
+        )
+        db.add(db_subscription)
+        db.commit()
+        db.refresh(db_subscription)
+        
+        # Reset tokens for unlimited plan (sets to -1 for unlimited)
+        reset_tokens_for_subscription(
+            user_id,
+            'unlimited',
+            db_subscription.current_period_start,
+            db_subscription.current_period_end,
+            db,
+            is_renewal=False
+        )
+        
+        # If we have preserved tokens, set them (unlimited plan allows any balance)
+        if preserved_tokens > 0:
+            from app.services.token_service import get_or_create_token_balance
+            token_balance = get_or_create_token_balance(user_id, db)
+            token_balance.tokens_remaining = preserved_tokens
+            token_balance.monthly_tokens = preserved_tokens
+            db.commit()
+        
+        logger.info(f"Created unlimited subscription for user {user_id}: {subscription.id} (preserved {preserved_tokens} tokens)")
+        return db_subscription
+        
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error creating unlimited subscription for user {user_id}: {e}")
+        db.rollback()
+        return None
+    except Exception as e:
+        logger.error(f"Error creating unlimited subscription for user {user_id}: {e}", exc_info=True)
+        db.rollback()
+        return None
 
 
 def update_subscription_from_stripe(

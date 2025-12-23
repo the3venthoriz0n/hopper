@@ -23,7 +23,7 @@ from app.core.config import (
 from app.core.security import require_auth, require_csrf_new, set_auth_cookie
 from app.db.helpers import (
     get_oauth_token, save_oauth_token, delete_oauth_token, check_token_expiration,
-    get_all_oauth_tokens, get_user_settings, set_user_setting,
+    get_all_oauth_tokens, get_user_settings, set_user_setting, get_user_videos,
     credentials_to_oauth_token_data, oauth_token_to_credentials
 )
 from app.db.redis import redis_client
@@ -512,6 +512,154 @@ def disconnect_youtube(user_id: int = Depends(require_csrf_new), db: Session = D
     delete_oauth_token(user_id, "youtube", db=db)
     set_user_setting(user_id, "destinations", "youtube_enabled", False, db=db)
     return {"message": "Disconnected"}
+
+
+@router.get("/youtube/videos")
+def get_youtube_videos(
+    user_id: int = Depends(require_auth),
+    page: int = 1,
+    per_page: int = 50,
+    hide_shorts: bool = False,
+    db: Session = Depends(get_db)
+):
+    """Get user's YouTube videos (paginated)"""
+    youtube_token = get_oauth_token(user_id, "youtube", db=db)
+    
+    if not youtube_token:
+        raise HTTPException(401, "YouTube not connected")
+    
+    # Decrypt and build credentials
+    youtube_creds = Credentials(
+        token=decrypt(youtube_token.access_token),
+        refresh_token=decrypt(youtube_token.refresh_token) if youtube_token.refresh_token else None,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=settings.GOOGLE_CLIENT_ID,
+        client_secret=settings.GOOGLE_CLIENT_SECRET
+    )
+    
+    try:
+        youtube = build('youtube', 'v3', credentials=youtube_creds)
+        
+        # Get channel ID first
+        channels_response = youtube.channels().list(
+            part='contentDetails',
+            mine=True
+        ).execute()
+        
+        if not channels_response.get('items'):
+            return {
+                "videos": [],
+                "total": 0,
+                "page": page,
+                "per_page": per_page,
+                "total_pages": 0
+            }
+        
+        channel_id = channels_response['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+        
+        # Get videos from uploads playlist
+        # Calculate offset
+        offset = (page - 1) * per_page
+        
+        # Fetch more than needed to filter shorts
+        fetch_count = per_page * 2 if hide_shorts else per_page
+        max_results = min(fetch_count + offset, 50)  # YouTube API max is 50 per request
+        
+        playlist_items = []
+        next_page_token = None
+        fetched = 0
+        
+        # Fetch in batches if needed
+        while fetched < offset + fetch_count:
+            request_count = min(50, offset + fetch_count - fetched)
+            
+            playlist_response = youtube.playlistItems().list(
+                part='contentDetails',
+                playlistId=channel_id,
+                maxResults=request_count,
+                pageToken=next_page_token
+            ).execute()
+            
+            playlist_items.extend(playlist_response.get('items', []))
+            fetched += len(playlist_response.get('items', []))
+            next_page_token = playlist_response.get('nextPageToken')
+            
+            if not next_page_token or fetched >= offset + fetch_count:
+                break
+        
+        # Get video IDs
+        video_ids = [item['contentDetails']['videoId'] for item in playlist_items[offset:offset + fetch_count]]
+        
+        if not video_ids:
+            return {
+                "videos": [],
+                "total": len(playlist_items),
+                "page": page,
+                "per_page": per_page,
+                "total_pages": (len(playlist_items) + per_page - 1) // per_page
+            }
+        
+        # Get video details (title, duration, category)
+        videos_response = youtube.videos().list(
+            part='snippet,contentDetails,status',
+            id=','.join(video_ids)
+        ).execute()
+        
+        videos = []
+        for video in videos_response.get('items', []):
+            video_id = video['id']
+            snippet = video['snippet']
+            
+            # Parse duration (ISO 8601 format: PT1H2M10S)
+            duration_str = video['contentDetails']['duration']
+            duration_seconds = 0
+            if duration_str:
+                import re
+                # Parse PT1H2M10S format
+                hours = re.search(r'(\d+)H', duration_str)
+                minutes = re.search(r'(\d+)M', duration_str)
+                seconds = re.search(r'(\d+)S', duration_str)
+                duration_seconds = (int(hours.group(1)) * 3600 if hours else 0) + \
+                                 (int(minutes.group(1)) * 60 if minutes else 0) + \
+                                 (int(seconds.group(1)) if seconds else 0)
+            
+            # Check if it's a short (category 15 is "People & Blogs" but shorts are typically < 60 seconds)
+            # YouTube Shorts are videos < 60 seconds
+            is_short = duration_seconds > 0 and duration_seconds < 60
+            
+            # Also check category - category 15 might indicate shorts, but duration is more reliable
+            category_id = snippet.get('categoryId', '')
+            
+            if hide_shorts and is_short:
+                continue
+            
+            videos.append({
+                "id": video_id,
+                "title": snippet.get('title', 'Untitled'),
+                "duration_seconds": duration_seconds,
+                "is_short": is_short,
+                "category_id": category_id,
+                "thumbnail": snippet.get('thumbnails', {}).get('default', {}).get('url', ''),
+                "published_at": snippet.get('publishedAt', '')
+            })
+        
+        # Limit to per_page
+        videos = videos[:per_page]
+        
+        # Calculate total (approximate - we'd need to fetch all to get exact count)
+        total = len(playlist_items)
+        
+        return {
+            "videos": videos,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": (total + per_page - 1) // per_page
+        }
+        
+    except Exception as e:
+        youtube_logger.error(f"Error fetching YouTube videos: {str(e)}", exc_info=True)
+        raise HTTPException(500, f"Error fetching videos: {str(e)}")
 
 
 # ============================================================================
@@ -1322,3 +1470,111 @@ def disconnect_instagram(user_id: int = Depends(require_csrf_new), db: Session =
     delete_oauth_token(user_id, "instagram", db=db)
     set_user_setting(user_id, "destinations", "instagram_enabled", False, db=db)
     return {"message": "Disconnected"}
+
+
+# ============================================================================
+# DESTINATIONS ROUTES (separate router for /api/destinations)
+# ============================================================================
+
+destinations_router = APIRouter(prefix="/api/destinations", tags=["destinations"])
+
+
+@destinations_router.get("")
+def get_destinations(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
+    """Get destination status for current user"""
+    # Batch load OAuth tokens and settings to prevent N+1 queries
+    all_tokens = get_all_oauth_tokens(user_id, db=db)
+    settings = get_user_settings(user_id, "destinations", db=db)
+    
+    # Extract OAuth tokens
+    youtube_token = all_tokens.get("youtube")
+    tiktok_token = all_tokens.get("tiktok")
+    instagram_token = all_tokens.get("instagram")
+    
+    # Check token expiration status
+    youtube_expiry = check_token_expiration(youtube_token)
+    tiktok_expiry = check_token_expiration(tiktok_token)
+    instagram_expiry = check_token_expiration(instagram_token)
+    
+    # Get scheduled video count
+    videos = get_user_videos(user_id, db=db)
+    scheduled_count = len([v for v in videos if v.status == 'scheduled'])
+    
+    return {
+        "youtube": {
+            "connected": youtube_token is not None,
+            "enabled": settings.get("youtube_enabled", False),
+            "token_status": youtube_expiry["status"],
+            "token_expired": youtube_expiry["expired"],
+            "token_expires_soon": youtube_expiry["expires_soon"]
+        },
+        "tiktok": {
+            "connected": tiktok_token is not None,
+            "enabled": settings.get("tiktok_enabled", False),
+            "token_status": tiktok_expiry["status"],
+            "token_expired": tiktok_expiry["expired"],
+            "token_expires_soon": tiktok_expiry["expires_soon"]
+        },
+        "instagram": {
+            "connected": instagram_token is not None,
+            "enabled": settings.get("instagram_enabled", False),
+            "token_status": instagram_expiry["status"],
+            "token_expired": instagram_expiry["expired"],
+            "token_expires_soon": instagram_expiry["expires_soon"]
+        },
+        "scheduled_videos": scheduled_count
+    }
+
+
+@destinations_router.post("/youtube/toggle")
+def toggle_youtube(
+    enabled: bool,
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
+    """Toggle YouTube destination on/off"""
+    set_user_setting(user_id, "destinations", "youtube_enabled", enabled, db=db)
+    
+    youtube_token = get_oauth_token(user_id, "youtube", db=db)
+    return {
+        "youtube": {
+            "connected": youtube_token is not None,
+            "enabled": enabled
+        }
+    }
+
+
+@destinations_router.post("/tiktok/toggle")
+def toggle_tiktok(
+    enabled: bool,
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
+    """Toggle TikTok destination on/off"""
+    set_user_setting(user_id, "destinations", "tiktok_enabled", enabled, db=db)
+    
+    tiktok_token = get_oauth_token(user_id, "tiktok", db=db)
+    return {
+        "tiktok": {
+            "connected": tiktok_token is not None,
+            "enabled": enabled
+        }
+    }
+
+
+@destinations_router.post("/instagram/toggle")
+def toggle_instagram(
+    enabled: bool,
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
+    """Toggle Instagram destination on/off"""
+    set_user_setting(user_id, "destinations", "instagram_enabled", enabled, db=db)
+    
+    instagram_token = get_oauth_token(user_id, "instagram", db=db)
+    return {
+        "instagram": {
+            "connected": instagram_token is not None,
+            "enabled": enabled
+        }
+    }

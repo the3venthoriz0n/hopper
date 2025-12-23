@@ -33,6 +33,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/videos", tags=["videos"])
 
+# Separate router for upload endpoints
+upload_router = APIRouter(prefix="/api/upload", tags=["upload"])
+
 
 @router.post("")
 async def add_video(
@@ -693,3 +696,117 @@ async def retry_failed_upload(video_id: int, user_id: int = Depends(require_csrf
         "succeeded": succeeded_destinations,
         "message": f"Retry completed. Succeeded: {', '.join(succeeded_destinations) if succeeded_destinations else 'none'}"
     }
+
+
+# ============================================================================
+# UPLOAD ROUTES
+# ============================================================================
+
+@upload_router.get("/limits")
+async def get_upload_limits():
+    """Get upload size limits"""
+    max_mb = settings.MAX_FILE_SIZE / (1024 * 1024)
+    max_gb = settings.MAX_FILE_SIZE / (1024 * 1024 * 1024)
+    return {
+        "max_file_size_bytes": settings.MAX_FILE_SIZE,
+        "max_file_size_mb": int(max_mb),
+        "max_file_size_gb": max_gb,
+        "max_file_size_display": f"{int(max_mb)} MB ({max_gb:.0f} GB)"
+    }
+
+
+@upload_router.post("")
+async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+    """Upload all pending videos to all enabled destinations (immediate or scheduled)"""
+    
+    # Check if at least one destination is enabled and connected
+    enabled_destinations = []
+    
+    upload_logger.debug(f"Checking destinations for user {user_id}...")
+    
+    # Build upload context (enabled destinations, settings, tokens)
+    upload_context = build_upload_context(user_id, db)
+    enabled_destinations = upload_context["enabled_destinations"]
+    destination_settings = upload_context["dest_settings"]
+    all_tokens = upload_context["all_tokens"]
+    
+    upload_logger.info(f"Enabled destinations for user {user_id}: {enabled_destinations}")
+    
+    if not enabled_destinations:
+        error_msg = "No enabled and connected destinations. Enable at least one destination and ensure it's connected."
+        upload_logger.error(error_msg)
+        raise HTTPException(400, error_msg)
+    
+    # Get videos that can be uploaded: pending, failed (retry), or uploading (retry if stuck)
+    user_videos = get_user_videos(user_id, db=db)
+    pending_videos = [v for v in user_videos if v.status in ['pending', 'failed', 'uploading']]
+    
+    upload_logger.info(f"Videos ready to upload for user {user_id}: {len(pending_videos)}")
+    
+    # Get global settings for upload behavior
+    global_settings = get_user_settings(user_id, "global", db=db)
+    upload_immediately = global_settings.get("upload_immediately", True)
+    
+    if not pending_videos:
+        # Check what statuses videos actually have
+        statuses = {}
+        for v in user_videos:
+            status = v.status or 'unknown'
+            statuses[status] = statuses.get(status, 0) + 1
+        error_msg = f"No videos ready to upload. Add videos first. Current video statuses: {statuses}"
+        upload_logger.error(error_msg)
+        raise HTTPException(400, error_msg)
+    
+    # If upload immediately is enabled, upload all at once to all enabled destinations
+    if upload_immediately:
+        for video in pending_videos:
+            video_id = video.id
+            
+            # Set status to uploading before starting
+            update_video(video_id, user_id, db=db, status="uploading")
+            
+            # Upload to all enabled destinations
+            for dest_name in enabled_destinations:
+                uploader_func = DESTINATION_UPLOADERS.get(dest_name)
+                if uploader_func:
+                    try:
+                        if dest_name == "instagram":
+                            await uploader_func(user_id, video_id, db=db)
+                        else:
+                            uploader_func(user_id, video_id, db=db)
+                    except Exception as upload_err:
+                        upload_logger.error(f"Upload failed for {dest_name}: {upload_err}")
+                        # Continue to next destination
+            
+            # Check final status
+            updated_video = db.query(Video).filter(Video.id == video_id).first()
+            if updated_video:
+                succeeded = []
+                for dest_name in enabled_destinations:
+                    if check_upload_success(updated_video, dest_name):
+                        succeeded.append(dest_name)
+                
+                if len(succeeded) == len(enabled_destinations):
+                    update_video(video_id, user_id, db=db, status="uploaded")
+                elif len(succeeded) > 0:
+                    update_video(video_id, user_id, db=db, status="failed", error=f"Upload succeeded for {', '.join(succeeded)} but failed for others")
+                else:
+                    update_video(video_id, user_id, db=db, status="failed", error="Upload failed for all destinations")
+        
+        return {
+            "ok": True,
+            "message": f"Uploaded {len(pending_videos)} video(s) to all enabled destinations",
+            "videos_uploaded": len(pending_videos)
+        }
+    else:
+        # Schedule uploads (scheduler will handle them)
+        scheduled_count = 0
+        for video in pending_videos:
+            update_video(video.id, user_id, db=db, status="scheduled")
+            scheduled_count += 1
+        
+        return {
+            "ok": True,
+            "message": f"Scheduled {scheduled_count} video(s) for upload",
+            "videos_scheduled": scheduled_count
+        }

@@ -1,6 +1,7 @@
 """Auth API routes"""
 import secrets
 import logging
+from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 from app.schemas.auth import (
@@ -15,11 +16,12 @@ from app.services.auth_service import (
 from app.services.email_service import send_verification_email, send_password_reset_email
 from app.core.security import require_auth, require_csrf_new, set_auth_cookie
 from app.db.session import get_db
+from app.db import helpers as db_helpers
 from app.db.redis import (
     set_pending_registration, get_pending_registration, delete_pending_registration,
     set_email_verification_code, get_email_verification_code, delete_email_verification_code,
     set_password_reset_token, get_password_reset_email, delete_password_reset_token,
-    delete_session
+    delete_session, redis_client
 )
 from app.services.stripe_service import create_stripe_customer, create_free_subscription
 
@@ -260,4 +262,90 @@ def get_csrf_token(request: Request):
         set_csrf_token(session_id, csrf_token)
     
     return {"csrf_token": csrf_token}
+
+
+@router.delete("/account")
+def delete_account(
+    request: Request,
+    response: Response,
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
+    """Delete user account and all associated data (user-initiated)
+    
+    This endpoint performs a complete data deletion (GDPR compliant):
+    - Deletes all videos from database
+    - Deletes all video files from disk
+    - Deletes all settings
+    - Deletes all OAuth tokens
+    - Deletes user account
+    - Clears all sessions and caches
+    
+    This action is irreversible.
+    """
+    security_logger = logging.getLogger("security")
+    upload_logger = logging.getLogger("upload")
+    
+    security_logger.info(f"User {user_id} requested account deletion")
+    
+    try:
+        # Delete user account and get cleanup info
+        result = db_helpers.delete_user_account(user_id, db=db)
+        
+        if not result["success"]:
+            security_logger.error(f"Failed to delete user {user_id}: {result.get('error')}")
+            raise HTTPException(500, f"Failed to delete account: {result.get('error')}")
+        
+        # Clean up video files from disk
+        video_paths = result.get("video_file_paths", [])
+        files_deleted = 0
+        files_failed = 0
+        
+        for video_path in video_paths:
+            try:
+                # ROOT CAUSE FIX: Resolve path to absolute to ensure proper file access
+                path = Path(video_path).resolve()
+                if path.exists():
+                    path.unlink()
+                    files_deleted += 1
+                    upload_logger.debug(f"Deleted video file: {video_path}")
+            except Exception as e:
+                files_failed += 1
+                upload_logger.warning(f"Failed to delete video file {video_path}: {e}")
+        
+        # Log current session to delete it
+        session_id = request.cookies.get("session_id")
+        if session_id:
+            delete_session(session_id)
+            redis_client.redis_client.delete(f"csrf:{session_id}")
+        
+        # Clear session cookie
+        response.delete_cookie("session_id")
+        
+        # Log deletion
+        stats = result.get("stats", {})
+        security_logger.info(
+            f"Account deleted: user_id={user_id}, "
+            f"email={stats.get('user_email')}, "
+            f"videos={stats.get('videos_deleted', 0)}, "
+            f"settings={stats.get('settings_deleted', 0)}, "
+            f"oauth_tokens={stats.get('oauth_tokens_deleted', 0)}, "
+            f"files_deleted={files_deleted}, "
+            f"files_failed={files_failed}"
+        )
+        
+        return {
+            "message": "Account deleted successfully",
+            "stats": {
+                **stats,
+                "files_deleted": files_deleted,
+                "files_failed": files_failed
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        security_logger.error(f"Error deleting account for user {user_id}: {e}", exc_info=True)
+        raise HTTPException(500, f"Failed to delete account: {str(e)}")
 

@@ -33,7 +33,7 @@ from app.core.security import (
 )
 
 # Import routers
-from app.api import auth, oauth, videos, subscriptions, tokens, admin
+from app.api import auth, oauth, videos, subscriptions, tokens, admin, settings
 
 # Configure logging
 LOG_LEVEL = settings.LOG_LEVEL.upper()
@@ -181,8 +181,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Failed to instrument SQLAlchemy: {e}")
     
-    # Start background tasks (placeholders - full implementation would import from app.tasks)
-    logger.info("Background tasks would be started here")
+    # Start background tasks
+    logger.info("Starting scheduler tasks...")
+    from app.tasks.scheduler import scheduler_task, token_reset_scheduler_task
+    from app.tasks.cleanup import cleanup_task
+    
+    asyncio.create_task(scheduler_task())
+    asyncio.create_task(token_reset_scheduler_task())
+    logger.info("Scheduler tasks started")
+    
+    # Start the cleanup task
+    logger.info("Starting cleanup task...")
+    asyncio.create_task(cleanup_task())
+    logger.info("Cleanup task started")
     
     yield
     
@@ -225,8 +236,12 @@ app.add_middleware(
 # Include routers
 app.include_router(auth.router)
 app.include_router(oauth.router)
+app.include_router(oauth.destinations_router)  # Separate router for /api/destinations
+app.include_router(settings.router)
 app.include_router(videos.router)
+app.include_router(videos.upload_router)  # Separate router for /api/upload
 app.include_router(subscriptions.router)
+app.include_router(subscriptions.stripe_router)  # Separate router for /api/stripe
 app.include_router(tokens.router)
 app.include_router(admin.router)
 
