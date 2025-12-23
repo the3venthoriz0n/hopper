@@ -11,19 +11,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the entire app/ directory structure
+# This includes app/core/assets/ with stripe_plans JSON files
 COPY app/ ./app/
 
-# Copy JSON config files (Stripe plans configuration) to app/core/assets/
-# Note: These should already be in app/core/assets/ from the migration, but we copy them here for safety
-# If files don't exist in build context, they won't be copied (that's fine)
-COPY stripe_plans_live.json ./app/core/assets/
-COPY stripe_plans_test.json ./app/core/assets/
-
-# Copy test files (for CI/testing, not included in production)
+# Copy test directory and test files (for CI/testing, not included in production)
 # These are only used during test runs, not in production containers
-# If files don't exist in build context, they won't be copied (that's fine)
-COPY test_main.py ./
-COPY test_security.py ./
+COPY tests/ ./tests/
 COPY pytest.ini ./
 
 EXPOSE 8000
