@@ -1,4 +1,5 @@
 """Application configuration using Pydantic BaseSettings"""
+import os
 from pydantic_settings import BaseSettings
 from pathlib import Path
 
@@ -73,9 +74,12 @@ class Settings(BaseSettings):
     DATA_REFRESH_COOLDOWN: int = 60  # seconds
     
     class Config:
-        env_file = ".env"
+        # Pydantic will check these in order.
+        # Environment variables set in Docker Compose ALWAYS override these files.
+        env_file = ".env", f".env.{os.getenv('ENVIRONMENT', 'dev')}"
         env_file_encoding = "utf-8"
         case_sensitive = True
+        extra = "ignore"  # Prevents crashing if there are extra variables in your .env
 
 
 # Create global settings instance
