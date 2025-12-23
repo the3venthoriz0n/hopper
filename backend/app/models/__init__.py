@@ -1,4 +1,5 @@
 """SQLAlchemy models package - imports all models so they register with Base.metadata"""
+from app.models.base import Base
 from app.models.user import User
 from app.models.video import Video
 from app.models.setting import Setting
@@ -10,6 +11,6 @@ from app.models.stripe_event import StripeEvent
 
 # Export all for convenience
 __all__ = [
-    "User", "Video", "Setting", "OAuthToken",
+    "Base", "User", "Video", "Setting", "OAuthToken",
     "Subscription", "TokenBalance", "TokenTransaction", "StripeEvent"
 ]

@@ -739,6 +739,39 @@ def update_video(video_id: int, user_id: int, db: Session = None, **kwargs) -> O
             db.close()
 
 
+def delete_video(video_id: int, user_id: int, db: Session = None) -> bool:
+    """Delete a video
+    
+    Args:
+        video_id: Video ID
+        user_id: User ID
+        db: Database session (if None, creates its own - for backward compatibility)
+    
+    Returns:
+        True if video was deleted, False if not found
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
+    try:
+        video = db.query(Video).filter(
+            Video.id == video_id,
+            Video.user_id == user_id
+        ).first()
+        
+        if not video:
+            return False
+        
+        db.delete(video)
+        db.commit()
+        return True
+    finally:
+        if should_close:
+            db.close()
+
+
 def get_all_scheduled_videos(db: Session = None) -> Dict[int, List[Video]]:
     """Get all scheduled videos across all users, grouped by user_id
     Optimized for scheduler task - single query instead of N queries.

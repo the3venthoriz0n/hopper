@@ -21,7 +21,7 @@ from app.db.redis import (
     set_pending_registration, get_pending_registration, delete_pending_registration,
     set_email_verification_code, get_email_verification_code, delete_email_verification_code,
     set_password_reset_token, get_password_reset_email, delete_password_reset_token,
-    delete_session, redis_client
+    delete_session, get_session, redis_client
 )
 from app.services.stripe_service import create_stripe_customer, create_free_subscription
 
@@ -190,21 +190,33 @@ def reset_password(request_data: ResetPasswordRequest, db: Session = Depends(get
 
 
 @router.get("/me")
-def get_current_user(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
-    """Get current user information"""
-    user = get_user_by_id(user_id, db=db)
-    if not user:
-        raise HTTPException(404, "User not found")
-    
-    return {
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "created_at": user.created_at.isoformat(),
-            "is_admin": user.is_admin,
-            "is_email_verified": user.is_email_verified,
+def get_current_user(request: Request, db: Session = Depends(get_db)):
+    """Get current logged-in user"""
+    try:
+        session_id = request.cookies.get("session_id")
+        if not session_id:
+            return {"user": None}
+        
+        user_id = get_session(session_id)
+        if not user_id:
+            return {"user": None}
+        
+        user = get_user_by_id(user_id, db=db)
+        if not user:
+            return {"user": None}
+        
+        return {
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "created_at": user.created_at.isoformat(),
+                "is_admin": user.is_admin,
+                "is_email_verified": user.is_email_verified,
+            }
         }
-    }
+    except Exception:
+        # Return None on any error to prevent redirect loops
+        return {"user": None}
 
 
 @router.post("/set-password")

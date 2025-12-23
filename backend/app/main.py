@@ -33,7 +33,8 @@ from app.core.security import (
 )
 
 # Import routers
-from app.api import auth, oauth, videos, subscriptions, tokens, admin, settings
+from app.api import auth, oauth, videos, subscriptions, tokens, admin
+from app.api import settings as settings_router
 
 # Configure logging
 LOG_LEVEL = settings.LOG_LEVEL.upper()
@@ -237,7 +238,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(oauth.router)
 app.include_router(oauth.destinations_router)  # Separate router for /api/destinations
-app.include_router(settings.router)
+app.include_router(settings_router.router)
 app.include_router(videos.router)
 app.include_router(videos.upload_router)  # Separate router for /api/upload
 app.include_router(subscriptions.router)

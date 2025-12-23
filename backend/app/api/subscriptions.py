@@ -19,7 +19,7 @@ from app.services.token_service import (
 )
 from app.core.config import settings
 
-router = APIRouter(prefix="/api/subscriptions", tags=["subscriptions"])
+router = APIRouter(prefix="/api/subscription", tags=["subscriptions"])
 logger = logging.getLogger(__name__)
 
 

@@ -81,6 +81,14 @@ class Settings(BaseSettings):
 # Create global settings instance
 settings = Settings()
 
+# Export Settings class attributes as module-level constants for convenience
+TIKTOK_AUTH_URL = settings.TIKTOK_AUTH_URL
+TIKTOK_TOKEN_URL = settings.TIKTOK_TOKEN_URL
+TIKTOK_RATE_LIMIT_REQUESTS = settings.TIKTOK_RATE_LIMIT_REQUESTS
+TIKTOK_RATE_LIMIT_WINDOW = settings.TIKTOK_RATE_LIMIT_WINDOW
+INSTAGRAM_AUTH_URL = settings.INSTAGRAM_AUTH_URL
+INSTAGRAM_GRAPH_API_BASE = settings.INSTAGRAM_GRAPH_API_BASE
+
 # Derived constants
 TIKTOK_SCOPES = ["user.info.basic", "video.upload", "video.publish"]
 TIKTOK_CREATOR_INFO_URL = f"{settings.TIKTOK_API_BASE}/post/publish/creator_info/query/"
