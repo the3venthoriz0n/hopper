@@ -16,7 +16,7 @@ import Pricing from './Pricing';
 // 
 // SYSTEM DESIGN: RGB values stored separately for opacity support
 // Use rgba() helper function for colors with opacity
-const HOPPER_COLORS = {
+export const HOPPER_COLORS = {
   // Primary Palette - Deep, Slate-based tones
   base: '#0F1115',      // Slightly deeper for better depth
   secondary: '#1A1D23', // Clearer separation from base
@@ -30,6 +30,11 @@ const HOPPER_COLORS = {
   error: '#E53935',     // Vibrant but deep red
   warning: '#FFB300',   // Amber warning
   info: '#1E88E5',      // Clearer blue
+  link: '#0066cc',      // Link color (blue)
+  linkHover: '#0052a3', // Link hover color (darker blue)
+  grey: '#666666',      // Grey text color
+  greyLight: '#CCCCCC', // Light grey for separators
+  greyBorder: '#EEEEEE', // Very light grey for borders
   
   // RGB values 
   rgb: {
@@ -41,7 +46,12 @@ const HOPPER_COLORS = {
     success: '67, 160, 71',
     error: '229, 57, 53',
     warning: '255, 179, 0',
-    info: '30, 136, 229'
+    info: '30, 136, 229',
+    link: '0, 102, 204',
+    linkHover: '0, 82, 163',
+    grey: '102, 102, 102',
+    greyLight: '204, 204, 204',
+    greyBorder: '238, 238, 238'
   }
 };
 
@@ -302,17 +312,8 @@ function PublicLanding() {
           <span>{appTitle.replace('🐸 ', '')}</span>
         </div>
         <nav className="landing-nav">
-          <Link to="/privacy" className="landing-nav-link">
-            Privacy
-          </Link>
-          <Link to="/terms" className="landing-nav-link">
-            Terms
-          </Link>
           <Link to="/help" className="landing-nav-link">
             Help
-          </Link>
-          <Link to="/delete-your-data" className="landing-nav-link">
-            Delete Your Data
           </Link>
           <Link to="/login" className="landing-nav-button">
             Login
@@ -340,8 +341,90 @@ function PublicLanding() {
         </div>
       </main>
 
-      <footer className="landing-footer">
-        © 2026 syndic. Owned and operated by Andrew Kaplan
+      <footer style={{
+        marginTop: '3rem',
+        padding: '1.5rem',
+        textAlign: 'center',
+        borderTop: `1px solid ${HOPPER_COLORS.greyBorder}`,
+        color: HOPPER_COLORS.grey,
+        fontSize: '0.9rem'
+      }}>
+        <Link 
+          to="/terms" 
+          style={{ 
+            color: HOPPER_COLORS.accent, 
+            textDecoration: 'none', 
+            marginRight: '1rem',
+            transition: 'color 0.2s'
+          }}
+          onMouseEnter={(e) => e.target.style.color = rgba(HOPPER_COLORS.rgb.accent, 0.7)}
+          onMouseLeave={(e) => e.target.style.color = HOPPER_COLORS.accent}
+        >
+          Terms of Service
+        </Link>
+        <span style={{ color: HOPPER_COLORS.greyLight }}>|</span>
+        <Link 
+          to="/privacy" 
+          style={{ 
+            color: HOPPER_COLORS.accent, 
+            textDecoration: 'none', 
+            margin: '0 1rem',
+            transition: 'color 0.2s'
+          }}
+          onMouseEnter={(e) => e.target.style.color = rgba(HOPPER_COLORS.rgb.accent, 0.7)}
+          onMouseLeave={(e) => e.target.style.color = HOPPER_COLORS.accent}
+        >
+          Privacy Policy
+        </Link>
+        <span style={{ color: HOPPER_COLORS.greyLight }}>|</span>
+        <Link 
+          to="/help"
+          style={{ 
+            color: HOPPER_COLORS.accent, 
+            textDecoration: 'none', 
+            margin: '0 1rem',
+            transition: 'color 0.2s'
+          }}
+          onMouseEnter={(e) => e.target.style.color = rgba(HOPPER_COLORS.rgb.accent, 0.7)}
+          onMouseLeave={(e) => e.target.style.color = HOPPER_COLORS.accent}
+        >
+          Help
+        </Link>
+        <span style={{ color: HOPPER_COLORS.greyLight }}>|</span>
+        <Link 
+          to="/delete-your-data"
+          style={{ 
+            color: HOPPER_COLORS.accent, 
+            textDecoration: 'none', 
+            marginLeft: '1rem',
+            transition: 'color 0.2s'
+          }}
+          onMouseEnter={(e) => e.target.style.color = rgba(HOPPER_COLORS.rgb.accent, 0.7)}
+          onMouseLeave={(e) => e.target.style.color = HOPPER_COLORS.accent}
+        >
+          Delete Your Data
+        </Link>
+        <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: HOPPER_COLORS.grey }}>
+          © 2026 syndic. Owned and operated by Andrew Kaplan
+        </div>
+        <div style={{ marginTop: '0.25rem', fontSize: '0.85rem', color: HOPPER_COLORS.grey }}>
+          <a 
+            href={process.env.REACT_APP_VERSION && process.env.REACT_APP_VERSION !== 'dev' 
+              ? `https://github.com/the3venthoriz0n/hopper/releases/tag/${process.env.REACT_APP_VERSION}`
+              : 'https://github.com/the3venthoriz0n/hopper/releases'}
+            target="_blank" 
+            rel="noopener noreferrer"
+            style={{ 
+              color: HOPPER_COLORS.accent, 
+              textDecoration: 'none',
+              transition: 'color 0.2s'
+            }}
+            onMouseEnter={(e) => e.target.style.color = rgba(HOPPER_COLORS.rgb.accent, 0.7)}
+            onMouseLeave={(e) => e.target.style.color = HOPPER_COLORS.accent}
+          >
+            {process.env.REACT_APP_VERSION || 'dev'}
+          </a>
+        </div>
       </footer>
     </div>
   );
@@ -5432,67 +5515,85 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         marginTop: '3rem',
         padding: '1.5rem',
         textAlign: 'center',
-        borderTop: '1px solid #eee',
+        borderTop: `1px solid ${HOPPER_COLORS.greyBorder}`,
         color: HOPPER_COLORS.grey,
         fontSize: '0.9rem'
       }}>
         <Link 
           to="/terms" 
           style={{ 
-            color: HOPPER_COLORS.grey, 
+            color: HOPPER_COLORS.accent, 
             textDecoration: 'none', 
             marginRight: '1rem',
             transition: 'color 0.2s'
           }}
-          onMouseEnter={(e) => e.target.style.color = '#0066cc'}
-          onMouseLeave={(e) => e.target.style.color = '#666'}
+          onMouseEnter={(e) => e.target.style.color = rgba(HOPPER_COLORS.rgb.accent, 0.7)}
+          onMouseLeave={(e) => e.target.style.color = HOPPER_COLORS.accent}
         >
           Terms of Service
         </Link>
-        <span style={{ color: '#ccc' }}>|</span>
+        <span style={{ color: HOPPER_COLORS.greyLight }}>|</span>
         <Link 
           to="/privacy" 
           style={{ 
-            color: HOPPER_COLORS.grey, 
+            color: HOPPER_COLORS.accent, 
             textDecoration: 'none', 
             margin: '0 1rem',
             transition: 'color 0.2s'
           }}
-          onMouseEnter={(e) => e.target.style.color = '#0066cc'}
-          onMouseLeave={(e) => e.target.style.color = '#666'}
+          onMouseEnter={(e) => e.target.style.color = rgba(HOPPER_COLORS.rgb.accent, 0.7)}
+          onMouseLeave={(e) => e.target.style.color = HOPPER_COLORS.accent}
         >
           Privacy Policy
         </Link>
-        <span style={{ color: '#ccc' }}>|</span>
+        <span style={{ color: HOPPER_COLORS.greyLight }}>|</span>
         <Link 
           to="/help"
           style={{ 
-            color: HOPPER_COLORS.grey, 
+            color: HOPPER_COLORS.accent, 
             textDecoration: 'none', 
             margin: '0 1rem',
             transition: 'color 0.2s'
           }}
-          onMouseEnter={(e) => e.target.style.color = '#0066cc'}
-          onMouseLeave={(e) => e.target.style.color = '#666'}
+          onMouseEnter={(e) => e.target.style.color = rgba(HOPPER_COLORS.rgb.accent, 0.7)}
+          onMouseLeave={(e) => e.target.style.color = HOPPER_COLORS.accent}
         >
           Help
         </Link>
-        <span style={{ color: '#ccc' }}>|</span>
+        <span style={{ color: HOPPER_COLORS.greyLight }}>|</span>
         <Link 
           to="/delete-your-data"
           style={{ 
-            color: HOPPER_COLORS.grey, 
+            color: HOPPER_COLORS.accent, 
             textDecoration: 'none', 
             marginLeft: '1rem',
             transition: 'color 0.2s'
           }}
-          onMouseEnter={(e) => e.target.style.color = '#0066cc'}
-          onMouseLeave={(e) => e.target.style.color = '#666'}
+          onMouseEnter={(e) => e.target.style.color = rgba(HOPPER_COLORS.rgb.accent, 0.7)}
+          onMouseLeave={(e) => e.target.style.color = HOPPER_COLORS.accent}
         >
           Delete Your Data
         </Link>
         <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: HOPPER_COLORS.grey }}>
           © 2026 syndic. Owned and operated by Andrew Kaplan
+        </div>
+        <div style={{ marginTop: '0.25rem', fontSize: '0.85rem', color: HOPPER_COLORS.grey }}>
+          <a 
+            href={process.env.REACT_APP_VERSION && process.env.REACT_APP_VERSION !== 'dev' 
+              ? `https://github.com/the3venthoriz0n/hopper/releases/tag/${process.env.REACT_APP_VERSION}`
+              : 'https://github.com/the3venthoriz0n/hopper/releases'}
+            target="_blank" 
+            rel="noopener noreferrer"
+            style={{ 
+              color: HOPPER_COLORS.accent, 
+              textDecoration: 'none',
+              transition: 'color 0.2s'
+            }}
+            onMouseEnter={(e) => e.target.style.color = rgba(HOPPER_COLORS.rgb.accent, 0.7)}
+            onMouseLeave={(e) => e.target.style.color = HOPPER_COLORS.accent}
+          >
+            {process.env.REACT_APP_VERSION || 'dev'}
+          </a>
         </div>
       </footer>
     </div>
