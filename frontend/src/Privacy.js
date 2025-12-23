@@ -13,6 +13,10 @@ function Privacy() {
         <h1>Privacy Policy</h1>
         <p className="page-meta"><strong>Last updated:</strong> {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
         
+        <p>
+          This website is operated by syndic. Throughout the site, the terms 'we', 'us' and 'our' refer to syndic.
+        </p>
+        
         <h2>1. Information We Collect</h2>
         <p>We collect information you provide directly to us, including account credentials and content you upload. We also collect usage data and technical information automatically when you use the service.</p>
         

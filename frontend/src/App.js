@@ -341,7 +341,7 @@ function PublicLanding() {
       </main>
 
       <footer className="landing-footer">
-        © {new Date().getFullYear()} hopper. All rights reserved.
+        © 2026 syndic. Owned and operated by Andrew Kaplan
       </footer>
     </div>
   );
@@ -5492,20 +5492,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           Delete Your Data
         </Link>
         <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: HOPPER_COLORS.grey }}>
-          <a 
-            href="https://github.com/the3venthoriz0n/hopper" 
-            target="_blank" 
-            rel="noopener noreferrer"
-            style={{ 
-              color: HOPPER_COLORS.grey, 
-              textDecoration: 'none',
-              transition: 'color 0.2s'
-            }}
-            onMouseEnter={(e) => e.target.style.color = '#0066cc'}
-            onMouseLeave={(e) => e.target.style.color = '#999'}
-          >
-            {process.env.REACT_APP_VERSION || 'dev'}
-          </a>
+          © 2026 syndic. Owned and operated by Andrew Kaplan
         </div>
       </footer>
     </div>

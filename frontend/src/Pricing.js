@@ -135,7 +135,7 @@ function Pricing() {
           <Link to="/delete-your-data" style={{ color: '#666', textDecoration: 'none', marginLeft: '1rem' }}>Delete Your Data</Link>
         </div>
         <div>
-          © {new Date().getFullYear()} hopper. All rights reserved.
+          © 2026 syndic. Owned and operated by Andrew Kaplan
         </div>
       </footer>
     </div>

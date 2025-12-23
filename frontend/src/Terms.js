@@ -13,6 +13,10 @@ function Terms() {
         <h1>Terms of Service</h1>
         <p className="page-meta"><strong>Last updated:</strong> {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
         
+        <p>
+          This website is operated by syndic. Throughout the site, the terms 'we', 'us' and 'our' refer to syndic.
+        </p>
+        
         <h2>1. Acceptance of Terms</h2>
         <p>By accessing and using this service, you accept and agree to be bound by these Terms of Service.</p>
         
