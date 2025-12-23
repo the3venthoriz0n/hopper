@@ -1,14 +1,24 @@
 #!/bin/bash
 set -e
 
-BACKUP_DIR="/root/backups"
+# Determine environment and set backup directory
+if docker ps --format '{{.Names}}' | grep -q "prod-hopper-postgres"; then
+    CONTAINER_NAME="prod-hopper-postgres"
+    APP_DIR="/opt/hopper-prod"
+    BACKUP_DIR="${APP_DIR}/backups"
+elif docker ps --format '{{.Names}}' | grep -q "dev-hopper-postgres"; then
+    CONTAINER_NAME="dev-hopper-postgres"
+    APP_DIR="/opt/hopper-dev"
+    BACKUP_DIR="${APP_DIR}/backups"
+else
+    echo "❌ Could not find postgres container"
+    exit 1
+fi
+
 mkdir -p "${BACKUP_DIR}"
 
-# Get password from .env.prod (works for both dev and prod)
-ENV_FILE="/opt/hopper-prod/.env.prod"
-if [ ! -f "${ENV_FILE}" ]; then
-    ENV_FILE="/opt/hopper-dev/.env.prod"
-fi
+# Get password from .env.prod
+ENV_FILE="${APP_DIR}/.env.prod"
 if [ ! -f "${ENV_FILE}" ]; then
     # Fallback: try current directory
     ENV_FILE=".env.prod"
@@ -20,16 +30,6 @@ if [ ! -f "${ENV_FILE}" ]; then
 fi
 
 POSTGRES_PASSWORD=$(grep POSTGRES_PASSWORD "${ENV_FILE}" | cut -d '=' -f2)
-
-# Determine container name based on environment
-if docker ps --format '{{.Names}}' | grep -q "prod-hopper-postgres"; then
-    CONTAINER_NAME="prod-hopper-postgres"
-elif docker ps --format '{{.Names}}' | grep -q "dev-hopper-postgres"; then
-    CONTAINER_NAME="dev-hopper-postgres"
-else
-    echo "❌ Could not find postgres container"
-    exit 1
-fi
 
 # Create backup with timestamp
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)

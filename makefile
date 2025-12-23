@@ -156,13 +156,21 @@ backup-db:
 
 restore-db:
 	@if [ -z "$(BACKUP_FILE)" ]; then \
-		echo "❌ Usage: make restore-db BACKUP_FILE=/root/backups/db_YYYYMMDD_HHMMSS.sql.gz"; \
+		echo "❌ Usage: make restore-db BACKUP_FILE=/opt/hopper-prod/backups/db_YYYYMMDD_HHMMSS.sql.gz"; \
 		echo "Available backups:"; \
-		ls -lh /root/backups/db_*.sql.gz 2>/dev/null | tail -20 || echo "  (no backups found)"; \
+		if [ "$(ENV)" = "prod" ]; then \
+			ls -lh /opt/hopper-prod/backups/db_*.sql.gz 2>/dev/null | tail -20 || echo "  (no backups found)"; \
+		else \
+			ls -lh /opt/hopper-dev/backups/db_*.sql.gz 2>/dev/null | tail -20 || echo "  (no backups found)"; \
+		fi; \
 		exit 1; \
 	fi
 	@bash scripts/restore-db.sh $(BACKUP_FILE)
 
 list-backups:
 	@echo "📦 Available database backups:"
-	@ls -lh /root/backups/db_*.sql.gz 2>/dev/null | tail -20 || echo "  (no backups found)"
+	@if [ "$(ENV)" = "prod" ]; then \
+		ls -lh /opt/hopper-prod/backups/db_*.sql.gz 2>/dev/null | tail -20 || echo "  (no backups found in /opt/hopper-prod/backups)"; \
+	else \
+		ls -lh /opt/hopper-dev/backups/db_*.sql.gz 2>/dev/null | tail -20 || echo "  (no backups found in /opt/hopper-dev/backups)"; \
+	fi

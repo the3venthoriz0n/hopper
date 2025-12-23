@@ -223,7 +223,7 @@ if [ "$ENV" == "prod" ]; then
         fi
         
         # Create backup directory if it doesn't exist
-        mkdir -p /root/backups
+        mkdir -p "$APP_DIR/backups"
     else
         echo "⚠️  Backup script not found: $BACKUP_SCRIPT (cron job not set up)"
     fi
