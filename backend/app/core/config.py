@@ -82,8 +82,8 @@ class Settings(BaseSettings):
 
     # Pydantic V2 Config
     model_config = SettingsConfigDict(
-        # Load .env first, then environment-specific .env
-        env_file=(".env", f".env.{os.getenv('ENVIRONMENT', 'development')}"),
+        # Remove env_file - Docker Compose already loads env vars into container environment
+        # Pydantic will automatically read from os.environ
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore"

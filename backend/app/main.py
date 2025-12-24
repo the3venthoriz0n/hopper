@@ -320,16 +320,35 @@ async def security_middleware(request: Request, call_next):
         response = await call_next(request)
         status_code = response.status_code
         
-        # Set CSRF token in response header for GET requests
-        if request.method == "GET" and session_id and not is_callback:
+        # FIX: Remove 'request.method == "GET"' so token is sent on POST/PUT too
+        if session_id and not is_callback and status_code < 400:
             from app.db.redis import get_csrf_token, set_csrf_token
+            import secrets
+            
             csrf_token = get_csrf_token(session_id)
             if not csrf_token:
-                import secrets
                 csrf_token = secrets.token_urlsafe(32)
                 set_csrf_token(session_id, csrf_token)
+            
             if csrf_token:
+                # 1. Keep the header for legacy support
                 response.headers["X-CSRF-Token"] = csrf_token
+                
+                # 2. ADD THIS: Set a non-HttpOnly cookie so React can actually find it
+                # Reuse your existing logic to get the correct domain
+                host = request.headers.get("host", settings.DOMAIN).split(":")[0]
+                domain_parts = host.split(".")
+                cookie_domain = "." + ".".join(domain_parts[-2:]) if len(domain_parts) >= 2 else None
+
+                response.set_cookie(
+                    key="csrf_token_client",
+                    value=csrf_token,
+                    domain=cookie_domain,
+                    httponly=False,  # CRITICAL: JS must read this
+                    secure=True,     # Since you are on HTTPS
+                    samesite="lax",
+                    path="/"
+                )
         
         return response
         

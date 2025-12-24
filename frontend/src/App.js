@@ -184,6 +184,11 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
 // Configure axios to send cookies with every request
 axios.defaults.withCredentials = true;
 
+// Axios will now automatically read the 'csrf_token_client' cookie 
+// and put it into the 'X-CSRF-Token' header for every request.
+axios.defaults.xsrfCookieName = 'csrf_token_client';
+axios.defaults.xsrfHeaderName = 'X-CSRF-Token';
+
 // CSRF Token Management
 let csrfToken = null;
 

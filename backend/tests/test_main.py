@@ -8,11 +8,13 @@ from datetime import timedelta
 from unittest.mock import Mock, patch, MagicMock
 
 # Add backend directory to Python path
-backend_dir = Path(__file__).parent
+backend_dir = Path(__file__).parent.parent
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
-from main import replace_template_placeholders, cleanup_video_file, get_client_identifier
+from app.utils.templates import replace_template_placeholders
+from app.services.video_service import cleanup_video_file
+from app.core.security import get_client_identifier
 
 
 class TestTemplatePlaceholders:
@@ -42,22 +44,21 @@ class TestTemplatePlaceholders:
 class TestAuthentication:
     """Test authentication functions"""
     
-    @patch('main.redis_client')
-    def test_require_auth_valid_session(self, mock_redis):
+    @patch('app.core.security.get_session')
+    def test_require_auth_valid_session(self, mock_get_session):
         """Test authentication with valid session"""
-        from main import require_auth
+        from app.core.security import require_auth
         
         mock_request = Mock()
         mock_request.cookies.get.return_value = "valid_session"
-        mock_redis.get_session.return_value = 123
+        mock_get_session.return_value = 123
         
         result = require_auth(mock_request)
         assert result == 123
     
-    @patch('main.redis_client')
-    def test_require_auth_no_session(self, mock_redis):
+    def test_require_auth_no_session(self):
         """Test authentication fails without session"""
-        from main import require_auth
+        from app.core.security import require_auth
         from fastapi import HTTPException
         
         mock_request = Mock()
@@ -92,7 +93,7 @@ class TestVideoCleanup:
     
     def test_cleanup_existing_file(self):
         """Test cleanup removes existing file"""
-        from models import Video
+        from app.models import Video
         
         # Create temporary file
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.mp4') as tmp:
@@ -115,7 +116,7 @@ class TestVideoCleanup:
     
     def test_cleanup_nonexistent_file(self):
         """Test cleanup succeeds when file already deleted"""
-        from models import Video
+        from app.models import Video
         
         mock_video = Mock(spec=Video)
         mock_video.path = "/tmp/nonexistent.mp4"
@@ -126,13 +127,13 @@ class TestVideoCleanup:
     
     def test_cleanup_permission_error(self):
         """Test cleanup handles permission errors"""
-        from models import Video
+        from app.models import Video
         
         mock_video = Mock(spec=Video)
         mock_video.path = "/protected/file.mp4"
         mock_video.filename = "file.mp4"
         
-        with patch('main.Path') as mock_path:
+        with patch('app.services.video_service.Path') as mock_path:
             mock_path_instance = MagicMock()
             # ROOT CAUSE FIX: Ensure resolve() returns the same mock instance
             mock_path_instance.resolve.return_value = mock_path_instance
@@ -147,12 +148,13 @@ class TestVideoCleanup:
 class TestStripeFunctionality:
     """Test basic Stripe functionality"""
     
-    @patch('stripe_helpers.stripe')
-    @patch('stripe_helpers.STRIPE_SECRET_KEY', 'sk_test_123')
-    def test_create_stripe_customer_success(self, mock_stripe):
+    @patch('app.services.stripe_service.stripe')
+    @patch('app.services.stripe_service.settings')
+    def test_create_stripe_customer_success(self, mock_settings, mock_stripe):
         """Test creating a Stripe customer successfully"""
-        from stripe_helpers import create_stripe_customer
-        from models import User
+        mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
+        from app.services.stripe_service import create_stripe_customer
+        from app.models import User
         from sqlalchemy.orm import Session
         
         # Mock Stripe customer creation
@@ -174,11 +176,12 @@ class TestStripeFunctionality:
         mock_db.commit.assert_called_once()
         mock_stripe.Customer.create.assert_called_once()
     
-    @patch('stripe_helpers.stripe')
-    @patch('stripe_helpers.STRIPE_SECRET_KEY', None)
-    def test_create_stripe_customer_no_key(self, mock_stripe):
+    @patch('app.services.stripe_service.stripe')
+    @patch('app.services.stripe_service.settings')
+    def test_create_stripe_customer_no_key(self, mock_settings, mock_stripe):
         """Test creating customer fails when Stripe key is not set"""
-        from stripe_helpers import create_stripe_customer
+        mock_settings.STRIPE_SECRET_KEY = None
+        from app.services.stripe_service import create_stripe_customer
         from sqlalchemy.orm import Session
         
         mock_db = Mock(spec=Session)
@@ -187,12 +190,13 @@ class TestStripeFunctionality:
         assert result is None
         mock_stripe.Customer.create.assert_not_called()
     
-    @patch('stripe_helpers.stripe')
-    @patch('stripe_helpers.STRIPE_SECRET_KEY', 'sk_test_123')
-    def test_create_stripe_customer_existing(self, mock_stripe):
+    @patch('app.services.stripe_service.stripe')
+    @patch('app.services.stripe_service.settings')
+    def test_create_stripe_customer_existing(self, mock_settings, mock_stripe):
         """Test creating customer returns existing customer ID"""
-        from stripe_helpers import create_stripe_customer
-        from models import User
+        mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
+        from app.services.stripe_service import create_stripe_customer
+        from app.models import User
         from sqlalchemy.orm import Session
         
         # Mock existing customer
@@ -212,17 +216,18 @@ class TestStripeFunctionality:
         mock_stripe.Customer.create.assert_not_called()
         mock_stripe.Customer.retrieve.assert_called_once_with('cus_existing123')
     
-    @patch('token_helpers.reset_tokens_for_subscription')
-    @patch('stripe_helpers.ensure_stripe_customer_exists')
-    @patch('stripe_helpers.update_subscription_from_stripe')
-    @patch('stripe_helpers.stripe')
-    @patch('stripe_helpers.STRIPE_SECRET_KEY', 'sk_test_123')
-    @patch('stripe_config.get_plan_price_id')
-    @patch('stripe_config.get_plans')
-    def test_create_free_subscription(self, mock_get_plans, mock_get_price, mock_stripe, mock_update_sub, mock_ensure_customer, mock_reset_tokens):
+    @patch('app.services.token_service.reset_tokens_for_subscription')
+    @patch('app.services.stripe_service.ensure_stripe_customer_exists')
+    @patch('app.services.stripe_service.update_subscription_from_stripe')
+    @patch('app.services.stripe_service.stripe')
+    @patch('app.services.stripe_service.settings')
+    @patch('app.services.stripe_service.get_plan_price_id')
+    @patch('app.services.stripe_service.get_plans')
+    def test_create_free_subscription(self, mock_get_plans, mock_get_price, mock_settings, mock_stripe, mock_update_sub, mock_ensure_customer, mock_reset_tokens):
         """Test creating a free subscription"""
-        from stripe_helpers import create_free_subscription
-        from models import User, Subscription
+        mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
+        from app.services.stripe_service import create_free_subscription
+        from app.models import User, Subscription
         from sqlalchemy.orm import Session
         from datetime import datetime, timezone
         
@@ -281,8 +286,8 @@ class TestStripeFunctionality:
     
     def test_check_if_tokens_already_added_for_period(self):
         """Test duplicate token detection for subscription period"""
-        from token_helpers import _check_if_tokens_already_added_for_period
-        from models import TokenTransaction
+        from app.services.token_service import _check_if_tokens_already_added_for_period
+        from app.models import TokenTransaction
         from sqlalchemy.orm import Session
         from datetime import datetime, timezone, timedelta
         
@@ -314,7 +319,7 @@ class TestStripeFunctionality:
     
     def test_check_if_tokens_not_added_for_period(self):
         """Test duplicate detection returns False when no tokens added"""
-        from token_helpers import _check_if_tokens_already_added_for_period
+        from app.services.token_service import _check_if_tokens_already_added_for_period
         from sqlalchemy.orm import Session
         from datetime import datetime, timezone, timedelta
         
@@ -333,10 +338,10 @@ class TestStripeFunctionality:
         
         assert result is False
     
-    @patch('stripe_config.get_plans')
+    @patch('app.services.stripe_service.get_plans')
     def test_get_plan_monthly_tokens(self, mock_get_plans):
         """Test getting monthly tokens for a plan"""
-        from stripe_config import get_plan_monthly_tokens
+        from app.services.stripe_service import get_plan_monthly_tokens
         
         # Mock plans data matching JSON structure
         mock_plans = {
@@ -393,7 +398,7 @@ class TestStripeFunctionality:
     @patch('builtins.open', create=True)
     def test_load_plans_from_json(self, mock_open):
         """Test loading plans from JSON file"""
-        from stripe_config import load_plans
+        from app.services.stripe_service import load_plans
         
         # Mock JSON file content
         mock_json_data = {
@@ -420,10 +425,10 @@ class TestStripeFunctionality:
         mock_open.return_value = mock_file
         
         # Mock json.load
-        with patch('stripe_config.json.load', return_value=mock_json_data):
+        with patch('app.services.stripe_service.json.load', return_value=mock_json_data):
             # Clear cache
-            import stripe_config
-            stripe_config._PLANS_CACHE = None
+            import app.services.stripe_service as stripe_service
+            stripe_service._PLANS_CACHE = None
             
             result = load_plans('test')
             
@@ -436,11 +441,11 @@ class TestStripeFunctionality:
     @patch('builtins.open', side_effect=FileNotFoundError)
     def test_load_plans_fallback_when_file_missing(self, mock_open):
         """Test that fallback plans are used when JSON file is missing"""
-        from stripe_config import load_plans
+        from app.services.stripe_service import load_plans
         
         # Clear cache
-        import stripe_config
-        stripe_config._PLANS_CACHE = None
+        import app.services.stripe_service as stripe_service
+        stripe_service._PLANS_CACHE = None
         
         result = load_plans('test')
         
@@ -453,3 +458,4 @@ class TestStripeFunctionality:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
