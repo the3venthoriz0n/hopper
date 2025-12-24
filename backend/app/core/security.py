@@ -40,29 +40,33 @@ def require_auth(request: Request) -> int:
 async def require_csrf_new(
     request: Request,
     user_id: int = Depends(require_auth),
-    x_csrf_token: Optional[str] = Header(None, alias="X-CSRF-Token")
+    x_csrf_token: Optional[str] = Header(None) # FastAPI looks for x-csrf-token
 ) -> int:
-    """Dependency: Require auth + valid CSRF token, return user_id"""
     session_id = request.cookies.get("session_id")
     
-    # Get CSRF token from header or form data
-    # Note: We don't read JSON body here as it would consume it
-    # Frontend should send CSRF token in X-CSRF-Token header (standard practice)
+    # 1. Try to get token from FastAPI's header injection
     csrf_token = x_csrf_token
+    
+    # 2. Fallback: Manually check headers if alias failed
+    if not csrf_token:
+        csrf_token = request.headers.get("x-csrf-token") or request.headers.get("X-CSRF-Token")
+
+    # 3. Fallback: Form data
     if not csrf_token:
         try:
             form_data = await request.form()
             csrf_token = form_data.get("csrf_token")
-        except Exception:
-            pass
-    
-    # Get expected CSRF token from Redis
+        except: pass
+
+    # DEBUG LOG (Temporary)
+    # print(f"DEBUG: Session: {session_id}, Received: {csrf_token}")
+
     expected_csrf = get_csrf_token(session_id)
+    
     if not expected_csrf or csrf_token != expected_csrf:
         security_logger.warning(
             f"CSRF validation failed - User: {user_id}, "
-            f"IP: {request.client.host if request.client else 'unknown'}, "
-            f"Path: {request.url.path}"
+            f"Expected: {expected_csrf[:5]}..., Received: {csrf_token[:5] if csrf_token else 'None'}"
         )
         raise HTTPException(403, "Invalid or missing CSRF token")
     

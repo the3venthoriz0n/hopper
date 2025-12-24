@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation, Navigate } from 'react-router-dom';
+import Cookies from 'js-cookie';
 import axios from 'axios';
 import './App.css';
 import Terms from './Terms';
@@ -233,6 +234,20 @@ axios.interceptors.response.use(
   (error) => Promise.reject(error)
 );
 
+axios.interceptors.request.use(
+  (config) => {
+    // Read the non-HttpOnly cookie we set in the backend
+    const token = Cookies.get('csrf_token_client');
+    
+    if (token) {
+      config.headers['X-CSRF-Token'] = token;
+      // Optional: console.log("CSRF Token injected:", token);
+    }
+    
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
 
 // Loading Screen Component
 function LoadingScreen() {
