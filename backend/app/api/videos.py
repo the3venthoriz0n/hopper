@@ -21,7 +21,7 @@ from app.models.video import Video
 from app.services.stripe_service import calculate_tokens_from_bytes
 from app.services.video_service import (
     DESTINATION_UPLOADERS, build_upload_context, build_video_response,
-    check_upload_success, cleanup_video_file
+    check_upload_success, cleanup_video_file, record_platform_error
 )
 from app.utils.templates import replace_template_placeholders
 from app.utils.video_tokens import verify_video_access_token
@@ -781,6 +781,17 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
             # Set status to uploading before starting
             update_video(video_id, user_id, db=db, status="uploading")
             
+            # Initialize platform_errors in custom_settings
+            video_obj = db.query(Video).filter(Video.id == video_id).first()
+            if video_obj:
+                if video_obj.custom_settings is None:
+                    video_obj.custom_settings = {}
+                if "platform_errors" not in video_obj.custom_settings:
+                    video_obj.custom_settings["platform_errors"] = {}
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(video_obj, "custom_settings")
+                db.commit()
+            
             # Upload to all enabled destinations
             failed_destinations = []
             for dest_name in enabled_destinations:
@@ -793,6 +804,8 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
                             uploader_func(user_id, video_id, db=db)
                     except Exception as upload_err:
                         upload_logger.error(f"Upload failed for {dest_name}: {upload_err}")
+                        # Record platform-specific error
+                        record_platform_error(video_id, user_id, dest_name, str(upload_err), db=db)
                         # Continue to next destination
             
             # Check final status and collect actual error messages
