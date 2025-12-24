@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from app.db.helpers import get_oauth_token
 from app.db.session import SessionLocal
 from app.services.video_service import _ensure_fresh_token, _fetch_creator_info_safe
+from app.services.platform_service import extract_tiktok_account_from_creator_info
 
 tiktok_logger = logging.getLogger("tiktok")
 
@@ -43,22 +44,8 @@ def refresh_tiktok_account_data(user_id: int):
         if not fresh_creator_info:
             return
         
-        # Extract account fields
-        fresh_account = {
-            "open_id": open_id,
-            "display_name": (
-                fresh_creator_info.get("creator_nickname") or 
-                fresh_creator_info.get("display_name")
-            ),
-            "username": (
-                fresh_creator_info.get("creator_username") or 
-                fresh_creator_info.get("username")
-            ),
-            "avatar_url": (
-                fresh_creator_info.get("creator_avatar_url") or 
-                fresh_creator_info.get("avatar_url")
-            ),
-        }
+        # Extract account fields using service function
+        fresh_account = extract_tiktok_account_from_creator_info(fresh_creator_info, open_id)
         
         # Check if data changed
         cached_creator_info = extra_data.get("creator_info")

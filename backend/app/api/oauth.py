@@ -34,6 +34,7 @@ from app.services.video_service import (
     get_google_client_config, _parse_and_save_tiktok_token_response,
     _ensure_fresh_token, _fetch_creator_info_safe, get_tiktok_creator_info
 )
+from app.services.platform_service import get_tiktok_account_info
 from app.utils.encryption import decrypt
 
 # Loggers
@@ -897,103 +898,18 @@ def get_tiktok_account(
     background_tasks: BackgroundTasks = BackgroundTasks(),
     force_refresh: bool = False
 ):
-    """Get TikTok account information with stale-while-revalidate pattern
-    
-    Strategy:
-    1. Ensure token is fresh (with distributed locking)
-    2. Always fetch privacy_level_options synchronously (critical for UI)
-    3. Use cached data for other fields (fast response)
-    4. Schedule background refresh to update cache
-    """
-    token_obj = get_oauth_token(user_id, "tiktok", db=db)
-    
-    if not token_obj:
-        return {
-            "account": None,
-            "creator_info": None,
-            "token_status": "missing",
-            "token_expired": True,
-            "token_expires_soon": False
-        }
-    
-    # Get token status
-    token_expiry = check_token_expiration(token_obj)
-    token_status = token_expiry.get("status", "valid")
-    token_expired = token_expiry.get("expired", False)
-    token_expires_soon = token_expiry.get("expires_soon", False)
-    
-    # Get cached data
-    extra_data = token_obj.extra_data or {}
-    cached_account = {
-        "open_id": extra_data.get("open_id"),
-        "display_name": extra_data.get("display_name"),
-        "username": extra_data.get("username"),
-        "avatar_url": extra_data.get("avatar_url")
-    }
-    cached_creator_info = extra_data.get("creator_info")
-    has_cache = (
-        (cached_account.get("display_name") or cached_account.get("username")) and 
-        cached_creator_info
-    )
-    
-    # Ensure token is fresh (with distributed locking)
-    access_token = _ensure_fresh_token(user_id, db)
-    if not access_token:
-        # Token refresh failed - return cached data if available
-        if has_cache:
-            tiktok_logger.warning(f"Token refresh failed, returning cached account data (user {user_id})")
-            return {
-                "account": cached_account,
-                "creator_info": cached_creator_info,
-                "token_status": token_status,
-                "token_expired": token_expired,
-                "token_expires_soon": token_expires_soon
-            }
-        return {
-            "account": None,
-            "creator_info": None,
-            "token_status": "expired",
-            "token_expired": True,
-            "token_expires_soon": False
-        }
-    
-    # Always fetch privacy_level_options synchronously (critical for UI)
-    # This ensures the UI always has the latest privacy options
-    try:
-        fresh_creator_info = _fetch_creator_info_safe(access_token, user_id, db=db)
-        if fresh_creator_info:
-            # Update cache with fresh privacy_level_options
-            if not cached_creator_info or cached_creator_info.get("privacy_level_options") != fresh_creator_info.get("privacy_level_options"):
-                extra_data["creator_info"] = fresh_creator_info
-                token_obj.extra_data = extra_data
-                db.commit()
-                tiktok_logger.debug(f"Updated privacy_level_options from API (user {user_id})")
-            
-            # Use fresh creator_info for response
-            creator_info = fresh_creator_info
-        else:
-            # API call failed, use cached data
-            creator_info = cached_creator_info
-    except Exception as e:
-        tiktok_logger.warning(f"Failed to fetch creator info (user {user_id}): {str(e)}")
-        creator_info = cached_creator_info
+    """Get TikTok account information with stale-while-revalidate pattern"""
+    result = get_tiktok_account_info(user_id, db, force_refresh=force_refresh)
     
     # Schedule background refresh to update cache (stale-while-revalidate)
-    if not force_refresh:
+    if not force_refresh and result.get("has_cache"):
         # Only schedule if we have cached data (to avoid unnecessary API calls)
-        if has_cache:
-            # Schedule background task to refresh account data
-            # This will update the cache without blocking the response
-            from app.tasks.oauth_tasks import refresh_tiktok_account_data
-            background_tasks.add_task(refresh_tiktok_account_data, user_id)
+        from app.tasks.oauth_tasks import refresh_tiktok_account_data
+        background_tasks.add_task(refresh_tiktok_account_data, user_id)
     
-    return {
-        "account": cached_account,
-        "creator_info": creator_info,
-        "token_status": token_status,
-        "token_expired": token_expired,
-        "token_expires_soon": token_expires_soon
-    }
+    # Remove has_cache from response (internal only)
+    result.pop("has_cache", None)
+    return result
 
 
 # ============================================================================

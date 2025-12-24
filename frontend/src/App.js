@@ -563,7 +563,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const [loadingPlanKey, setLoadingPlanKey] = useState(null); // Track which specific plan is loading
   const [notification, setNotification] = useState(null); // For popup notifications
   const [confirmDialog, setConfirmDialog] = useState(null); // For confirmation dialogs
-  const [destinationModal, setDestinationModal] = useState(null); // { videoId, platform, video }
+  const [destinationModal, setDestinationModal] = useState(null);
+  const [overrideInputValues, setOverrideInputValues] = useState({}); // { videoId, platform, video }
   const [expandedDestinationErrors, setExpandedDestinationErrors] = useState(new Set()); // Track which destination errors are expanded
 
   // Check for Google login callback
@@ -4654,6 +4655,44 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         }
         const customSettings = video.custom_settings || {};
         
+        // DRY: Helper function to format tags (must be defined before use)
+        const formatTags = (tags) => {
+          if (!tags) return '';
+          if (Array.isArray(tags)) return tags.join(', ');
+          if (typeof tags === 'string') return tags.split(',').map(t => t.trim()).join(', ');
+          return String(tags);
+        };
+        
+        // Get or initialize override input values for character counters
+        const modalKey = `${video.id}-${platform}`;
+        
+        // Initialize values if not already set
+        if (!overrideInputValues[modalKey]) {
+          const initial = {};
+          if (platform === 'youtube') {
+            initial.youtube_title = customSettings.youtube_title || platformData.title || '';
+            initial.description = customSettings.description || platformData.description || '';
+            initial.tags = customSettings.tags || formatTags(platformData.tags) || '';
+          } else if (platform === 'tiktok') {
+            initial.title = customSettings.title || platformData.title || '';
+          } else if (platform === 'instagram') {
+            initial.caption = customSettings.caption || platformData.caption || '';
+          }
+          setOverrideInputValues(prev => ({ ...prev, [modalKey]: initial }));
+        }
+        
+        const overrideValues = overrideInputValues[modalKey] || {};
+        
+        const updateOverrideValue = (key, value) => {
+          setOverrideInputValues(prev => ({
+            ...prev,
+            [modalKey]: {
+              ...(prev[modalKey] || {}),
+              [key]: value
+            }
+          }));
+        };
+        
         // DRY: Reusable style objects for metadata display
         const metadataContainerStyle = {
           display: 'flex',
@@ -4728,40 +4767,28 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           return value ? 'Yes' : 'No';
         };
         
-        // DRY: Helper function to format tags
-        const formatTags = (tags) => {
-          if (!tags) return '';
-          if (Array.isArray(tags)) return tags.join(', ');
-          if (typeof tags === 'string') return tags.split(',').map(t => t.trim()).join(', ');
-          return String(tags);
-        };
-        
         const handleSaveOverrides = async () => {
           try {
             const overrides = {};
             
             if (platform === 'youtube') {
-              const titleEl = document.getElementById(`dest-override-title-${video.id}-${platform}`);
               const descEl = document.getElementById(`dest-override-description-${video.id}-${platform}`);
               const tagsEl = document.getElementById(`dest-override-tags-${video.id}-${platform}`);
               const visibilityEl = document.getElementById(`dest-override-visibility-${video.id}-${platform}`);
               const madeForKidsEl = document.getElementById(`dest-override-made-for-kids-${video.id}-${platform}`);
               
-              if (titleEl?.value) overrides.title = titleEl.value;
+              if (overrideValues.youtube_title) overrides.title = overrideValues.youtube_title;
               if (descEl?.value) overrides.description = descEl.value;
               if (tagsEl?.value) overrides.tags = tagsEl.value;
               if (visibilityEl?.value) overrides.visibility = visibilityEl.value;
               overrides.made_for_kids = madeForKidsEl?.checked ?? false;
             } else if (platform === 'tiktok') {
-              const titleEl = document.getElementById(`dest-override-title-${video.id}-${platform}`);
               const privacyEl = document.getElementById(`dest-override-privacy-${video.id}-${platform}`);
               
-              if (titleEl?.value) overrides.title = titleEl.value;
+              if (overrideValues.title) overrides.title = overrideValues.title;
               if (privacyEl?.value) overrides.privacy_level = privacyEl.value;
             } else if (platform === 'instagram') {
-              const captionEl = document.getElementById(`dest-override-caption-${video.id}-${platform}`);
-              
-              if (captionEl?.value) overrides.caption = captionEl.value;
+              if (overrideValues.caption) overrides.caption = overrideValues.caption;
             }
             
             const success = await saveDestinationOverrides(video.id, platform, overrides);
@@ -5075,12 +5102,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     <>
                       <div className="setting-group">
                         <label htmlFor={`dest-override-title-${video.id}-${platform}`}>
-                          Title <span className="char-counter">{(customSettings.youtube_title || platformData.title || '').length}/100</span>
+                          Title <span className="char-counter">{(overrideValues.youtube_title || '').length}/100</span>
                         </label>
                         <input
                           type="text"
                           id={`dest-override-title-${video.id}-${platform}`}
-                          defaultValue={customSettings.youtube_title || platformData.title || ''}
+                          value={overrideValues.youtube_title || ''}
+                          onChange={(e) => updateOverrideValue('youtube_title', e.target.value)}
                           placeholder={platformData.title || video.filename}
                           maxLength={100}
                           className="input-text"
@@ -5140,12 +5168,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     <>
                       <div className="setting-group">
                         <label htmlFor={`dest-override-title-${video.id}-${platform}`}>
-                          Title <span className="char-counter">{(customSettings.title || platformData.title || '').length}/2200</span>
+                          Title <span className="char-counter">{(overrideValues.title || '').length}/2200</span>
                         </label>
                         <input
                           type="text"
                           id={`dest-override-title-${video.id}-${platform}`}
-                          defaultValue={customSettings.title || platformData.title || ''}
+                          value={overrideValues.title || ''}
+                          onChange={(e) => updateOverrideValue('title', e.target.value)}
                           placeholder={platformData.title || 'Enter title...'}
                           maxLength={2200}
                           className="input-text"
@@ -5173,11 +5202,12 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     <>
                       <div className="setting-group">
                         <label htmlFor={`dest-override-caption-${video.id}-${platform}`}>
-                          Caption <span className="char-counter">{(customSettings.caption || platformData.caption || '').length}/2200</span>
+                          Caption <span className="char-counter">{(overrideValues.caption || '').length}/2200</span>
                         </label>
                         <textarea
                           id={`dest-override-caption-${video.id}-${platform}`}
-                          defaultValue={customSettings.caption || platformData.caption || ''}
+                          value={overrideValues.caption || ''}
+                          onChange={(e) => updateOverrideValue('caption', e.target.value)}
                           placeholder={platformData.caption || 'Enter caption...'}
                           rows={4}
                           maxLength={2200}
