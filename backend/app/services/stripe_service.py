@@ -82,9 +82,18 @@ def load_plans(mode: str = None) -> Dict[str, Dict[str, Any]]:
                     logger.warning(f"Skipping invalid plan '{plan_key}': not a dictionary")
                     continue
                 
+                # Support both old format (stripe_price_id) and new format (stripe_price_id_monthly)
                 price_id = plan_data.get('stripe_price_id')
                 if not price_id:
-                    logger.warning(f"Plan '{plan_key}' has no stripe_price_id - this plan will not work for subscriptions")
+                    # Try new format: stripe_price_id_monthly (default to monthly for subscriptions)
+                    price_id = plan_data.get('stripe_price_id_monthly')
+                    if price_id:
+                        # Add stripe_price_id for backward compatibility with existing code
+                        plan_data['stripe_price_id'] = price_id
+                
+                # Only warn if no price_id found AND it's not the free plan (free plan doesn't need a price_id)
+                if not price_id and plan_key != 'free':
+                    logger.warning(f"Plan '{plan_key}' has no stripe_price_id or stripe_price_id_monthly - this plan will not work for subscriptions")
                 
                 valid_plans[plan_key] = plan_data
             
