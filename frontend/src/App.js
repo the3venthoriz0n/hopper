@@ -4829,11 +4829,11 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 
                 {/* Upload Metadata */}
                 <div className="setting-group">
-                  <label>Current Upload Metadata</label>
+                  <label>Upload Metadata</label>
                   <div style={{ 
                     display: 'flex', 
                     flexDirection: 'column', 
-                    gap: '0.5rem',
+                    gap: '0.75rem',
                     padding: '0.75rem',
                     background: 'rgba(255, 255, 255, 0.03)',
                     border: '1px solid rgba(255, 255, 255, 0.1)',
@@ -4842,151 +4842,208 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   }}>
                     {platform === 'youtube' && (
                       <>
-                        <div><strong>Title:</strong> {video.youtube_title || video.filename}</div>
-                        {platformData.description && (
-                          <div><strong>Description:</strong> {platformData.description.substring(0, 200)}
-                          {platformData.description.length > 200 && '...'}</div>
-                        )}
-                        {platformData.tags && (
-                          <div><strong>Tags:</strong> {Array.isArray(platformData.tags) ? platformData.tags.join(', ') : platformData.tags}</div>
-                        )}
-                        {platformData.visibility && (
-                          <div><strong>Visibility:</strong> {platformData.visibility}</div>
-                        )}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                          <div><strong>Title:</strong> <span style={{ color: HOPPER_COLORS.light }}>{platformData.title || video.youtube_title || video.filename}</span></div>
+                          {platformData.description && (
+                            <div>
+                              <strong>Description:</strong>
+                              <div style={{ 
+                                marginTop: '0.25rem', 
+                                padding: '0.5rem', 
+                                background: 'rgba(0, 0, 0, 0.2)', 
+                                borderRadius: '4px',
+                                color: HOPPER_COLORS.light,
+                                maxHeight: '150px',
+                                overflowY: 'auto',
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-word'
+                              }}>
+                                {platformData.description}
+                              </div>
+                            </div>
+                          )}
+                          {platformData.tags && (
+                            <div>
+                              <strong>Tags:</strong> <span style={{ color: HOPPER_COLORS.light }}>
+                                {Array.isArray(platformData.tags) 
+                                  ? platformData.tags.join(', ') 
+                                  : (typeof platformData.tags === 'string' 
+                                    ? platformData.tags.split(',').map(t => t.trim()).join(', ')
+                                    : platformData.tags)}
+                              </span>
+                            </div>
+                          )}
+                          {platformData.visibility && (
+                            <div>
+                              <strong>Visibility:</strong> <span style={{ 
+                                color: HOPPER_COLORS.light,
+                                textTransform: 'capitalize'
+                              }}>{platformData.visibility}</span>
+                            </div>
+                          )}
+                          {platformData.made_for_kids !== undefined && (
+                            <div>
+                              <strong>Made for Kids:</strong> <span style={{ color: HOPPER_COLORS.light }}>
+                                {platformData.made_for_kids ? 'Yes' : 'No'}
+                              </span>
+                            </div>
+                          )}
+                        </div>
                       </>
                     )}
                     {platform === 'tiktok' && (
                       <>
-                        {platformData.title && <div><strong>Title:</strong> {platformData.title}</div>}
-                        {video.tiktok_publish_status && (
-                          <div><strong>Publish Status:</strong> {video.tiktok_publish_status}</div>
-                        )}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                          {platformData.title && (
+                            <div>
+                              <strong>Title:</strong>
+                              <div style={{ 
+                                marginTop: '0.25rem', 
+                                padding: '0.5rem', 
+                                background: 'rgba(0, 0, 0, 0.2)', 
+                                borderRadius: '4px',
+                                color: HOPPER_COLORS.light,
+                                wordBreak: 'break-word'
+                              }}>
+                                {platformData.title}
+                              </div>
+                            </div>
+                          )}
+                          {platformData.privacy_level && (
+                            <div>
+                              <strong>Privacy Level:</strong> <span style={{ 
+                                color: HOPPER_COLORS.light,
+                                textTransform: 'capitalize'
+                              }}>{platformData.privacy_level}</span>
+                            </div>
+                          )}
+                          <div style={{ 
+                            display: 'grid', 
+                            gridTemplateColumns: '1fr 1fr', 
+                            gap: '0.5rem',
+                            marginTop: '0.25rem'
+                          }}>
+                            <div>
+                              <strong>Allow Comments:</strong> <span style={{ color: HOPPER_COLORS.light }}>
+                                {platformData.allow_comments !== undefined ? (platformData.allow_comments ? 'Yes' : 'No') : 'Not set'}
+                              </span>
+                            </div>
+                            <div>
+                              <strong>Allow Duet:</strong> <span style={{ color: HOPPER_COLORS.light }}>
+                                {platformData.allow_duet !== undefined ? (platformData.allow_duet ? 'Yes' : 'No') : 'Not set'}
+                              </span>
+                            </div>
+                            <div>
+                              <strong>Allow Stitch:</strong> <span style={{ color: HOPPER_COLORS.light }}>
+                                {platformData.allow_stitch !== undefined ? (platformData.allow_stitch ? 'Yes' : 'No') : 'Not set'}
+                              </span>
+                            </div>
+                            {platformData.commercial_content_disclosure !== undefined && (
+                              <div>
+                                <strong>Commercial Disclosure:</strong> <span style={{ color: HOPPER_COLORS.light }}>
+                                  {platformData.commercial_content_disclosure ? 'Yes' : 'No'}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                          {(platformData.commercial_content_your_brand || platformData.commercial_content_branded) && (
+                            <div style={{ 
+                              marginTop: '0.25rem',
+                              padding: '0.5rem',
+                              background: 'rgba(255, 179, 0, 0.1)',
+                              borderRadius: '4px',
+                              border: `1px solid ${rgba(HOPPER_COLORS.rgb.warning, 0.3)}`
+                            }}>
+                              <strong style={{ color: HOPPER_COLORS.warning }}>Commercial Content:</strong>
+                              <div style={{ marginTop: '0.25rem', color: HOPPER_COLORS.light, fontSize: '0.85rem' }}>
+                                {platformData.commercial_content_your_brand && <div>• Your Brand</div>}
+                                {platformData.commercial_content_branded && <div>• Branded Content</div>}
+                              </div>
+                            </div>
+                          )}
+                          {video.tiktok_publish_status && (
+                            <div style={{ 
+                              marginTop: '0.5rem',
+                              padding: '0.5rem',
+                              background: video.tiktok_publish_status === 'PUBLISHED' 
+                                ? rgba(HOPPER_COLORS.rgb.success, 0.1)
+                                : rgba(HOPPER_COLORS.rgb.info, 0.1),
+                              borderRadius: '4px',
+                              border: `1px solid ${
+                                video.tiktok_publish_status === 'PUBLISHED' 
+                                  ? rgba(HOPPER_COLORS.rgb.success, 0.3)
+                                  : rgba(HOPPER_COLORS.rgb.info, 0.3)
+                              }`
+                            }}>
+                              <strong>Publish Status:</strong> <span style={{ 
+                                color: video.tiktok_publish_status === 'PUBLISHED' 
+                                  ? HOPPER_COLORS.success
+                                  : HOPPER_COLORS.info,
+                                textTransform: 'capitalize',
+                                marginLeft: '0.5rem'
+                              }}>{video.tiktok_publish_status}</span>
+                            </div>
+                          )}
+                        </div>
                       </>
                     )}
                     {platform === 'instagram' && (
                       <>
-                        {platformData.caption && <div><strong>Caption:</strong> {platformData.caption}</div>}
-                      </>
-                    )}
-                  </div>
-                </div>
-                
-                {/* Override Configuration */}
-                <div className="setting-group">
-                  <label>Destination-Specific Overrides</label>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                    {platform === 'youtube' && (
-                      <>
-                        <div className="form-group">
-                          <label>Title Override</label>
-                          <input
-                            type="text"
-                            id={`dest-override-title-${video.id}-${platform}`}
-                            className="input-text"
-                            defaultValue={customSettings.title || ''}
-                            placeholder="Leave empty to use template"
-                            maxLength="100"
-                          />
-                        </div>
-                        <div className="form-group">
-                          <label>Description Override</label>
-                          <textarea
-                            id={`dest-override-description-${video.id}-${platform}`}
-                            className="textarea-text"
-                            rows="4"
-                            defaultValue={customSettings.description || ''}
-                            placeholder="Leave empty to use template"
-                          />
-                        </div>
-                        <div className="form-group">
-                          <label>Tags Override</label>
-                          <input
-                            type="text"
-                            id={`dest-override-tags-${video.id}-${platform}`}
-                            className="input-text"
-                            defaultValue={customSettings.tags || ''}
-                            placeholder="Comma-separated tags"
-                          />
-                        </div>
-                        <div className="form-group">
-                          <label>Visibility</label>
-                          <select
-                            id={`dest-override-visibility-${video.id}-${platform}`}
-                            className="select"
-                            defaultValue={customSettings.visibility || youtubeSettings.visibility}
-                          >
-                            <option value="private">Private</option>
-                            <option value="unlisted">Unlisted</option>
-                            <option value="public">Public</option>
-                          </select>
-                        </div>
-                        <div className="form-group">
-                          <label className="checkbox-label" style={{ gap: '1rem' }}>
-                            <input
-                              type="checkbox"
-                              id={`dest-override-made-for-kids-${video.id}-${platform}`}
-                              className="checkbox"
-                              defaultChecked={customSettings.made_for_kids ?? youtubeSettings.made_for_kids}
-                            />
-                            <span>Made for Kids</span>
-                          </label>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                          {platformData.caption && (
+                            <div>
+                              <strong>Caption:</strong>
+                              <div style={{ 
+                                marginTop: '0.25rem', 
+                                padding: '0.5rem', 
+                                background: 'rgba(0, 0, 0, 0.2)', 
+                                borderRadius: '4px',
+                                color: HOPPER_COLORS.light,
+                                maxHeight: '150px',
+                                overflowY: 'auto',
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-word'
+                              }}>
+                                {platformData.caption}
+                              </div>
+                            </div>
+                          )}
+                          {platformData.location_id && (
+                            <div>
+                              <strong>Location ID:</strong> <span style={{ color: HOPPER_COLORS.light }}>
+                                {platformData.location_id}
+                              </span>
+                            </div>
+                          )}
+                          <div style={{ 
+                            display: 'grid', 
+                            gridTemplateColumns: '1fr 1fr', 
+                            gap: '0.5rem',
+                            marginTop: '0.25rem'
+                          }}>
+                            <div>
+                              <strong>Comments:</strong> <span style={{ color: HOPPER_COLORS.light }}>
+                                {platformData.disable_comments ? 'Disabled' : 'Enabled'}
+                              </span>
+                            </div>
+                            <div>
+                              <strong>Likes:</strong> <span style={{ color: HOPPER_COLORS.light }}>
+                                {platformData.disable_likes ? 'Disabled' : 'Enabled'}
+                              </span>
+                            </div>
+                          </div>
                         </div>
                       </>
                     )}
-                    
-                    {platform === 'tiktok' && (
-                      <>
-                        <div className="form-group">
-                          <label>Title Override</label>
-                          <input
-                            type="text"
-                            id={`dest-override-title-${video.id}-${platform}`}
-                            className="input-text"
-                            defaultValue={customSettings.title || ''}
-                            placeholder="Leave empty to use template"
-                          />
-                        </div>
-                        <div className="form-group">
-                          <label>Privacy Level</label>
-                          <select
-                            id={`dest-override-privacy-${video.id}-${platform}`}
-                            className="select"
-                            defaultValue={customSettings.privacy_level || ''}
-                          >
-                            <option value="">Use default</option>
-                            {Array.isArray(tiktokCreatorInfo?.privacy_level_options) && 
-                              tiktokCreatorInfo.privacy_level_options.map(option => {
-                                const labelMap = {
-                                  'PUBLIC_TO_EVERYONE': 'Everyone',
-                                  'MUTUAL_FOLLOW_FRIENDS': 'Friends',
-                                  'FOLLOWER_OF_CREATOR': 'Followers',
-                                  'SELF_ONLY': 'Only you'
-                                };
-                                return (
-                                  <option key={option} value={option}>
-                                    {labelMap[option] || option}
-                                  </option>
-                                );
-                              })
-                            }
-                          </select>
-                        </div>
-                      </>
-                    )}
-                    
-                    {platform === 'instagram' && (
-                      <>
-                        <div className="form-group">
-                          <label>Caption Override</label>
-                          <textarea
-                            id={`dest-override-caption-${video.id}-${platform}`}
-                            className="textarea-text"
-                            rows="4"
-                            defaultValue={customSettings.caption || ''}
-                            placeholder="Leave empty to use template"
-                          />
-                        </div>
-                      </>
+                    {(!platformData || Object.keys(platformData).length === 0) && (
+                      <div style={{ 
+                        color: HOPPER_COLORS.grey,
+                        fontStyle: 'italic',
+                        textAlign: 'center',
+                        padding: '1rem'
+                      }}>
+                        No upload metadata available yet. Metadata will be computed when the upload is processed.
+                      </div>
                     )}
                   </div>
                 </div>
