@@ -1,9 +1,9 @@
 FROM python:3.11-slim
 
-WORKDIR /backend
+WORKDIR /app
 
 # Set PYTHONPATH so app module can be imported
-ENV PYTHONPATH=/backend
+ENV PYTHONPATH=/app
 
 # Install ffmpeg (includes ffprobe) for video duration validation
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -28,5 +28,5 @@ EXPOSE 8000
 # For production, use uvicorn without reload
 # --reload enables hot reload, --reload-dir specifies directories to watch
 # Updated to use app.main:app instead of main:app
-CMD ["sh", "-c", "if [ \"$ENVIRONMENT\" = \"development\" ]; then uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /backend/app; else uvicorn app.main:app --host 0.0.0.0 --port 8000; fi"]
+CMD ["sh", "-c", "if [ \"$ENVIRONMENT\" = \"development\" ]; then uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app; else uvicorn app.main:app --host 0.0.0.0 --port 8000; fi"]
 
