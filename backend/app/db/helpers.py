@@ -256,12 +256,23 @@ def get_all_oauth_tokens(user_id: int, db: Session = None) -> Dict[str, Optional
         # Create a dictionary keyed by platform
         tokens_by_platform = {}
         for token in all_tokens:
-            # Decrypt tokens
+            # ROOT CAUSE FIX: Store original encrypted values before expunging
+            original_access_token = token.access_token
+            original_refresh_token = token.refresh_token
+            
+            # ROOT CAUSE FIX: Expunge token from session BEFORE modifying to prevent accidental saves
+            db.expunge(token)
+            
+            # Decrypt tokens (now safe since object is not in session)
             try:
-                token.access_token = decrypt(token.access_token) if token.access_token else None
-                token.refresh_token = decrypt(token.refresh_token) if token.refresh_token else None
-            except Exception as e:
+                token.access_token = decrypt(original_access_token) if original_access_token else None
+                token.refresh_token = decrypt(original_refresh_token) if original_refresh_token else None
+            except ValueError as e:
+                # ROOT CAUSE FIX: decrypt() now raises ValueError on failure
                 logger.warning(f"Failed to decrypt token for user {user_id}, platform {token.platform}: {e}")
+                # If decryption fails, set to None but object is already expunged so it won't be saved
+                token.access_token = None
+                token.refresh_token = None
             
             tokens_by_platform[token.platform] = token
         
@@ -286,11 +297,18 @@ def get_oauth_token(user_id: int, platform: str, db: Session = None) -> Optional
         user_id: User ID
         platform: Platform name (youtube, tiktok, instagram)
         db: Database session (if None, creates its own - for backward compatibility)
+    
+    Security Note:
+        If Redis cache is implemented, ensure cached data is ENCRYPTED.
+        Storing decrypted tokens in Redis would move the security vulnerability
+        from Postgres to Redis. Always cache encrypted token values.
     """
     # Try to get from cache first
     cached = get_cached_oauth_token(user_id, platform)
     if cached is not None:
-        # Reconstruct OAuthToken object from cached data
+        # SECURITY WARNING: If implementing cache reconstruction, ensure cached data contains
+        # ENCRYPTED tokens only. Decrypted tokens should NEVER be cached.
+        # Reconstruct OAuthToken object from cached data (encrypted values only)
         # This is a simplified version - full implementation would properly deserialize
         pass
     
@@ -306,11 +324,19 @@ def get_oauth_token(user_id: int, platform: str, db: Session = None) -> Optional
         ).first()
         
         if token:
-            # Decrypt tokens
+            # ROOT CAUSE FIX: Store original encrypted values before expunging
+            original_access_token = token.access_token
+            original_refresh_token = token.refresh_token
+            
+            # ROOT CAUSE FIX: Expunge token from session BEFORE modifying to prevent accidental saves
+            db.expunge(token)
+            
+            # Decrypt tokens (now safe since object is not in session)
             try:
-                token.access_token = decrypt(token.access_token) if token.access_token else None
-                token.refresh_token = decrypt(token.refresh_token) if token.refresh_token else None
-            except Exception as e:
+                token.access_token = decrypt(original_access_token) if original_access_token else None
+                token.refresh_token = decrypt(original_refresh_token) if original_refresh_token else None
+            except ValueError as e:
+                # ROOT CAUSE FIX: decrypt() now raises ValueError on failure
                 logger.warning(f"Failed to decrypt token for user {user_id}, platform {platform}: {e}")
                 return None
         
@@ -347,13 +373,19 @@ def save_oauth_token(user_id: int, platform: str, access_token: str,
                 f"This usually means token decryption failed or refresh returned None."
             )
         
+        # ROOT CAUSE FIX: Handle session rollback errors
+        try:
+            # Check if session is in a bad state and rollback if needed
+            db.rollback()
+        except Exception:
+            pass  # Session might not need rollback, ignore
+        
         token = db.query(OAuthToken).filter(
             OAuthToken.user_id == user_id,
             OAuthToken.platform == platform
         ).first()
         
         # Encrypt tokens before storing
-        # ROOT CAUSE FIX: Ensure access_token is never None - use empty string if falsy (but we already validated above)
         encrypted_access = encrypt(access_token) if access_token else ""
         encrypted_refresh = encrypt(refresh_token) if refresh_token else None
         
@@ -392,7 +424,10 @@ def save_oauth_token(user_id: int, platform: str, access_token: str,
         return token
     except Exception as e:
         if should_close:
-            db.rollback()
+            try:
+                db.rollback()
+            except Exception:
+                pass  # Ignore rollback errors
         raise
     finally:
         if should_close:

@@ -38,14 +38,21 @@ def encrypt(plaintext: str) -> str:
 
 
 def decrypt(ciphertext: str) -> Optional[str]:
-    """Decrypt a string"""
+    """Decrypt a string
+    
+    Raises:
+        ValueError: If decryption fails (invalid token, wrong key, corrupted data)
+    """
     if not ciphertext:
         return None
     try:
         return cipher.decrypt(ciphertext.encode()).decode()
     except Exception as e:
+        # ROOT CAUSE FIX: Raise ValueError instead of returning None
+        # This forces callers to handle decryption failures explicitly
+        # and ensures db_helpers.py hits the except block to log warnings properly
         import logging
         logger = logging.getLogger(__name__)
         logger.error(f"Decryption failed: {type(e).__name__}: {str(e)}")
-        return None
+        raise ValueError(f"Decryption failed: {type(e).__name__}: {str(e)}")
 
