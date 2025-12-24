@@ -2355,10 +2355,10 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             maxWidth: '500px',
             padding: '1.25rem',
             background: notification.type === 'error' 
-              ? `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.error, 0.95)} 0%, ${rgba(HOPPER_COLORS.rgb.redDark, 0.95)} 100%)`
+              ? `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.error, 1.0)} 0%, ${rgba(HOPPER_COLORS.rgb.error, 0.9)} 100%)`
               : notification.type === 'info'
-              ? `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.info, 0.95)} 0%, ${rgba(HOPPER_COLORS.rgb.blueDark, 0.95)} 100%)`
-              : `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.success, 0.95)} 0%, ${rgba(HOPPER_COLORS.rgb.greenDark, 0.95)} 100%)`,
+              ? `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.info, 1.0)} 0%, ${rgba(HOPPER_COLORS.rgb.info, 0.9)} 100%)`
+              : `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.success, 1.0)} 0%, ${rgba(HOPPER_COLORS.rgb.success, 0.9)} 100%)`,
             border: notification.type === 'error'
               ? `2px solid ${HOPPER_COLORS.error}`
               : notification.type === 'info'
@@ -2531,7 +2531,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 onClick={confirmDialog.onConfirm}
                 style={{
                   padding: '0.75rem 1.5rem',
-                  background: `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.error, 0.9)} 0%, ${rgba(HOPPER_COLORS.rgb.redDark, 0.9)} 100%)`,
+                  background: `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.error, 1.0)} 0%, ${rgba(HOPPER_COLORS.rgb.error, 0.9)} 100%)`,
                   border: `1px solid ${HOPPER_COLORS.error}`,
                   borderRadius: '8px',
                   color: 'white',
