@@ -1228,10 +1228,26 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
         try:
             youtube_logger.debug("Refreshing expired YouTube token...")
             youtube_creds.refresh(GoogleRequest())
+            
+            # ROOT CAUSE FIX: Validate credentials after refresh
+            if not youtube_creds.token:
+                error_msg = 'Failed to refresh YouTube token: No access token returned after refresh. Please disconnect and reconnect YouTube.'
+                update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+                youtube_logger.error(error_msg)
+                return
+            
             # Save refreshed token back to database
             token_data = credentials_to_oauth_token_data(
                 youtube_creds, settings.GOOGLE_CLIENT_ID, settings.GOOGLE_CLIENT_SECRET
             )
+            
+            # ROOT CAUSE FIX: Additional validation (credentials_to_oauth_token_data now raises on None, but double-check)
+            if not token_data.get("access_token"):
+                error_msg = 'Failed to refresh YouTube token: No access token in token data. Please disconnect and reconnect YouTube.'
+                update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+                youtube_logger.error(error_msg)
+                return
+            
             save_oauth_token(
                 user_id=user_id,
                 platform="youtube",
@@ -1242,6 +1258,12 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
                 db=db
             )
             youtube_logger.debug("YouTube token refreshed successfully")
+        except ValueError as ve:
+            # ROOT CAUSE FIX: Handle validation errors from credentials_to_oauth_token_data
+            error_msg = f'Failed to refresh YouTube token: {str(ve)}. Please disconnect and reconnect YouTube.'
+            update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+            youtube_logger.error(error_msg, exc_info=True)
+            return
         except Exception as refresh_error:
             error_msg = f'Failed to refresh YouTube token: {str(refresh_error)}. Please disconnect and reconnect YouTube.'
             update_video(video_id, user_id, db=db, status="failed", error=error_msg)

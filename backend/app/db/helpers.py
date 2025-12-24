@@ -182,6 +182,7 @@ def get_all_user_settings(user_id: int, db: Session = None) -> Dict[str, Dict[st
             "schedule_interval_value": 1,
             "schedule_interval_unit": "hours",
             "schedule_start_time": "",
+            "upload_first_immediately": True,
             "allow_duplicates": False
         }
         result["global"] = {**global_defaults, **settings_by_category.get("global", {})}
@@ -327,7 +328,7 @@ def save_oauth_token(user_id: int, platform: str, access_token: str,
     Args:
         user_id: User ID
         platform: Platform name
-        access_token: Access token (will be encrypted)
+        access_token: Access token (will be encrypted) - MUST NOT BE None
         refresh_token: Refresh token (will be encrypted, optional)
         expires_at: Token expiration time (optional)
         extra_data: Additional token data (optional)
@@ -339,12 +340,20 @@ def save_oauth_token(user_id: int, platform: str, access_token: str,
         should_close = True
     
     try:
+        # ROOT CAUSE FIX: Validate access_token is not None before saving
+        if access_token is None:
+            raise ValueError(
+                f"Cannot save OAuth token with None access_token for user {user_id}, platform {platform}. "
+                f"This usually means token decryption failed or refresh returned None."
+            )
+        
         token = db.query(OAuthToken).filter(
             OAuthToken.user_id == user_id,
             OAuthToken.platform == platform
         ).first()
         
         # Encrypt tokens before storing
+        # ROOT CAUSE FIX: Ensure access_token is never None - use empty string if falsy (but we already validated above)
         encrypted_access = encrypt(access_token) if access_token else ""
         encrypted_refresh = encrypt(refresh_token) if refresh_token else None
         
@@ -381,6 +390,10 @@ def save_oauth_token(user_id: int, platform: str, access_token: str,
         invalidate_oauth_token_cache(user_id, platform)
         
         return token
+    except Exception as e:
+        if should_close:
+            db.rollback()
+        raise
     finally:
         if should_close:
             db.close()
@@ -564,8 +577,13 @@ def oauth_token_to_credentials(token: OAuthToken, db: Session = None) -> Optiona
         access_token = decrypt(token.access_token)
         refresh_token = decrypt(token.refresh_token) if token.refresh_token else None
         
+        # ROOT CAUSE FIX: More explicit error handling for decryption failures
         if not access_token:
-            logger.warning(f"Failed to decrypt access token for user {token.user_id if hasattr(token, 'user_id') else 'unknown'}, platform {token.platform if hasattr(token, 'platform') else 'unknown'}. Token may be corrupted or encrypted with different key.")
+            logger.warning(
+                f"Failed to decrypt access token for user {token.user_id if hasattr(token, 'user_id') else 'unknown'}, "
+                f"platform {token.platform if hasattr(token, 'platform') else 'unknown'}. "
+                f"Token may be corrupted or encrypted with different key."
+            )
             return None
         
         # Parse extra_data to get client info
@@ -600,10 +618,17 @@ def oauth_token_to_credentials(token: OAuthToken, db: Session = None) -> Optiona
                 logger.debug(f"Updated OAuth token extra_data with client_id/client_secret for user {token.user_id}, platform {token.platform}")
             except Exception as update_error:
                 logger.warning(f"Failed to update token extra_data: {update_error}")
+                # ROOT CAUSE FIX: Rollback on error to prevent session issues
+                if should_close:
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass  # Session might already be rolled back
             finally:
                 if should_close:
                     db.close()
         
+        # Create Credentials object
         creds = Credentials(
             token=access_token,
             refresh_token=refresh_token,
@@ -613,9 +638,6 @@ def oauth_token_to_credentials(token: OAuthToken, db: Session = None) -> Optiona
             scopes=extra_data.get("scopes", [])
         )
         
-        if token.expires_at:
-            creds.expiry = token.expires_at
-        
         return creds
     except Exception as e:
         logger.error(f"Error converting OAuth token to credentials: {e}", exc_info=True)
@@ -624,7 +646,18 @@ def oauth_token_to_credentials(token: OAuthToken, db: Session = None) -> Optiona
 
 def credentials_to_oauth_token_data(creds: Credentials, client_id: str = None, 
                                      client_secret: str = None) -> Dict[str, Any]:
-    """Convert Google Credentials to OAuth token data"""
+    """Convert Google Credentials to OAuth token data
+    
+    ROOT CAUSE FIX: Validates that creds.token is not None before returning
+    """
+    # ROOT CAUSE FIX: Validate that access_token is not None
+    if not creds.token:
+        raise ValueError(
+            f"Credentials object has None access_token. "
+            f"This usually means token refresh failed or credentials are in an invalid state. "
+            f"Client ID: {client_id or getattr(creds, 'client_id', 'unknown')}"
+        )
+    
     return {
         "access_token": creds.token,
         "refresh_token": creds.refresh_token,

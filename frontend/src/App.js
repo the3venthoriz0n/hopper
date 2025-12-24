@@ -1422,7 +1422,20 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const loadGlobalSettings = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/global/settings`);
-      setGlobalSettings(res.data);
+      // Merge with default state to ensure all fields are defined
+      setGlobalSettings({
+        title_template: '{filename}',
+        description_template: 'Uploaded via Hopper',
+        wordbank: [],
+        upload_immediately: true,
+        schedule_mode: 'spaced',
+        schedule_interval_value: 1,
+        schedule_interval_unit: 'hours',
+        schedule_start_time: '',
+        upload_first_immediately: true,
+        allow_duplicates: false,
+        ...res.data
+      });
     } catch (err) {
       console.error('Error loading global settings:', err);
     }
@@ -1559,7 +1572,11 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       // FastAPI Query() will convert them back to booleans
       params.append(key, value);
       const res = await axios.post(`${API}/global/settings?${params.toString()}`);
-      setGlobalSettings(res.data);
+      // Merge with current state to ensure all fields are defined
+      setGlobalSettings(prev => ({
+        ...prev,
+        ...res.data
+      }));
       setMessage(`✅ Settings updated`);
     } catch (err) {
       setMessage('❌ Error updating settings');
@@ -1715,7 +1732,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           const params = new URLSearchParams();
           params.append('word', word);
           const res = await axios.post(`${API}/global/wordbank?${params.toString()}`);
-          setGlobalSettings({...globalSettings, wordbank: res.data.wordbank});
+          setGlobalSettings(prev => ({...prev, wordbank: res.data.wordbank}));
           addedCount++;
         } catch (err) {
           console.error(`Error adding word "${word}":`, err);
@@ -1740,7 +1757,10 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const removeWordFromWordbank = async (word) => {
     try {
       await axios.delete(`${API}/global/wordbank/${encodeURIComponent(word)}`);
-      setGlobalSettings({...globalSettings, wordbank: globalSettings.wordbank.filter(w => w !== word)});
+      setGlobalSettings(prev => ({
+        ...prev,
+        wordbank: prev.wordbank.filter(w => w !== word)
+      }));
       setMessage('✅ Word removed from wordbank');
     } catch (err) {
       setMessage('❌ Error removing word');
@@ -1754,7 +1774,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     }
     try {
       await axios.delete(`${API}/global/wordbank`);
-      setGlobalSettings({...globalSettings, wordbank: []});
+      setGlobalSettings(prev => ({...prev, wordbank: []}));
       setMessage('✅ Wordbank cleared');
     } catch (err) {
       setMessage('❌ Error clearing wordbank');

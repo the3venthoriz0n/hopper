@@ -36,6 +36,41 @@ from app.core.security import (
 from app.api import auth, oauth, videos, subscriptions, tokens, admin
 from app.api import settings as settings_router
 
+# Prometheus metrics - define globally to avoid circular imports
+try:
+    from prometheus_client import Counter, Gauge, REGISTRY
+    try:
+        successful_uploads_counter = Counter(
+            'hopper_successful_uploads_total',
+            'Total number of successful video uploads'
+        )
+    except ValueError:
+        successful_uploads_counter = REGISTRY._names_to_collectors.get('hopper_successful_uploads_total')
+    
+    try:
+        failed_uploads_gauge = Gauge(
+            'hopper_failed_uploads',
+            'Number of failed video uploads'
+        )
+    except ValueError:
+        failed_uploads_gauge = REGISTRY._names_to_collectors.get('hopper_failed_uploads')
+except ImportError:
+    # Prometheus not available - create no-op metrics
+    class NoOpCounter:
+        def labels(self, **kwargs):
+            return self
+        def inc(self, value=1):
+            pass
+    class NoOpGauge:
+        def labels(self, **kwargs):
+            return self
+        def inc(self, value=1):
+            pass
+        def set(self, value):
+            pass
+    successful_uploads_counter = NoOpCounter()
+    failed_uploads_gauge = NoOpGauge()
+
 # Configure logging
 LOG_LEVEL = settings.LOG_LEVEL.upper()
 logging.basicConfig(
