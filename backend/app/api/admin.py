@@ -22,6 +22,9 @@ from app.services.stripe_service import (
     get_plans, get_plan_monthly_tokens, get_plan_price_id, cancel_subscription_with_invoice
 )
 from app.services.video_service import cleanup_video_file
+from app.services.admin_service import (
+    list_users_with_subscriptions, get_user_details_with_balance, trigger_manual_cleanup
+)
 from app.models.video import Video
 from datetime import datetime, timezone, timedelta
 
@@ -418,29 +421,7 @@ def list_users(
     db: Session = Depends(get_db)
 ):
     """List users with basic info (admin only)"""
-    query = db.query(User)
-    if search:
-        query = query.filter(User.email.ilike(f"%{search}%"))
-    
-    total = query.count()
-    users = query.order_by(User.created_at.desc()).offset((page-1)*limit).limit(limit).all()
-    
-    # Get subscriptions for all users in one query
-    user_ids = [u.id for u in users]
-    subscriptions = {s.user_id: s for s in db.query(Subscription).filter(Subscription.user_id.in_(user_ids)).all()}
-    
-    return {
-        "users": [{
-            "id": u.id,
-            "email": u.email,
-            "created_at": u.created_at.isoformat(),
-            "plan_type": subscriptions.get(u.id).plan_type if subscriptions.get(u.id) else None,
-            "is_admin": u.is_admin
-        } for u in users],
-        "total": total,
-        "page": page,
-        "limit": limit
-    }
+    return list_users_with_subscriptions(page, limit, search, db)
 
 
 @router.get("/users/{user_id}")
@@ -450,41 +431,10 @@ def get_user_details(
     db: Session = Depends(get_db)
 ):
     """Get detailed user information (admin only)"""
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        raise HTTPException(404, "User not found")
-    
-    # Get token balance
-    balance = get_token_balance(user_id, db)
-    
-    # Get subscription info
-    subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
-    
-    # Calculate total tokens used (sum of all negative token transactions, which are deductions)
-    total_tokens_used = db.query(func.sum(func.abs(TokenTransaction.tokens))).filter(
-        TokenTransaction.user_id == user_id,
-        TokenTransaction.tokens < 0  # Negative tokens represent usage/deductions
-    ).scalar() or 0
-    
-    return {
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "created_at": user.created_at.isoformat(),
-            "plan_type": subscription.plan_type if subscription else None,
-            "is_admin": user.is_admin,
-            "stripe_customer_id": user.stripe_customer_id
-        },
-        "token_balance": balance,
-        "token_usage": {
-            "tokens_used_this_period": balance.get("tokens_used_this_period", 0) if balance else 0,
-            "total_tokens_used": int(total_tokens_used)
-        },
-        "subscription": {
-            "plan_type": subscription.plan_type if subscription else None,
-            "status": subscription.status if subscription else None
-        } if subscription else None
-    }
+    try:
+        return get_user_details_with_balance(user_id, db)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
 
 
 @router.post("/users/{target_user_id}/reset-password")
@@ -660,33 +610,10 @@ async def manual_cleanup(user_id: int = Depends(require_auth), db: Session = Dep
     This endpoint allows users to clean up their own old uploaded videos.
     Removes video files for videos uploaded more than 24 hours ago.
     """
-    cleanup_logger = logging.getLogger("cleanup")
-    
     try:
-        cleanup_logger.info(f"Manual cleanup triggered by user {user_id}")
-        
-        # Clean up user's old uploaded videos (older than 24 hours)
-        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
-        old_uploaded_videos = db.query(Video).filter(
-            Video.user_id == user_id,
-            Video.status == "uploaded",
-            Video.created_at < cutoff_time
-        ).all()
-        
-        cleaned_count = 0
-        for video in old_uploaded_videos:
-            if cleanup_video_file(video):
-                cleaned_count += 1
-        
-        cleanup_logger.info(f"Manual cleanup by user {user_id}: cleaned {cleaned_count} files")
-        
-        return {
-            "success": True,
-            "cleaned_files": cleaned_count,
-            "message": f"Cleaned up {cleaned_count} old uploaded video files"
-        }
-        
+        return trigger_manual_cleanup(user_id, db)
     except Exception as e:
+        cleanup_logger = logging.getLogger("cleanup")
         cleanup_logger.error(f"Error in manual cleanup for user {user_id}: {e}", exc_info=True)
         raise HTTPException(500, f"Cleanup failed: {str(e)}")
 
