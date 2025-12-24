@@ -12,7 +12,9 @@ from app.models.subscription import Subscription
 from app.services.stripe_service import (
     create_checkout_session, get_customer_portal_url, get_subscription_info,
     get_plans, get_price_info, get_plan_price_id, get_plan_overage_price_id,
-    get_plan_monthly_tokens, create_free_subscription
+    get_plan_monthly_tokens, create_free_subscription,
+    handle_checkout_completed, handle_subscription_created, handle_subscription_updated,
+    handle_subscription_deleted, handle_invoice_payment_succeeded, handle_invoice_payment_failed
 )
 from app.services.token_service import (
     get_token_balance, get_or_create_token_balance, ensure_tokens_synced_for_subscription
@@ -112,15 +114,18 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     data = event["data"]["object"]
     
     try:
-        if event_type == "customer.subscription.created":
-            # Handle subscription creation
-            pass
+        if event_type == "checkout.session.completed":
+            handle_checkout_completed(data, db)
+        elif event_type == "customer.subscription.created":
+            handle_subscription_created(data, db)
         elif event_type == "customer.subscription.updated":
-            # Handle subscription update
-            pass
+            handle_subscription_updated(data, db)
         elif event_type == "customer.subscription.deleted":
-            # Handle subscription deletion
-            pass
+            handle_subscription_deleted(data, db)
+        elif event_type == "invoice.payment_succeeded":
+            handle_invoice_payment_succeeded(data, db)
+        elif event_type == "invoice.payment_failed":
+            handle_invoice_payment_failed(data, db)
         
         mark_stripe_event_processed(event["id"], db)
         return {"status": "success"}

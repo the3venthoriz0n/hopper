@@ -96,6 +96,10 @@ from token_helpers import (
     get_token_transactions, reset_tokens_for_subscription
 )
 # ============================================================================
+# ✅ MIGRATED TO: app/core/otel.py
+# Migration Date: 2025-12-24
+# Status: COMPLETE
+# ============================================================================
 # OPENTELEMETRY INITIALIZATION
 # ============================================================================
 
@@ -148,6 +152,11 @@ def initialize_otel():
 tracer = trace.get_tracer(__name__)
 meter = metrics.get_meter(__name__)
 
+# ============================================================================
+# ✅ MIGRATED TO: app/core/metrics.py
+# Migration Date: 2025-12-24
+# Status: COMPLETE - All 17 metrics migrated (9 originally + 8 added)
+# ============================================================================
 # Custom Prometheus metrics - use try/except to handle duplicate registration on module reload
 try:
     login_attempts_counter = Counter(
@@ -725,6 +734,11 @@ INSTAGRAM_SCOPES = [
     "pages_show_list"
 ]
 
+# ============================================================================
+# ✅ MIGRATED TO: app/services/video_service.py
+# Migration Date: 2025-12-24
+# Status: COMPLETE
+# ============================================================================
 # Destination upload functions registry
 # This allows easy addition of new destinations in the future
 DESTINATION_UPLOADERS = {
@@ -1084,6 +1098,11 @@ def get_google_client_config():
         }
     }
 
+# ============================================================================
+# ✅ MIGRATED TO: app/core/middleware.py
+# Migration Date: 2025-12-24
+# Status: COMPLETE
+# ============================================================================
 # CORS Configuration
 # Build allowed origins list based on environment variables
 allowed_origins = []
@@ -1201,6 +1220,10 @@ async def global_exception_handler(request: Request, exc: Exception):
     
     return response
 
+# ============================================================================
+# ✅ MIGRATED TO: app/core/security.py
+# Migration Date: 2025-12-24
+# Status: COMPLETE
 # ============================================================================
 # SECURITY IMPLEMENTATION
 # ============================================================================
@@ -3677,6 +3700,11 @@ async def fetch_instagram_profile(access_token: str) -> dict:
         return {"username": None, "business_account_id": None, "account_type": None}
 
 
+# ============================================================================
+# ✅ MIGRATED TO: app/api/settings.py
+# Migration Date: 2025-12-24
+# Status: COMPLETE
+# ============================================================================
 @app.get("/api/global/settings")
 def get_global_settings(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
     """Get global settings"""
@@ -5558,6 +5586,11 @@ def handle_invoice_payment_failed(invoice_data: Dict[str, Any], db: Session):
         logger.warning(f"Payment failed for subscription {subscription_id}")
 
 
+# ============================================================================
+# ✅ MIGRATED TO: app/services/stripe_service.py
+# Migration Date: 2025-12-24
+# Status: COMPLETE
+# ============================================================================
 def _get_user_id_from_session(session_data: Dict[str, Any], db: Session) -> Optional[int]:
     """Extract user_id from checkout session."""
     # Try metadata first
@@ -5614,6 +5647,10 @@ def _cancel_existing_subscriptions(user_id: int, new_subscription_id: str, db: S
                     f"Failed to cancel subscription {sub.stripe_subscription_id}: {e}"
                 )
 
+# ============================================================================
+# ✅ MIGRATED TO: app/api/admin.py
+# Migration Date: 2025-12-24
+# Status: COMPLETE
 # ============================================================================
 # ADMIN ENDPOINTS
 # ============================================================================
