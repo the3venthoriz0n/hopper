@@ -2128,6 +2128,23 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     }
   };
 
+  const recomputeAllVideos = async (platform) => {
+    try {
+      const res = await axios.post(`${API}/videos/recompute-all/${platform}`);
+      await loadVideos();
+      const platformName = platform.charAt(0).toUpperCase() + platform.slice(1);
+      setMessage(`✅ Recomputed ${res.data.updated_count} ${platformName} video${res.data.updated_count !== 1 ? 's' : ''}`);
+    } catch (err) {
+      console.error(`Error recomputing ${platform} videos:`, err);
+      const platformName = platform.charAt(0).toUpperCase() + platform.slice(1);
+      setMessage(`❌ Error recomputing ${platformName} videos`);
+    }
+  };
+
+  const recomputeAllYouTube = () => recomputeAllVideos('youtube');
+  const recomputeAllTiktok = () => recomputeAllVideos('tiktok');
+  const recomputeAllInstagram = () => recomputeAllVideos('instagram');
+
   const handleDragStart = (e, video) => {
     // Only allow dragging if not uploading
     if (video.status === 'uploading') {
@@ -3063,6 +3080,35 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               />
             </div>
 
+            <div className="setting-group">
+              <button 
+                onClick={recomputeAllYouTube}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  background: 'rgba(139, 92, 246, 0.2)',
+                  border: '1px solid rgba(139, 92, 246, 0.4)',
+                  borderRadius: '6px',
+                  color: '#8b5cf6',
+                  cursor: 'pointer',
+                  fontSize: '0.9rem',
+                  fontWeight: '500',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.background = 'rgba(139, 92, 246, 0.3)';
+                  e.target.style.borderColor = 'rgba(139, 92, 246, 0.6)';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.background = 'rgba(139, 92, 246, 0.2)';
+                  e.target.style.borderColor = 'rgba(139, 92, 246, 0.4)';
+                }}
+                title="Recompute all YouTube video titles, descriptions, and tags using current templates and wordbank"
+              >
+                🔄 Recompute All YouTube Videos
+              </button>
+            </div>
+
             <div className="setting-divider"></div>
             
             <div className="setting-group">
@@ -3374,6 +3420,35 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               />
             </div>
 
+            <div className="setting-group">
+              <button 
+                onClick={recomputeAllTiktok}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  background: 'rgba(139, 92, 246, 0.2)',
+                  border: '1px solid rgba(139, 92, 246, 0.4)',
+                  borderRadius: '6px',
+                  color: '#8b5cf6',
+                  cursor: 'pointer',
+                  fontSize: '0.9rem',
+                  fontWeight: '500',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.background = 'rgba(139, 92, 246, 0.3)';
+                  e.target.style.borderColor = 'rgba(139, 92, 246, 0.6)';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.background = 'rgba(139, 92, 246, 0.2)';
+                  e.target.style.borderColor = 'rgba(139, 92, 246, 0.4)';
+                }}
+                title="Recompute all TikTok video captions using current template and wordbank"
+              >
+                🔄 Recompute All TikTok Videos
+              </button>
+            </div>
+
             
             <div className="setting-divider"></div>
             
@@ -3487,6 +3562,35 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 className="input-text"
                 maxLength="2200"
               />
+            </div>
+
+            <div className="setting-group">
+              <button 
+                onClick={recomputeAllInstagram}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  background: 'rgba(139, 92, 246, 0.2)',
+                  border: '1px solid rgba(139, 92, 246, 0.4)',
+                  borderRadius: '6px',
+                  color: '#8b5cf6',
+                  cursor: 'pointer',
+                  fontSize: '0.9rem',
+                  fontWeight: '500',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.background = 'rgba(139, 92, 246, 0.3)';
+                  e.target.style.borderColor = 'rgba(139, 92, 246, 0.6)';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.background = 'rgba(139, 92, 246, 0.2)';
+                  e.target.style.borderColor = 'rgba(139, 92, 246, 0.4)';
+                }}
+                title="Recompute all Instagram video captions using current template and wordbank"
+              >
+                🔄 Recompute All Instagram Videos
+              </button>
             </div>
 
             <div className="setting-group">

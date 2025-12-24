@@ -491,6 +491,25 @@ def recompute_video_title(video_id: int, user_id: int = Depends(require_csrf_new
     return {"ok": True, "title": new_title[:100]}
 
 
+@router.post("/recompute-all/{platform}")
+def recompute_all_videos(
+    platform: str,
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
+    """Recompute all videos for a platform using current templates
+    
+    Platform can be: youtube, tiktok, instagram
+    """
+    from app.services.video_service import recompute_all_videos_for_platform
+    
+    try:
+        updated_count = recompute_all_videos_for_platform(user_id, platform, db)
+        return {"ok": True, "updated_count": updated_count}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.patch("/{video_id}")
 def update_video_settings(
     video_id: int,

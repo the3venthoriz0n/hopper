@@ -61,16 +61,27 @@ PLATFORM_CONFIG = {
         'enabled_key': 'youtube_enabled',
         'id_keys': ['youtube_id'],
         'error_keywords': ['youtube', 'google'],
+        'recompute_fields': {
+            'title': {'template_key': 'title_template', 'field': 'generated_title', 'custom_key': 'title'},
+            'description': {'template_key': 'description_template', 'field': 'custom_settings', 'custom_key': 'description'},
+            'tags': {'template_key': 'tags_template', 'field': 'custom_settings', 'custom_key': 'tags'},
+        },
     },
     'tiktok': {
         'enabled_key': 'tiktok_enabled',
         'id_keys': ['tiktok_id', 'tiktok_publish_id'],
         'error_keywords': ['tiktok'],
+        'recompute_fields': {
+            'title': {'template_key': 'title_template', 'field': 'generated_title', 'custom_key': 'title'},
+        },
     },
     'instagram': {
         'enabled_key': 'instagram_enabled',
         'id_keys': ['instagram_id', 'instagram_container_id'],
         'error_keywords': ['instagram', 'facebook'],
+        'recompute_fields': {
+            'caption': {'template_key': 'caption_template', 'field': 'custom_settings', 'custom_key': 'caption'},
+        },
     },
 }
 
@@ -2785,6 +2796,100 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         delete_upload_progress(user_id, video_id)
         
         failed_uploads_gauge.inc()
+
+
+# ============================================================================
+# RECOMPUTE FUNCTIONS
+# ============================================================================
+
+def recompute_all_videos_for_platform(
+    user_id: int,
+    platform: str,
+    db: Session
+) -> int:
+    """Recompute all videos for a specific platform using current templates
+    
+    This is a DRY, extensible function that works for any platform by using
+    PLATFORM_CONFIG to determine which fields to recompute.
+    
+    Args:
+        user_id: User ID
+        platform: Platform name ('youtube', 'tiktok', 'instagram')
+        db: Database session
+    
+    Returns:
+        Number of videos updated
+    """
+    if platform not in PLATFORM_CONFIG:
+        raise ValueError(f"Unknown platform: {platform}")
+    
+    platform_config = PLATFORM_CONFIG[platform]
+    recompute_fields = platform_config.get('recompute_fields', {})
+    
+    if not recompute_fields:
+        logger.warning(f"No recompute fields configured for platform: {platform}")
+        return 0
+    
+    # Get all videos and settings
+    videos = get_user_videos(user_id, db=db)
+    global_settings = get_user_settings(user_id, "global", db=db)
+    platform_settings = get_user_settings(user_id, platform, db=db)
+    wordbank = global_settings.get('wordbank', [])
+    
+    updated_count = 0
+    
+    for video in videos:
+        filename_no_ext = video.filename.rsplit('.', 1)[0]
+        custom_settings = dict(video.custom_settings or {})  # Create a copy to avoid mutating original
+        video_updated = False
+        update_data = {}
+        custom_settings_modified = False
+        
+        # Process each field configured for this platform
+        for field_name, field_config in recompute_fields.items():
+            template_key = field_config['template_key']
+            field_type = field_config['field']  # 'generated_title' or 'custom_settings'
+            custom_key = field_config.get('custom_key')
+            
+            # Skip if manually overridden
+            if custom_key and custom_key in custom_settings:
+                continue
+            
+            # Get template (platform-specific or global fallback)
+            template = platform_settings.get(template_key, '')
+            if not template:
+                # For caption_template, fallback to title_template
+                if template_key == 'caption_template':
+                    template = global_settings.get('title_template', '{filename}')
+                else:
+                    template = global_settings.get(template_key, '{filename}' if 'title' in template_key else '')
+            
+            # Skip if no template available
+            if not template:
+                continue
+            
+            # Generate new value
+            new_value = replace_template_placeholders(template, filename_no_ext, wordbank)
+            
+            # Store in appropriate location
+            if field_type == 'generated_title':
+                update_data['generated_title'] = new_value
+                video_updated = True
+            elif field_type == 'custom_settings':
+                custom_settings[custom_key] = new_value
+                custom_settings_modified = True
+                video_updated = True
+        
+        # Update custom_settings if we modified it
+        if custom_settings_modified:
+            update_data['custom_settings'] = custom_settings
+        
+        # Update video if any fields were recomputed
+        if video_updated:
+            update_video(video.id, user_id, db=db, **update_data)
+            updated_count += 1
+    
+    return updated_count
 
 
 # Destination upload functions registry

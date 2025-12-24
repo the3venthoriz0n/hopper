@@ -58,6 +58,15 @@ async def security_middleware(request: Request, call_next):
             "/api/auth/instagram/callback" in path
         )
         
+        # OAuth completion endpoints are called from callback pages served by the API domain
+        # They should be excluded from origin/referer validation
+        is_oauth_completion = (
+            path == "/api/auth/instagram/complete" or
+            path == "/api/auth/tiktok/complete" or
+            path == "/api/auth/youtube/complete" or
+            path == "/api/auth/google/complete"
+        )
+        
         is_public_endpoint = (
             path == "/api/auth/csrf" or
             path == "/api/auth/register" or
@@ -94,7 +103,7 @@ async def security_middleware(request: Request, call_next):
                 return response
             
             # Origin/Referer validation
-            if not is_public_endpoint and not is_video_file_endpoint and request.method != "OPTIONS" and (request.method != "GET" or settings.ENVIRONMENT == "production"):
+            if not is_public_endpoint and not is_video_file_endpoint and not is_oauth_completion and request.method != "OPTIONS" and (request.method != "GET" or settings.ENVIRONMENT == "production"):
                 if not validate_origin_referer(request):
                     error = "Invalid origin or referer"
                     security_logger.warning(f"Origin/Referer validation failed - Path: {path}")
