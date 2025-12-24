@@ -756,3 +756,111 @@ def get_token_transactions(user_id: int, limit: int = 50, db: Session = None) ->
         if should_close:
             db.close()
 
+
+def grant_tokens_admin(
+    user_id: int,
+    amount: int,
+    reason: Optional[str],
+    admin_id: int,
+    db: Session
+) -> Dict[str, Any]:
+    """Grant tokens to a user (admin operation)
+    
+    Args:
+        user_id: Target user ID
+        amount: Number of tokens to grant
+        reason: Optional reason for granting tokens
+        admin_id: Admin user ID performing the action
+        db: Database session
+    
+    Returns:
+        Dict with success message
+    
+    Raises:
+        ValueError: If user not found
+    """
+    if not add_tokens(user_id, amount, transaction_type='grant', metadata={'reason': reason}, db=db):
+        raise ValueError("User not found")
+    
+    return {"message": f"Granted {amount} tokens to user {user_id}"}
+
+
+def deduct_tokens_with_overage_calculation(
+    user_id: int,
+    amount: int,
+    reason: Optional[str],
+    admin_id: int,
+    db: Session
+) -> Dict[str, Any]:
+    """Deduct tokens from a user with overage calculation (admin operation for testing)
+    
+    Args:
+        user_id: Target user ID
+        amount: Number of tokens to deduct
+        reason: Optional reason for deducting tokens
+        admin_id: Admin user ID performing the action
+        db: Database session
+    
+    Returns:
+        Dict with deduction results including balance before/after and overage info
+    
+    Raises:
+        ValueError: If user not found or balance retrieval fails
+    """
+    from app.services.stripe_service import get_plan_monthly_tokens
+    
+    target_user = db.query(User).filter(User.id == user_id).first()
+    if not target_user:
+        raise ValueError("User not found")
+    
+    # Get balance before deduction
+    balance_before = get_token_balance(user_id, db)
+    if not balance_before:
+        raise ValueError("Could not retrieve user token balance")
+    
+    # Get subscription info to determine included tokens
+    # Use monthly_tokens from balance (actual starting balance) not base plan amount
+    # This accounts for preserved/granted tokens when user upgrades
+    balance = get_or_create_token_balance(user_id, db)
+    included_tokens = balance.monthly_tokens if balance.monthly_tokens > 0 else 0
+    
+    # Fallback to plan amount if monthly_tokens not set
+    if included_tokens == 0:
+        subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+        included_tokens = get_plan_monthly_tokens(subscription.plan_type) if subscription else 0
+    
+    # Calculate if this will trigger overage
+    tokens_used_before = balance_before.get('tokens_used_this_period', 0)
+    tokens_used_after = tokens_used_before + amount
+    overage_before = max(0, tokens_used_before - included_tokens)
+    overage_after = max(0, tokens_used_after - included_tokens)
+    new_overage = overage_after - overage_before
+    
+    # Deduct tokens using the standard function (this will trigger meter events if overage)
+    success = deduct_tokens(
+        user_id=user_id,
+        tokens=amount,
+        transaction_type='admin_test',
+        metadata={
+            'admin_id': admin_id,
+            'reason': reason or 'admin_test',
+            'test_overage': new_overage > 0
+        },
+        db=db
+    )
+    
+    if not success:
+        raise ValueError("Failed to deduct tokens")
+    
+    # Get balance after deduction
+    balance_after = get_token_balance(user_id, db)
+    
+    logger.info(f"Admin {admin_id} deducted {amount} tokens from user {user_id} (overage: {new_overage})")
+    
+    return {
+        "message": f"Deducted {amount} tokens from user {user_id}",
+        "balance_before": balance_before,
+        "balance_after": balance_after,
+        "overage_triggered": new_overage > 0,
+        "new_overage": new_overage
+    }
