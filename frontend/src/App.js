@@ -4654,6 +4654,88 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         }
         const customSettings = video.custom_settings || {};
         
+        // DRY: Reusable style objects for metadata display
+        const metadataContainerStyle = {
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.75rem',
+          padding: '0.75rem',
+          background: rgba(HOPPER_COLORS.rgb.white, 0.03),
+          border: `1px solid ${rgba(HOPPER_COLORS.rgb.white, 0.1)}`,
+          borderRadius: '6px',
+          fontSize: '0.9rem'
+        };
+        
+        const metadataItemStyle = {
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.5rem'
+        };
+        
+        const metadataLabelStyle = {
+          fontWeight: '600',
+          color: HOPPER_COLORS.light
+        };
+        
+        const metadataValueStyle = {
+          color: HOPPER_COLORS.light
+        };
+        
+        const metadataTextBlockStyle = {
+          marginTop: '0.25rem',
+          padding: '0.5rem',
+          background: rgba(HOPPER_COLORS.rgb.base, 0.2),
+          borderRadius: '4px',
+          color: HOPPER_COLORS.light,
+          maxHeight: '150px',
+          overflowY: 'auto',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word'
+        };
+        
+        const metadataGridStyle = {
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: '0.5rem',
+          marginTop: '0.25rem'
+        };
+        
+        const metadataStatusBadgeStyle = (status) => ({
+          marginTop: '0.5rem',
+          padding: '0.5rem',
+          background: status === 'PUBLISHED' 
+            ? rgba(HOPPER_COLORS.rgb.success, 0.1)
+            : rgba(HOPPER_COLORS.rgb.info, 0.1),
+          borderRadius: '4px',
+          border: `1px solid ${
+            status === 'PUBLISHED' 
+              ? rgba(HOPPER_COLORS.rgb.success, 0.3)
+              : rgba(HOPPER_COLORS.rgb.info, 0.3)
+          }`
+        });
+        
+        const metadataWarningBoxStyle = {
+          marginTop: '0.25rem',
+          padding: '0.5rem',
+          background: rgba(HOPPER_COLORS.rgb.warning, 0.1),
+          borderRadius: '4px',
+          border: `1px solid ${rgba(HOPPER_COLORS.rgb.warning, 0.3)}`
+        };
+        
+        // DRY: Helper function to format boolean values
+        const formatBoolean = (value, undefinedText = 'Not set') => {
+          if (value === undefined || value === null) return undefinedText;
+          return value ? 'Yes' : 'No';
+        };
+        
+        // DRY: Helper function to format tags
+        const formatTags = (tags) => {
+          if (!tags) return '';
+          if (Array.isArray(tags)) return tags.join(', ');
+          if (typeof tags === 'string') return tags.split(',').map(t => t.trim()).join(', ');
+          return String(tags);
+        };
+        
         const handleSaveOverrides = async () => {
           try {
             const overrides = {};
@@ -4691,6 +4773,25 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           }
         };
         
+        // DRY: Reusable button styles
+        const errorButtonBaseStyle = {
+          padding: '0.375rem 0.75rem',
+          background: rgba(HOPPER_COLORS.rgb.error, 0.1),
+          border: `1px solid ${rgba(HOPPER_COLORS.rgb.error, 0.3)}`,
+          borderRadius: '6px',
+          color: HOPPER_COLORS.error,
+          cursor: 'pointer',
+          fontSize: '0.85rem',
+          fontWeight: '500',
+          transition: 'all 0.2s',
+          fontFamily: 'inherit'
+        };
+        
+        const errorButtonHoverStyle = {
+          background: rgba(HOPPER_COLORS.rgb.error, 0.2),
+          borderColor: rgba(HOPPER_COLORS.rgb.error, 0.5)
+        };
+        
         return (
           <div
             style={{
@@ -4699,7 +4800,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               left: 0,
               right: 0,
               bottom: 0,
-              backgroundColor: 'rgba(0, 0, 0, 0.7)',
+              backgroundColor: rgba(HOPPER_COLORS.rgb.base, 0.7),
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -4746,24 +4847,12 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                             return newSet;
                           });
                         }}
-                        style={{
-                          padding: '0.375rem 0.75rem',
-                          background: rgba(HOPPER_COLORS.rgb.error, 0.1),
-                          border: `1px solid ${rgba(HOPPER_COLORS.rgb.error, 0.3)}`,
-                          borderRadius: '6px',
-                          color: HOPPER_COLORS.error,
-                          cursor: 'pointer',
-                          fontSize: '0.85rem',
-                          fontWeight: '500',
-                          transition: 'all 0.2s'
-                        }}
+                        style={errorButtonBaseStyle}
                         onMouseEnter={(e) => {
-                          e.target.style.background = rgba(HOPPER_COLORS.rgb.error, 0.2);
-                          e.target.style.borderColor = rgba(HOPPER_COLORS.rgb.error, 0.5);
+                          Object.assign(e.target.style, errorButtonHoverStyle);
                         }}
                         onMouseLeave={(e) => {
-                          e.target.style.background = rgba(HOPPER_COLORS.rgb.error, 0.1);
-                          e.target.style.borderColor = rgba(HOPPER_COLORS.rgb.error, 0.3);
+                          Object.assign(e.target.style, errorButtonBaseStyle);
                         }}
                       >
                         {expandedDestinationErrors.has(`${video.id}-${platform}`) ? 'Hide Error' : 'Show Error'}
@@ -4830,210 +4919,134 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 {/* Upload Metadata */}
                 <div className="setting-group">
                   <label>Upload Metadata</label>
-                  <div style={{ 
-                    display: 'flex', 
-                    flexDirection: 'column', 
-                    gap: '0.75rem',
-                    padding: '0.75rem',
-                    background: 'rgba(255, 255, 255, 0.03)',
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
-                    borderRadius: '6px',
-                    fontSize: '0.9rem'
-                  }}>
+                  <div style={metadataContainerStyle}>
                     {platform === 'youtube' && (
-                      <>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                          <div><strong>Title:</strong> <span style={{ color: HOPPER_COLORS.light }}>{platformData.title || video.youtube_title || video.filename}</span></div>
-                          {platformData.description && (
-                            <div>
-                              <strong>Description:</strong>
-                              <div style={{ 
-                                marginTop: '0.25rem', 
-                                padding: '0.5rem', 
-                                background: 'rgba(0, 0, 0, 0.2)', 
-                                borderRadius: '4px',
-                                color: HOPPER_COLORS.light,
-                                maxHeight: '150px',
-                                overflowY: 'auto',
-                                whiteSpace: 'pre-wrap',
-                                wordBreak: 'break-word'
-                              }}>
-                                {platformData.description}
-                              </div>
-                            </div>
-                          )}
-                          {platformData.tags && (
-                            <div>
-                              <strong>Tags:</strong> <span style={{ color: HOPPER_COLORS.light }}>
-                                {Array.isArray(platformData.tags) 
-                                  ? platformData.tags.join(', ') 
-                                  : (typeof platformData.tags === 'string' 
-                                    ? platformData.tags.split(',').map(t => t.trim()).join(', ')
-                                    : platformData.tags)}
-                              </span>
-                            </div>
-                          )}
-                          {platformData.visibility && (
-                            <div>
-                              <strong>Visibility:</strong> <span style={{ 
-                                color: HOPPER_COLORS.light,
-                                textTransform: 'capitalize'
-                              }}>{platformData.visibility}</span>
-                            </div>
-                          )}
-                          {platformData.made_for_kids !== undefined && (
-                            <div>
-                              <strong>Made for Kids:</strong> <span style={{ color: HOPPER_COLORS.light }}>
-                                {platformData.made_for_kids ? 'Yes' : 'No'}
-                              </span>
-                            </div>
-                          )}
+                      <div style={metadataItemStyle}>
+                        <div>
+                          <span style={metadataLabelStyle}>Title:</span>{' '}
+                          <span style={metadataValueStyle}>{platformData.title || video.youtube_title || video.filename}</span>
                         </div>
-                      </>
+                        {platformData.description && (
+                          <div>
+                            <span style={metadataLabelStyle}>Description:</span>
+                            <div style={metadataTextBlockStyle}>
+                              {platformData.description}
+                            </div>
+                          </div>
+                        )}
+                        {platformData.tags && (
+                          <div>
+                            <span style={metadataLabelStyle}>Tags:</span>{' '}
+                            <span style={metadataValueStyle}>{formatTags(platformData.tags)}</span>
+                          </div>
+                        )}
+                        {platformData.visibility && (
+                          <div>
+                            <span style={metadataLabelStyle}>Visibility:</span>{' '}
+                            <span style={{...metadataValueStyle, textTransform: 'capitalize'}}>
+                              {platformData.visibility}
+                            </span>
+                          </div>
+                        )}
+                        {platformData.made_for_kids !== undefined && (
+                          <div>
+                            <span style={metadataLabelStyle}>Made for Kids:</span>{' '}
+                            <span style={metadataValueStyle}>{formatBoolean(platformData.made_for_kids)}</span>
+                          </div>
+                        )}
+                      </div>
                     )}
                     {platform === 'tiktok' && (
-                      <>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                          {platformData.title && (
-                            <div>
-                              <strong>Title:</strong>
-                              <div style={{ 
-                                marginTop: '0.25rem', 
-                                padding: '0.5rem', 
-                                background: 'rgba(0, 0, 0, 0.2)', 
-                                borderRadius: '4px',
-                                color: HOPPER_COLORS.light,
-                                wordBreak: 'break-word'
-                              }}>
-                                {platformData.title}
-                              </div>
+                      <div style={metadataItemStyle}>
+                        {platformData.title && (
+                          <div>
+                            <span style={metadataLabelStyle}>Title:</span>
+                            <div style={{...metadataTextBlockStyle, maxHeight: 'none'}}>
+                              {platformData.title}
                             </div>
-                          )}
-                          {platformData.privacy_level && (
-                            <div>
-                              <strong>Privacy Level:</strong> <span style={{ 
-                                color: HOPPER_COLORS.light,
-                                textTransform: 'capitalize'
-                              }}>{platformData.privacy_level}</span>
-                            </div>
-                          )}
-                          <div style={{ 
-                            display: 'grid', 
-                            gridTemplateColumns: '1fr 1fr', 
-                            gap: '0.5rem',
-                            marginTop: '0.25rem'
-                          }}>
-                            <div>
-                              <strong>Allow Comments:</strong> <span style={{ color: HOPPER_COLORS.light }}>
-                                {platformData.allow_comments !== undefined ? (platformData.allow_comments ? 'Yes' : 'No') : 'Not set'}
-                              </span>
-                            </div>
-                            <div>
-                              <strong>Allow Duet:</strong> <span style={{ color: HOPPER_COLORS.light }}>
-                                {platformData.allow_duet !== undefined ? (platformData.allow_duet ? 'Yes' : 'No') : 'Not set'}
-                              </span>
-                            </div>
-                            <div>
-                              <strong>Allow Stitch:</strong> <span style={{ color: HOPPER_COLORS.light }}>
-                                {platformData.allow_stitch !== undefined ? (platformData.allow_stitch ? 'Yes' : 'No') : 'Not set'}
-                              </span>
-                            </div>
-                            {platformData.commercial_content_disclosure !== undefined && (
-                              <div>
-                                <strong>Commercial Disclosure:</strong> <span style={{ color: HOPPER_COLORS.light }}>
-                                  {platformData.commercial_content_disclosure ? 'Yes' : 'No'}
-                                </span>
-                              </div>
-                            )}
                           </div>
-                          {(platformData.commercial_content_your_brand || platformData.commercial_content_branded) && (
-                            <div style={{ 
-                              marginTop: '0.25rem',
-                              padding: '0.5rem',
-                              background: 'rgba(255, 179, 0, 0.1)',
-                              borderRadius: '4px',
-                              border: `1px solid ${rgba(HOPPER_COLORS.rgb.warning, 0.3)}`
-                            }}>
-                              <strong style={{ color: HOPPER_COLORS.warning }}>Commercial Content:</strong>
-                              <div style={{ marginTop: '0.25rem', color: HOPPER_COLORS.light, fontSize: '0.85rem' }}>
-                                {platformData.commercial_content_your_brand && <div>• Your Brand</div>}
-                                {platformData.commercial_content_branded && <div>• Branded Content</div>}
-                              </div>
-                            </div>
-                          )}
-                          {video.tiktok_publish_status && (
-                            <div style={{ 
-                              marginTop: '0.5rem',
-                              padding: '0.5rem',
-                              background: video.tiktok_publish_status === 'PUBLISHED' 
-                                ? rgba(HOPPER_COLORS.rgb.success, 0.1)
-                                : rgba(HOPPER_COLORS.rgb.info, 0.1),
-                              borderRadius: '4px',
-                              border: `1px solid ${
-                                video.tiktok_publish_status === 'PUBLISHED' 
-                                  ? rgba(HOPPER_COLORS.rgb.success, 0.3)
-                                  : rgba(HOPPER_COLORS.rgb.info, 0.3)
-                              }`
-                            }}>
-                              <strong>Publish Status:</strong> <span style={{ 
-                                color: video.tiktok_publish_status === 'PUBLISHED' 
-                                  ? HOPPER_COLORS.success
-                                  : HOPPER_COLORS.info,
-                                textTransform: 'capitalize',
-                                marginLeft: '0.5rem'
-                              }}>{video.tiktok_publish_status}</span>
+                        )}
+                        {platformData.privacy_level && (
+                          <div>
+                            <span style={metadataLabelStyle}>Privacy Level:</span>{' '}
+                            <span style={{...metadataValueStyle, textTransform: 'capitalize'}}>
+                              {platformData.privacy_level}
+                            </span>
+                          </div>
+                        )}
+                        <div style={metadataGridStyle}>
+                          <div>
+                            <span style={metadataLabelStyle}>Allow Comments:</span>{' '}
+                            <span style={metadataValueStyle}>{formatBoolean(platformData.allow_comments)}</span>
+                          </div>
+                          <div>
+                            <span style={metadataLabelStyle}>Allow Duet:</span>{' '}
+                            <span style={metadataValueStyle}>{formatBoolean(platformData.allow_duet)}</span>
+                          </div>
+                          <div>
+                            <span style={metadataLabelStyle}>Allow Stitch:</span>{' '}
+                            <span style={metadataValueStyle}>{formatBoolean(platformData.allow_stitch)}</span>
+                          </div>
+                          {platformData.commercial_content_disclosure !== undefined && (
+                            <div>
+                              <span style={metadataLabelStyle}>Commercial Disclosure:</span>{' '}
+                              <span style={metadataValueStyle}>{formatBoolean(platformData.commercial_content_disclosure)}</span>
                             </div>
                           )}
                         </div>
-                      </>
+                        {(platformData.commercial_content_your_brand || platformData.commercial_content_branded) && (
+                          <div style={metadataWarningBoxStyle}>
+                            <strong style={{ color: HOPPER_COLORS.warning }}>Commercial Content:</strong>
+                            <div style={{ marginTop: '0.25rem', color: HOPPER_COLORS.light, fontSize: '0.85rem' }}>
+                              {platformData.commercial_content_your_brand && <div>• Your Brand</div>}
+                              {platformData.commercial_content_branded && <div>• Branded Content</div>}
+                            </div>
+                          </div>
+                        )}
+                        {video.tiktok_publish_status && (
+                          <div style={metadataStatusBadgeStyle(video.tiktok_publish_status)}>
+                            <strong>Publish Status:</strong>{' '}
+                            <span style={{ 
+                              color: video.tiktok_publish_status === 'PUBLISHED' 
+                                ? HOPPER_COLORS.success
+                                : HOPPER_COLORS.info,
+                              textTransform: 'capitalize'
+                            }}>{video.tiktok_publish_status}</span>
+                          </div>
+                        )}
+                      </div>
                     )}
                     {platform === 'instagram' && (
-                      <>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                          {platformData.caption && (
-                            <div>
-                              <strong>Caption:</strong>
-                              <div style={{ 
-                                marginTop: '0.25rem', 
-                                padding: '0.5rem', 
-                                background: 'rgba(0, 0, 0, 0.2)', 
-                                borderRadius: '4px',
-                                color: HOPPER_COLORS.light,
-                                maxHeight: '150px',
-                                overflowY: 'auto',
-                                whiteSpace: 'pre-wrap',
-                                wordBreak: 'break-word'
-                              }}>
-                                {platformData.caption}
-                              </div>
-                            </div>
-                          )}
-                          {platformData.location_id && (
-                            <div>
-                              <strong>Location ID:</strong> <span style={{ color: HOPPER_COLORS.light }}>
-                                {platformData.location_id}
-                              </span>
-                            </div>
-                          )}
-                          <div style={{ 
-                            display: 'grid', 
-                            gridTemplateColumns: '1fr 1fr', 
-                            gap: '0.5rem',
-                            marginTop: '0.25rem'
-                          }}>
-                            <div>
-                              <strong>Comments:</strong> <span style={{ color: HOPPER_COLORS.light }}>
-                                {platformData.disable_comments ? 'Disabled' : 'Enabled'}
-                              </span>
-                            </div>
-                            <div>
-                              <strong>Likes:</strong> <span style={{ color: HOPPER_COLORS.light }}>
-                                {platformData.disable_likes ? 'Disabled' : 'Enabled'}
-                              </span>
+                      <div style={metadataItemStyle}>
+                        {platformData.caption && (
+                          <div>
+                            <span style={metadataLabelStyle}>Caption:</span>
+                            <div style={metadataTextBlockStyle}>
+                              {platformData.caption}
                             </div>
                           </div>
+                        )}
+                        {platformData.location_id && (
+                          <div>
+                            <span style={metadataLabelStyle}>Location ID:</span>{' '}
+                            <span style={metadataValueStyle}>{platformData.location_id}</span>
+                          </div>
+                        )}
+                        <div style={metadataGridStyle}>
+                          <div>
+                            <span style={metadataLabelStyle}>Comments:</span>{' '}
+                            <span style={metadataValueStyle}>
+                              {platformData.disable_comments ? 'Disabled' : 'Enabled'}
+                            </span>
+                          </div>
+                          <div>
+                            <span style={metadataLabelStyle}>Likes:</span>{' '}
+                            <span style={metadataValueStyle}>
+                              {platformData.disable_likes ? 'Disabled' : 'Enabled'}
+                            </span>
+                          </div>
                         </div>
-                      </>
+                      </div>
                     )}
                     {(!platformData || Object.keys(platformData).length === 0) && (
                       <div style={{ 
@@ -5054,7 +5067,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   <div style={{ 
                     fontSize: '0.85rem', 
                     color: HOPPER_COLORS.grey,
-                    marginBottom: '1rem'
+                    marginBottom: '1rem',
+                    fontStyle: 'italic'
                   }}>
                     Override default settings for this video on {platformNames[platform]} only
                   </div>
