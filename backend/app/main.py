@@ -10,20 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
-# OpenTelemetry imports
-from opentelemetry import metrics, trace
-from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-
 from app.core.config import settings
+from app.core.otel import (
+    initialize_otel, setup_otel_logging,
+    instrument_fastapi, instrument_httpx, instrument_sqlalchemy
+)
 from app.db.session import engine, init_db
 from app.db.redis import redis_client
 from app.models import Base  # Import all models to register with Base.metadata
@@ -63,86 +54,6 @@ security_logger = logging.getLogger("security")
 api_access_logger = logging.getLogger("api_access")
 
 
-def initialize_otel():
-    """Initialize OpenTelemetry providers"""
-    if not settings.OTEL_EXPORTER_OTLP_ENDPOINT:
-        return False
-    
-    try:
-        resource = Resource.create({
-            "service.name": settings.OTEL_SERVICE_NAME,
-            "service.version": "1.0.0",
-            "deployment.environment": settings.OTEL_ENVIRONMENT
-        })
-
-        # Trace provider
-        trace_provider = TracerProvider(resource=resource)
-        otlp_trace_exporter = OTLPSpanExporter(
-            endpoint=settings.OTEL_EXPORTER_OTLP_ENDPOINT,
-            insecure=True
-        )
-        trace_provider.add_span_processor(BatchSpanProcessor(otlp_trace_exporter))
-        trace.set_tracer_provider(trace_provider)
-
-        # Metrics provider
-        otlp_metric_exporter = OTLPMetricExporter(
-            endpoint=settings.OTEL_EXPORTER_OTLP_ENDPOINT,
-            insecure=True
-        )
-        metric_reader = PeriodicExportingMetricReader(
-            otlp_metric_exporter, 
-            export_interval_millis=5000,
-            export_timeout_millis=30000
-        )
-        metrics_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
-        metrics.set_meter_provider(metrics_provider)
-        
-        return True
-    except Exception as e:
-        logger.warning(f"Failed to initialize OpenTelemetry: {e}")
-        return False
-
-
-def setup_otel_logging():
-    """Setup OTEL logging handler"""
-    if not settings.OTEL_EXPORTER_OTLP_ENDPOINT:
-        return False
-        
-    try:
-        from opentelemetry._logs import set_logger_provider
-        from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
-        from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
-        from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
-        from opentelemetry.sdk.resources import Resource as LogResource
-        
-        log_resource = LogResource.create({
-            "service.name": settings.OTEL_SERVICE_NAME,
-            "deployment.environment": settings.OTEL_ENVIRONMENT
-        })
-        logger_provider = LoggerProvider(resource=log_resource)
-        set_logger_provider(logger_provider)
-        
-        log_exporter = OTLPLogExporter(
-            endpoint=settings.OTEL_EXPORTER_OTLP_ENDPOINT,
-            insecure=True
-        )
-        log_processor = BatchLogRecordProcessor(
-            log_exporter,
-            max_queue_size=2048,
-            export_timeout_millis=30000,
-            schedule_delay_millis=5000
-        )
-        logger_provider.add_log_record_processor(log_processor)
-        
-        handler = LoggingHandler(level=logging.NOTSET, logger_provider=logger_provider)
-        logging.getLogger().addHandler(handler)
-        
-        return True
-    except Exception as e:
-        logger.warning(f"Failed to setup OTEL logging: {e}")
-        return False
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown"""
@@ -176,11 +87,7 @@ async def lifespan(app: FastAPI):
         raise
     
     # Instrument SQLAlchemy
-    try:
-        SQLAlchemyInstrumentor().instrument(engine=engine)
-        logger.info("SQLAlchemy instrumentation enabled")
-    except Exception as e:
-        logger.warning(f"Failed to instrument SQLAlchemy: {e}")
+    instrument_sqlalchemy(engine)
     
     # Start background tasks
     logger.info("Starting scheduler tasks...")
@@ -211,10 +118,10 @@ app = FastAPI(
 )
 
 # Instrument FastAPI with OpenTelemetry
-FastAPIInstrumentor.instrument_app(app)
+instrument_fastapi(app)
 
 # Instrument HTTPX
-HTTPXClientInstrumentor().instrument()
+instrument_httpx()
 
 # CORS middleware
 allowed_origins = [settings.FRONTEND_URL]
