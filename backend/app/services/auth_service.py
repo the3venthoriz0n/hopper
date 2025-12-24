@@ -378,7 +378,7 @@ def delete_user_account(user_id: int, db: Session) -> bool:
     Args:
         user_id: User ID
         db: Database session
-        
+    
     Returns:
         bool: True if successful, False if user not found
     """
@@ -395,3 +395,415 @@ def delete_user_account(user_id: int, db: Session) -> bool:
     
     return True
 
+
+def register_user(email: str, password: str) -> dict:
+    """Complete registration flow: validate password, check existing user, initiate registration, send verification email
+    
+    Args:
+        email: User email
+        password: User password
+        
+    Returns:
+        dict: Registration response with user info
+        
+    Raises:
+        ValueError: If password too short or email already registered
+    """
+    import logging
+    from app.services.email_service import send_verification_email
+    
+    logger = logging.getLogger(__name__)
+    
+    # Validate password
+    if len(password) < 8:
+        raise ValueError("Password must be at least 8 characters long")
+    
+    # Check existing user
+    existing_user = get_user_by_email(email)
+    if existing_user:
+        raise ValueError("Email already registered. Please log in, reset your password, or resend the verification email.")
+    
+    # Initiate registration
+    verification_code, password_hash = initiate_registration(email, password)
+    
+    # Send verification email
+    try:
+        send_verification_email(email, verification_code)
+    except Exception:
+        logger.warning(f"Failed to send verification email to {email}", exc_info=True)
+    
+    logger.info(f"Registration initiated (verification required) for: {email}")
+    
+    return {
+        "user": {
+            "id": None,
+            "email": email,
+            "created_at": None,
+            "is_admin": False,
+            "is_email_verified": False,
+        },
+        "requires_email_verification": True,
+    }
+
+
+def login_user(email: str, password: str, db: Session) -> dict:
+    """Complete login flow: authenticate, verify email, create session, return user info
+    
+    Args:
+        email: User email
+        password: User password
+        db: Database session
+        
+    Returns:
+        dict: Login response with user info and session_id
+        
+    Raises:
+        ValueError: If invalid credentials or email not verified
+    """
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    # Authenticate user
+    user = authenticate_user(email, password, db=db)
+    if not user:
+        raise ValueError("Invalid email or password")
+    
+    # Check email verification
+    if not getattr(user, "is_email_verified", False):
+        raise ValueError("Email address not verified")
+    
+    # Create session
+    session_id = create_session(user.id)
+    
+    logger.info(f"User logged in: {user.email} (ID: {user.id})")
+    
+    return {
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "created_at": user.created_at.isoformat(),
+            "is_admin": user.is_admin
+        },
+        "session_id": session_id
+    }
+
+
+def logout_user(session_id: Optional[str]) -> dict:
+    """Logout flow: delete session
+    
+    Args:
+        session_id: Session ID (optional)
+        
+    Returns:
+        dict: Logout response message
+    """
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    if session_id:
+        delete_user_session(session_id)
+        logger.info(f"User logged out (session: {session_id[:16]}...)")
+    
+    return {"message": "Logged out successfully"}
+
+
+def verify_email_with_stripe_setup(email: str, code: str, db: Session) -> dict:
+    """Verify email and ensure Stripe customer/subscription exist
+    
+    Args:
+        email: User email
+        code: Verification code
+        db: Database session
+        
+    Returns:
+        dict: User info with verification status
+        
+    Raises:
+        ValueError: If invalid code or user not found
+    """
+    import logging
+    from app.services.stripe_service import create_stripe_customer, create_free_subscription
+    
+    logger = logging.getLogger(__name__)
+    
+    # Verify code
+    if not verify_email_code(email, code):
+        raise ValueError("Invalid or expired verification code")
+    
+    # Complete email verification
+    user = complete_email_verification(email, db)
+    if not user:
+        raise ValueError("User not found")
+    
+    # Ensure Stripe customer and free subscription exist
+    try:
+        create_stripe_customer(user.email, user.id, db)
+        create_free_subscription(user.id, db)
+    except Exception as e:
+        logger.warning(f"Failed to create Stripe customer/subscription for user {user.id}: {e}")
+    
+    return {
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "created_at": user.created_at.isoformat(),
+            "is_admin": user.is_admin,
+            "is_email_verified": True,
+        }
+    }
+
+
+def resend_verification_code(email: str, db: Session) -> dict:
+    """Generate new verification code and send email
+    
+    Args:
+        email: User email
+        db: Database session
+        
+    Returns:
+        dict: Response message
+    """
+    import logging
+    import secrets
+    from app.services.email_service import send_verification_email
+    
+    logger = logging.getLogger(__name__)
+    
+    # Check if user already verified
+    user = get_user_by_email(email, db=db)
+    if user and getattr(user, "is_email_verified", False):
+        return {"message": "If this email is registered, a verification email has been sent."}
+    
+    # Generate new verification code
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+    verification_code = "".join(secrets.choice(alphabet) for _ in range(6))
+    set_email_verification_code(email, verification_code)
+    
+    # Send email
+    try:
+        send_verification_email(email, verification_code)
+    except Exception:
+        logger.warning(f"Failed to send verification email (resend) to {email}", exc_info=True)
+    
+    return {"message": "If this email is registered, a verification email has been sent."}
+
+
+def forgot_password_with_email(email: str, db: Session) -> dict:
+    """Initiate password reset and send email
+    
+    Args:
+        email: User email
+        db: Database session
+        
+    Returns:
+        dict: Response message
+    """
+    import logging
+    from app.services.email_service import send_password_reset_email
+    
+    logger = logging.getLogger(__name__)
+    
+    # Initiate password reset
+    reset_token = initiate_password_reset(email, db=db)
+    
+    # Send email if token was generated
+    if reset_token:
+        try:
+            send_password_reset_email(email, reset_token)
+        except Exception:
+            logger.warning(f"Failed to send password reset email to {email}", exc_info=True)
+    
+    return {"message": "If this email is registered, a password reset email has been sent."}
+
+
+def reset_password_with_validation(token: str, new_password: str, db: Session) -> dict:
+    """Validate password and complete reset
+    
+    Args:
+        token: Password reset token
+        new_password: New password
+        db: Database session
+        
+    Returns:
+        dict: Success message
+        
+    Raises:
+        ValueError: If password too short or token invalid
+    """
+    # Validate password
+    if len(new_password) < 8:
+        raise ValueError("Password must be at least 8 characters long")
+    
+    # Complete password reset
+    if not complete_password_reset(token, new_password, db):
+        raise ValueError("Invalid or expired reset link")
+    
+    return {"message": "Password has been reset successfully."}
+
+
+def get_current_user_from_session(session_id: Optional[str], db: Session) -> dict:
+    """Get user from session
+    
+    Args:
+        session_id: Session ID
+        db: Database session
+        
+    Returns:
+        dict: User info or None
+    """
+    from app.db.redis import get_session
+    
+    if not session_id:
+        return {"user": None}
+    
+    user_id = get_session(session_id)
+    if not user_id:
+        return {"user": None}
+    
+    user = get_user_by_id(user_id, db=db)
+    if not user:
+        return {"user": None}
+    
+    return {
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "created_at": user.created_at.isoformat(),
+            "is_admin": user.is_admin,
+            "is_email_verified": user.is_email_verified,
+        }
+    }
+
+
+def set_password_with_validation(user_id: int, password: str, db: Session) -> dict:
+    """Validate and set password
+    
+    Args:
+        user_id: User ID
+        password: New password
+        db: Database session
+        
+    Returns:
+        dict: Success message
+        
+    Raises:
+        ValueError: If password too short or user not found
+    """
+    # Validate password
+    if len(password) < 8:
+        raise ValueError("Password must be at least 8 characters long")
+    
+    # Set password
+    if not set_user_password(user_id, password, db=db):
+        raise ValueError("User not found")
+    
+    return {"message": "Password set successfully"}
+
+
+def change_password_with_validation(user_id: int, current_password: str, new_password: str, db: Session) -> dict:
+    """Validate current password, validate new password, change password
+    
+    Args:
+        user_id: User ID
+        current_password: Current password
+        new_password: New password
+        db: Database session
+        
+    Returns:
+        dict: Success message
+        
+    Raises:
+        ValueError: If user not found, password too short, or current password incorrect
+    """
+    # Get user
+    user = get_user_by_id(user_id, db=db)
+    if not user:
+        raise ValueError("User not found")
+    
+    # Validate new password
+    if len(new_password) < 8:
+        raise ValueError("Password must be at least 8 characters long")
+    
+    # Verify current password
+    if not verify_password(current_password, user.password_hash):
+        raise ValueError("Current password is incorrect")
+    
+    # Change password
+    if not set_user_password(user_id, new_password, db=db):
+        raise ValueError("Failed to change password")
+    
+    return {"message": "Password changed successfully"}
+
+
+def delete_user_account_complete(user_id: int, db: Session) -> dict:
+    """Complete account deletion: delete account via db_helpers, clean up video files, delete sessions
+    
+    Args:
+        user_id: User ID
+        db: Database session
+        
+    Returns:
+        dict: Deletion result with stats
+        
+    Raises:
+        ValueError: If deletion fails
+    """
+    import logging
+    from pathlib import Path
+    from app.db import helpers as db_helpers
+    from app.db.redis import delete_session, redis_client
+    
+    security_logger = logging.getLogger("security")
+    upload_logger = logging.getLogger("upload")
+    
+    security_logger.info(f"User {user_id} requested account deletion")
+    
+    # Delete user account and get cleanup info
+    result = db_helpers.delete_user_account(user_id, db=db)
+    
+    if not result["success"]:
+        security_logger.error(f"Failed to delete user {user_id}: {result.get('error')}")
+        raise ValueError(f"Failed to delete account: {result.get('error')}")
+    
+    # Clean up video files from disk
+    video_paths = result.get("video_file_paths", [])
+    files_deleted = 0
+    files_failed = 0
+    
+    for video_path in video_paths:
+        try:
+            # Resolve path to absolute to ensure proper file access
+            path = Path(video_path).resolve()
+            if path.exists():
+                path.unlink()
+                files_deleted += 1
+                upload_logger.debug(f"Deleted video file: {video_path}")
+        except Exception as e:
+            files_failed += 1
+            upload_logger.warning(f"Failed to delete video file {video_path}: {e}")
+    
+    # Delete all sessions and CSRF tokens for user
+    delete_all_sessions_for_user(user_id)
+    
+    # Log deletion
+    stats = result.get("stats", {})
+    security_logger.info(
+        f"Account deleted: user_id={user_id}, "
+        f"email={stats.get('user_email')}, "
+        f"videos={stats.get('videos_deleted', 0)}, "
+        f"settings={stats.get('settings_deleted', 0)}, "
+        f"oauth_tokens={stats.get('oauth_tokens_deleted', 0)}, "
+        f"files_deleted={files_deleted}, "
+        f"files_failed={files_failed}"
+    )
+    
+    return {
+        "message": "Account deleted successfully",
+        "stats": {
+            **stats,
+            "files_deleted": files_deleted,
+            "files_failed": files_failed
+        }
+    }

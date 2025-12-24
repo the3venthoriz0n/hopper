@@ -65,6 +65,28 @@ def get_csrf_token(session_id: str) -> Optional[str]:
     return redis_client.get(key)
 
 
+def get_or_create_csrf_token(session_id: str) -> str:
+    """Get existing CSRF token or create new one if it doesn't exist
+    
+    Args:
+        session_id: Session ID
+        
+    Returns:
+        str: CSRF token
+    """
+    import secrets
+    
+    # Check Redis for existing token
+    csrf_token = get_csrf_token(session_id)
+    
+    # If no token in Redis, create one
+    if not csrf_token:
+        csrf_token = secrets.token_urlsafe(32)
+        set_csrf_token(session_id, csrf_token)
+    
+    return csrf_token
+
+
 def set_upload_progress(user_id: int, video_id: int, progress: int) -> None:
     """Store upload progress in Redis"""
     key = f"progress:{user_id}:{video_id}"
