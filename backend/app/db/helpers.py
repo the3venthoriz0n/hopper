@@ -324,21 +324,10 @@ def get_oauth_token(user_id: int, platform: str, db: Session = None) -> Optional
         ).first()
         
         if token:
-            # ROOT CAUSE FIX: Store original encrypted values before expunging
-            original_access_token = token.access_token
-            original_refresh_token = token.refresh_token
-            
-            # ROOT CAUSE FIX: Expunge token from session BEFORE modifying to prevent accidental saves
+            # ROOT CAUSE FIX: Expunge token from session to prevent accidental saves
+            # Do NOT decrypt here - let oauth_token_to_credentials handle decryption
+            # This prevents double decryption errors
             db.expunge(token)
-            
-            # Decrypt tokens (now safe since object is not in session)
-            try:
-                token.access_token = decrypt(original_access_token) if original_access_token else None
-                token.refresh_token = decrypt(original_refresh_token) if original_refresh_token else None
-            except ValueError as e:
-                # ROOT CAUSE FIX: decrypt() now raises ValueError on failure
-                logger.warning(f"Failed to decrypt token for user {user_id}, platform {platform}: {e}")
-                return None
         
         return token
     finally:
