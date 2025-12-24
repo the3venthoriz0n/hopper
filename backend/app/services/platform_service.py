@@ -9,7 +9,7 @@ from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-from app.core.config import settings
+from app.core.config import settings, INSTAGRAM_GRAPH_API_BASE
 from app.db.helpers import (
     get_oauth_token, check_token_expiration, oauth_token_to_credentials,
     credentials_to_oauth_token_data, save_oauth_token
@@ -19,6 +19,7 @@ from app.utils.encryption import decrypt
 
 tiktok_logger = logging.getLogger("tiktok")
 youtube_logger = logging.getLogger("youtube")
+instagram_logger = logging.getLogger("instagram")
 
 
 def get_tiktok_account_info(
@@ -525,4 +526,131 @@ def get_youtube_videos(
     finally:
         if should_close:
             db.close()
+
+
+# ============================================================================
+# INSTAGRAM ACCOUNT INFO
+# ============================================================================
+
+async def fetch_instagram_profile(access_token: str) -> Dict:
+    """
+    Fetch Instagram profile information using /me endpoint.
+    Returns dict with 'username' and 'business_account_id' (or None for each if failed).
+    This is the root cause fix - centralizes profile fetching logic.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            me_response = await client.get(
+                f"{INSTAGRAM_GRAPH_API_BASE}/me",
+                params={
+                    "fields": "id,username,account_type",
+                    "access_token": access_token
+                }
+            )
+            
+            if me_response.status_code == 200:
+                me_data = me_response.json()
+                username = me_data.get("username")
+                account_type = me_data.get("account_type")
+                # The id from /me is the Instagram Business Account ID (for posting content)
+                business_account_id = me_data.get("id")
+                instagram_logger.info(f"Profile fetched - Username: {username}, Account Type: {account_type}, Business Account ID: {business_account_id}")
+                return {
+                    "username": username,
+                    "business_account_id": business_account_id,
+                    "account_type": account_type
+                }
+            else:
+                error_text = me_response.text[:500]
+                instagram_logger.warning(f"Failed to fetch profile info (status {me_response.status_code}): {error_text}")
+                return {"username": None, "business_account_id": None, "account_type": None}
+    except Exception as e:
+        instagram_logger.warning(f"Error fetching profile info: {str(e)}")
+        return {"username": None, "business_account_id": None, "account_type": None}
+
+
+async def get_instagram_account_info(user_id: int, db: Session) -> Dict:
+    """Get Instagram account information (username) with caching"""
+    instagram_token = get_oauth_token(user_id, "instagram", db=db)
+    
+    if not instagram_token:
+        return {"account": None}
+    
+    try:
+        # Get username from extra_data (cached)
+        extra_data = instagram_token.extra_data or {}
+        username = extra_data.get("username")
+        business_account_id = extra_data.get("business_account_id")
+        
+        # Return cached info only if we have username (complete data)
+        if username:
+            account_info = {"username": username}
+            if business_account_id:
+                account_info["user_id"] = business_account_id
+            return {"account": account_info}
+        
+        # If not cached, fetch from Instagram API
+        access_token = decrypt(instagram_token.access_token)
+        if not access_token:
+            instagram_logger.warning(f"Failed to decrypt Instagram token for user {user_id}")
+            # Return None only if we truly can't identify the account
+            return {"account": None}
+        
+        # Fetch profile info with timeout
+        account_info = {}  # Start with empty dict, will populate with available info
+        try:
+            profile_info = await fetch_instagram_profile(access_token)
+            username = profile_info.get("username")
+            business_account_id = profile_info.get("business_account_id")
+            
+            # Build account info with whatever we have (similar to YouTube pattern)
+            if business_account_id:
+                account_info["user_id"] = business_account_id
+            if username:
+                account_info["username"] = username
+            
+            # Only return if we have username (complete data)
+            if username:
+                # Cache the info for future requests
+                extra_data["username"] = username
+                extra_data["business_account_id"] = business_account_id
+                save_oauth_token(
+                    user_id=user_id,
+                    platform="instagram",
+                    access_token=instagram_token.access_token,  # Already encrypted
+                    refresh_token=None,
+                    expires_at=instagram_token.expires_at,
+                    extra_data=extra_data,
+                    db=db
+                )
+                return {"account": account_info}
+            else:
+                # Don't return incomplete data (only user_id without username)
+                instagram_logger.warning(f"Failed to fetch Instagram username for user {user_id}")
+                return {"account": None}
+        except Exception as profile_error:
+            instagram_logger.warning(f"Could not fetch Instagram profile for user {user_id}: {str(profile_error)}")
+            # Return cached username if available, otherwise None
+            if username:
+                account_info = {"username": username}
+                if business_account_id:
+                    account_info["user_id"] = business_account_id
+                return {"account": account_info}
+            return {"account": None}
+        
+    except Exception as e:
+        instagram_logger.error(f"Error getting Instagram account info for user {user_id}: {str(e)}", exc_info=True)
+        # Try to return cached username if available (complete data only)
+        try:
+            extra_data = instagram_token.extra_data or {}
+            username = extra_data.get("username")
+            if username:
+                account_info = {"username": username}
+                business_account_id = extra_data.get("business_account_id")
+                if business_account_id:
+                    account_info["user_id"] = business_account_id
+                return {"account": account_info}
+        except:
+            pass
+        return {"account": None, "error": str(e)}
 

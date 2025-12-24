@@ -1,16 +1,26 @@
 """Authentication service - business logic for user authentication"""
 import bcrypt
+import logging
 import secrets
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
+from fastapi import Request
+import httpx
 from sqlalchemy.orm import Session
+from google_auth_oauthlib.flow import Flow
+
 from app.models.user import User
+from app.core.config import settings
+from app.core.metrics import login_attempts_counter
 from app.db.redis import (
     set_session, delete_session, set_email_verification_code,
     get_email_verification_code, delete_email_verification_code,
     set_pending_registration, get_pending_registration, delete_pending_registration,
     set_password_reset_token, get_password_reset_email, delete_password_reset_token,
-    delete_all_user_sessions, invalidate_all_user_caches
+    delete_all_user_sessions, invalidate_all_user_caches, redis_client
 )
+from app.services.video_service import get_google_client_config
+
+logger = logging.getLogger(__name__)
 
 
 def hash_password(password: str) -> str:
@@ -807,3 +817,125 @@ def delete_user_account_complete(user_id: int, db: Session) -> dict:
             "files_failed": files_failed
         }
     }
+
+
+# ============================================================================
+# GOOGLE OAUTH LOGIN
+# ============================================================================
+
+def initiate_google_oauth_login(request: Request) -> Dict[str, str]:
+    """Start Google OAuth login flow (for user authentication, not YouTube)"""
+    google_config = get_google_client_config()
+    if not google_config:
+        raise ValueError("Google OAuth credentials not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_PROJECT_ID environment variables.")
+    
+    # Build redirect URI dynamically based on request
+    protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" or settings.ENVIRONMENT == "production" else "http"
+    host = request.headers.get("host", settings.DOMAIN)
+    if ":" in host:
+        host = host.split(":")[0]
+    redirect_uri = f"{protocol}://{host}/api/auth/google/login/callback"
+    
+    # Create Flow from config dict with OpenID scopes for user authentication
+    flow = Flow.from_client_config(
+        google_config,
+        scopes=[
+            'openid',
+            'https://www.googleapis.com/auth/userinfo.email',
+            'https://www.googleapis.com/auth/userinfo.profile'
+        ],
+        redirect_uri=redirect_uri
+    )
+    
+    # Generate random state for security
+    state = secrets.token_urlsafe(32)
+    url, _ = flow.authorization_url(access_type='offline', state=state, prompt='select_account')
+    
+    # Store state in Redis for verification (5 minutes expiry)
+    # Prefix with environment to prevent collisions between dev/prod
+    redis_client.setex(f"{settings.ENVIRONMENT}:google_login_state:{state}", 300, "pending")
+    
+    return {"url": url}
+
+
+def complete_google_oauth_login(code: str, state: str, request: Request, db: Session) -> Tuple[Dict[str, str], str, bool]:
+    """
+    Complete Google OAuth login - verify state, exchange code, get user info, create/login user, create session
+    
+    Returns:
+        Tuple of (result_dict, session_id, is_new_user)
+    """
+    # Verify state to prevent CSRF
+    # Prefix with environment to prevent collisions between dev/prod
+    state_key = f"{settings.ENVIRONMENT}:google_login_state:{state}"
+    state_value = redis_client.get(state_key)
+    if not state_value:
+        # Track failed login attempt (invalid state)
+        login_attempts_counter.labels(status="failure", method="google").inc()
+        raise ValueError("Invalid state parameter")
+    
+    # Delete state after verification
+    redis_client.delete(state_key)
+    
+    # Build redirect URI dynamically
+    protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" or settings.ENVIRONMENT == "production" else "http"
+    host = request.headers.get("host", settings.DOMAIN)
+    if ":" in host:
+        host = host.split(":")[0]
+    redirect_uri = f"{protocol}://{host}/api/auth/google/login/callback"
+    
+    google_config = get_google_client_config()
+    if not google_config:
+        raise ValueError("Google OAuth credentials not configured")
+    
+    # Create flow and fetch token
+    flow = Flow.from_client_config(
+        google_config,
+        scopes=[
+            'openid',
+            'https://www.googleapis.com/auth/userinfo.email',
+            'https://www.googleapis.com/auth/userinfo.profile'
+        ],
+        redirect_uri=redirect_uri
+    )
+    
+    flow.fetch_token(code=code)
+    creds = flow.credentials
+    
+    # Get user info from Google
+    userinfo_response = httpx.get(
+        'https://www.googleapis.com/oauth2/v2/userinfo',
+        headers={'Authorization': f'Bearer {creds.token}'},
+        timeout=10.0
+    )
+    
+    if userinfo_response.status_code != 200:
+        # Track failed login attempt
+        login_attempts_counter.labels(status="failure", method="google").inc()
+        raise ValueError("Failed to fetch user info from Google")
+    
+    user_info = userinfo_response.json()
+    email = user_info.get('email')
+    
+    if not email:
+        # Track failed login attempt
+        login_attempts_counter.labels(status="failure", method="google").inc()
+        raise ValueError("Email not provided by Google")
+    
+    # Get or create user by email (links accounts automatically)
+    user, is_new = get_or_create_oauth_user(email, db=db)
+    
+    # Create session
+    session_id = secrets.token_urlsafe(32)
+    set_session(session_id, user.id)
+    
+    # Track successful login attempt
+    login_attempts_counter.labels(status="success", method="google").inc()
+    
+    action = "registered" if is_new else "logged in"
+    logger.info(f"User {action} via Google OAuth: {user.email} (ID: {user.id})")
+    
+    # Create redirect response (send user to the main app shell)
+    frontend_redirect = f"{settings.FRONTEND_URL}/app?google_login=success"
+    
+    return {"redirect_url": frontend_redirect}, session_id, is_new

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.security import require_auth, require_csrf_new
 from app.db.session import get_db
 from app.db import helpers as db_helpers
+from app.services.settings_service import get_destinations_status, toggle_destination
 
 router = APIRouter(prefix="/api", tags=["settings"])
 logger = logging.getLogger(__name__)
@@ -248,4 +249,51 @@ def update_instagram_settings(
         db_helpers.set_user_setting(user_id, "instagram", "disable_likes", disable_likes, db=db)
     
     return db_helpers.get_user_settings(user_id, "instagram", db=db)
+
+
+# ============================================================================
+# DESTINATIONS ROUTES
+# ============================================================================
+
+destinations_router = APIRouter(prefix="/api/destinations", tags=["destinations"])
+
+
+@destinations_router.get("")
+def get_destinations(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
+    """Get destination status for current user"""
+    try:
+        return get_destinations_status(user_id, db)
+    except Exception as e:
+        logger.error(f"Error getting destinations for user {user_id}: {e}", exc_info=True)
+        raise HTTPException(500, f"Failed to load destinations: {str(e)}")
+
+
+@destinations_router.post("/youtube/toggle")
+def toggle_youtube(
+    enabled: bool,
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
+    """Toggle YouTube destination on/off"""
+    return toggle_destination(user_id, "youtube", enabled, db)
+
+
+@destinations_router.post("/tiktok/toggle")
+def toggle_tiktok(
+    enabled: bool,
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
+    """Toggle TikTok destination on/off"""
+    return toggle_destination(user_id, "tiktok", enabled, db)
+
+
+@destinations_router.post("/instagram/toggle")
+def toggle_instagram(
+    enabled: bool,
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
+    """Toggle Instagram destination on/off"""
+    return toggle_destination(user_id, "instagram", enabled, db)
 

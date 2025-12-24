@@ -101,7 +101,7 @@ setup_cors_middleware(app)
 # Include routers
 app.include_router(auth.router)
 app.include_router(oauth.router)
-app.include_router(oauth.destinations_router)  # Separate router for /api/destinations
+app.include_router(settings_router.destinations_router)  # Separate router for /api/destinations
 app.include_router(settings_router.router)
 app.include_router(videos.router)
 app.include_router(videos.upload_router)  # Separate router for /api/upload
