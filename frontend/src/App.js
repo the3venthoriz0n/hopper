@@ -3830,8 +3830,17 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         marginTop: '4px',
                         flexWrap: 'wrap'
                       }}>
-                        {Object.entries(v.platform_statuses).map(([platform, status]) => {
-                          if (status === 'not_enabled') return null;
+                        {Object.entries(v.platform_statuses).map(([platform, statusData]) => {
+                          // Handle new format: statusData is now {status: "...", error: "..."}
+                          const status = typeof statusData === 'object' ? statusData.status : statusData;
+                          
+                          // Filter: Only show platforms that are enabled
+                          const isEnabled = 
+                            (platform === 'youtube' && youtube.enabled) ||
+                            (platform === 'tiktok' && tiktok.enabled) ||
+                            (platform === 'instagram' && instagram.enabled);
+                          
+                          if (!isEnabled || status === 'not_enabled') return null;
                           
                           const platformNames = {
                             youtube: 'YouTube',
@@ -4609,9 +4618,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         };
         
         const platformData = video.upload_properties?.[platform] || {};
-        const platformStatus = video.platform_statuses?.[platform] || 'pending';
+        const platformStatusData = video.platform_statuses?.[platform] || {status: 'pending', error: null};
+        // Handle both old format (string) and new format (object)
+        const platformStatus = typeof platformStatusData === 'object' ? platformStatusData.status : platformStatusData;
+        const platformErrorFromStatus = typeof platformStatusData === 'object' ? platformStatusData.error : null;
+        
         // Get error from multiple possible sources
-        let platformError = platformData.error || null;
+        let platformError = platformData.error || platformErrorFromStatus || null;
         if (!platformError && platform === 'tiktok') {
           platformError = video.tiktok_publish_error || null;
         }
