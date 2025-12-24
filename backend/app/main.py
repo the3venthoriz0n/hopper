@@ -1,15 +1,12 @@
 """FastAPI application entry point"""
 import asyncio
-import logging
-import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 
-from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from app.core.config import settings
+from app.core.logging import setup_logging, get_logger
 from app.core.otel import (
     initialize_otel, setup_otel_logging,
     instrument_fastapi, instrument_httpx, instrument_sqlalchemy
@@ -21,35 +18,13 @@ from app.db.session import engine, init_db
 from app.db.redis import redis_client
 from app.models import Base  # Import all models to register with Base.metadata
 
+# Configure logging first
+setup_logging()
+logger = get_logger(__name__)
+
 # Import routers
 from app.api import auth, oauth, videos, subscriptions, tokens, admin
 from app.api import settings as settings_router
-
-# Configure logging
-LOG_LEVEL = settings.LOG_LEVEL.upper()
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    force=True
-)
-
-# Silence noisy third-party libraries
-logging.getLogger("stripe").setLevel(logging.WARNING)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
-logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-
-logger = logging.getLogger(__name__)
-
-# Create specific loggers
-upload_logger = logging.getLogger("upload")
-cleanup_logger = logging.getLogger("cleanup")
-tiktok_logger = logging.getLogger("tiktok")
-youtube_logger = logging.getLogger("youtube")
-instagram_logger = logging.getLogger("instagram")
-security_logger = logging.getLogger("security")
-api_access_logger = logging.getLogger("api_access")
 
 
 @asynccontextmanager
