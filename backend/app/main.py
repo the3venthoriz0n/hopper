@@ -2,8 +2,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Response
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from fastapi import FastAPI
 
 from app.core.config import settings
 from app.core.logging import setup_logging, get_logger
@@ -23,7 +22,7 @@ setup_logging()
 logger = get_logger(__name__)
 
 # Import routers
-from app.api import auth, oauth, videos, subscriptions, tokens, admin
+from app.api import auth, oauth, videos, subscriptions, tokens, admin, monitoring
 from app.api import settings as settings_router
 
 
@@ -110,24 +109,10 @@ app.include_router(subscriptions.router)
 app.include_router(subscriptions.stripe_router)  # Separate router for /api/stripe
 app.include_router(tokens.router)
 app.include_router(admin.router)
+app.include_router(monitoring.router)
 
 # Security middleware
 app.middleware("http")(security_middleware)
 
 # Global exception handler
 app.exception_handler(Exception)(global_exception_handler)
-
-
-# Prometheus metrics endpoint
-@app.get("/metrics")
-def metrics_endpoint():
-    """Prometheus metrics endpoint"""
-    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
-
-
-# Health check endpoint
-@app.get("/health")
-def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy"}
-
