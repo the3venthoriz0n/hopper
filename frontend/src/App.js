@@ -2287,8 +2287,12 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         return hasTiktokUpload && isUploaded;
       });
       
-      if (res.data.uploaded !== undefined && res.data.uploaded > 0) {
-        setMessage(`✅ Uploaded ${res.data.uploaded} videos!`);
+      if (res.data.videos_uploaded !== undefined && res.data.videos_uploaded > 0) {
+        if (res.data.videos_failed > 0) {
+          setMessage(`⚠️ ${res.data.message || `Uploaded ${res.data.videos_uploaded} video(s), ${res.data.videos_failed} failed`}`);
+        } else {
+          setMessage(`✅ ${res.data.message || `Uploaded ${res.data.videos_uploaded} videos!`}`);
+        }
         // Show notification for TikTok only if TikTok uploads actually succeeded
         if (tiktok.enabled && hasSuccessfulTiktokUploads) {
           setNotification({
@@ -2296,9 +2300,10 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             title: 'Content Processing',
             message: 'Your content has been published successfully. It may take a few minutes for the content to process and be visible on your TikTok profile.',
           });
-          // Auto-dismiss after 15 seconds to ensure users see the important message
           setTimeout(() => setNotification(null), 15000);
         }
+      } else if (res.data.videos_failed > 0) {
+        setMessage(`❌ ${res.data.message || `Upload failed for ${res.data.videos_failed} video(s)`}`);
       } else if (res.data.scheduled !== undefined) {
         setMessage(`✅ ${res.data.scheduled} videos scheduled! ${res.data.message}`);
         // Don't show processing notification for scheduled uploads - they haven't been published yet
@@ -2311,7 +2316,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             title: 'Content Processing',
             message: 'Your content has been published successfully. It may take a few minutes for the content to process and be visible on your TikTok profile.',
           });
-          // Auto-dismiss after 15 seconds to ensure users see the important message
           setTimeout(() => setNotification(null), 15000);
         }
       }

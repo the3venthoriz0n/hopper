@@ -775,6 +775,9 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
     
     # If upload immediately is enabled, upload all at once to all enabled destinations
     if upload_immediately:
+        videos_succeeded = 0
+        videos_failed = 0
+        
         for video in pending_videos:
             video_id = video.id
             
@@ -826,6 +829,7 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
                 
                 if len(succeeded) == len(enabled_destinations):
                     update_video(video_id, user_id, db=db, status="uploaded")
+                    videos_succeeded += 1
                 elif len(succeeded) > 0:
                     # Partial success - preserve actual error if it's platform-specific, otherwise list failed destinations
                     if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
@@ -834,6 +838,7 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
                         # List which destinations succeeded and failed (like old implementation)
                         update_video(video_id, user_id, db=db, status="failed", 
                                    error=f"Partial upload: succeeded ({', '.join(succeeded)}), failed ({', '.join(failed)})")
+                    videos_failed += 1
                 else:
                     # All failed - preserve actual error if it's platform-specific, otherwise list failed destinations
                     if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
@@ -841,11 +846,21 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
                     else:
                         update_video(video_id, user_id, db=db, status="failed", 
                                    error=f"Upload failed for all destinations: {', '.join(failed)}")
+                    videos_failed += 1
+        
+        # Build appropriate message based on results
+        if videos_succeeded > 0 and videos_failed == 0:
+            message = f"Successfully uploaded {videos_succeeded} video(s) to all enabled destinations"
+        elif videos_succeeded > 0 and videos_failed > 0:
+            message = f"Uploaded {videos_succeeded} video(s) successfully, {videos_failed} failed"
+        else:
+            message = f"Upload failed for {videos_failed} video(s)"
         
         return {
             "ok": True,
-            "message": f"Uploaded {len(pending_videos)} video(s) to all enabled destinations",
-            "videos_uploaded": len(pending_videos)
+            "message": message,
+            "videos_uploaded": videos_succeeded,
+            "videos_failed": videos_failed
         }
     else:
         # Schedule uploads (scheduler will handle them)
