@@ -1152,8 +1152,8 @@ def map_privacy_level_to_tiktok(privacy_level, creator_info):
 
 def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
     """Upload a single video to YouTube - queries database directly"""
-    # Import metrics dynamically to avoid circular imports
-    from app.main import successful_uploads_counter, failed_uploads_gauge
+    # Import metrics from centralized location
+    from app.core.metrics import successful_uploads_counter, failed_uploads_gauge
     
     # Get video from database
     videos = get_user_videos(user_id, db=db)
@@ -1468,9 +1468,9 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
 
 
 def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, session_id: str = None):
-    """Upload video to TikTok using Content Posting API - queries database directly"""
-    # Import metrics dynamically to avoid circular imports
-    from app.main import successful_uploads_counter, failed_uploads_gauge
+    """Upload a single video to TikTok - queries database directly"""
+    # Import metrics from centralized location
+    from app.core.metrics import successful_uploads_counter, failed_uploads_gauge
     
     # Get video from database
     videos = get_user_videos(user_id, db=db)
@@ -2267,9 +2267,9 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
 
 
 async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = None):
-    """Upload video to Instagram using Graph API - queries database directly"""
-    # Import metrics dynamically to avoid circular imports
-    from app.main import successful_uploads_counter, failed_uploads_gauge
+    """Upload a single video to Instagram - queries database directly"""
+    # Import metrics from centralized location
+    from app.core.metrics import successful_uploads_counter, failed_uploads_gauge
     
     # Get video from database
     videos = get_user_videos(user_id, db=db)

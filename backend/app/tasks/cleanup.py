@@ -10,58 +10,13 @@ from app.db.session import SessionLocal
 from app.models.video import Video
 from app.services.video_service import cleanup_video_file
 
-# Prometheus metrics (import from main if available, otherwise create placeholder)
-try:
-    from prometheus_client import Counter, Gauge, REGISTRY
-    try:
-        cleanup_runs_counter = Counter(
-            'hopper_cleanup_runs_total',
-            'Total number of cleanup job runs',
-            ['status']
-        )
-    except ValueError:
-        cleanup_runs_counter = REGISTRY._names_to_collectors.get('hopper_cleanup_runs_total')
-    
-    try:
-        cleanup_files_removed_counter = Counter(
-            'hopper_cleanup_files_removed_total',
-            'Total number of files removed by cleanup job'
-        )
-    except ValueError:
-        cleanup_files_removed_counter = REGISTRY._names_to_collectors.get('hopper_cleanup_files_removed_total')
-    
-    try:
-        orphaned_videos_gauge = Gauge(
-            'hopper_orphaned_videos',
-            'Number of orphaned video files (files without database records)'
-        )
-    except ValueError:
-        orphaned_videos_gauge = REGISTRY._names_to_collectors.get('hopper_orphaned_videos')
-    
-    try:
-        storage_size_gauge = Gauge(
-            'hopper_storage_size_bytes',
-            'Storage size in bytes',
-            ['type']
-        )
-    except ValueError:
-        storage_size_gauge = REGISTRY._names_to_collectors.get('hopper_storage_size_bytes')
-except ImportError:
-    # Prometheus not available - create no-op metrics
-    class NoOpCounter:
-        def labels(self, **kwargs):
-            return self
-        def inc(self, value=1):
-            pass
-    class NoOpGauge:
-        def labels(self, **kwargs):
-            return self
-        def set(self, value):
-            pass
-    cleanup_runs_counter = NoOpCounter()
-    cleanup_files_removed_counter = NoOpCounter()
-    orphaned_videos_gauge = NoOpGauge()
-    storage_size_gauge = NoOpGauge()
+# Import Prometheus metrics from centralized location
+from app.core.metrics import (
+    cleanup_runs_counter,
+    cleanup_files_removed_counter,
+    orphaned_videos_gauge,
+    storage_size_gauge
+)
 
 cleanup_logger = logging.getLogger("cleanup")
 

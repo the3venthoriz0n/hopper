@@ -42,27 +42,8 @@ youtube_logger = logging.getLogger("youtube")
 tiktok_logger = logging.getLogger("tiktok")
 instagram_logger = logging.getLogger("instagram")
 
-# Prometheus metrics (import from main if available, otherwise create placeholder)
-try:
-    from prometheus_client import Counter
-    try:
-        login_attempts_counter = Counter(
-            'hopper_login_attempts_total',
-            'Total number of login attempts',
-            ['status', 'method']
-        )
-    except ValueError:
-        # Already registered
-        from prometheus_client import REGISTRY
-        login_attempts_counter = REGISTRY._names_to_collectors.get('hopper_login_attempts_total')
-except ImportError:
-    # Prometheus not available - create no-op counter
-    class NoOpCounter:
-        def labels(self, **kwargs):
-            return self
-        def inc(self, value=1):
-            pass
-    login_attempts_counter = NoOpCounter()
+# Import Prometheus metrics from centralized location
+from app.core.metrics import login_attempts_counter
 
 router = APIRouter(prefix="/api/auth", tags=["oauth"])
 

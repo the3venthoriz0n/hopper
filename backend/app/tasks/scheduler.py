@@ -14,43 +14,12 @@ from app.services.video_service import (
     DESTINATION_UPLOADERS, build_upload_context, check_upload_success, cleanup_video_file
 )
 
-# Prometheus metrics (import from main if available, otherwise create placeholder)
-try:
-    from prometheus_client import Counter, REGISTRY
-    try:
-        scheduler_runs_counter = Counter(
-            'hopper_scheduler_runs_total',
-            'Total number of scheduler job runs',
-            ['status']
-        )
-    except ValueError:
-        scheduler_runs_counter = REGISTRY._names_to_collectors.get('hopper_scheduler_runs_total')
-    
-    try:
-        scheduler_videos_processed_counter = Counter(
-            'hopper_scheduler_videos_processed_total',
-            'Total number of videos processed by scheduler'
-        )
-    except ValueError:
-        scheduler_videos_processed_counter = REGISTRY._names_to_collectors.get('hopper_scheduler_videos_processed_total')
-    
-    try:
-        successful_uploads_counter = Counter(
-            'hopper_successful_uploads_total',
-            'Total number of successful video uploads'
-        )
-    except ValueError:
-        successful_uploads_counter = REGISTRY._names_to_collectors.get('hopper_successful_uploads_total')
-except ImportError:
-    # Prometheus not available - create no-op metrics
-    class NoOpCounter:
-        def labels(self, **kwargs):
-            return self
-        def inc(self, value=1):
-            pass
-    scheduler_runs_counter = NoOpCounter()
-    scheduler_videos_processed_counter = NoOpCounter()
-    successful_uploads_counter = NoOpCounter()
+# Import Prometheus metrics from centralized location
+from app.core.metrics import (
+    successful_uploads_counter,
+    scheduler_runs_counter,
+    scheduler_videos_processed_counter
+)
 
 logger = logging.getLogger(__name__)
 upload_logger = logging.getLogger("upload")
