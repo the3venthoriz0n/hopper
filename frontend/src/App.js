@@ -5063,27 +5063,27 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 
                 {/* Override Configuration */}
                 <div className="setting-group">
-                  <label>Override Settings (Optional)</label>
-                  <div style={{ 
-                    fontSize: '0.85rem', 
-                    color: HOPPER_COLORS.grey,
-                    marginBottom: '1rem',
-                    fontStyle: 'italic'
-                  }}>
-                    Override default settings for this video on {platformNames[platform]} only
-                  </div>
+                  <label>
+                    Override Settings (Optional)
+                    <span className="tooltip-wrapper">
+                      <span className="tooltip-icon">i</span>
+                      <span className="tooltip-text">Override default settings for this video on {platformNames[platform]} only</span>
+                    </span>
+                  </label>
                   
                   {platform === 'youtube' && (
                     <>
                       <div className="setting-group">
-                        <label htmlFor={`dest-override-title-${video.id}-${platform}`}>Title</label>
+                        <label htmlFor={`dest-override-title-${video.id}-${platform}`}>
+                          Title <span className="char-counter">{(customSettings.youtube_title || platformData.title || '').length}/100</span>
+                        </label>
                         <input
                           type="text"
                           id={`dest-override-title-${video.id}-${platform}`}
                           defaultValue={customSettings.youtube_title || platformData.title || ''}
                           placeholder={platformData.title || video.filename}
                           maxLength={100}
-                          style={{ width: '100%' }}
+                          className="input-text"
                         />
                       </div>
                       
@@ -5094,7 +5094,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                           defaultValue={customSettings.description || platformData.description || ''}
                           placeholder={platformData.description || 'Enter description...'}
                           rows={4}
-                          style={{ width: '100%', resize: 'vertical' }}
+                          className="textarea-text"
                         />
                       </div>
                       
@@ -5103,9 +5103,9 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         <input
                           type="text"
                           id={`dest-override-tags-${video.id}-${platform}`}
-                          defaultValue={customSettings.tags || (Array.isArray(platformData.tags) ? platformData.tags.join(', ') : platformData.tags) || ''}
-                          placeholder={Array.isArray(platformData.tags) ? platformData.tags.join(', ') : platformData.tags || 'Enter tags...'}
-                          style={{ width: '100%' }}
+                          defaultValue={customSettings.tags || formatTags(platformData.tags) || ''}
+                          placeholder={formatTags(platformData.tags) || 'Enter tags...'}
+                          className="input-text"
                         />
                       </div>
                       
@@ -5114,7 +5114,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         <select
                           id={`dest-override-visibility-${video.id}-${platform}`}
                           defaultValue={customSettings.visibility || platformData.visibility || 'private'}
-                          style={{ width: '100%' }}
+                          className="select"
                         >
                           <option value="private">Private</option>
                           <option value="unlisted">Unlisted</option>
@@ -5139,14 +5139,16 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   {platform === 'tiktok' && (
                     <>
                       <div className="setting-group">
-                        <label htmlFor={`dest-override-title-${video.id}-${platform}`}>Title</label>
+                        <label htmlFor={`dest-override-title-${video.id}-${platform}`}>
+                          Title <span className="char-counter">{(customSettings.title || platformData.title || '').length}/2200</span>
+                        </label>
                         <input
                           type="text"
                           id={`dest-override-title-${video.id}-${platform}`}
                           defaultValue={customSettings.title || platformData.title || ''}
                           placeholder={platformData.title || 'Enter title...'}
                           maxLength={2200}
-                          style={{ width: '100%' }}
+                          className="input-text"
                         />
                       </div>
                       
@@ -5155,12 +5157,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         <select
                           id={`dest-override-privacy-${video.id}-${platform}`}
                           defaultValue={customSettings.privacy_level || platformData.privacy_level || ''}
-                          style={{ width: '100%' }}
+                          className="select"
                         >
                           <option value="">Use default</option>
                           <option value="PUBLIC_TO_EVERYONE">Public to Everyone</option>
-                          <option value="FRIENDS">Friends</option>
-                          <option value="SELF_ONLY">Self Only</option>
+                          <option value="MUTUAL_FOLLOW_FRIENDS">Friends</option>
+                          <option value="FOLLOWER_OF_CREATOR">Followers</option>
+                          <option value="SELF_ONLY">Only you</option>
                         </select>
                       </div>
                     </>
@@ -5169,14 +5172,16 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   {platform === 'instagram' && (
                     <>
                       <div className="setting-group">
-                        <label htmlFor={`dest-override-caption-${video.id}-${platform}`}>Caption</label>
+                        <label htmlFor={`dest-override-caption-${video.id}-${platform}`}>
+                          Caption <span className="char-counter">{(customSettings.caption || platformData.caption || '').length}/2200</span>
+                        </label>
                         <textarea
                           id={`dest-override-caption-${video.id}-${platform}`}
                           defaultValue={customSettings.caption || platformData.caption || ''}
                           placeholder={platformData.caption || 'Enter caption...'}
                           rows={4}
                           maxLength={2200}
-                          style={{ width: '100%', resize: 'vertical' }}
+                          className="textarea-text"
                         />
                       </div>
                     </>
