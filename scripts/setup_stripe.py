@@ -334,11 +334,19 @@ def create_or_update_products() -> Dict[str, Dict[str, Any]]:
 
 def save_config(plans: Dict[str, Dict[str, Any]], mode: str) -> bool:
     """Save plans configuration to JSON file."""
-    # Write to backend/ directory (same directory as this script)
-    config_dir = os.path.dirname(os.path.abspath(__file__))
+    # Write to backend/app/core/assets/ directory (new directory structure)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # script_dir is hopper/scripts/, so go up one level to hopper/, then to backend/app/core/assets/
+    project_root = os.path.dirname(script_dir)  # hopper/
+    config_dir = os.path.join(project_root, 'backend', 'app', 'core', 'assets')
+    
+    # Create directory if it doesn't exist
+    os.makedirs(config_dir, exist_ok=True)
+    
     config_file = os.path.join(config_dir, f'stripe_plans_{mode}.json')
     
     print(f"\n{'='*60}\nSaving Configuration\n{'='*60}")
+    print(f"Directory: {config_dir}")
     print(f"File: {config_file}\n")
     
     try:
