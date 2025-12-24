@@ -340,22 +340,32 @@ def get_platform_statuses(video: Video, dest_settings: Dict[str, Any], all_token
         # Check if upload succeeded (has platform ID)
         has_id = any(bool(custom_settings.get(key)) for key in id_keys)
         
+        # ROOT CAUSE FIX: If platform has ID, it succeeded - don't check error message
         if has_id:
             platform_statuses[platform_name] = 'success'
-        elif video.status == 'failed':
-            # Check if error mentions this platform
-            # Check for "Platform:" prefix (format_platform_error format)
+            continue
+        
+        # Platform has no ID - determine status based on error and video status
+        if video.status == 'failed':
+            # Check if error explicitly mentions this platform FAILED
+            # Check for "Platform:" prefix (format_platform_error format) - this means platform failed
             platform_capitalized = platform_name.capitalize()
             error_starts_with_platform = error.startswith(platform_name.lower() + ':') or error.startswith(platform_capitalized.lower() + ':')
-            # Check for platform keywords
-            error_has_keywords = any(keyword in error for keyword in error_keywords)
             # Check if platform name appears in failed destinations list (e.g., "failed (tiktok)")
             error_has_failed_list = f"failed ({platform_name}" in error
             
-            if error_starts_with_platform or error_has_keywords or error_has_failed_list:
+            # Only check keywords if they appear in context of failure (not in success list)
+            # Check if platform appears in succeeded list - if so, don't mark as failed
+            error_has_succeeded_list = f"succeeded ({platform_name}" in error
+            
+            if error_starts_with_platform or error_has_failed_list:
+                # Error explicitly mentions this platform failed
                 platform_statuses[platform_name] = 'failed'
+            elif error_has_succeeded_list:
+                # Platform is in succeeded list - should have ID but doesn't, mark as pending
+                platform_statuses[platform_name] = 'pending'
             else:
-                # Error doesn't mention this platform - check if other platforms succeeded
+                # Check if other platforms succeeded (partial success scenario)
                 other_platforms_succeeded = any(
                     status == 'success' for p, status in platform_statuses.items() if p != platform_name
                 )
@@ -363,8 +373,14 @@ def get_platform_statuses(video: Video, dest_settings: Dict[str, Any], all_token
                     # Other platforms succeeded, this one has no ID = it failed
                     platform_statuses[platform_name] = 'failed'
                 else:
-                    # No other platforms succeeded - if video status is 'failed' and platform has no ID, it failed
-                    platform_statuses[platform_name] = 'failed'
+                    # Check if error has platform keywords (but not in success context)
+                    # Only mark as failed if keywords appear AND not in success list
+                    error_has_keywords = any(keyword in error for keyword in error_keywords)
+                    if error_has_keywords:
+                        platform_statuses[platform_name] = 'failed'
+                    else:
+                        # No clear indication - mark as failed since video status is failed
+                        platform_statuses[platform_name] = 'failed'
         elif video.status == 'uploaded' or video.status == 'completed':
             # Video marked as uploaded/completed but no ID for this platform
             # This means it failed for this platform (partial success scenario)
