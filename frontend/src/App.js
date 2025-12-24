@@ -5186,8 +5186,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
       
       {/* Account Settings Modal */}
       {showAccountSettings && (
