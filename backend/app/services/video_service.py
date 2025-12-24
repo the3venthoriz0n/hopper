@@ -54,6 +54,26 @@ instagram_logger = logging.getLogger("instagram")
 TOKEN_REFRESH_LOCK_TIMEOUT = 10  # seconds
 DATA_REFRESH_COOLDOWN = 60  # seconds
 
+# Platform configuration - DRY, extensible, single source of truth
+# To add a new platform, just add an entry here
+PLATFORM_CONFIG = {
+    'youtube': {
+        'enabled_key': 'youtube_enabled',
+        'id_keys': ['youtube_id'],
+        'error_keywords': ['youtube', 'google'],
+    },
+    'tiktok': {
+        'enabled_key': 'tiktok_enabled',
+        'id_keys': ['tiktok_id', 'tiktok_publish_id'],
+        'error_keywords': ['tiktok'],
+    },
+    'instagram': {
+        'enabled_key': 'instagram_enabled',
+        'id_keys': ['instagram_id', 'instagram_container_id'],
+        'error_keywords': ['instagram', 'facebook'],
+    },
+}
+
 
 # ============================================================================
 # HELPER FUNCTIONS
@@ -270,7 +290,7 @@ def build_video_response(video: Video, all_settings: Dict[str, Dict], all_tokens
 
 
 def check_upload_success(video: Video, dest_name: str) -> bool:
-    """Check if upload to a destination succeeded based on video state
+    """Check if upload to a destination succeeded based on video state (DRY, extensible)
     
     Args:
         video: Video object to check
@@ -279,19 +299,18 @@ def check_upload_success(video: Video, dest_name: str) -> bool:
     Returns:
         True if upload succeeded, False otherwise
     """
-    custom_settings = video.custom_settings or {}
+    config = PLATFORM_CONFIG.get(dest_name)
+    if not config:
+        return False
     
-    if dest_name == 'youtube':
-        return bool(custom_settings.get('youtube_id'))
-    elif dest_name == 'tiktok':
-        return bool(custom_settings.get('tiktok_id') or custom_settings.get('tiktok_publish_id'))
-    elif dest_name == 'instagram':
-        return bool(custom_settings.get('instagram_id') or custom_settings.get('instagram_container_id'))
-    return False
+    custom_settings = video.custom_settings or {}
+    id_keys = config['id_keys']
+    # Check if any ID key exists and has a value
+    return any(bool(custom_settings.get(key)) for key in id_keys)
 
 
 def get_platform_statuses(video: Video, dest_settings: Dict[str, Any], all_tokens: Dict[str, Optional[OAuthToken]]) -> Dict[str, str]:
-    """Get upload status for each enabled platform
+    """Get upload status for each enabled platform (DRY, extensible)
     
     Args:
         video: Video object to check
@@ -305,14 +324,12 @@ def get_platform_statuses(video: Video, dest_settings: Dict[str, Any], all_token
     platform_statuses = {}
     error = (video.error or '').lower()
     
-    # Check each platform
-    platforms = {
-        'youtube': ('youtube_enabled', 'youtube_id', ['youtube', 'google']),
-        'tiktok': ('tiktok_enabled', ('tiktok_id', 'tiktok_publish_id'), ['tiktok']),
-        'instagram': ('instagram_enabled', ('instagram_id', 'instagram_container_id'), ['instagram', 'facebook'])
-    }
-    
-    for platform_name, (enabled_key, id_keys, error_keywords) in platforms.items():
+    # Process each platform using configuration
+    for platform_name, config in PLATFORM_CONFIG.items():
+        enabled_key = config['enabled_key']
+        id_keys = config['id_keys']
+        error_keywords = config['error_keywords']
+        
         is_enabled = dest_settings.get(enabled_key, False)
         has_token = all_tokens.get(platform_name) is not None
         
@@ -321,33 +338,32 @@ def get_platform_statuses(video: Video, dest_settings: Dict[str, Any], all_token
             continue
         
         # Check if upload succeeded (has platform ID)
-        if platform_name == 'youtube':
-            has_id = bool(custom_settings.get(id_keys))
-        elif platform_name == 'tiktok':
-            has_id = bool(custom_settings.get(id_keys[0]) or custom_settings.get(id_keys[1]))
-        else:  # instagram
-            has_id = bool(custom_settings.get(id_keys[0]) or custom_settings.get(id_keys[1]))
+        has_id = any(bool(custom_settings.get(key)) for key in id_keys)
         
         if has_id:
             platform_statuses[platform_name] = 'success'
         elif video.status == 'failed':
             # Check if error mentions this platform
-            error_mentions_platform = any(keyword in error for keyword in error_keywords)
-            if error_mentions_platform:
+            # Check for "Platform:" prefix (format_platform_error format)
+            platform_capitalized = platform_name.capitalize()
+            error_starts_with_platform = error.startswith(platform_name.lower() + ':') or error.startswith(platform_capitalized.lower() + ':')
+            # Check for platform keywords
+            error_has_keywords = any(keyword in error for keyword in error_keywords)
+            # Check if platform name appears in failed destinations list (e.g., "failed (tiktok)")
+            error_has_failed_list = f"failed ({platform_name}" in error
+            
+            if error_starts_with_platform or error_has_keywords or error_has_failed_list:
                 platform_statuses[platform_name] = 'failed'
             else:
-                # Error doesn't mention this platform - might be pending or failed silently
-                # Check if other platforms succeeded (partial success scenario)
+                # Error doesn't mention this platform - check if other platforms succeeded
                 other_platforms_succeeded = any(
                     status == 'success' for p, status in platform_statuses.items() if p != platform_name
                 )
                 if other_platforms_succeeded:
-                    # Other platforms succeeded, this one likely failed
+                    # Other platforms succeeded, this one has no ID = it failed
                     platform_statuses[platform_name] = 'failed'
                 else:
-                    # ROOT CAUSE FIX: If video status is 'failed' and this platform is enabled,
-                    # it was attempted and failed (even if error doesn't mention it explicitly).
-                    # Only mark as 'pending' if video hasn't been attempted yet.
+                    # No other platforms succeeded - if video status is 'failed' and platform has no ID, it failed
                     platform_statuses[platform_name] = 'failed'
         elif video.status == 'uploaded' or video.status == 'completed':
             # Video marked as uploaded/completed but no ID for this platform

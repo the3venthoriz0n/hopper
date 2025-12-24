@@ -4615,9 +4615,25 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         if (!platformError && platform === 'tiktok') {
           platformError = video.tiktok_publish_error || null;
         }
-        // If no platform-specific error but video failed, show general error
+        // If no platform-specific error but video failed, try to extract platform-specific error from general error
         if (!platformError && platformStatus === 'failed' && video.error) {
-          platformError = video.error;
+          // Check if the general error message mentions this platform
+          const platformKeywords = {
+            youtube: ['youtube', 'google'],
+            tiktok: ['tiktok'],
+            instagram: ['instagram', 'facebook']
+          };
+          const keywords = platformKeywords[platform] || [];
+          const errorLower = video.error.toLowerCase();
+          
+          // If error mentions this platform, use it
+          if (keywords.some(keyword => errorLower.includes(keyword))) {
+            platformError = video.error;
+          } else if (!video.error.includes('Upload failed for all destinations') && 
+                     !video.error.includes('but failed for others')) {
+            // If error doesn't mention platform but isn't generic, show it anyway
+            platformError = video.error;
+          }
         }
         const customSettings = video.custom_settings || {};
         

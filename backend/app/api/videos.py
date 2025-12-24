@@ -683,13 +683,29 @@ async def retry_failed_upload(video_id: int, user_id: int = Depends(require_csrf
                 upload_logger.error(f"Retry upload failed for {dest_name}: {upload_err}")
                 # Continue to next destination
     
-    # Update final status
+    # Update final status - preserve actual error messages
+    updated_video = db.query(Video).filter(Video.id == video_id).first()
+    actual_error = updated_video.error if updated_video else None
+    
     if len(succeeded_destinations) == len(enabled_destinations):
         update_video(video_id, user_id, db=db, status="uploaded")
     elif len(succeeded_destinations) > 0:
-        update_video(video_id, user_id, db=db, status="failed", error=f"Upload succeeded for {', '.join(succeeded_destinations)} but failed for others")
+        # Partial success - preserve actual error if it's platform-specific, otherwise list failed destinations
+        failed_destinations = [d for d in enabled_destinations if d not in succeeded_destinations]
+        if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
+            update_video(video_id, user_id, db=db, status="failed", error=actual_error)
+        else:
+            # List which destinations succeeded and failed (like old implementation)
+            update_video(video_id, user_id, db=db, status="failed", 
+                       error=f"Partial upload: succeeded ({', '.join(succeeded_destinations)}), failed ({', '.join(failed_destinations)})")
     else:
-        update_video(video_id, user_id, db=db, status="failed", error="Upload failed for all destinations")
+        # All failed - preserve actual error if it's platform-specific, otherwise list failed destinations
+        failed_destinations = [d for d in enabled_destinations if d not in succeeded_destinations]
+        if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
+            update_video(video_id, user_id, db=db, status="failed", error=actual_error)
+        else:
+            update_video(video_id, user_id, db=db, status="failed", 
+                       error=f"Upload failed for all destinations: {', '.join(failed_destinations)}")
     
     return {
         "ok": True,
@@ -766,6 +782,7 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
             update_video(video_id, user_id, db=db, status="uploading")
             
             # Upload to all enabled destinations
+            failed_destinations = []
             for dest_name in enabled_destinations:
                 uploader_func = DESTINATION_UPLOADERS.get(dest_name)
                 if uploader_func:
@@ -778,20 +795,39 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
                         upload_logger.error(f"Upload failed for {dest_name}: {upload_err}")
                         # Continue to next destination
             
-            # Check final status
+            # Check final status and collect actual error messages
             updated_video = db.query(Video).filter(Video.id == video_id).first()
             if updated_video:
                 succeeded = []
+                failed = []
+                error_messages = []
+                
                 for dest_name in enabled_destinations:
                     if check_upload_success(updated_video, dest_name):
                         succeeded.append(dest_name)
+                    else:
+                        failed.append(dest_name)
+                
+                # Get actual error message from video if it exists
+                actual_error = updated_video.error
                 
                 if len(succeeded) == len(enabled_destinations):
                     update_video(video_id, user_id, db=db, status="uploaded")
                 elif len(succeeded) > 0:
-                    update_video(video_id, user_id, db=db, status="failed", error=f"Upload succeeded for {', '.join(succeeded)} but failed for others")
+                    # Partial success - preserve actual error if it's platform-specific, otherwise list failed destinations
+                    if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
+                        update_video(video_id, user_id, db=db, status="failed", error=actual_error)
+                    else:
+                        # List which destinations succeeded and failed (like old implementation)
+                        update_video(video_id, user_id, db=db, status="failed", 
+                                   error=f"Partial upload: succeeded ({', '.join(succeeded)}), failed ({', '.join(failed)})")
                 else:
-                    update_video(video_id, user_id, db=db, status="failed", error="Upload failed for all destinations")
+                    # All failed - preserve actual error if it's platform-specific, otherwise list failed destinations
+                    if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
+                        update_video(video_id, user_id, db=db, status="failed", error=actual_error)
+                    else:
+                        update_video(video_id, user_id, db=db, status="failed", 
+                                   error=f"Upload failed for all destinations: {', '.join(failed)}")
         
         return {
             "ok": True,
