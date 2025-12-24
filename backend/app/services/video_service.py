@@ -59,6 +59,25 @@ DATA_REFRESH_COOLDOWN = 60  # seconds
 # HELPER FUNCTIONS
 # ============================================================================
 
+def format_platform_error(platform: str, error_message: str) -> str:
+    """Format error message with platform name prefix (DRY, extensible)
+    
+    Args:
+        platform: Platform name (e.g., 'youtube', 'tiktok', 'instagram')
+        error_message: The error message to format
+        
+    Returns:
+        Formatted error message with platform prefix
+    """
+    # Capitalize platform name for display
+    platform_display = platform.capitalize()
+    
+    # If error already starts with platform name, don't duplicate
+    if error_message.lower().startswith(platform.lower()):
+        return error_message
+    
+    return f"{platform_display}: {error_message}"
+
 def build_upload_context(user_id: int, db: Session) -> Dict[str, Any]:
     """Build upload context for a user (enabled destinations, settings, tokens)
     
@@ -326,8 +345,10 @@ def get_platform_statuses(video: Video, dest_settings: Dict[str, Any], all_token
                     # Other platforms succeeded, this one likely failed
                     platform_statuses[platform_name] = 'failed'
                 else:
-                    # Still pending or not attempted yet
-                    platform_statuses[platform_name] = 'pending'
+                    # ROOT CAUSE FIX: If video status is 'failed' and this platform is enabled,
+                    # it was attempted and failed (even if error doesn't mention it explicitly).
+                    # Only mark as 'pending' if video hasn't been attempted yet.
+                    platform_statuses[platform_name] = 'failed'
         elif video.status == 'uploaded' or video.status == 'completed':
             # Video marked as uploaded/completed but no ID for this platform
             # This means it failed for this platform (partial success scenario)
@@ -1168,7 +1189,7 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
         if not check_tokens_available(user_id, tokens_required, db):
             balance_info = get_token_balance(user_id, db)
             tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
-            error_msg = f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining"
+            error_msg = format_platform_error("youtube", f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining")
             
             # Log with comprehensive context
             youtube_logger.error(
@@ -1194,7 +1215,7 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
     # Get YouTube credentials from database
     youtube_token = get_oauth_token(user_id, "youtube", db=db)
     if not youtube_token:
-            error_msg = "No YouTube credentials"
+            error_msg = format_platform_error("youtube", "No credentials")
             youtube_logger.error(
                 f"❌ YouTube upload FAILED - No credentials - User {user_id}, Video {video_id} ({video.filename})",
                 extra={
@@ -1212,13 +1233,13 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
     # Convert OAuth token to Google Credentials
     youtube_creds = oauth_token_to_credentials(youtube_token, db=db)
     if not youtube_creds:
-        update_video(video_id, user_id, db=db, status="failed", error="Failed to convert YouTube token to credentials")
+        update_video(video_id, user_id, db=db, status="failed", error=format_platform_error("youtube", "Failed to convert token to credentials"))
         youtube_logger.error("Failed to convert YouTube token to credentials")
         return
     
     # Check if refresh_token is present (required for token refresh)
     if not youtube_creds.refresh_token:
-        error_msg = 'YouTube refresh token is missing. Please disconnect and reconnect YouTube.'
+        error_msg = format_platform_error("youtube", "Refresh token is missing. Please disconnect and reconnect YouTube.")
         update_video(video_id, user_id, db=db, status="failed", error=error_msg)
         youtube_logger.error(error_msg)
         return
@@ -1231,7 +1252,7 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
             
             # ROOT CAUSE FIX: Validate credentials after refresh
             if not youtube_creds.token:
-                error_msg = 'Failed to refresh YouTube token: No access token returned after refresh. Please disconnect and reconnect YouTube.'
+                error_msg = format_platform_error("youtube", "Failed to refresh token: No access token returned after refresh. Please disconnect and reconnect YouTube.")
                 update_video(video_id, user_id, db=db, status="failed", error=error_msg)
                 youtube_logger.error(error_msg)
                 return
@@ -1243,7 +1264,7 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
             
             # ROOT CAUSE FIX: Additional validation (credentials_to_oauth_token_data now raises on None, but double-check)
             if not token_data.get("access_token"):
-                error_msg = 'Failed to refresh YouTube token: No access token in token data. Please disconnect and reconnect YouTube.'
+                error_msg = format_platform_error("youtube", "Failed to refresh token: No access token in token data. Please disconnect and reconnect YouTube.")
                 update_video(video_id, user_id, db=db, status="failed", error=error_msg)
                 youtube_logger.error(error_msg)
                 return
@@ -1260,12 +1281,12 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
             youtube_logger.debug("YouTube token refreshed successfully")
         except ValueError as ve:
             # ROOT CAUSE FIX: Handle validation errors from credentials_to_oauth_token_data
-            error_msg = f'Failed to refresh YouTube token: {str(ve)}. Please disconnect and reconnect YouTube.'
+            error_msg = format_platform_error("youtube", f"Failed to refresh token: {str(ve)}. Please disconnect and reconnect YouTube.")
             update_video(video_id, user_id, db=db, status="failed", error=error_msg)
             youtube_logger.error(error_msg, exc_info=True)
             return
         except Exception as refresh_error:
-            error_msg = f'Failed to refresh YouTube token: {str(refresh_error)}. Please disconnect and reconnect YouTube.'
+            error_msg = format_platform_error("youtube", f"Failed to refresh token: {str(refresh_error)}. Please disconnect and reconnect YouTube.")
             update_video(video_id, user_id, db=db, status="failed", error=error_msg)
             youtube_logger.error(error_msg, exc_info=True)
             return
@@ -1348,7 +1369,7 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
         
         # Verify file exists before attempting upload
         if not video_path.exists():
-            error_msg = f"Video file not found: {video_path}"
+            error_msg = format_platform_error("youtube", f"Video file not found: {video_path}")
             youtube_logger.error(
                 f"❌ YouTube upload FAILED - File not found - User {user_id}, Video {video_id} ({video.filename}): "
                 f"Path: {video_path}",
@@ -1459,7 +1480,7 @@ def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
         )
         
         # Update video status with detailed error
-        detailed_error = f"YouTube upload failed: {error_type}: {error_msg}"
+        detailed_error = format_platform_error("youtube", f"Upload failed: {error_type}: {error_msg}")
         update_video(video_id, user_id, db=db, status="failed", error=detailed_error)
         delete_upload_progress(user_id, video_id)
         
@@ -1485,7 +1506,7 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
         if not check_tokens_available(user_id, tokens_required, db):
             balance_info = get_token_balance(user_id, db)
             tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
-            error_msg = f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining"
+            error_msg = format_platform_error("tiktok", f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining")
             
             tiktok_logger.error(
                 f"❌ TikTok upload FAILED - Insufficient tokens - User {user_id}, Video {video_id} ({video.filename}): "
@@ -1510,7 +1531,7 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
     # Get TikTok credentials from database
     tiktok_token = get_oauth_token(user_id, "tiktok", db=db)
     if not tiktok_token:
-            error_msg = "No TikTok credentials"
+            error_msg = format_platform_error("tiktok", "No credentials")
             tiktok_logger.error(
                 f"❌ TikTok upload FAILED - No credentials - User {user_id}, Video {video_id} ({video.filename})",
                 extra={
@@ -1528,7 +1549,7 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
     # Decrypt access token
     access_token = decrypt(tiktok_token.access_token)
     if not access_token or not access_token.strip():
-        error_msg = "TikTok: Access token is missing or invalid. Please reconnect your TikTok account."
+        error_msg = format_platform_error("tiktok", "Access token is missing or invalid. Please reconnect your TikTok account.")
         tiktok_logger.error(
             f"❌ TikTok token is empty or invalid - User {user_id}, Video {video_id} ({video.filename})",
             extra={
@@ -1556,7 +1577,7 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                     raise Exception("Failed to retrieve token after refresh")
                 tiktok_logger.info(f"Successfully refreshed TikTok token for user {user_id}")
             except Exception as refresh_error:
-                error_msg = f"TikTok: Failed to refresh access token. Please reconnect your TikTok account. Error: {str(refresh_error)}"
+                error_msg = format_platform_error("tiktok", f"Failed to refresh access token. Please reconnect your TikTok account. Error: {str(refresh_error)}")
                 tiktok_logger.error(
                     f"❌ TikTok token refresh FAILED - User {user_id}, Video {video_id} ({video.filename}): {refresh_error}",
                     extra={
@@ -1572,7 +1593,7 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
                 failed_uploads_gauge.inc()
                 return
         else:
-            error_msg = "TikTok: Access token expired and no refresh token available. Please reconnect your TikTok account."
+            error_msg = format_platform_error("tiktok", "Access token expired and no refresh token available. Please reconnect your TikTok account.")
             tiktok_logger.error(
                 f"❌ TikTok token expired with no refresh token - User {user_id}, Video {video_id} ({video.filename})",
                 extra={
@@ -2259,7 +2280,7 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
             exc_info=True
         )
         
-        detailed_error = f"TikTok upload failed: {error_type}: {error_msg}"
+        detailed_error = format_platform_error("tiktok", f"Upload failed: {error_type}: {error_msg}")
         update_video(video_id, user_id, db=db, status="failed", error=detailed_error)
         delete_upload_progress(user_id, video_id)
         
@@ -2284,7 +2305,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         if not check_tokens_available(user_id, tokens_required, db):
             balance_info = get_token_balance(user_id, db)
             tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
-            error_msg = f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining"
+            error_msg = format_platform_error("instagram", f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining")
             
             instagram_logger.error(
                 f"❌ Instagram upload FAILED - Insufficient tokens - User {user_id}, Video {video_id} ({video.filename}): "
@@ -2309,7 +2330,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
     # Get Instagram credentials from database
     instagram_token = get_oauth_token(user_id, "instagram", db=db)
     if not instagram_token:
-            error_msg = "No Instagram credentials"
+            error_msg = format_platform_error("instagram", "No credentials")
             instagram_logger.error(
                 f"❌ Instagram upload FAILED - No credentials - User {user_id}, Video {video_id} ({video.filename})",
                 extra={
@@ -2327,7 +2348,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
     # Decrypt access token
     access_token = decrypt(instagram_token.access_token)
     if not access_token:
-        update_video(video_id, user_id, db=db, status="failed", error="Failed to decrypt Instagram token")
+        update_video(video_id, user_id, db=db, status="failed", error=format_platform_error("instagram", "Failed to decrypt token"))
         instagram_logger.error("Failed to decrypt Instagram token")
         return
     
@@ -2335,7 +2356,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
     extra_data = instagram_token.extra_data or {}
     business_account_id = extra_data.get("business_account_id")
     if not business_account_id:
-        update_video(video_id, user_id, db=db, status="failed", error="No Instagram Business Account ID. Please reconnect your Instagram account.")
+        update_video(video_id, user_id, db=db, status="failed", error=format_platform_error("instagram", "No Business Account ID. Please reconnect your Instagram account."))
         instagram_logger.error("No Instagram Business Account ID")
         return
     
@@ -2352,7 +2373,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         # Get video file
         video_path = Path(video.path).resolve()
         if not video_path.exists():
-            error_msg = f"Video file not found: {video_path}"
+            error_msg = format_platform_error("instagram", f"Video file not found: {video_path}")
             instagram_logger.error(
                 f"❌ Instagram upload FAILED - File not found - User {user_id}, Video {video_id} ({video.filename}): "
                 f"Path: {video_path}",
@@ -2706,7 +2727,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             exc_info=True
         )
         
-        detailed_error = f"Instagram upload failed: {error_type}: {error_msg}"
+        detailed_error = format_platform_error("instagram", f"Upload failed: {error_type}: {error_msg}")
         update_video(video_id, user_id, db=db, status="failed", error=detailed_error)
         delete_upload_progress(user_id, video_id)
         

@@ -3861,20 +3861,23 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                             );
                           }
                           
-                          // Determine border color based on status
-                          let borderColor, backgroundColor, title;
+                          // Determine border color based on status using design system colors
+                          let borderColor, backgroundColor, boxShadow, title;
                           if (status === 'success') {
-                            borderColor = '#22c55e'; // Green
-                            backgroundColor = 'rgba(34, 197, 94, 0.1)';
+                            borderColor = HOPPER_COLORS.success;
+                            backgroundColor = rgba(HOPPER_COLORS.rgb.success, 0.1);
+                            boxShadow = `0 0 8px ${rgba(HOPPER_COLORS.rgb.success, 0.4)}`;
                             title = `${platformNames[platform]}: Upload successful - Click to view/edit`;
                           } else if (status === 'failed') {
-                            borderColor = '#ef4444'; // Red
-                            backgroundColor = 'rgba(239, 68, 68, 0.1)';
+                            borderColor = HOPPER_COLORS.error;
+                            backgroundColor = rgba(HOPPER_COLORS.rgb.error, 0.1);
+                            boxShadow = `0 0 8px ${rgba(HOPPER_COLORS.rgb.error, 0.4)}`;
                             title = `${platformNames[platform]}: Upload failed - Click to view errors/edit`;
                           } else {
                             // Pending
-                            borderColor = 'rgba(255, 255, 255, 0.2)';
-                            backgroundColor = 'rgba(255, 255, 255, 0.05)';
+                            borderColor = rgba(HOPPER_COLORS.rgb.white, 0.2);
+                            backgroundColor = rgba(HOPPER_COLORS.rgb.white, 0.05);
+                            boxShadow = 'none';
                             title = `${platformNames[platform]}: Will upload to this platform - Click to configure`;
                           }
                           
@@ -3899,12 +3902,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                 transition: 'all 0.2s ease',
                                 opacity: status === 'pending' ? 0.7 : 1,
                                 minWidth: '32px',
-                                height: '28px'
+                                height: '28px',
+                                boxShadow: boxShadow
                               }}
                               onMouseEnter={(e) => {
                                 if (status === 'pending') {
                                   e.currentTarget.style.opacity = '1';
-                                  e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.5)';
+                                  e.currentTarget.style.borderColor = rgba(HOPPER_COLORS.rgb.info, 0.5);
                                 } else {
                                   e.currentTarget.style.transform = 'scale(1.05)';
                                 }
@@ -3912,7 +3916,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                               onMouseLeave={(e) => {
                                 if (status === 'pending') {
                                   e.currentTarget.style.opacity = '0.7';
-                                  e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                                  e.currentTarget.style.borderColor = rgba(HOPPER_COLORS.rgb.white, 0.2);
                                 } else {
                                   e.currentTarget.style.transform = 'scale(1)';
                                 }
@@ -4684,8 +4688,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               <div className="modal-header">
                 <h2>
                   {platformNames[platform]} Upload Details
-                  {platformStatus === 'success' && <span style={{ color: '#22c55e', marginLeft: '8px' }}>✓</span>}
-                  {platformStatus === 'failed' && <span style={{ color: '#ef4444', marginLeft: '8px' }}>✕</span>}
+                  {platformStatus === 'success' && <span style={{ color: HOPPER_COLORS.success, marginLeft: '8px' }}>✓</span>}
+                  {platformStatus === 'failed' && <span style={{ color: HOPPER_COLORS.error, marginLeft: '8px' }}>✕</span>}
                 </h2>
                 <button className="btn-close" onClick={() => setDestinationModal(null)}>×</button>
               </div>
@@ -4711,22 +4715,22 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         }}
                         style={{
                           padding: '0.375rem 0.75rem',
-                          background: 'rgba(239, 68, 68, 0.1)',
-                          border: '1px solid rgba(239, 68, 68, 0.3)',
+                          background: rgba(HOPPER_COLORS.rgb.error, 0.1),
+                          border: `1px solid ${rgba(HOPPER_COLORS.rgb.error, 0.3)}`,
                           borderRadius: '6px',
-                          color: '#ef4444',
+                          color: HOPPER_COLORS.error,
                           cursor: 'pointer',
                           fontSize: '0.85rem',
                           fontWeight: '500',
                           transition: 'all 0.2s'
                         }}
                         onMouseEnter={(e) => {
-                          e.target.style.background = 'rgba(239, 68, 68, 0.2)';
-                          e.target.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+                          e.target.style.background = rgba(HOPPER_COLORS.rgb.error, 0.2);
+                          e.target.style.borderColor = rgba(HOPPER_COLORS.rgb.error, 0.5);
                         }}
                         onMouseLeave={(e) => {
-                          e.target.style.background = 'rgba(239, 68, 68, 0.1)';
-                          e.target.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+                          e.target.style.background = rgba(HOPPER_COLORS.rgb.error, 0.1);
+                          e.target.style.borderColor = rgba(HOPPER_COLORS.rgb.error, 0.3);
                         }}
                       >
                         {expandedDestinationErrors.has(`${video.id}-${platform}`) ? 'Hide Error' : 'Show Error'}
@@ -4736,23 +4740,23 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   <div style={{
                     padding: '0.75rem',
                     background: platformStatus === 'success' 
-                      ? 'rgba(34, 197, 94, 0.1)' 
+                      ? rgba(HOPPER_COLORS.rgb.success, 0.1)
                       : platformStatus === 'failed'
-                      ? 'rgba(239, 68, 68, 0.1)'
-                      : 'rgba(255, 255, 255, 0.05)',
+                      ? rgba(HOPPER_COLORS.rgb.error, 0.1)
+                      : rgba(HOPPER_COLORS.rgb.white, 0.05),
                     border: `1px solid ${
                       platformStatus === 'success'
-                        ? '#22c55e'
+                        ? HOPPER_COLORS.success
                         : platformStatus === 'failed'
-                        ? '#ef4444'
-                        : 'rgba(255, 255, 255, 0.2)'
+                        ? HOPPER_COLORS.error
+                        : rgba(HOPPER_COLORS.rgb.white, 0.2)
                     }`,
                     borderRadius: '6px',
                     color: platformStatus === 'success'
-                      ? '#22c55e'
+                      ? HOPPER_COLORS.success
                       : platformStatus === 'failed'
-                      ? '#ef4444'
-                      : '#999',
+                      ? HOPPER_COLORS.error
+                      : HOPPER_COLORS.grey,
                     fontWeight: '500'
                   }}>
                     {platformStatus === 'success' && '✓ Upload Successful'}
@@ -4767,10 +4771,10 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     <label>{platformNames[platform]} Upload Error</label>
                     <div style={{
                       padding: '0.75rem',
-                      background: 'rgba(239, 68, 68, 0.1)',
-                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      background: rgba(HOPPER_COLORS.rgb.error, 0.1),
+                      border: `1px solid ${rgba(HOPPER_COLORS.rgb.error, 0.3)}`,
                       borderRadius: '6px',
-                      color: '#ef4444',
+                      color: HOPPER_COLORS.error,
                       fontSize: '0.9rem',
                       wordBreak: 'break-word'
                     }}>
@@ -4780,7 +4784,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         <div style={{ fontStyle: 'italic', opacity: 0.8 }}>
                           No detailed error message available. The upload failed but no specific error was captured.
                           {video.error && (
-                            <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid rgba(239, 68, 68, 0.2)' }}>
+                            <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: `1px solid ${rgba(HOPPER_COLORS.rgb.error, 0.2)}` }}>
                               <strong>General error:</strong> {video.error}
                             </div>
                           )}
