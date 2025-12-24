@@ -10,10 +10,7 @@ import Login from './Login';
 import AdminDashboard from './AdminDashboard';
 import Pricing from './Pricing';
 
-// Hopper Color Palette - Centralized color constants
-// Custom Palette
-// Update these to change colors throughout the app (matches CSS variables)
-// 
+
 // SYSTEM DESIGN: RGB values stored separately for opacity support
 // Use rgba() helper function for colors with opacity
 export const HOPPER_COLORS = {
@@ -181,11 +178,10 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
   );
 };
 
-// Configure axios to send cookies with every request
-axios.defaults.withCredentials = true;
 
 // Axios will now automatically read the 'csrf_token_client' cookie 
 // and put it into the 'X-CSRF-Token' header for every request.
+axios.defaults.withCredentials = true;
 axios.defaults.xsrfCookieName = 'csrf_token_client';
 axios.defaults.xsrfHeaderName = 'X-CSRF-Token';
 
@@ -232,39 +228,11 @@ function useAuth() {
   return { user, isAdmin, setUser, authLoading, checkAuth };
 }
 
-// Intercept GET responses to extract CSRF token
 axios.interceptors.response.use(
-  (response) => {
-    // Extract CSRF token from response header
-    // Axios normalizes headers to lowercase
-    const token = response.headers['x-csrf-token'] || response.headers['X-CSRF-Token'];
-    if (token) {
-      csrfToken = token;
-    }
-    return response;
-  },
-  (error) => {
-    // Handle 401 errors - don't reload the page, let components handle their own auth errors
-    // This prevents annoying page refreshes on login failures and session expirations
-    return Promise.reject(error);
-  }
+  (response) => response,
+  (error) => Promise.reject(error)
 );
 
-// Intercept POST/PATCH/DELETE/PUT requests to add CSRF token
-axios.interceptors.request.use(
-  (config) => {
-    // Add CSRF token to state-changing requests
-    if (['post', 'patch', 'delete', 'put'].includes(config.method?.toLowerCase())) {
-      if (csrfToken) {
-        config.headers['X-CSRF-Token'] = csrfToken;
-      }
-    }
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
 
 // Loading Screen Component
 function LoadingScreen() {
