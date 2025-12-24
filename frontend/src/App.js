@@ -2145,6 +2145,52 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const recomputeAllTiktok = () => recomputeAllVideos('tiktok');
   const recomputeAllInstagram = () => recomputeAllVideos('instagram');
 
+  const recomputeVideoField = async (videoId, platform, field) => {
+    try {
+      // Recompute the specific field for this video
+      // For now, we'll use the single video recompute endpoint
+      // and then update the specific field in the override modal
+      await axios.post(`${API}/videos/${videoId}/recompute-title`);
+      
+      // Reload videos to get updated values
+      await loadVideos();
+      
+      // Update the override input value if modal is open
+      const modalKey = `${videoId}-${platform}`;
+      const videosRes = await axios.get(`${API}/videos`);
+      const updatedVideo = videosRes.data.find(v => v.id === videoId);
+      
+      if (updatedVideo) {
+        const newValue = field === 'title' 
+          ? (platform === 'youtube' ? updatedVideo.youtube_title : updatedVideo.tiktok_title)
+          : field === 'description'
+          ? updatedVideo.youtube_description
+          : field === 'tags'
+          ? updatedVideo.youtube_tags
+          : field === 'caption'
+          ? updatedVideo.instagram_caption
+          : null;
+        
+        if (newValue !== null) {
+          setOverrideInputValues(prev => ({
+            ...prev,
+            [modalKey]: {
+              ...(prev[modalKey] || {}),
+              [platform === 'youtube' && field === 'title' ? 'youtube_title' : 
+               field === 'title' ? 'title' : 
+               field === 'caption' ? 'caption' : field]: newValue
+            }
+          }));
+        }
+      }
+      
+      setMessage(`✅ ${field === 'title' ? 'Title' : field === 'description' ? 'Description' : field === 'tags' ? 'Tags' : 'Caption'} recomputed from template`);
+    } catch (err) {
+      console.error(`Error recomputing ${field}:`, err);
+      setMessage(`❌ Error recomputing ${field}`);
+    }
+  };
+
   const handleDragStart = (e, video) => {
     // Only allow dragging if not uploading
     if (video.status === 'uploading') {
@@ -3080,35 +3126,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               />
             </div>
 
-            <div className="setting-group">
-              <button 
-                onClick={recomputeAllYouTube}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  background: 'rgba(139, 92, 246, 0.2)',
-                  border: '1px solid rgba(139, 92, 246, 0.4)',
-                  borderRadius: '6px',
-                  color: '#8b5cf6',
-                  cursor: 'pointer',
-                  fontSize: '0.9rem',
-                  fontWeight: '500',
-                  transition: 'all 0.2s'
-                }}
-                onMouseEnter={(e) => {
-                  e.target.style.background = 'rgba(139, 92, 246, 0.3)';
-                  e.target.style.borderColor = 'rgba(139, 92, 246, 0.6)';
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.background = 'rgba(139, 92, 246, 0.2)';
-                  e.target.style.borderColor = 'rgba(139, 92, 246, 0.4)';
-                }}
-                title="Recompute all YouTube video titles, descriptions, and tags using current templates and wordbank"
-              >
-                🔄 Recompute All YouTube Videos
-              </button>
-            </div>
-
             <div className="setting-divider"></div>
             
             <div className="setting-group">
@@ -3420,35 +3437,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               />
             </div>
 
-            <div className="setting-group">
-              <button 
-                onClick={recomputeAllTiktok}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  background: 'rgba(139, 92, 246, 0.2)',
-                  border: '1px solid rgba(139, 92, 246, 0.4)',
-                  borderRadius: '6px',
-                  color: '#8b5cf6',
-                  cursor: 'pointer',
-                  fontSize: '0.9rem',
-                  fontWeight: '500',
-                  transition: 'all 0.2s'
-                }}
-                onMouseEnter={(e) => {
-                  e.target.style.background = 'rgba(139, 92, 246, 0.3)';
-                  e.target.style.borderColor = 'rgba(139, 92, 246, 0.6)';
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.background = 'rgba(139, 92, 246, 0.2)';
-                  e.target.style.borderColor = 'rgba(139, 92, 246, 0.4)';
-                }}
-                title="Recompute all TikTok video captions using current template and wordbank"
-              >
-                🔄 Recompute All TikTok Videos
-              </button>
-            </div>
-
             
             <div className="setting-divider"></div>
             
@@ -3562,35 +3550,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 className="input-text"
                 maxLength="2200"
               />
-            </div>
-
-            <div className="setting-group">
-              <button 
-                onClick={recomputeAllInstagram}
-                style={{
-                  width: '100%',
-                  padding: '0.75rem',
-                  background: 'rgba(139, 92, 246, 0.2)',
-                  border: '1px solid rgba(139, 92, 246, 0.4)',
-                  borderRadius: '6px',
-                  color: '#8b5cf6',
-                  cursor: 'pointer',
-                  fontSize: '0.9rem',
-                  fontWeight: '500',
-                  transition: 'all 0.2s'
-                }}
-                onMouseEnter={(e) => {
-                  e.target.style.background = 'rgba(139, 92, 246, 0.3)';
-                  e.target.style.borderColor = 'rgba(139, 92, 246, 0.6)';
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.background = 'rgba(139, 92, 246, 0.2)';
-                  e.target.style.borderColor = 'rgba(139, 92, 246, 0.4)';
-                }}
-                title="Recompute all Instagram video captions using current template and wordbank"
-              >
-                🔄 Recompute All Instagram Videos
-              </button>
             </div>
 
             <div className="setting-group">
@@ -5205,9 +5164,28 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   {platform === 'youtube' && (
                     <>
                       <div className="setting-group">
-                        <label htmlFor={`dest-override-title-${video.id}-${platform}`}>
-                          Title <span className="char-counter">{(overrideValues.youtube_title || '').length}/100</span>
-                        </label>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                          <label htmlFor={`dest-override-title-${video.id}-${platform}`}>
+                            Title <span className="char-counter">{(overrideValues.youtube_title || '').length}/100</span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => recomputeVideoField(video.id, platform, 'title')}
+                            style={{
+                              padding: '0.4rem 0.8rem',
+                              fontSize: '0.85rem',
+                              background: 'rgba(139, 92, 246, 0.2)',
+                              border: '1px solid rgba(139, 92, 246, 0.4)',
+                              borderRadius: '4px',
+                              color: '#8b5cf6',
+                              cursor: 'pointer',
+                              fontWeight: '500'
+                            }}
+                            title="Recompute title from current template"
+                          >
+                            🔄 Recompute
+                          </button>
+                        </div>
                         <input
                           type="text"
                           id={`dest-override-title-${video.id}-${platform}`}
@@ -5220,7 +5198,26 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       </div>
                       
                       <div className="setting-group">
-                        <label htmlFor={`dest-override-description-${video.id}-${platform}`}>Description</label>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                          <label htmlFor={`dest-override-description-${video.id}-${platform}`}>Description</label>
+                          <button
+                            type="button"
+                            onClick={() => recomputeVideoField(video.id, platform, 'description')}
+                            style={{
+                              padding: '0.4rem 0.8rem',
+                              fontSize: '0.85rem',
+                              background: 'rgba(139, 92, 246, 0.2)',
+                              border: '1px solid rgba(139, 92, 246, 0.4)',
+                              borderRadius: '4px',
+                              color: '#8b5cf6',
+                              cursor: 'pointer',
+                              fontWeight: '500'
+                            }}
+                            title="Recompute description from current template"
+                          >
+                            🔄 Recompute
+                          </button>
+                        </div>
                         <textarea
                           id={`dest-override-description-${video.id}-${platform}`}
                           defaultValue={customSettings.description || platformData.description || ''}
@@ -5231,7 +5228,26 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       </div>
                       
                       <div className="setting-group">
-                        <label htmlFor={`dest-override-tags-${video.id}-${platform}`}>Tags (comma-separated)</label>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                          <label htmlFor={`dest-override-tags-${video.id}-${platform}`}>Tags (comma-separated)</label>
+                          <button
+                            type="button"
+                            onClick={() => recomputeVideoField(video.id, platform, 'tags')}
+                            style={{
+                              padding: '0.4rem 0.8rem',
+                              fontSize: '0.85rem',
+                              background: 'rgba(139, 92, 246, 0.2)',
+                              border: '1px solid rgba(139, 92, 246, 0.4)',
+                              borderRadius: '4px',
+                              color: '#8b5cf6',
+                              cursor: 'pointer',
+                              fontWeight: '500'
+                            }}
+                            title="Recompute tags from current template"
+                          >
+                            🔄 Recompute
+                          </button>
+                        </div>
                         <input
                           type="text"
                           id={`dest-override-tags-${video.id}-${platform}`}
@@ -5271,9 +5287,28 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   {platform === 'tiktok' && (
                     <>
                       <div className="setting-group">
-                        <label htmlFor={`dest-override-title-${video.id}-${platform}`}>
-                          Title <span className="char-counter">{(overrideValues.title || '').length}/2200</span>
-                        </label>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                          <label htmlFor={`dest-override-title-${video.id}-${platform}`}>
+                            Title <span className="char-counter">{(overrideValues.title || '').length}/2200</span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => recomputeVideoField(video.id, platform, 'title')}
+                            style={{
+                              padding: '0.4rem 0.8rem',
+                              fontSize: '0.85rem',
+                              background: 'rgba(139, 92, 246, 0.2)',
+                              border: '1px solid rgba(139, 92, 246, 0.4)',
+                              borderRadius: '4px',
+                              color: '#8b5cf6',
+                              cursor: 'pointer',
+                              fontWeight: '500'
+                            }}
+                            title="Recompute title from current template"
+                          >
+                            🔄 Recompute
+                          </button>
+                        </div>
                         <input
                           type="text"
                           id={`dest-override-title-${video.id}-${platform}`}
@@ -5305,9 +5340,28 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   {platform === 'instagram' && (
                     <>
                       <div className="setting-group">
-                        <label htmlFor={`dest-override-caption-${video.id}-${platform}`}>
-                          Caption <span className="char-counter">{(overrideValues.caption || '').length}/2200</span>
-                        </label>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                          <label htmlFor={`dest-override-caption-${video.id}-${platform}`}>
+                            Caption <span className="char-counter">{(overrideValues.caption || '').length}/2200</span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => recomputeVideoField(video.id, platform, 'caption')}
+                            style={{
+                              padding: '0.4rem 0.8rem',
+                              fontSize: '0.85rem',
+                              background: 'rgba(139, 92, 246, 0.2)',
+                              border: '1px solid rgba(139, 92, 246, 0.4)',
+                              borderRadius: '4px',
+                              color: '#8b5cf6',
+                              cursor: 'pointer',
+                              fontWeight: '500'
+                            }}
+                            title="Recompute caption from current template"
+                          >
+                            🔄 Recompute
+                          </button>
+                        </div>
                         <textarea
                           id={`dest-override-caption-${video.id}-${platform}`}
                           value={overrideValues.caption || ''}
