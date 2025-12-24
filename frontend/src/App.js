@@ -408,7 +408,7 @@ function PublicLanding() {
           Delete Your Data
         </Link>
         <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: HOPPER_COLORS.grey }}>
-          © 2026 syndic. Owned and operated by Andrew Kaplan
+          © {new Date().getFullYear()} hopper
         </div>
         <div style={{ marginTop: '0.25rem', fontSize: '0.85rem', color: HOPPER_COLORS.grey }}>
           <a 
@@ -5578,7 +5578,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           Delete Your Data
         </Link>
         <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: HOPPER_COLORS.grey }}>
-          © 2026 syndic. Owned and operated by Andrew Kaplan
+          © {new Date().getFullYear()} hopper
         </div>
         <div style={{ marginTop: '0.25rem', fontSize: '0.85rem', color: HOPPER_COLORS.grey }}>
           <a 
