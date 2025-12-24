@@ -5047,6 +5047,127 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     )}
                   </div>
                 </div>
+                
+                {/* Override Configuration */}
+                <div className="setting-group">
+                  <label>Override Settings (Optional)</label>
+                  <div style={{ 
+                    fontSize: '0.85rem', 
+                    color: HOPPER_COLORS.grey,
+                    marginBottom: '1rem'
+                  }}>
+                    Override default settings for this video on {platformNames[platform]} only
+                  </div>
+                  
+                  {platform === 'youtube' && (
+                    <>
+                      <div className="setting-group">
+                        <label htmlFor={`dest-override-title-${video.id}-${platform}`}>Title</label>
+                        <input
+                          type="text"
+                          id={`dest-override-title-${video.id}-${platform}`}
+                          defaultValue={customSettings.youtube_title || platformData.title || ''}
+                          placeholder={platformData.title || video.filename}
+                          maxLength={100}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                      
+                      <div className="setting-group">
+                        <label htmlFor={`dest-override-description-${video.id}-${platform}`}>Description</label>
+                        <textarea
+                          id={`dest-override-description-${video.id}-${platform}`}
+                          defaultValue={customSettings.description || platformData.description || ''}
+                          placeholder={platformData.description || 'Enter description...'}
+                          rows={4}
+                          style={{ width: '100%', resize: 'vertical' }}
+                        />
+                      </div>
+                      
+                      <div className="setting-group">
+                        <label htmlFor={`dest-override-tags-${video.id}-${platform}`}>Tags (comma-separated)</label>
+                        <input
+                          type="text"
+                          id={`dest-override-tags-${video.id}-${platform}`}
+                          defaultValue={customSettings.tags || (Array.isArray(platformData.tags) ? platformData.tags.join(', ') : platformData.tags) || ''}
+                          placeholder={Array.isArray(platformData.tags) ? platformData.tags.join(', ') : platformData.tags || 'Enter tags...'}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                      
+                      <div className="setting-group">
+                        <label htmlFor={`dest-override-visibility-${video.id}-${platform}`}>Visibility</label>
+                        <select
+                          id={`dest-override-visibility-${video.id}-${platform}`}
+                          defaultValue={customSettings.visibility || platformData.visibility || 'private'}
+                          style={{ width: '100%' }}
+                        >
+                          <option value="private">Private</option>
+                          <option value="unlisted">Unlisted</option>
+                          <option value="public">Public</option>
+                        </select>
+                      </div>
+                      
+                      <div className="setting-group">
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            id={`dest-override-made-for-kids-${video.id}-${platform}`}
+                            defaultChecked={customSettings.made_for_kids !== undefined ? customSettings.made_for_kids : platformData.made_for_kids || false}
+                            className="checkbox"
+                          />
+                          <span>Made for Kids</span>
+                        </label>
+                      </div>
+                    </>
+                  )}
+                  
+                  {platform === 'tiktok' && (
+                    <>
+                      <div className="setting-group">
+                        <label htmlFor={`dest-override-title-${video.id}-${platform}`}>Title</label>
+                        <input
+                          type="text"
+                          id={`dest-override-title-${video.id}-${platform}`}
+                          defaultValue={customSettings.title || platformData.title || ''}
+                          placeholder={platformData.title || 'Enter title...'}
+                          maxLength={2200}
+                          style={{ width: '100%' }}
+                        />
+                      </div>
+                      
+                      <div className="setting-group">
+                        <label htmlFor={`dest-override-privacy-${video.id}-${platform}`}>Privacy Level</label>
+                        <select
+                          id={`dest-override-privacy-${video.id}-${platform}`}
+                          defaultValue={customSettings.privacy_level || platformData.privacy_level || ''}
+                          style={{ width: '100%' }}
+                        >
+                          <option value="">Use default</option>
+                          <option value="PUBLIC_TO_EVERYONE">Public to Everyone</option>
+                          <option value="FRIENDS">Friends</option>
+                          <option value="SELF_ONLY">Self Only</option>
+                        </select>
+                      </div>
+                    </>
+                  )}
+                  
+                  {platform === 'instagram' && (
+                    <>
+                      <div className="setting-group">
+                        <label htmlFor={`dest-override-caption-${video.id}-${platform}`}>Caption</label>
+                        <textarea
+                          id={`dest-override-caption-${video.id}-${platform}`}
+                          defaultValue={customSettings.caption || platformData.caption || ''}
+                          placeholder={platformData.caption || 'Enter caption...'}
+                          rows={4}
+                          maxLength={2200}
+                          style={{ width: '100%', resize: 'vertical' }}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
               
               <div className="modal-footer">
@@ -5065,8 +5186,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               </div>
             </div>
           </div>
-        );
-      })()}
+        </div>
+      )}
       
       {/* Account Settings Modal */}
       {showAccountSettings && (
