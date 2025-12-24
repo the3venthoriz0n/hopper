@@ -1,6 +1,6 @@
 """Settings service - Business logic for user settings and destination management"""
 import logging
-from typing import Dict
+from typing import Dict, Any
 from sqlalchemy.orm import Session
 
 from app.db.helpers import (
@@ -56,4 +56,72 @@ def toggle_destination(user_id: int, platform: str, enabled: bool, db: Session) 
             "enabled": enabled
         }
     }
+
+
+# ============================================================================
+# SETTINGS BATCH UPDATES
+# ============================================================================
+
+def update_settings_batch(user_id: int, category: str, data_dict: Dict[str, Any], db: Session) -> Dict:
+    """Update multiple settings at once in a batch
+    
+    Args:
+        user_id: User ID
+        category: Settings category (e.g., "global", "youtube", "tiktok", "instagram")
+        data_dict: Dictionary of key-value pairs to update
+                  - None values are included to allow clearing settings (e.g., privacy_level)
+                  - Only fields explicitly provided in the dict are updated
+        db: Database session
+    
+    Returns:
+        Updated settings dictionary
+    """
+    # Update each setting (including None values to allow clearing)
+    for key, value in data_dict.items():
+        set_user_setting(user_id, category, key, value, db=db)
+    
+    # Return updated settings
+    return get_user_settings(user_id, category, db=db)
+
+
+# ============================================================================
+# WORDBANK MANAGEMENT
+# ============================================================================
+
+def add_wordbank_word(user_id: int, word: str, db: Session) -> Dict:
+    """Add a word to the global wordbank"""
+    # Strip whitespace and capitalize
+    word = word.strip().capitalize()
+    if not word:
+        raise ValueError("Word cannot be empty")
+    
+    # Get current wordbank
+    settings = get_user_settings(user_id, "global", db=db)
+    wordbank = settings.get("wordbank", [])
+    
+    if word not in wordbank:
+        wordbank.append(word)
+        set_user_setting(user_id, "global", "wordbank", wordbank, db=db)
+    
+    # Return updated settings
+    return get_user_settings(user_id, "global", db=db)
+
+
+def remove_wordbank_word(user_id: int, word: str, db: Session) -> Dict:
+    """Remove a word from the global wordbank"""
+    # Get current wordbank
+    settings = get_user_settings(user_id, "global", db=db)
+    wordbank = settings.get("wordbank", [])
+    
+    if word in wordbank:
+        wordbank.remove(word)
+        set_user_setting(user_id, "global", "wordbank", wordbank, db=db)
+    
+    return {"wordbank": wordbank}
+
+
+def clear_wordbank(user_id: int, db: Session) -> Dict:
+    """Clear all words from the global wordbank"""
+    set_user_setting(user_id, "global", "wordbank", [], db=db)
+    return {"wordbank": []}
 
