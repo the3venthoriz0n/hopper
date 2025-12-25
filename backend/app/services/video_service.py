@@ -3164,6 +3164,62 @@ def serve_video_file(
     }
 
 
+def calculate_scheduled_time(
+    video: Video,
+    video_index: int,
+    global_settings: Dict[str, Any],
+    db: Session
+) -> Optional[datetime]:
+    """Calculate scheduled_time for a video based on schedule settings"""
+    
+    if video.scheduled_time:
+        return video.scheduled_time
+    
+    schedule_mode = global_settings.get("schedule_mode", "spaced")
+    schedule_interval_value = global_settings.get("schedule_interval_value", 1)
+    schedule_interval_unit = global_settings.get("schedule_interval_unit", "hours")
+    schedule_start_time = global_settings.get("schedule_start_time", "")
+    upload_first_immediately = global_settings.get("upload_first_immediately", True)
+    
+    current_time = datetime.now(timezone.utc)
+    
+    # CASE 1: Immediate first upload handling
+    if upload_first_immediately and video_index == 0:
+        return current_time
+
+    # Determine Base Time
+    if schedule_start_time:
+        try:
+            base_time = datetime.fromisoformat(schedule_start_time.replace('Z', '+00:00'))
+            if base_time.tzinfo is None:
+                base_time = base_time.replace(tzinfo=timezone.utc)
+        except (ValueError, AttributeError):
+            base_time = current_time
+    else:
+        base_time = current_time
+
+    # Calculate interval in seconds
+    units = {"minutes": 60, "hours": 3600, "days": 86400}
+    interval_seconds = schedule_interval_value * units.get(schedule_interval_unit, 3600)
+
+    # --- THE LOGIC FIX ---
+    # If immediate is TRUE:  Index 0=Now, Index 1=Base+1Interval, Index 2=Base+2Interval
+    # If immediate is FALSE: Index 0=Base+1Interval, Index 1=Base+2Interval, Index 2=Base+3Interval
+    if upload_first_immediately:
+        offset_multiplier = video_index  # 0, 1, 2...
+    else:
+        offset_multiplier = video_index + 1  # 1, 2, 3...
+    
+    scheduled_time = base_time + timedelta(seconds=interval_seconds * offset_multiplier)
+
+    # Final check: If scheduled for the past (due to old base_time), 
+    # shift everything relative to current_time
+    if scheduled_time < current_time:
+        scheduled_time = current_time + timedelta(seconds=interval_seconds * offset_multiplier)
+    
+    return scheduled_time
+
+
 async def upload_all_pending_videos(
     user_id: int,
     db: Session
@@ -3299,8 +3355,10 @@ async def upload_all_pending_videos(
     else:
         # Schedule uploads (scheduler will handle them)
         scheduled_count = 0
-        for video in pending_videos:
-            update_video(video.id, user_id, db=db, status="scheduled")
+        for index, video in enumerate(pending_videos):
+            # Calculate scheduled_time based on schedule settings
+            scheduled_time = calculate_scheduled_time(video, index, global_settings, db)
+            update_video(video.id, user_id, db=db, status="scheduled", scheduled_time=scheduled_time)
             scheduled_count += 1
         
         return {

@@ -4067,7 +4067,9 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         ) : (
                           <span>Processing...</span>
                         )
-                      ) : v.status === 'scheduled' && v.scheduled_time ? (
+                      ) : v.status === 'failed' ? (
+                        <span style={{ color: HOPPER_COLORS.error }}>Upload Failed</span>
+                      ) : v.scheduled_time ? (
                         <span>Scheduled for {new Date(v.scheduled_time).toLocaleString(undefined, {
                           year: 'numeric',
                           month: 'short',
@@ -4076,8 +4078,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                           minute: '2-digit',
                           second: '2-digit'
                         })}</span>
-                      ) : v.status === 'failed' ? (
-                        <span style={{ color: HOPPER_COLORS.error }}>Upload Failed</span>
                       ) : (
                         <span>{v.status}</span>
                       )}
@@ -5008,8 +5008,10 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     {platform === 'youtube' && (
                       <div style={metadataItemStyle}>
                         <div>
-                          <span style={metadataLabelStyle}>Title:</span>{' '}
-                          <span style={metadataValueStyle}>{platformData.title || video.youtube_title || video.filename}</span>
+                          <span style={metadataLabelStyle}>Title:</span>
+                          <div style={metadataTextBlockStyle}>
+                            {platformData.title || video.youtube_title || video.filename}
+                          </div>
                         </div>
                         {platformData.description && (
                           <div>
@@ -5193,26 +5195,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       </div>
                       
                       <div className="setting-group">
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                          <label htmlFor={`dest-override-description-${video.id}-${platform}`}>Description</label>
-                          <button
-                            type="button"
-                            onClick={() => recomputeVideoField(video.id, platform, 'description')}
-                            style={{
-                              padding: '0.4rem 0.8rem',
-                              fontSize: '0.85rem',
-                              background: 'rgba(139, 92, 246, 0.2)',
-                              border: '1px solid rgba(139, 92, 246, 0.4)',
-                              borderRadius: '4px',
-                              color: '#8b5cf6',
-                              cursor: 'pointer',
-                              fontWeight: '500'
-                            }}
-                            title="Recompute description from current template"
-                          >
-                            🔄 Recompute
-                          </button>
-                        </div>
+                        <label htmlFor={`dest-override-description-${video.id}-${platform}`}>Description</label>
                         <textarea
                           id={`dest-override-description-${video.id}-${platform}`}
                           defaultValue={customSettings.description || platformData.description || ''}
@@ -5223,26 +5206,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       </div>
                       
                       <div className="setting-group">
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                          <label htmlFor={`dest-override-tags-${video.id}-${platform}`}>Tags (comma-separated)</label>
-                          <button
-                            type="button"
-                            onClick={() => recomputeVideoField(video.id, platform, 'tags')}
-                            style={{
-                              padding: '0.4rem 0.8rem',
-                              fontSize: '0.85rem',
-                              background: 'rgba(139, 92, 246, 0.2)',
-                              border: '1px solid rgba(139, 92, 246, 0.4)',
-                              borderRadius: '4px',
-                              color: '#8b5cf6',
-                              cursor: 'pointer',
-                              fontWeight: '500'
-                            }}
-                            title="Recompute tags from current template"
-                          >
-                            🔄 Recompute
-                          </button>
-                        </div>
+                        <label htmlFor={`dest-override-tags-${video.id}-${platform}`}>Tags (comma-separated)</label>
                         <input
                           type="text"
                           id={`dest-override-tags-${video.id}-${platform}`}
