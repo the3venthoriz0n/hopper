@@ -43,21 +43,38 @@ class TestAuthentication:
 class TestCSRFProtection:
     """Test CSRF protection on state-changing endpoints"""
     
-    def test_post_without_csrf_token(self, authenticated_client):
+    def test_post_without_csrf_token(self, client, test_user, mock_redis, db_session):
         """Test POST requests without CSRF token are rejected"""
-        # Test global settings update
-        response = authenticated_client.post(
+        # Login to get session but don't set CSRF token in headers
+        login_response = client.post(
+            "/api/auth/login",
+            json={"email": test_user.email, "password": "TestPassword123!"}
+        )
+        assert login_response.status_code == 200
+        
+        # Ensure cookies are properly set on the client
+        # TestClient automatically handles cookies, but we need to make sure
+        # the session is persisted in Redis mock for the next request
+        session_id = login_response.cookies.get("session_id")
+        if session_id:
+            mock_redis.setex(f"session:{session_id}", 2592000, str(test_user.id))
+        
+        # Test global settings update without CSRF token in headers
+        # Note: We intentionally omit headers={"X-CSRF-Token": ...}
+        response = client.post(
             "/api/global/settings",
             json={"title_template": "Test"}
         )
         assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert "Invalid or missing CSRF token" in response.json()["detail"]
         
-        # Test wordbank add
-        response = authenticated_client.post(
+        # Test wordbank add without CSRF
+        response = client.post(
             "/api/global/wordbank",
             json={"word": "test"}
         )
         assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert "Invalid or missing CSRF token" in response.json()["detail"]
     
     def test_post_with_invalid_csrf_token(self, authenticated_client):
         """Test POST requests with invalid CSRF token are rejected"""
@@ -107,10 +124,10 @@ class TestOwnershipValidation:
         db_session.commit()
         db_session.refresh(video)
         
-        # User1 (authenticated) tries to update user2's video
-        response = authenticated_client.put(
+        # User1 (authenticated) tries to update user2's video using PATCH
+        response = authenticated_client.patch(
             f"/api/videos/{video.id}",
-            json={"status": "completed"},
+            params={"status": "completed"},
             headers={"X-CSRF-Token": authenticated_client.headers.get("X-CSRF-Token", "")}
         )
         # Should fail with 404 (video not found for this user) or 403
@@ -398,11 +415,16 @@ class TestHappyPathIntegration:
         data = register_response.json()
         assert data["requires_email_verification"] is True
         
-        # 2. Verify email (mock - in real scenario, user clicks link)
-        user = db_session.query(User).filter(User.email == "newuser@example.com").first()
-        if user:
-            user.is_email_verified = True
-            db_session.commit()
+        # 2. Verify email - get verification code from Redis mock
+        from app.db.redis import get_email_verification_code
+        verification_code = get_email_verification_code("newuser@example.com")
+        
+        if verification_code:
+            # Verify email using the code
+            from app.services.auth_service import complete_email_verification
+            user = complete_email_verification("newuser@example.com", db_session)
+            assert user is not None
+            assert user.is_email_verified is True
         
         # 3. Login
         login_response = client.post(
@@ -412,32 +434,38 @@ class TestHappyPathIntegration:
         assert login_response.status_code == status.HTTP_200_OK
         assert "session_id" in login_response.cookies
         
-        # Get CSRF token
-        csrf_token = login_response.headers.get("X-CSRF-Token") or login_response.cookies.get("csrf_token_client")
+        # Set cookies on the client instance so they persist automatically
+        client.cookies.update(login_response.cookies)
         
         # 4. Get subscription (auto-creates free plan)
-        sub_response = client.get(
-            "/api/subscription/current",
-            cookies=login_response.cookies
-        )
+        sub_response = client.get("/api/subscription/current")
         assert sub_response.status_code == status.HTTP_200_OK
         sub_data = sub_response.json()
         assert sub_data["subscription"]["plan_type"] == "free"
         
-        # 5. Toggle YouTube destination
+        # Update cookies from subscription response (in case session was updated)
+        client.cookies.update(sub_response.cookies)
+        
+        # 5. Get CSRF token from CSRF endpoint (needed for POST requests)
+        csrf_response = client.get("/api/auth/csrf")
+        assert csrf_response.status_code == status.HTTP_200_OK
+        
+        # Update cookies from CSRF response (in case session was updated/initialized)
+        client.cookies.update(csrf_response.cookies)
+        
+        csrf_token = csrf_response.headers.get("X-CSRF-Token") or csrf_response.json().get("csrf_token")
+        assert csrf_token is not None, "CSRF token should be available"
+        
+        # 6. Toggle YouTube destination (cookies are now on client, no need to pass manually)
         toggle_response = client.post(
             "/api/destinations/youtube/toggle",
             json={"enabled": True},
-            cookies=login_response.cookies,
-            headers={"X-CSRF-Token": csrf_token}
+            headers={"X-CSRF-Token": csrf_token}  # Only pass the header
         )
         assert toggle_response.status_code == status.HTTP_200_OK
         
-        # 6. Verify settings reflect changes
-        settings_response = client.get(
-            "/api/destinations",
-            cookies=login_response.cookies
-        )
+        # 7. Verify settings reflect changes
+        settings_response = client.get("/api/destinations")
         assert settings_response.status_code == status.HTTP_200_OK
         dest_data = settings_response.json()
         assert dest_data["youtube"]["enabled"] is True

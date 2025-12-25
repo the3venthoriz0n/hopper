@@ -40,7 +40,7 @@ def require_auth(request: Request) -> int:
 async def require_csrf_new(
     request: Request,
     user_id: int = Depends(require_auth),
-    x_csrf_token: Optional[str] = Header(None) # FastAPI looks for x-csrf-token
+    x_csrf_token: Optional[str] = Header(None, alias="X-CSRF-Token")  # Explicitly map the header name
 ) -> int:
     session_id = request.cookies.get("session_id")
     
@@ -64,9 +64,11 @@ async def require_csrf_new(
     expected_csrf = get_csrf_token(session_id)
     
     if not expected_csrf or csrf_token != expected_csrf:
+        exp_prefix = expected_csrf[:5] if expected_csrf else "None"
+        rec_prefix = csrf_token[:5] if csrf_token else "None"
         security_logger.warning(
             f"CSRF validation failed - User: {user_id}, "
-            f"Expected: {expected_csrf[:5]}..., Received: {csrf_token[:5] if csrf_token else 'None'}"
+            f"Expected: {exp_prefix}..., Received: {rec_prefix}..."
         )
         raise HTTPException(403, "Invalid or missing CSRF token")
     

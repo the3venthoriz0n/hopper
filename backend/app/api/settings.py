@@ -9,7 +9,8 @@ from app.db.session import get_db
 from app.db import helpers as db_helpers
 from app.schemas.settings import (
     GlobalSettingsUpdate, YouTubeSettingsUpdate, TikTokSettingsUpdate,
-    InstagramSettingsUpdate, AddWordbankWordRequest, TikTokPrivacyLevel
+    InstagramSettingsUpdate, AddWordbankWordRequest, TikTokPrivacyLevel,
+    ToggleDestinationRequest
 )
 from app.services.settings_service import (
     get_destinations_status, toggle_destination, update_settings_batch,
@@ -147,30 +148,30 @@ def get_destinations(user_id: int = Depends(require_auth), db: Session = Depends
 
 @destinations_router.post("/youtube/toggle")
 def toggle_youtube(
-    enabled: bool,
+    request: ToggleDestinationRequest,
     user_id: int = Depends(require_csrf_new),
     db: Session = Depends(get_db)
 ):
     """Toggle YouTube destination on/off"""
-    return toggle_destination(user_id, "youtube", enabled, db)
+    return toggle_destination(user_id, "youtube", request.enabled, db)
 
 
 @destinations_router.post("/tiktok/toggle")
 def toggle_tiktok(
-    enabled: bool,
+    request: ToggleDestinationRequest,
     user_id: int = Depends(require_csrf_new),
     db: Session = Depends(get_db)
 ):
     """Toggle TikTok destination on/off"""
-    return toggle_destination(user_id, "tiktok", enabled, db)
+    return toggle_destination(user_id, "tiktok", request.enabled, db)
 
 
 @destinations_router.post("/instagram/toggle")
 def toggle_instagram(
-    enabled: bool,
+    request: ToggleDestinationRequest,
     user_id: int = Depends(require_csrf_new),
     db: Session = Depends(get_db)
 ):
     """Toggle Instagram destination on/off"""
-    return toggle_destination(user_id, "instagram", enabled, db)
+    return toggle_destination(user_id, "instagram", request.enabled, db)
 

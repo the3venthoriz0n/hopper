@@ -75,3 +75,7 @@ class AddWordbankWordRequest(BaseModel):
     """Schema for adding a word to the wordbank"""
     word: str = Field(..., min_length=1)
 
+
+class ToggleDestinationRequest(BaseModel):
+    """Schema for toggling a destination on/off - extensible for future fields"""
+    enabled: bool = Field(..., description="Whether to enable or disable the destination")
