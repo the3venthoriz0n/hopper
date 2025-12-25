@@ -1696,9 +1696,9 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     setState({ ...currentState, enabled: newEnabled });
     
     try {
-      const params = new URLSearchParams();
-      params.append('enabled', newEnabled);
-      await axios.post(`${API}/destinations/${platform}/toggle?${params.toString()}`);
+      await axios.post(`${API}/destinations/${platform}/toggle`, {
+        enabled: newEnabled
+      });
     } catch (err) {
       console.error(`Error toggling ${platform}:`, err);
       // Revert on error
@@ -1724,9 +1724,9 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       let addedCount = 0;
       for (const word of words) {
         try {
-          const params = new URLSearchParams();
-          params.append('word', word);
-          const res = await axios.post(`${API}/global/wordbank?${params.toString()}`);
+          const res = await axios.post(`${API}/global/wordbank`, {
+            word: word
+          });
           setGlobalSettings(prev => ({...prev, wordbank: res.data.wordbank}));
           addedCount++;
         } catch (err) {
