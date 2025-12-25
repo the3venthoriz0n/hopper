@@ -143,7 +143,7 @@ setup-stripe:
 		echo "❌ Virtual environment not found. Run: cd backend && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt"; \
 		exit 1; \
 	fi
-	@cd backend && ./venv/bin/python setup_stripe.py --env-file $(ENV)
+	@cd backend && ./venv/bin/python ../scripts/setup_stripe.py --env-file $(ENV)
 	@echo "🔄 Syncing to remote..."
 	@$(MAKE) sync
 	@echo "✅ Stripe setup completed and synced."

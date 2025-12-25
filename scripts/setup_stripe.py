@@ -27,7 +27,7 @@ PRODUCTS = {
         'name': 'Free',
         'description': '100 tokens per month',
         'monthly_tokens': 100,
-        'price_cents': 0,
+        'price_cents': 0.0,
         'overage_price_cents': None  # Hard limit, no overages
     },
     'starter': {
@@ -35,20 +35,20 @@ PRODUCTS = {
         'description': '300 tokens per month',
         'monthly_tokens': 300,
         'price_cents': 1,  # $3.00/month
-        'overage_price_cents': 1.5
+        'overage_price_cents': 1.5  # $0.015 per token
     },
     'creator': {
         'name': 'Creator',
         'description': '1250 tokens per month',
         'monthly_tokens': 1250,
-        'price_cents': .8,  # $10.00/month
-        'overage_price_cents': 1
+        'price_cents': 0.8,  # $10/month
+        'overage_price_cents': 1  # $0.01 per token
     },
     'unlimited': {
         'name': 'Unlimited',
         'description': 'Unlimited tokens',
         'monthly_tokens': -1,
-        'price_cents': 0,
+        'price_cents': 0.0,
         'overage_price_cents': None,
         'hidden': True
     }
@@ -140,7 +140,9 @@ def archive_old_prices(product_id: str, config: Dict[str, Any],
     Returns:
         Number of prices archived
     """
-    amount = config['overage_price_cents'] if is_metered else config['price_cents']
+    # Use decimal string format (e.g., "0.01" for 1 cent)
+    dollar_amount = config['overage_price_cents'] if is_metered else config['price_cents']
+    amount_decimal = f"{dollar_amount:.4f}".rstrip('0').rstrip('.')  # Format as decimal string, remove trailing zeros
     archived_count = 0
     
     if not is_metered:
@@ -150,7 +152,13 @@ def archive_old_prices(product_id: str, config: Dict[str, Any],
     # Only archive metered prices that don't have the correct meter
     for price in existing_prices:
         # Only consider prices for this product with matching amount
-        if price.product != product_id or price.unit_amount != amount:
+        # Check both unit_amount_decimal (new format) and unit_amount (legacy)
+        price_amount = getattr(price, 'unit_amount_decimal', None)
+        if price_amount is None and hasattr(price, 'unit_amount'):
+            # Fallback: convert unit_amount (cents) to decimal string
+            price_amount = f"{price.unit_amount / 100:.4f}".rstrip('0').rstrip('.')
+        
+        if price.product != product_id or price_amount != amount_decimal:
             continue
         
         # Only archive metered prices
@@ -188,7 +196,9 @@ def find_or_create_price(product_id: str, config: Dict[str, Any],
         is_metered: Whether this is a metered price for overage
         meter_id: Meter ID to attach (only used when creating new metered prices)
     """
-    amount = config['overage_price_cents'] if is_metered else config['price_cents']
+    # Use decimal string format (e.g., "0.01" for 1 cent)
+    dollar_amount = config['overage_price_cents'] if is_metered else config['price_cents']
+    amount_decimal = f"{dollar_amount:.4f}".rstrip('0').rstrip('.')  # Format as decimal string, remove trailing zeros
     
     # Archive old prices first (cleanup)
     archived = archive_old_prices(product_id, config, existing_prices, is_metered, meter_id)
@@ -198,7 +208,13 @@ def find_or_create_price(product_id: str, config: Dict[str, Any],
     
     # Search for existing price (only active prices are in the list)
     for price in existing_prices:
-        if price.product != product_id or price.unit_amount != amount:
+        # Check both unit_amount_decimal (new format) and unit_amount (legacy)
+        price_amount = getattr(price, 'unit_amount_decimal', None)
+        if price_amount is None and hasattr(price, 'unit_amount'):
+            # Fallback: convert unit_amount (cents) to decimal string
+            price_amount = f"{price.unit_amount / 100:.4f}".rstrip('0').rstrip('.')
+        
+        if price.product != product_id or price_amount != amount_decimal:
             continue
         
         # Must have recurring configuration
@@ -238,7 +254,7 @@ def find_or_create_price(product_id: str, config: Dict[str, Any],
         print(f"    ➕ Creating new price...")
     price_params = {
         'product': product_id,
-        'unit_amount': amount,
+        'unit_amount_decimal': amount_decimal,  # Use decimal string format
         'currency': 'usd',
         'recurring': {'interval': 'month'}
     }
@@ -293,9 +309,9 @@ def create_or_update_products() -> Dict[str, Dict[str, Any]]:
         # Find or create base price
         price = find_or_create_price(product.id, config, existing_prices)
         if any(p.id == price.id for p in existing_prices):
-            print(f"  ✓ Found existing price: {price.id} (${config['price_cents']/100:.2f}/month)")
+            print(f"  ✓ Found existing price: {price.id} (${config['price_cents']:.2f}/month)")
         else:
-            print(f"  ✓ Created new price: {price.id} (${config['price_cents']/100:.2f}/month)")
+            print(f"  ✓ Created new price: {price.id} (${config['price_cents']:.2f}/month)")
         
         # Build plan config
         plan_config = {
@@ -322,9 +338,9 @@ def create_or_update_products() -> Dict[str, Dict[str, Any]]:
                 p.recurring.meter == meter_id
                 for p in existing_prices
             ):
-                print(f"  ✓ Overage: {overage_price.id} (${config['overage_price_cents']/100:.2f}/token) with meter attached")
+                print(f"  ✓ Overage: {overage_price.id} (${config['overage_price_cents']:.4f}/token) with meter attached")
             else:
-                print(f"  ✓ Overage: {overage_price.id} (${config['overage_price_cents']/100:.2f}/token)")
+                print(f"  ✓ Overage: {overage_price.id} (${config['overage_price_cents']:.4f}/token)")
         
         results[key] = plan_config
         print()
