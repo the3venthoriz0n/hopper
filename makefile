@@ -12,6 +12,7 @@ export GIT_VERSION
 
 # Compose command builder
 COMPOSE = docker compose -p $(ENV)-hopper -f docker-compose.$(ENV).yml --env-file .env.$(ENV)
+TEST_CMD = python -m pytest /app/tests/ -v --tb=short
 
 # Service filter (optional: make logs SERVICE=backend)
 SERVICE ?=
@@ -58,18 +59,9 @@ test:
 	@if [ "$(ENV)" = "prod" ]; then \
 		echo "⏭️  Skipping tests for prod environment (use deploy.sh for production deployments)"; \
 	else \
-		echo "🧪 Building backend image (to ensure pytest is installed)..."; \
-		$(COMPOSE) build backend; \
-		echo "🧪 Running unit tests..."; \
-		$(COMPOSE) run --rm backend python -m pytest /app/tests/test_main.py -v --tb=short; \
-		echo "✅ All tests passed!"; \
+		echo "🧪 Running comprehensive test suite..."; \
+		$(COMPOSE) run --rm backend $(TEST_CMD); \
 	fi
-
-test-security: 
-	@echo "🔒 Running security tests (requires API to be running)..."
-	@echo "⚠️  Make sure backend is running: make up ENV=$(ENV)"
-	@$(COMPOSE) run --rm -e TEST_BASE_URL=http://backend:8000 backend python -m pytest /app/tests/test_security.py -v --tb=short
-	@echo "✅ Security tests passed!"
 
 up: sync
 	@if [ "$(ENV)" != "prod" ]; then \
