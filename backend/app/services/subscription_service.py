@@ -1,6 +1,7 @@
 """Subscription service - Subscription management and business logic"""
 import logging
-from typing import Dict, Optional
+import json
+from typing import Dict, Optional, Any
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
 import stripe
@@ -9,9 +10,14 @@ from app.core.config import settings
 from app.models.user import User
 from app.models.subscription import Subscription
 from app.models.token_transaction import TokenTransaction
+from app.services.auth_service import get_user_by_id
 from app.services.stripe_service import (
-    get_plans, get_price_info, get_plan_monthly_tokens,
-    create_free_subscription, cancel_subscription_with_invoice
+    get_plans, get_price_info, get_plan_monthly_tokens, get_plan_price_id,
+    create_free_subscription, cancel_subscription_with_invoice,
+    create_checkout_session, get_customer_portal_url, get_subscription_info,
+    handle_checkout_completed, handle_subscription_created, handle_subscription_updated,
+    handle_subscription_deleted, handle_invoice_payment_succeeded, handle_invoice_payment_failed,
+    log_stripe_event, mark_stripe_event_processed
 )
 from app.services.token_service import (
     get_token_balance, get_or_create_token_balance, ensure_tokens_synced_for_subscription
@@ -332,4 +338,239 @@ def cancel_user_subscription(
         "plan_type": "free",
         "tokens_preserved": current_tokens
     }
+
+
+# ============================================================================
+# CHECKOUT CREATION
+# ============================================================================
+
+def create_subscription_checkout(
+    user_id: int,
+    plan_key: str,
+    frontend_url: str,
+    db: Session
+) -> Dict[str, Any]:
+    """Create Stripe checkout session for subscription
+    
+    Consolidates logic from both /checkout and /create-checkout routes.
+    Handles plan validation, existing subscription checks, and upgrade scenarios.
+    
+    Args:
+        user_id: User ID
+        plan_key: Plan key (e.g., 'starter', 'creator', 'unlimited')
+        frontend_url: Frontend URL for success/cancel redirects
+        db: Database session
+    
+    Returns:
+        Dict with session data or error response with portal_url
+    
+    Raises:
+        ValueError: If plan is invalid or user already has subscription (with portal_url in response)
+    """
+    plans = get_plans()
+    if plan_key not in plans:
+        raise ValueError(f"Invalid plan: {plan_key}")
+    
+    plan = plans[plan_key]
+    if not plan.get("stripe_price_id"):
+        raise ValueError(f"Plan {plan_key} is not configured with a Stripe price")
+    
+    # Check if user already has an active paid subscription
+    existing_subscription = db.query(Subscription).filter(
+        Subscription.user_id == user_id,
+        Subscription.status == 'active'
+    ).first()
+    
+    # Determine if we should cancel existing subscription (upgrade/change scenario)
+    cancel_existing = False
+    if existing_subscription:
+        # If user has a paid subscription (not free/unlimited), allow upgrade/change by canceling existing
+        if existing_subscription.stripe_subscription_id and not existing_subscription.stripe_subscription_id.startswith(('free_', 'unlimited_')):
+            # Always allow changing plans - cancel existing and create new
+            cancel_existing = True
+            current_plan = plans.get(existing_subscription.plan_type, {})
+            new_plan = plan
+            current_tokens = current_plan.get('monthly_tokens', 0)
+            new_tokens = new_plan.get('monthly_tokens', 0)
+            logger.info(f"User {user_id} changing from {existing_subscription.plan_type} ({current_tokens} tokens) to {plan_key} ({new_tokens} tokens)")
+    
+    # Build success and cancel URLs
+    success_url = f"{frontend_url}/app/subscription/success?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{frontend_url}/app/subscription"
+    
+    # Check if user already has an active subscription that prevents checkout
+    # (only if cancel_existing is False - meaning we're not upgrading)
+    if not cancel_existing and existing_subscription:
+        # User has subscription but we're not canceling it - return portal URL
+        portal_url = get_customer_portal_url(user_id, f"{frontend_url}/app/subscription", db)
+        if portal_url:
+            return {
+                "error": "User already has an active subscription",
+                "message": "User already has an active subscription. Use the customer portal to manage it.",
+                "portal_url": portal_url
+            }
+    
+    try:
+        session_data = create_checkout_session(
+            user_id,
+            plan["stripe_price_id"],
+            success_url,
+            cancel_url,
+            db,
+            cancel_existing=cancel_existing
+        )
+        
+        if not session_data:
+            raise ValueError("Failed to create checkout session")
+        
+        return session_data
+    except ValueError as e:
+        # Re-raise ValueError exceptions (invalid plan, etc.)
+        raise
+
+
+# ============================================================================
+# CURRENT SUBSCRIPTION WITH AUTO-REPAIR
+# ============================================================================
+
+def get_current_subscription_with_auto_repair(
+    user_id: int,
+    db: Session
+) -> Dict[str, Any]:
+    """Get user's current subscription with auto-repair logic
+    
+    If user doesn't have a subscription, automatically creates a free one.
+    This is the "auto-repair" logic that ensures all users have a subscription.
+    
+    Args:
+        user_id: User ID
+        db: Database session
+    
+    Returns:
+        Dict with subscription info and token balance
+    
+    Raises:
+        ValueError: If user doesn't exist
+    """
+    # Verify user still exists (may have been deleted after authentication)
+    user = get_user_by_id(user_id, db)
+    if not user:
+        logger.warning(f"Subscription request for deleted user {user_id}")
+        raise ValueError("User account no longer exists")
+    
+    subscription_info = get_subscription_info(user_id, db)
+    
+    # If user doesn't have a subscription, create a free one
+    if not subscription_info:
+        logger.info(f"User {user_id} has no subscription, creating free subscription")
+        free_sub = create_free_subscription(user_id, db)
+        if free_sub:
+            subscription_info = get_subscription_info(user_id, db)
+        else:
+            # If creation fails, return a default response
+            # Note: create_free_subscription already logs the error, including if user doesn't exist
+            logger.error(f"Failed to create free subscription for user {user_id}")
+            return {
+                "subscription": None,
+                "token_balance": {
+                    "tokens_remaining": 0,
+                    "tokens_used_this_period": 0,
+                    "monthly_tokens": 10,  # Default to free plan
+                    "overage_tokens": 0,
+                    "unlimited": False,
+                    "period_start": None,
+                    "period_end": None,
+                }
+            }
+    
+    token_balance = get_token_balance(user_id, db)
+    
+    return {
+        "subscription": subscription_info,
+        "token_balance": token_balance,
+    }
+
+
+# ============================================================================
+# WEBHOOK PROCESSING
+# ============================================================================
+
+def process_stripe_webhook(
+    payload: bytes,
+    sig_header: str,
+    db: Session
+) -> Dict[str, Any]:
+    """Process Stripe webhook event
+    
+    Validates webhook signature, handles idempotency, and processes different event types.
+    Returns success (200) even on processing errors to prevent Stripe retries.
+    Only raises exceptions for signature validation failures.
+    
+    Args:
+        payload: Raw request body as bytes (must not be parsed by middleware)
+        sig_header: Stripe signature header
+        db: Database session
+    
+    Returns:
+        Dict with status information
+    
+    Raises:
+        ValueError: For invalid payload
+        stripe.error.SignatureVerificationError: For invalid signature
+    """
+    if not settings.STRIPE_WEBHOOK_SECRET:
+        logger.error("Webhook secret not configured")
+        raise ValueError("Webhook secret not configured")
+    
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, settings.STRIPE_WEBHOOK_SECRET
+        )
+    except ValueError as e:
+        logger.error(f"Invalid webhook payload: {e}")
+        raise ValueError("Invalid payload")
+    except stripe.error.SignatureVerificationError as e:
+        logger.error(f"Invalid webhook signature: {e}")
+        raise stripe.error.SignatureVerificationError("Invalid signature", sig_header)
+    
+    # Log event for idempotency
+    stripe_event = log_stripe_event(
+        event["id"],
+        event["type"],
+        event,
+        db
+    )
+    
+    if stripe_event.processed:
+        logger.info(f"Webhook event {event['id']} already processed")
+        return {"status": "already_processed"}
+    
+    # Handle different event types
+    event_type = event["type"]
+    data = event["data"]["object"]
+    
+    try:
+        if event_type == "checkout.session.completed":
+            handle_checkout_completed(data, db)
+        elif event_type == "customer.subscription.created":
+            handle_subscription_created(data, db)
+        elif event_type == "customer.subscription.updated":
+            handle_subscription_updated(data, db)
+        elif event_type == "customer.subscription.deleted":
+            handle_subscription_deleted(data, db)
+        elif event_type == "invoice.payment_succeeded":
+            handle_invoice_payment_succeeded(data, db)
+        elif event_type == "invoice.payment_failed":
+            handle_invoice_payment_failed(data, db)
+        
+        mark_stripe_event_processed(event["id"], db)
+        logger.info(f"Successfully processed webhook event {event['id']} of type {event_type}")
+        return {"status": "success"}
+    except Exception as e:
+        # Log error but return success to prevent Stripe retries
+        # This is critical: Stripe will retry webhooks that return non-2xx responses
+        logger.error(f"Error processing webhook {event['id']}: {e}", exc_info=True)
+        mark_stripe_event_processed(event["id"], db, error_message=str(e))
+        # Return success even on error to prevent infinite retries
+        return {"status": "error_logged", "error": str(e)}
 
