@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Stripe setup script - creates products, prices, and meters.
-Injects monthly_tokens into Product metadata for the StripeRegistry.
+Injects 'tokens' into Metadata for both Products and Prices.
 """
 
 import argparse
@@ -15,29 +15,37 @@ METER_EVENT_NAME = "hopper_tokens"
 METER_DISPLAY_NAME = "hopper tokens"
 STRIPE_API_VERSION = "2024-11-20.acacia"
 
-# price_total_dollars: The flat monthly fee
-# overage_unit_cents: The fractional cent cost per token (e.g., 0.8 = $0.008)
+# price_total_dollars: The flat fee for the cycle
+# overage_unit_cents: The fractional cent cost per token (e.g., 1.5 = $0.015)
 PRODUCTS = {
     'free': {
         'name': 'Free',
-        'description': '100 tokens per month',
-        'monthly_tokens': 100,
+        'description': '100 tokens included',
+        'tokens': 100,
         'price_total_dollars': 0,
         'overage_unit_cents': None
     },
     'starter': {
         'name': 'Starter',
-        'description': '300 tokens per month',
-        'monthly_tokens': 300,
+        'description': '300 tokens included',
+        'tokens': 300,
         'price_total_dollars': 3.0,
-        'overage_unit_cents': 1.5  # 1.5 cents per token ($0.015)
+        'overage_unit_cents': 1.5
     },
     'creator': {
         'name': 'Creator',
-        'description': '1250 tokens per month',
-        'monthly_tokens': 1250,
+        'description': '1250 tokens included',
+        'tokens': 1250,
         'price_total_dollars': 10.0,
-        'overage_unit_cents': 0.8  # ($0.008)
+        'overage_unit_cents': 0.8
+    },
+    'unlimited': {
+        'name': 'Unlimited',
+        'description': 'Unlimited tokens',
+        'tokens': -1,  # Using -1 to represent unlimited in your logic
+        'price_total_dollars': 0.0,
+        'overage_unit_cents': None,   # No overage for unlimited
+        'hidden': True
     }
 }
 
@@ -45,11 +53,13 @@ def load_env_file(env_file: str) -> bool:
     """Load environment variables from .env.{env_file}."""
     try:
         from dotenv import load_dotenv
+        # Look in current and parent directory (standard FastAPI structure)
         backend_dir = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.dirname(backend_dir)
         
         paths = [
             os.path.join(project_root, f'.env.{env_file}'),
+            os.path.join(backend_dir, f'.env.{env_file}'),
             f'.env.{env_file}',
         ]
         
@@ -87,8 +97,9 @@ def get_or_create_meter() -> Any:
 def find_or_create_price(product_id: str, config: Dict[str, Any], 
                          existing_prices: List[Any], is_metered: bool = False, 
                          meter_id: Optional[str] = None, plan_key: str = "") -> Any:
-    """Finds or creates price using stable lookup_keys for the Registry."""
+    """Finds or creates price using stable lookup_keys and ensures metadata sync."""
     
+    metadata = {"tokens": str(config['tokens'])}
     if is_metered:
         target_value = str(config['overage_unit_cents'])
         lookup_key = f"{plan_key}_overage_price"
@@ -99,14 +110,18 @@ def find_or_create_price(product_id: str, config: Dict[str, Any],
     # Search for existing active price with this lookup_key
     for price in existing_prices:
         if getattr(price, 'lookup_key', None) == lookup_key and price.active:
-            # Check if values match. If not, we'd deactivate and create new, 
-            # but for this script we assume lookup_key is the master ID.
+            # If price value is the same, just update metadata if needed
             if price.unit_amount_decimal == target_value:
-                print(f"    ✓ Found active price by lookup_key: {price.id} ({lookup_key})")
+                if price.metadata.get("tokens") != metadata["tokens"]:
+                    stripe.Price.modify(price.id, metadata=metadata)
+                    print(f"    ✓ Updated metadata for price: {price.id} ({lookup_key})")
+                else:
+                    print(f"    ✓ Price and metadata up to date: {price.id} ({lookup_key})")
                 return price
             else:
-                print(f"    ⚠️  Price for {lookup_key} has changed. Deactivating old price...")
-                stripe.Price.modify(price.id, active=False)
+                # Deactivate old price if the value changed
+                print(f"    ⚠️  Price value for {lookup_key} changed. Deactivating {price.id}...")
+                stripe.Price.modify(price.id, active=False, lookup_key=None)
 
     print(f"    ➕ Creating new price for {lookup_key}...")
     params = {
@@ -115,7 +130,8 @@ def find_or_create_price(product_id: str, config: Dict[str, Any],
         "unit_amount_decimal": target_value,
         "recurring": {"interval": "month"},
         "lookup_key": lookup_key,
-        "transfer_lookup_key": True # Ensures lookup key moves if product is updated
+        "transfer_lookup_key": True,
+        "metadata": metadata
     }
     if is_metered:
         params["recurring"]["usage_type"] = "metered"
@@ -130,14 +146,19 @@ def sync_stripe_resources():
     
     all_products = stripe.Product.list(limit=100).data
     existing_products = {p.name: p for p in all_products if p.active}
+    # List prices and expand product to check metadata
     existing_prices = stripe.Price.list(limit=100, active=True).data
 
     for key, config in PRODUCTS.items():
         print(f"Plan: {config['name']}")
         
-        # 1. Handle Product & Metadata (The source of truth for monthly_tokens)
+        # 1. Product Metadata Sync
         product = existing_products.get(config['name'])
-        metadata = {"monthly_tokens": str(config['monthly_tokens'])}
+        metadata = {"tokens": str(config['tokens'])}
+        
+        # Add hidden flag to metadata if present
+        if config.get('hidden'):
+            metadata["hidden"] = "true"
         
         if not product:
             product = stripe.Product.create(
@@ -148,8 +169,10 @@ def sync_stripe_resources():
             print(f"  ✓ Created product: {product.id}")
         else:
             # Update product if description or metadata changed
+            current_hidden = "true" if config.get('hidden') else "false"
             if (product.description != config['description'] or 
-                product.metadata.get("monthly_tokens") != metadata["monthly_tokens"]):
+                product.metadata.get("tokens") != metadata.get("tokens") or
+                product.metadata.get("hidden", "false") != current_hidden):
                 stripe.Product.modify(
                     product.id, 
                     description=config['description'],
@@ -157,15 +180,15 @@ def sync_stripe_resources():
                 )
                 print(f"  ✓ Updated product metadata/description: {product.id}")
         
-        # 2. Handle Base Price
+        # 2. Base Price Sync (updates Price metadata too)
         find_or_create_price(product.id, config, existing_prices, is_metered=False, plan_key=key)
 
-        # 3. Handle Overage Price
+        # 3. Overage Price Sync
         if config.get('overage_unit_cents') is not None:
             find_or_create_price(product.id, config, existing_prices, is_metered=True, meter_id=meter_id, plan_key=key)
 
 def main():
-    parser = argparse.ArgumentParser(description='Setup Stripe Products with Metadata.')
+    parser = argparse.ArgumentParser(description='Setup Stripe Resources with stable Lookup Keys.')
     parser.add_argument('--env-file', choices=['dev', 'prod'], help='Load from .env file')
     args = parser.parse_args()
 
@@ -174,7 +197,7 @@ def main():
 
     api_key = os.getenv('STRIPE_SECRET_KEY')
     if not api_key:
-        print("❌ STRIPE_SECRET_KEY not found in environment.")
+        print("❌ STRIPE_SECRET_KEY not found in environment. Check your .env file.")
         sys.exit(1)
 
     stripe.api_key = api_key
@@ -183,7 +206,7 @@ def main():
 
     print(f"Starting Setup in {mode.upper()} mode")
     sync_stripe_resources()
-    print(f"\n{'='*60}\n✅ Sync Complete. Registry will now fetch these details dynamically.\n{'='*60}")
+    print(f"\n{'='*60}\n✅ Sync Complete. Code 'tokens' is now the source of truth.\n{'='*60}")
 
 if __name__ == '__main__':
     main()

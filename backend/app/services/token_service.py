@@ -10,8 +10,15 @@ from app.models.token_transaction import TokenTransaction
 from app.models.user import User
 from app.models.video import Video
 from app.models.subscription import Subscription
+from app.services.stripe_service import StripeRegistry
 
 logger = logging.getLogger(__name__)
+
+
+def get_plan_tokens(plan_type: str) -> int:
+    """Get token allocation for a plan type from StripeRegistry"""
+    plan_config = StripeRegistry.get(f"{plan_type}_price")
+    return plan_config.get("tokens", 0) if plan_config else 0
 
 
 def get_or_create_token_balance(user_id: int, db: Session) -> TokenBalance:
@@ -55,8 +62,7 @@ def get_token_balance(user_id: int, db: Session) -> Dict[str, Any]:
     balance = get_or_create_token_balance(user_id, db)
     
     # Get monthly token allocation for the plan (for overage calculation)
-    from app.services.stripe_service import get_plan_monthly_tokens
-    plan_monthly_tokens = get_plan_monthly_tokens(subscription.plan_type) if subscription else 0
+    plan_monthly_tokens = get_plan_tokens(subscription.plan_type) if subscription else 0
     
     # For display purposes, show 0 if tokens_remaining is negative (user is in overage)
     # The negative value is used internally for tracking, but UI should show 0
@@ -177,8 +183,7 @@ def deduct_tokens(
         overage_tokens_used = max(0, tokens - included_tokens_used)
         
         # Check if free plan is trying to go over limit (free plan has hard limit, no overage)
-        from app.services.stripe_service import get_plan_monthly_tokens
-        plan_monthly_tokens = get_plan_monthly_tokens(subscription.plan_type) if subscription else 0
+        plan_monthly_tokens = get_plan_tokens(subscription.plan_type) if subscription else 0
         if subscription and subscription.plan_type == 'free' and overage_tokens_used > 0:
             logger.warning(
                 f"Free plan user {user_id} attempted to use {tokens} tokens but only has {balance.tokens_remaining} remaining. "
@@ -362,8 +367,7 @@ def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: da
         balance = get_or_create_token_balance(user_id, db)
         
         # Get monthly allocation for plan
-        from app.services.stripe_service import get_plan_monthly_tokens
-        monthly_tokens = get_plan_monthly_tokens(plan_type)
+        monthly_tokens = get_plan_tokens(plan_type)
         
         balance_before = balance.tokens_remaining
         
@@ -652,8 +656,7 @@ def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db
         # Not a renewal - check if tokens need to be added for new subscription
         period_mismatch = (token_balance.period_start != subscription.current_period_start or 
                           token_balance.period_end != subscription.current_period_end)
-        from app.services.stripe_service import get_plan_monthly_tokens
-        monthly_tokens = get_plan_monthly_tokens(subscription.plan_type)
+        monthly_tokens = get_plan_tokens(subscription.plan_type)
         amount_mismatch = token_balance.tokens_remaining != monthly_tokens
         period_uninitialized = (token_balance.period_start == token_balance.period_end)
         
@@ -807,8 +810,6 @@ def deduct_tokens_with_overage_calculation(
     Raises:
         ValueError: If user not found or balance retrieval fails
     """
-    from app.services.stripe_service import get_plan_monthly_tokens
-    
     target_user = db.query(User).filter(User.id == user_id).first()
     if not target_user:
         raise ValueError("User not found")
@@ -827,7 +828,7 @@ def deduct_tokens_with_overage_calculation(
     # Fallback to plan amount if monthly_tokens not set
     if included_tokens == 0:
         subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
-        included_tokens = get_plan_monthly_tokens(subscription.plan_type) if subscription else 0
+        included_tokens = get_plan_tokens(subscription.plan_type) if subscription else 0
     
     # Calculate if this will trigger overage
     tokens_used_before = balance_before.get('tokens_used_this_period', 0)

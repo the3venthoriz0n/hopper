@@ -45,11 +45,15 @@ def list_available_plans() -> Dict:
     base_plans = StripeRegistry.get_all_base_plans()
     
     for plan_key, config in base_plans.items():
+        # Skip unlimited plans and hidden plans
+        if plan_key == 'unlimited' or config.get('hidden', False):
+            continue
+            
         # Build plan data using Registry info
         plan_data = {
             "key": plan_key,
             "name": config["name"],
-            "monthly_tokens": config["monthly_tokens"],
+            "tokens": config["tokens"],
             "stripe_price_id": config["price_id"],
             "price": {
                 "amount": int(config["amount_dollars"] * 100),
@@ -163,7 +167,7 @@ def cancel_user_subscription(user_id: int, db: Session) -> Dict:
     # Restore balance to the new free record
     token_balance = get_or_create_token_balance(user_id, db)
     token_balance.tokens_remaining = current_tokens
-    token_balance.monthly_tokens = max(current_tokens, StripeRegistry.get("free_price")["monthly_tokens"] if StripeRegistry.get("free_price") else 100)
+    token_balance.tokens = max(current_tokens, StripeRegistry.get("free_price")["tokens"] if StripeRegistry.get("free_price") else 100)
     token_balance.tokens_used_this_period = 0
     token_balance.period_start = free_sub.current_period_start
     token_balance.period_end = free_sub.current_period_end

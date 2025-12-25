@@ -291,8 +291,8 @@ def unenroll_user_unlimited_plan(
         ValueError: If user not found, has no subscription, or is not on unlimited plan
     """
     import stripe
-    from app.services.stripe_service import create_free_subscription, get_plan_monthly_tokens
-    from app.services.token_service import get_or_create_token_balance
+    from app.services.stripe_service import create_free_subscription
+    from app.services.token_service import get_or_create_token_balance, get_plan_tokens
     
     target_user = db.query(User).filter(User.id == target_user_id).first()
     if not target_user:
@@ -363,7 +363,7 @@ def unenroll_user_unlimited_plan(
     # Since we used skip_token_reset=True, tokens weren't modified by create_free_subscription
     # We want the final balance to be just preserved_tokens (not preserved_tokens + free_plan_tokens)
     token_balance = get_or_create_token_balance(target_user_id, db)
-    free_plan_tokens = get_plan_monthly_tokens('free')
+    free_plan_tokens = get_plan_tokens('free')
     
     # Set tokens_remaining to preserved_tokens
     token_balance.tokens_remaining = preserved_tokens
@@ -421,10 +421,10 @@ def switch_user_plan(
     import stripe
     from app.services.stripe_service import (
         cancel_all_user_subscriptions, create_free_subscription, create_unlimited_subscription,
-        get_plans, get_plan_monthly_tokens, get_plan_price_id, cancel_subscription_with_invoice,
+        get_plans, get_plan_price_id, cancel_subscription_with_invoice,
         create_stripe_customer
     )
-    from app.services.token_service import reset_tokens_for_subscription, get_or_create_token_balance
+    from app.services.token_service import reset_tokens_for_subscription, get_or_create_token_balance, get_plan_tokens
     
     target_user = db.query(User).filter(User.id == target_user_id).first()
     if not target_user:
@@ -468,7 +468,7 @@ def switch_user_plan(
         new_subscription = create_free_subscription(target_user_id, db, skip_token_reset=True)
         if new_subscription:
             # Preserve tokens and set monthly_tokens correctly
-            free_plan_tokens = get_plan_monthly_tokens('free')
+            free_plan_tokens = get_plan_tokens('free')
             token_balance = get_or_create_token_balance(target_user_id, db)
             token_balance.tokens_remaining = preserved_tokens
             token_balance.monthly_tokens = max(preserved_tokens, free_plan_tokens)
@@ -526,7 +526,7 @@ def switch_user_plan(
         
         # Preserve tokens
         token_balance = get_or_create_token_balance(target_user_id, db)
-        plan_tokens = get_plan_monthly_tokens(plan_key)
+        plan_tokens = get_plan_tokens(plan_key)
         token_balance.tokens_remaining = preserved_tokens
         token_balance.monthly_tokens = max(preserved_tokens, plan_tokens)
         token_balance.tokens_used_this_period = 0
@@ -560,8 +560,8 @@ def test_meter_event_for_user(
     Raises:
         ValueError: If user not found, has no subscription, wrong plan type, or no Stripe customer ID
     """
-    from app.services.stripe_service import record_token_usage_to_stripe, get_plan_monthly_tokens
-    from app.services.token_service import get_or_create_token_balance
+    from app.services.stripe_service import record_token_usage_to_stripe
+    from app.services.token_service import get_or_create_token_balance, get_plan_tokens
     
     # Get user's subscription to verify they have a paid plan
     subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
@@ -580,7 +580,7 @@ def test_meter_event_for_user(
     original_used = balance.tokens_used_this_period
     
     # Set tokens_used_this_period to create overage
-    included_tokens = get_plan_monthly_tokens(subscription.plan_type)
+    included_tokens = get_plan_tokens(subscription.plan_type)
     balance.tokens_used_this_period = included_tokens + value
     db.commit()
     

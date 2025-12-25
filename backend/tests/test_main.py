@@ -313,13 +313,38 @@ class TestStripeFunctionality:
         )
         assert result is False
     
-    @patch('app.services.stripe_service.get_plans')
-    def test_get_plan_monthly_tokens(self, mock_get_plans):
-        """Test getting monthly tokens for a plan"""
-        from app.services.stripe_service import get_plan_monthly_tokens
-        mock_get_plans.return_value = {'free': {'monthly_tokens': 10}}
+    @patch('app.services.token_service.StripeRegistry')
+    def test_get_plan_tokens(self, mock_registry):
+        """Test getting tokens for a plan from StripeRegistry"""
+        from app.services.token_service import get_plan_tokens
         
-        assert get_plan_monthly_tokens('free') == 10
+        # Mock StripeRegistry.get() to return plan config with tokens
+        mock_registry.get.return_value = {'tokens': 10}
+        
+        assert get_plan_tokens('free') == 10
+        mock_registry.get.assert_called_once_with('free_price')
+    
+    @patch('app.services.token_service.StripeRegistry')
+    def test_get_plan_tokens_missing_plan(self, mock_registry):
+        """Test getting tokens when plan is not found in registry"""
+        from app.services.token_service import get_plan_tokens
+        
+        # Mock StripeRegistry.get() to return None (plan not found)
+        mock_registry.get.return_value = None
+        
+        assert get_plan_tokens('nonexistent') == 0
+        mock_registry.get.assert_called_once_with('nonexistent_price')
+    
+    @patch('app.services.token_service.StripeRegistry')
+    def test_get_plan_tokens_missing_tokens_key(self, mock_registry):
+        """Test getting tokens when plan config exists but tokens key is missing"""
+        from app.services.token_service import get_plan_tokens
+        
+        # Mock StripeRegistry.get() to return config without tokens key
+        mock_registry.get.return_value = {'price_id': 'price_123', 'name': 'Free Plan'}
+        
+        assert get_plan_tokens('free') == 0
+        mock_registry.get.assert_called_once_with('free_price')
     
     @patch('builtins.open', create=True)
     def test_load_plans_from_json(self, mock_open):
