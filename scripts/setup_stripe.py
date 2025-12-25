@@ -25,24 +25,24 @@ METER_DISPLAY_NAME = "hopper tokens"
 PRODUCTS = {
     'free': {
         'name': 'Free',
-        'description': '10 tokens per month',
-        'monthly_tokens': 10,
+        'description': '100 tokens per month',
+        'monthly_tokens': 100,
         'price_cents': 0,
         'overage_price_cents': None  # Hard limit, no overages
     },
     'starter': {
         'name': 'Starter',
-        'description': '100 tokens per month',
-        'monthly_tokens': 100,
-        'price_cents': 10,  # $0.10 per token (100 tokens × $0.10 = $10.00/month)
-        'overage_price_cents': 10  # $0.10 per token (matches base price)
+        'description': '300 tokens per month',
+        'monthly_tokens': 300,
+        'price_cents': 1,  # $3.00/month
+        'overage_price_cents': 1.5
     },
     'creator': {
         'name': 'Creator',
-        'description': '500 tokens per month',
-        'monthly_tokens': 500,
-        'price_cents': 6,  # $0.06 per token (500 tokens × $0.06 = $30.00/month)
-        'overage_price_cents': 6  # $0.06 per token (matches base price)
+        'description': '1250 tokens per month',
+        'monthly_tokens': 1250,
+        'price_cents': .8,  # $10.00/month
+        'overage_price_cents': 1
     },
     'unlimited': {
         'name': 'Unlimited',
