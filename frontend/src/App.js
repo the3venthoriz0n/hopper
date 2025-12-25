@@ -2522,7 +2522,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             left: 0,
             right: 0,
             bottom: 0,
-            backgroundColor: rgba(HOPPER_COLORS.rgb.black, 0.6),
+            backgroundColor: 'var(--bg-overlay)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -2930,19 +2930,21 @@ function Home({ user, isAdmin, setUser, authLoading }) {
 
               {globalSettings.schedule_mode === 'spaced' && (
                 <div className="setting-group">
-                  <label>
-                    <input
+                  <label className="checkbox-label">
+                    <input 
                       type="checkbox"
                       checked={globalSettings.upload_first_immediately !== false}
                       onChange={(e) => updateGlobalSettings('upload_first_immediately', e.target.checked)}
-                      style={{ marginRight: '8px' }}
+                      className="checkbox"
                     />
-                    Upload first video immediately
-                    <span className="tooltip-wrapper">
-                      <span className="tooltip-icon">i</span>
-                      <span className="tooltip-text">
-                        When checked, the first video uploads immediately and subsequent videos are spaced by the interval.
-                        When unchecked, all videos (including the first) are spaced evenly by the interval.
+                    <span>
+                      Upload first video immediately
+                      <span className="tooltip-wrapper" style={{ marginLeft: '6px' }}>
+                        <span className="tooltip-icon">i</span>
+                        <span className="tooltip-text">
+                          When checked, the first video uploads immediately and subsequent videos are spaced by the interval.
+                          When unchecked, all videos (including the first) are spaced evenly by the interval.
+                        </span>
                       </span>
                     </span>
                   </label>
@@ -4885,7 +4887,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               left: 0,
               right: 0,
               bottom: 0,
-              backgroundColor: rgba(HOPPER_COLORS.rgb.base, 0.7),
+              backgroundColor: 'var(--bg-overlay)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
