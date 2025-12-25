@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-Stripe setup script - creates products, prices, and webhooks.
-Uses unit_amount_decimal for fractional cent support (e.g., 0.8 cents).
+Stripe setup script - creates products, prices, and meters.
+Injects monthly_tokens into Product metadata for the StripeRegistry.
 """
 
 import argparse
-import json
 import os
 import sys
 import stripe
@@ -39,14 +38,6 @@ PRODUCTS = {
         'monthly_tokens': 1250,
         'price_total_dollars': 10.0,
         'overage_unit_cents': 0.8  # ($0.008)
-    },
-    'unlimited': {
-        'name': 'Unlimited',
-        'description': 'Unlimited tokens',
-        'monthly_tokens': -1,
-        'price_total_dollars': 0,
-        'overage_unit_cents': None,
-        'hidden': True
     }
 }
 
@@ -74,6 +65,7 @@ def load_env_file(env_file: str) -> bool:
         return False
 
 def get_or_create_meter() -> Any:
+    """Find or create the billing meter for token usage."""
     try:
         meters = stripe.billing.Meter.list(limit=100)
         for meter in meters.data:
@@ -94,69 +86,48 @@ def get_or_create_meter() -> Any:
 
 def find_or_create_price(product_id: str, config: Dict[str, Any], 
                          existing_prices: List[Any], is_metered: bool = False, 
-                         meter_id: Optional[str] = None, plan_key: Optional[str] = None) -> Any:
-    """Finds or creates price using unit_amount_decimal for idempotency."""
+                         meter_id: Optional[str] = None, plan_key: str = "") -> Any:
+    """Finds or creates price using stable lookup_keys for the Registry."""
+    
     if is_metered:
         target_value = str(config['overage_unit_cents'])
-        lookup_key = f"{plan_key}_overage_price" if plan_key else None
+        lookup_key = f"{plan_key}_overage_price"
     else:
         target_value = str(int(config['price_total_dollars'] * 100))
-        lookup_key = f"{plan_key}_price" if plan_key else None
+        lookup_key = f"{plan_key}_price"
 
-    # First try to find by lookup_key if provided
-    if lookup_key:
-        for price in existing_prices:
-            if price.product == product_id and price.active and getattr(price, 'lookup_key', None) == lookup_key:
-                current_val = getattr(price, 'unit_amount_decimal', None)
-                is_usage_metered = getattr(price.recurring, 'usage_type', None) == 'metered'
-                if current_val == target_value and is_usage_metered == is_metered:
-                    if is_metered and getattr(price.recurring, 'meter', None) != meter_id:
-                        continue
-                    print(f"    ✓ Found price by lookup_key: {price.id} ({lookup_key})")
-                    return price
-
-    # Fallback: find by amount and type
+    # Search for existing active price with this lookup_key
     for price in existing_prices:
-        if price.product != product_id or not price.active:
-            continue
-        
-        current_val = getattr(price, 'unit_amount_decimal', None)
-        is_usage_metered = getattr(price.recurring, 'usage_type', None) == 'metered'
-        
-        if current_val == target_value and is_usage_metered == is_metered:
-            if is_metered and getattr(price.recurring, 'meter', None) != meter_id:
-                continue
-            # Update existing price with lookup_key if it doesn't have one
-            if lookup_key and not getattr(price, 'lookup_key', None):
-                try:
-                    stripe.Price.modify(price.id, lookup_key=lookup_key)
-                    print(f"    ✓ Added lookup_key to existing price: {price.id} ({lookup_key})")
-                except Exception as e:
-                    print(f"    ⚠️  Could not add lookup_key to {price.id}: {e}")
-            print(f"    ✓ Reusing price: {price.id} ({target_value} cents)")
-            return price
+        if getattr(price, 'lookup_key', None) == lookup_key and price.active:
+            # Check if values match. If not, we'd deactivate and create new, 
+            # but for this script we assume lookup_key is the master ID.
+            if price.unit_amount_decimal == target_value:
+                print(f"    ✓ Found active price by lookup_key: {price.id} ({lookup_key})")
+                return price
+            else:
+                print(f"    ⚠️  Price for {lookup_key} has changed. Deactivating old price...")
+                stripe.Price.modify(price.id, active=False)
 
-    print(f"    ➕ Creating price: {target_value} cents (Metered: {is_metered}, lookup_key: {lookup_key})")
+    print(f"    ➕ Creating new price for {lookup_key}...")
     params = {
         "product": product_id,
         "currency": "usd",
         "unit_amount_decimal": target_value,
-        "recurring": {"interval": "month"}
+        "recurring": {"interval": "month"},
+        "lookup_key": lookup_key,
+        "transfer_lookup_key": True # Ensures lookup key moves if product is updated
     }
-    if lookup_key:
-        params["lookup_key"] = lookup_key
     if is_metered:
         params["recurring"]["usage_type"] = "metered"
         params["recurring"]["meter"] = meter_id
     
     return stripe.Price.create(**params)
 
-def create_or_update_products() -> Dict[str, Dict[str, Any]]:
-    print(f"\n{'='*60}\nSyncing Stripe Products\n{'='*60}\n")
+def sync_stripe_resources():
+    print(f"\n{'='*60}\nSyncing Stripe Products & Metadata\n{'='*60}\n")
     meter = get_or_create_meter()
     meter_id = meter.id if meter else None
     
-    results = {}
     all_products = stripe.Product.list(limit=100).data
     existing_products = {p.name: p for p in all_products if p.active}
     existing_prices = stripe.Price.list(limit=100, active=True).data
@@ -164,53 +135,38 @@ def create_or_update_products() -> Dict[str, Dict[str, Any]]:
     for key, config in PRODUCTS.items():
         print(f"Plan: {config['name']}")
         
+        # 1. Handle Product & Metadata (The source of truth for monthly_tokens)
         product = existing_products.get(config['name'])
+        metadata = {"monthly_tokens": str(config['monthly_tokens'])}
+        
         if not product:
-            product = stripe.Product.create(name=config['name'], description=config['description'])
+            product = stripe.Product.create(
+                name=config['name'], 
+                description=config['description'],
+                metadata=metadata
+            )
             print(f"  ✓ Created product: {product.id}")
         else:
-            # Update description if it doesn't match (in case token amounts changed)
-            if product.description != config['description']:
-                stripe.Product.modify(product.id, description=config['description'])
-                print(f"  ✓ Updated product description: {product.id}")
+            # Update product if description or metadata changed
+            if (product.description != config['description'] or 
+                product.metadata.get("monthly_tokens") != metadata["monthly_tokens"]):
+                stripe.Product.modify(
+                    product.id, 
+                    description=config['description'],
+                    metadata=metadata
+                )
+                print(f"  ✓ Updated product metadata/description: {product.id}")
         
-        base_price = find_or_create_price(product.id, config, existing_prices, is_metered=False, plan_key=key)
-        
-        plan_config = {
-            'name': config['name'],
-            'monthly_tokens': config['monthly_tokens'],
-            'stripe_product_id': product.id,
-            'stripe_price_id': base_price.id,
-            'stripe_overage_price_id': None
-        }
+        # 2. Handle Base Price
+        find_or_create_price(product.id, config, existing_prices, is_metered=False, plan_key=key)
 
+        # 3. Handle Overage Price
         if config.get('overage_unit_cents') is not None:
-            ov_price = find_or_create_price(product.id, config, existing_prices, is_metered=True, meter_id=meter_id, plan_key=key)
-            plan_config['stripe_overage_price_id'] = ov_price.id
-
-        # Preserve hidden flag if present
-        if config.get('hidden'):
-            plan_config['hidden'] = True
-
-        results[key] = plan_config
-    return results
-
-def save_config(plans: Dict[str, Dict[str, Any]], mode: str):
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(script_dir)
-    target_dir = os.path.join(project_root, 'backend', 'app', 'core', 'assets')
-    
-    os.makedirs(target_dir, exist_ok=True)
-    file_path = os.path.join(target_dir, f'stripe_plans_{mode}.json')
-    
-    with open(file_path, 'w') as f:
-        json.dump(plans, f, indent=2)
-    print(f"\n✓ Configuration saved to: {file_path}")
+            find_or_create_price(product.id, config, existing_prices, is_metered=True, meter_id=meter_id, plan_key=key)
 
 def main():
-    parser = argparse.ArgumentParser(description='Setup Stripe fractional pricing.')
+    parser = argparse.ArgumentParser(description='Setup Stripe Products with Metadata.')
     parser.add_argument('--env-file', choices=['dev', 'prod'], help='Load from .env file')
-    parser.add_argument('--mode', choices=['test', 'live'], help='Stripe mode')
     args = parser.parse_args()
 
     if args.env_file:
@@ -221,15 +177,13 @@ def main():
         print("❌ STRIPE_SECRET_KEY not found in environment.")
         sys.exit(1)
 
-    mode = args.mode or ('test' if api_key.startswith('sk_test_') else 'live')
     stripe.api_key = api_key
     stripe.api_version = STRIPE_API_VERSION
+    mode = 'test' if api_key.startswith('sk_test_') else 'live'
 
-    print(f"Starting Setup: {mode.upper()}")
-    
-    plans = create_or_update_products()
-    save_config(plans, mode)
-    print(f"\n{'='*60}\n✅ Idempotent Sync Complete\n{'='*60}")
+    print(f"Starting Setup in {mode.upper()} mode")
+    sync_stripe_resources()
+    print(f"\n{'='*60}\n✅ Sync Complete. Registry will now fetch these details dynamically.\n{'='*60}")
 
 if __name__ == '__main__':
     main()

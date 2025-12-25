@@ -1,4 +1,3 @@
-"""Subscriptions API routes"""
 import logging
 import os
 import stripe
@@ -21,11 +20,9 @@ router = APIRouter(prefix="/api/subscription", tags=["subscriptions"])
 logger = logging.getLogger(__name__)
 
 
-
-
 @router.get("/info")
 def get_subscription(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
-    """Get subscription information"""
+    """Get subscription information."""
     info = get_subscription_info(user_id, db)
     if not info:
         return {"subscription": None}
@@ -38,46 +35,35 @@ def get_portal_url(
     user_id: int = Depends(require_auth),
     db: Session = Depends(get_db)
 ):
-    """Get Stripe customer portal URL"""
+    """Get Stripe customer portal URL."""
     frontend_url = settings.FRONTEND_URL
     return_url = f"{frontend_url}/settings"
     
     portal_url = get_customer_portal_url(user_id, return_url, db)
     if not portal_url:
-        raise HTTPException(500, "Failed to create portal session")
+        raise HTTPException(status_code=500, detail="Failed to create portal session")
     
     return {"url": portal_url}
 
 
-
-# Additional subscription routes (legacy endpoints for compatibility)
 @router.get("/plans")
 def get_subscription_plans():
-    """Get available subscription plans (excludes hidden/dev-only plans)"""
+    """Get available subscription plans dynamically from the Stripe Registry."""
     return list_available_plans()
 
 
 @router.get("/current")
 def get_current_subscription(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
-    """Get user's current subscription.
-    
-    This is a lightweight GET endpoint that returns current state.
-    Subscription syncing is handled by:
-    - Webhooks (primary mechanism)
-    - Background scheduler (periodic sync for missed webhooks)
-    
-    Auto-repairs missing subscriptions by creating a free subscription.
-    """
+    """Get user's current subscription with auto-repair logic."""
     try:
         return get_current_subscription_with_auto_repair(user_id, db)
     except ValueError as e:
         error_msg = str(e)
         if "no longer exists" in error_msg.lower():
             # Return 401 instead of 404 to trigger logout in frontend
-            # This happens when a user was deleted but their session is still active
-            raise HTTPException(401, error_msg)
+            raise HTTPException(status_code=401, detail=error_msg)
         else:
-            raise HTTPException(500, error_msg)
+            raise HTTPException(status_code=500, detail=error_msg)
 
 
 @router.post("/create-checkout")
@@ -87,8 +73,7 @@ def create_subscription_checkout_route(
     user_id: int = Depends(require_csrf_new),
     db: Session = Depends(get_db)
 ):
-    """Create Stripe checkout session for subscription"""
-    # Get frontend URL from environment or request
+    """Create Stripe checkout session for subscription using lookup keys."""
     frontend_url = settings.FRONTEND_URL or str(request.base_url).rstrip("/")
     
     try:
@@ -98,7 +83,7 @@ def create_subscription_checkout_route(
             frontend_url,
             db
         )
-        # Check if result contains error (user already has subscription)
+        # Handle 400 cases (e.g., user already has a subscription)
         if isinstance(result, dict) and "error" in result:
             return JSONResponse(
                 status_code=400,
@@ -106,10 +91,10 @@ def create_subscription_checkout_route(
             )
         return result
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error creating checkout session for user {user_id}: {e}", exc_info=True)
-        raise HTTPException(500, "Failed to create checkout session")
+        raise HTTPException(status_code=500, detail="Failed to create checkout session")
 
 
 @router.get("/checkout-status")
@@ -118,23 +103,20 @@ def check_checkout_status_route(
     user_id: int = Depends(require_csrf_new),
     db: Session = Depends(get_db)
 ):
-    """
-    Check the status of a Stripe checkout session and verify if subscription was created.
-    This endpoint allows the frontend to verify payment completion without polling subscription state.
-    """
+    """Check the status of a Stripe checkout session."""
     try:
         return check_checkout_status(session_id, user_id, db)
     except ValueError as e:
         error_msg = str(e)
         if "not configured" in error_msg.lower():
-            raise HTTPException(500, error_msg)
+            raise HTTPException(status_code=500, detail=error_msg)
         elif "does not belong" in error_msg.lower():
-            raise HTTPException(403, error_msg)
+            raise HTTPException(status_code=403, detail=error_msg)
         else:
-            raise HTTPException(400, error_msg)
+            raise HTTPException(status_code=400, detail=error_msg)
     except Exception as e:
         logger.error(f"Error checking checkout session {session_id}: {e}", exc_info=True)
-        raise HTTPException(500, "Error checking checkout session")
+        raise HTTPException(status_code=500, detail="Error checking checkout session")
 
 
 @router.post("/cancel")
@@ -142,21 +124,17 @@ def cancel_subscription(
     user_id: int = Depends(require_auth),
     db: Session = Depends(get_db)
 ):
-    """
-    Cancel the user's subscription and switch to free plan.
-    Cancels the Stripe subscription immediately and creates a new free Stripe subscription.
-    Preserves the user's current token balance.
-    """
+    """Cancel subscription and switch to free plan while preserving tokens."""
     try:
         return cancel_user_subscription(user_id, db)
     except ValueError as e:
         error_msg = str(e)
         if "no longer exists" in error_msg.lower():
-            raise HTTPException(401, error_msg)
+            raise HTTPException(status_code=401, detail=error_msg)
         elif "not found" in error_msg.lower():
-            raise HTTPException(404, error_msg)
+            raise HTTPException(status_code=404, detail=error_msg)
         else:
-            raise HTTPException(500, error_msg)
+            raise HTTPException(status_code=500, detail=error_msg)
 
 
 @router.post("/switch-to-free")
@@ -164,77 +142,59 @@ def switch_to_free_plan(
     user_id: int = Depends(require_auth),
     db: Session = Depends(get_db)
 ):
-    """
-    Switch user to free plan (alias for cancel subscription).
-    This is the same as canceling the subscription.
-    """
+    """Alias for cancel subscription."""
     try:
         return cancel_user_subscription(user_id, db)
     except ValueError as e:
         error_msg = str(e)
         if "no longer exists" in error_msg.lower():
-            raise HTTPException(401, error_msg)
+            raise HTTPException(status_code=401, detail=error_msg)
         elif "not found" in error_msg.lower():
-            raise HTTPException(404, error_msg)
+            raise HTTPException(status_code=404, detail=error_msg)
         else:
-            raise HTTPException(500, error_msg)
+            raise HTTPException(status_code=500, detail=error_msg)
 
 
 # ============================================================================
-# STRIPE CONFIG ROUTE (separate router for /api/stripe)
+# STRIPE WEBHOOK & CONFIG ROUTER
 # ============================================================================
 
 stripe_router = APIRouter(prefix="/api/stripe", tags=["stripe"])
 
 
 @stripe_router.post("/webhook")
-async def stripe_webhook_stripe(request: Request, db: Session = Depends(get_db)):
-    """Handle Stripe webhook events (stripe_router endpoint)
-    
-    Note: This route must be excluded from any global JSON parsing middleware
-    to ensure the request body remains as raw bytes for signature verification.
-    """
-    # Read body as raw bytes (critical for signature verification)
-    # Middleware must not parse JSON before this point
+async def stripe_webhook_endpoint(request: Request, db: Session = Depends(get_db)):
+    """Handle Stripe webhook events. Must receive raw bytes for signature."""
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
     
     if not sig_header:
-        raise HTTPException(400, "Missing stripe-signature header")
+        raise HTTPException(status_code=400, detail="Missing stripe-signature header")
     
     try:
-        result = process_stripe_webhook(payload, sig_header, db)
-        return result
+        return process_stripe_webhook(payload, sig_header, db)
     except ValueError as e:
-        # Invalid payload
         logger.error(f"Invalid webhook payload: {e}")
-        raise HTTPException(400, str(e))
+        raise HTTPException(status_code=400, detail=str(e))
     except stripe.error.SignatureVerificationError as e:
-        # Invalid signature
         logger.error(f"Invalid webhook signature: {e}")
-        raise HTTPException(400, "Invalid signature")
+        raise HTTPException(status_code=400, detail="Invalid signature")
     except Exception as e:
-        # Unexpected error - log but return 200 to prevent retries
         logger.error(f"Unexpected error processing webhook: {e}", exc_info=True)
+        # Return 200/success to prevent Stripe from retrying infinitely
         return {"status": "error", "message": "Webhook processing failed"}
 
 
 @stripe_router.get("/config")
 def get_stripe_config():
-    """Get Stripe publishable key and pricing table ID for frontend"""
-    # Get pricing table ID from environment variable
+    """Get Stripe publishable key and pricing table ID."""
     pricing_table_id = os.getenv("STRIPE_PRICING_TABLE_ID", "")
-    
     publishable_key = settings.STRIPE_PUBLISHABLE_KEY
-    if not publishable_key:
-        raise HTTPException(500, "Stripe not configured")
     
-    # Log warning if pricing table ID is not set (for debugging)
-    if not pricing_table_id:
-        logger.warning("STRIPE_PRICING_TABLE_ID not set in environment variables")
+    if not publishable_key:
+        raise HTTPException(status_code=500, detail="Stripe not configured")
     
     return {
         "publishable_key": publishable_key,
         "pricing_table_id": pricing_table_id
     }
-
