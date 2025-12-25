@@ -382,28 +382,120 @@ def complete_password_reset(token: str, new_password: str, db: Session) -> bool:
     return True
 
 
-def delete_user_account(user_id: int, db: Session) -> bool:
-    """Delete a user account and all associated data
+def delete_user_account(user_id: int, db: Session) -> dict:
+    """Complete account deletion: cancel subscriptions, delete all data, clean up files
+    
+    This function performs a complete GDPR-compliant account deletion:
+    - Cancels all Stripe subscriptions (with final invoice for overage)
+    - Collects video file paths before deletion
+    - Deletes all Redis data (sessions, caches, etc.)
+    - Deletes user account (cascade handles: videos, settings, oauth_tokens, 
+      subscriptions, token_balance, token_transactions)
+    - Deletes video files from disk
+    - Returns detailed deletion stats
     
     Args:
         user_id: User ID
         db: Database session
     
     Returns:
-        bool: True if successful, False if user not found
+        dict: Deletion result with stats:
+            - message: str
+            - stats: dict with deletion counts and user email
+    
+    Raises:
+        ValueError: If user not found or deletion fails
     """
+    import logging
+    from pathlib import Path
+    from app.models.video import Video
+    from app.models.setting import Setting
+    from app.models.oauth_token import OAuthToken
+    from app.services.stripe_service import cancel_all_user_subscriptions
+    from app.db.redis import delete_all_user_sessions, invalidate_all_user_caches
+    
+    security_logger = logging.getLogger("security")
+    upload_logger = logging.getLogger("upload")
+    
+    security_logger.info(f"User {user_id} requested account deletion")
+    
+    # Get user and validate
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        return False
+        raise ValueError("User not found")
+    
+    user_email = user.email
+    
+    # Collect video file paths before deletion
+    videos = db.query(Video).filter(Video.user_id == user_id).all()
+    video_file_paths = [video.path for video in videos if video.path]
+    
+    # Count related records before deletion
+    videos_count = len(videos)
+    settings_count = db.query(Setting).filter(Setting.user_id == user_id).count()
+    oauth_tokens_count = db.query(OAuthToken).filter(OAuthToken.user_id == user_id).count()
+    
+    # Cancel all Stripe subscriptions (with final invoice for overage)
+    try:
+        cancel_all_user_subscriptions(user_id, db, invoice_now=True)
+    except Exception as e:
+        security_logger.warning(f"Failed to cancel Stripe subscriptions for user {user_id}: {e}")
+        # Continue with deletion even if Stripe cancellation fails
     
     # Delete all Redis data (sessions, caches, etc.)
-    invalidate_all_user_caches(user_id)
+    try:
+        invalidate_all_user_caches(user_id)
+        delete_all_user_sessions(user_id)
+    except Exception as e:
+        security_logger.warning(f"Failed to delete some Redis data for user {user_id}: {e}")
+        # Continue with deletion even if Redis cleanup fails
     
     # Delete user (cascade will handle related records)
-    db.delete(user)
-    db.commit()
+    try:
+        db.delete(user)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        security_logger.error(f"Failed to delete user {user_id} from database: {e}", exc_info=True)
+        raise ValueError(f"Failed to delete account: {str(e)}")
     
-    return True
+    # Clean up video files from disk
+    files_deleted = 0
+    files_failed = 0
+    
+    for video_path in video_file_paths:
+        try:
+            path = Path(video_path).resolve()
+            if path.exists():
+                path.unlink()
+                files_deleted += 1
+                upload_logger.debug(f"Deleted video file: {video_path}")
+        except Exception as e:
+            files_failed += 1
+            upload_logger.warning(f"Failed to delete video file {video_path}: {e}")
+    
+    # Log deletion
+    security_logger.info(
+        f"Account deleted: user_id={user_id}, "
+        f"email={user_email}, "
+        f"videos={videos_count}, "
+        f"settings={settings_count}, "
+        f"oauth_tokens={oauth_tokens_count}, "
+        f"files_deleted={files_deleted}, "
+        f"files_failed={files_failed}"
+    )
+    
+    return {
+        "message": "Account deleted successfully",
+        "stats": {
+            "user_email": user_email,
+            "videos_deleted": videos_count,
+            "settings_deleted": settings_count,
+            "oauth_tokens_deleted": oauth_tokens_count,
+            "files_deleted": files_deleted,
+            "files_failed": files_failed
+        }
+    }
 
 
 def register_user(email: str, password: str) -> dict:
@@ -745,78 +837,6 @@ def change_password_with_validation(user_id: int, current_password: str, new_pas
         raise ValueError("Failed to change password")
     
     return {"message": "Password changed successfully"}
-
-
-def delete_user_account_complete(user_id: int, db: Session) -> dict:
-    """Complete account deletion: delete account via db_helpers, clean up video files, delete sessions
-    
-    Args:
-        user_id: User ID
-        db: Database session
-        
-    Returns:
-        dict: Deletion result with stats
-        
-    Raises:
-        ValueError: If deletion fails
-    """
-    import logging
-    from pathlib import Path
-    from app.db import helpers as db_helpers
-    from app.db.redis import delete_session, redis_client
-    
-    security_logger = logging.getLogger("security")
-    upload_logger = logging.getLogger("upload")
-    
-    security_logger.info(f"User {user_id} requested account deletion")
-    
-    # Delete user account and get cleanup info
-    result = db_helpers.delete_user_account(user_id, db=db)
-    
-    if not result["success"]:
-        security_logger.error(f"Failed to delete user {user_id}: {result.get('error')}")
-        raise ValueError(f"Failed to delete account: {result.get('error')}")
-    
-    # Clean up video files from disk
-    video_paths = result.get("video_file_paths", [])
-    files_deleted = 0
-    files_failed = 0
-    
-    for video_path in video_paths:
-        try:
-            # Resolve path to absolute to ensure proper file access
-            path = Path(video_path).resolve()
-            if path.exists():
-                path.unlink()
-                files_deleted += 1
-                upload_logger.debug(f"Deleted video file: {video_path}")
-        except Exception as e:
-            files_failed += 1
-            upload_logger.warning(f"Failed to delete video file {video_path}: {e}")
-    
-    # Delete all sessions and CSRF tokens for user
-    delete_all_sessions_for_user(user_id)
-    
-    # Log deletion
-    stats = result.get("stats", {})
-    security_logger.info(
-        f"Account deleted: user_id={user_id}, "
-        f"email={stats.get('user_email')}, "
-        f"videos={stats.get('videos_deleted', 0)}, "
-        f"settings={stats.get('settings_deleted', 0)}, "
-        f"oauth_tokens={stats.get('oauth_tokens_deleted', 0)}, "
-        f"files_deleted={files_deleted}, "
-        f"files_failed={files_failed}"
-    )
-    
-    return {
-        "message": "Account deleted successfully",
-        "stats": {
-            **stats,
-            "files_deleted": files_deleted,
-            "files_failed": files_failed
-        }
-    }
 
 
 # ============================================================================

@@ -222,55 +222,6 @@ def reset_user_password_admin(
     return {"message": "Password reset successfully"}
 
 
-def delete_user_account_admin(
-    target_user_id: int,
-    admin_id: int,
-    db: Session
-) -> Dict[str, Any]:
-    """Delete a user account and Stripe customer (admin operation)
-    
-    Args:
-        target_user_id: Target user ID
-        admin_id: Admin user ID performing the action
-        db: Database session
-    
-    Returns:
-        Dict with success message
-    
-    Raises:
-        ValueError: If user not found or self-deletion attempted
-    """
-    from app.services.stripe_service import delete_stripe_customer
-    
-    # Prevent admin from deleting themselves
-    if target_user_id == admin_id:
-        raise ValueError("Cannot delete your own account")
-    
-    target_user = db.query(User).filter(User.id == target_user_id).first()
-    if not target_user:
-        raise ValueError("User not found")
-    
-    user_email = target_user.email
-    
-    try:
-        # Delete Stripe customer if it exists
-        # Note: Deleting a Stripe customer automatically cancels all their subscriptions
-        if target_user.stripe_customer_id:
-            delete_stripe_customer(target_user.stripe_customer_id, user_id=target_user_id)
-        
-        # Delete user (cascade will handle related records including subscription)
-        db.delete(target_user)
-        db.commit()
-        
-        logger.info(f"Admin {admin_id} deleted user: {user_email} (ID: {target_user_id})")
-        
-        return {"message": f"User {user_email} deleted successfully"}
-    except Exception as e:
-        logger.error(f"Error deleting user {target_user_id}: {e}", exc_info=True)
-        db.rollback()
-        raise ValueError("Failed to delete user") from e
-
-
 def enroll_user_unlimited_plan(
     target_user_id: int,
     admin_id: int,

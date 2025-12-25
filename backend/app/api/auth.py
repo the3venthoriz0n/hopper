@@ -11,7 +11,7 @@ from app.services.auth_service import (
     register_user, login_user, logout_user, verify_email_with_stripe_setup,
     resend_verification_code, forgot_password_with_email, reset_password_with_validation,
     get_current_user_from_session, set_password_with_validation, change_password_with_validation,
-    delete_user_account_complete
+    delete_user_account
 )
 from app.core.security import require_auth, require_csrf_new, set_auth_cookie
 from app.db.session import get_db
@@ -195,12 +195,15 @@ def delete_account(
     This action is irreversible.
     """
     try:
-        result = delete_user_account_complete(user_id, db)
+        result = delete_user_account(user_id, db)
         # Clear session cookie (HTTP concern)
         response.delete_cookie("session_id")
         return result
     except ValueError as e:
-        raise HTTPException(500, str(e))
+        error_msg = str(e)
+        if "User not found" in error_msg:
+            raise HTTPException(404, error_msg)
+        raise HTTPException(500, error_msg)
     except Exception as e:
         security_logger = logging.getLogger("security")
         security_logger.error(f"Error deleting account for user {user_id}: {e}", exc_info=True)

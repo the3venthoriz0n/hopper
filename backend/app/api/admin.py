@@ -13,10 +13,11 @@ from app.services.token_service import (
 )
 from app.services.admin_service import (
     list_users_with_subscriptions, get_user_details_with_balance, trigger_manual_cleanup,
-    create_user_with_admin_flag, reset_user_password_admin, delete_user_account_admin,
+    create_user_with_admin_flag, reset_user_password_admin,
     enroll_user_unlimited_plan, unenroll_user_unlimited_plan, switch_user_plan,
     test_meter_event_for_user, get_webhook_events_list, get_user_token_transactions
 )
+from app.services.auth_service import delete_user_account
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 logger = logging.getLogger(__name__)
@@ -232,17 +233,24 @@ def delete_user_admin(
     admin_user: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
-    """Delete a user (admin only). Deletes Stripe customer (which automatically cancels all subscriptions) before deletion."""
+    """Delete a user (admin only). Performs complete account deletion including Stripe subscriptions, files, and all data."""
+    # Prevent admin from deleting themselves
+    if target_user_id == admin_user.id:
+        raise HTTPException(400, "Cannot delete your own account")
+    
     try:
-        return delete_user_account_admin(target_user_id, admin_user.id, db)
+        result = delete_user_account(target_user_id, db)
+        logger.info(f"Admin {admin_user.id} deleted user: {target_user_id}")
+        return result
     except ValueError as e:
         error_msg = str(e)
-        if "Cannot delete your own account" in error_msg:
-            raise HTTPException(400, error_msg)
-        elif "User not found" in error_msg:
+        if "User not found" in error_msg:
             raise HTTPException(404, error_msg)
         else:
             raise HTTPException(500, error_msg)
+    except Exception as e:
+        logger.error(f"Error deleting user {target_user_id}: {e}", exc_info=True)
+        raise HTTPException(500, f"Failed to delete user: {str(e)}")
 
 
 @router.get("/webhooks/events")
