@@ -2051,15 +2051,15 @@ function Home({ user, isAdmin, setUser, authLoading }) {
 
   const updateVideoSettings = async (videoId, settings) => {
     try {
-      const params = new URLSearchParams();
+      // Filter out null/undefined values but keep empty strings (for clearing values like scheduled_time)
+      const filteredSettings = {};
       Object.entries(settings).forEach(([key, value]) => {
-        // Include empty strings (for clearing values like scheduled_time)
         if (value !== null && value !== undefined) {
-          params.append(key, value);
+          filteredSettings[key] = value;
         }
       });
       
-      await axios.patch(`${API}/videos/${videoId}?${params.toString()}`);
+      await axios.patch(`${API}/videos/${videoId}`, filteredSettings);
       
       // Reload videos to get updated computed titles
       await loadVideos();
@@ -2075,14 +2075,15 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   // Reusable function for saving destination-specific overrides (DRY)
   const saveDestinationOverrides = async (videoId, platform, overrides) => {
     try {
-      const params = new URLSearchParams();
+      // Filter out null/undefined values
+      const filteredOverrides = {};
       Object.entries(overrides).forEach(([key, value]) => {
         if (value !== null && value !== undefined) {
-          params.append(key, value);
+          filteredOverrides[key] = value;
         }
       });
       
-      await axios.patch(`${API}/videos/${videoId}?${params.toString()}`);
+      await axios.patch(`${API}/videos/${videoId}`, filteredOverrides);
       
       // Reload videos to get updated data
       await loadVideos();

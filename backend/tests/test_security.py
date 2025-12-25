@@ -164,7 +164,7 @@ def test_csrf_protection(client):
     # First, test that unauthenticated request fails
     response = client.post(
         f"{BASE_URL}/api/global/wordbank",
-        params={"word": "test"},
+        json={"word": "test"},
         timeout=5.0
     )
     # Should fail with 401 (not authenticated) or 403 (missing CSRF)

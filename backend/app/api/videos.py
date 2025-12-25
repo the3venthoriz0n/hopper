@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -28,6 +28,7 @@ from app.services.video_service import (
 )
 from app.utils.templates import replace_template_placeholders
 from app.utils.video_tokens import verify_video_access_token
+from app.schemas.video import VideoUpdateRequest, VideoReorderRequest
 
 # Loggers
 upload_logger = logging.getLogger("upload")
@@ -176,29 +177,17 @@ def recompute_all_videos(
 @router.patch("/{video_id}")
 def update_video_settings_route(
     video_id: int,
+    request: VideoUpdateRequest,
     user_id: int = Depends(require_csrf_new),
-    db: Session = Depends(get_db),
-    title: Optional[str] = None,
-    description: Optional[str] = None,
-    tags: Optional[str] = None,
-    visibility: Optional[str] = None,
-    made_for_kids: Optional[bool] = None,
-    scheduled_time: Optional[str] = None,
-    privacy_level: Optional[str] = None,
-    allow_comments: Optional[bool] = None,
-    allow_duet: Optional[bool] = None,
-    allow_stitch: Optional[bool] = None,
-    caption: Optional[str] = None
+    db: Session = Depends(get_db)
 ):
     """Update video settings"""
     try:
+        # Convert Pydantic model to dict, excluding unset fields
+        update_data = request.model_dump(exclude_unset=True)
         return update_video_settings(
             video_id, user_id, db,
-            title=title, description=description, tags=tags,
-            visibility=visibility, made_for_kids=made_for_kids,
-            scheduled_time=scheduled_time, privacy_level=privacy_level,
-            allow_comments=allow_comments, allow_duet=allow_duet,
-            allow_stitch=allow_stitch, caption=caption
+            **update_data
         )
     except ValueError as e:
         error_msg = str(e)
@@ -209,12 +198,14 @@ def update_video_settings_route(
 
 
 @router.post("/reorder")
-async def reorder_videos(request: Request, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+async def reorder_videos(
+    request_data: VideoReorderRequest,
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
     """Reorder videos in the user's queue"""
     try:
-        # Parse JSON body
-        body = await request.json()
-        video_ids = body.get("video_ids", [])
+        video_ids = request_data.video_ids
         
         if not video_ids:
             raise HTTPException(400, "video_ids required")

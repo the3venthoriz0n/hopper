@@ -127,7 +127,7 @@ class TestOwnershipValidation:
         # User1 (authenticated) tries to update user2's video using PATCH
         response = authenticated_client.patch(
             f"/api/videos/{video.id}",
-            params={"status": "completed"},
+            json={"title": "Updated Title"},
             headers={"X-CSRF-Token": authenticated_client.headers.get("X-CSRF-Token", "")}
         )
         # Should fail with 404 (video not found for this user) or 403
