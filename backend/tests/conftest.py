@@ -218,14 +218,14 @@ def csrf_token(authenticated_client: TestClient, mock_redis) -> str:
 def two_users(db_session: Session) -> tuple[User, User]:
     """Create two users for ownership tests"""
     user1 = create_user(
-        email="integration-test@example.com",
+        email="test-user-1@example.com",
         password="TestPassword123!",
         db=db_session
     )
     user1.is_email_verified = True
     
     user2 = create_user(
-        email="integration-test2@example.com",
+        email="test-user-2@example.com",
         password="TestPassword123!",
         db=db_session
     )
@@ -294,11 +294,14 @@ def auto_mock_stripe():
         })
         
         # Mock Price operations
-        mock_stripe_module.Price.retrieve = Mock(return_value=Mock(
+        mock_price = Mock(
             id="price_test123",
             product="prod_test123",
-            unit_amount=0
-        ))
+            unit_amount=0,
+            currency="usd",
+            recurring=Mock(interval="month")
+        )
+        mock_stripe_module.Price.retrieve = Mock(return_value=mock_price)
         
         # Mock Product operations
         mock_stripe_module.Product.retrieve = Mock(return_value=Mock(
