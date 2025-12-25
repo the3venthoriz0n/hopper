@@ -1568,11 +1568,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
 
   const updateGlobalSettings = async (key, value) => {
     try {
-      const params = new URLSearchParams();
-      // URLSearchParams automatically converts booleans to strings
-      // FastAPI Query() will convert them back to booleans
-      params.append(key, value);
-      const res = await axios.post(`${API}/global/settings?${params.toString()}`);
+      // Send as JSON body (backend now uses Pydantic schemas)
+      const res = await axios.post(`${API}/global/settings`, { [key]: value });
       // Merge with current state to ensure all fields are defined
       setGlobalSettings(prev => ({
         ...prev,
@@ -1587,9 +1584,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
 
   const updateYoutubeSettings = async (key, value) => {
     try {
-      const params = new URLSearchParams();
-      params.append(key, value);
-      const res = await axios.post(`${API}/youtube/settings?${params.toString()}`);
+      // Send as JSON body (backend now uses Pydantic schemas)
+      const res = await axios.post(`${API}/youtube/settings`, { [key]: value });
       setYoutubeSettings(res.data);
       
       if (key === 'visibility') {
@@ -1625,14 +1621,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
 
   const updateTiktokSettings = async (key, value) => {
     try {
-      const params = new URLSearchParams();
-      // Don't send null or empty string for privacy_level - skip the parameter entirely
+      // Don't send null or empty string for privacy_level - skip the request entirely
       if (key === 'privacy_level' && (!value || value === 'null' || value === '')) {
         // Skip sending empty/null privacy_level to avoid backend validation errors
         return;
       }
-      params.append(key, value);
-      const res = await axios.post(`${API}/tiktok/settings?${params.toString()}`);
+      // Send as JSON body (backend now uses Pydantic schemas)
+      const res = await axios.post(`${API}/tiktok/settings`, { [key]: value });
       setTiktokSettings(res.data);
       
       if (key === 'privacy_level') {
@@ -1649,9 +1644,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
 
   const updateInstagramSettings = async (key, value) => {
     try {
-      const params = new URLSearchParams();
-      params.append(key, value);
-      const res = await axios.post(`${API}/instagram/settings?${params.toString()}`);
+      // Send as JSON body (backend now uses Pydantic schemas)
+      const res = await axios.post(`${API}/instagram/settings`, { [key]: value });
       setInstagramSettings(res.data);
       setMessage(`✅ Instagram settings updated`);
     } catch (err) {
