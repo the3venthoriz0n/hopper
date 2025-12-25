@@ -364,11 +364,25 @@ def unenroll_user_unlimited_plan(
     token_balance.tokens_remaining = preserved_tokens
     db.commit()
     
-    # Cancel all existing subscriptions and create free subscription
-    # create_free_subscription will handle canceling all subscriptions (including this one)
-    # and ensure only one subscription exists
+    # Cancel Stripe subscription if it exists
+    if subscription.stripe_subscription_id:
+        try:
+            from app.services.stripe_service import cancel_subscription_with_invoice
+            cancel_subscription_with_invoice(subscription.stripe_subscription_id, invoice_now=True)
+            logger.info(f"Canceled Stripe subscription {subscription.stripe_subscription_id} for user {target_user_id}")
+        except Exception as e:
+            logger.warning(f"Failed to cancel Stripe subscription {subscription.stripe_subscription_id}: {e}")
+            # Continue anyway - we'll delete the DB record and create new subscription
+    
+    # Delete existing subscription record from database to avoid unique constraint violation
+    # This must happen BEFORE create_free_subscription tries to insert a new record
+    db.delete(subscription)
+    db.commit()
+    logger.info(f"Deleted existing subscription record for user {target_user_id} before creating free subscription")
+    
+    # Now create free subscription (database is clean, no existing record)
     try:
-        free_subscription = create_free_subscription(target_user_id, db)
+        free_subscription = create_free_subscription(target_user_id, db, skip_token_reset=True)
         if not free_subscription:
             # Check if there are still active subscriptions preventing creation
             if target_user.stripe_customer_id:
@@ -394,11 +408,9 @@ def unenroll_user_unlimited_plan(
         logger.error(f"Error unenrolling user {target_user_id} from unlimited plan: {e}", exc_info=True)
         raise ValueError(f"Failed to unenroll from unlimited plan: {str(e)}") from e
     
-    # After create_free_subscription, reset_tokens_for_subscription was called which:
-    # - Added free plan tokens to preserved_tokens (10 + 10 = 20)
-    # - Set monthly_tokens to the new total (20)
+    # After create_free_subscription, we need to set tokens correctly
+    # Since we used skip_token_reset=True, tokens weren't modified by create_free_subscription
     # We want the final balance to be just preserved_tokens (not preserved_tokens + free_plan_tokens)
-    # So we set both tokens_remaining and monthly_tokens to preserved_tokens
     token_balance = get_or_create_token_balance(target_user_id, db)
     free_plan_tokens = get_plan_monthly_tokens('free')
     
@@ -411,6 +423,11 @@ def unenroll_user_unlimited_plan(
     
     # Ensure tokens_used_this_period is 0 (fresh start on free plan)
     token_balance.tokens_used_this_period = 0
+    
+    # Update period to match new subscription
+    token_balance.period_start = free_subscription.current_period_start
+    token_balance.period_end = free_subscription.current_period_end
+    token_balance.updated_at = datetime.now(timezone.utc)
     
     db.commit()
     
