@@ -64,13 +64,9 @@ test:
 	fi
 
 test-security:
-	@if [ "$(ENV)" = "prod" ]; then \
-		echo "⏭️  Skipping security tests for prod environment (use deploy.sh for production deployments)"; \
-	else \
-		echo "🔒 Running security integration tests..."; \
-		echo "⚠️  Note: These tests require a running backend server"; \
-		$(COMPOSE) run --rm -e RUN_INTEGRATION_TESTS=true backend python -m pytest /app/tests/test_security.py -v --tb=short; \
-	fi
+	@echo "🔒 Running security integration tests for $(ENV) environment..."; \
+	echo "⚠️  Note: These tests require a running backend server"; \
+	$(COMPOSE) run --rm -e RUN_INTEGRATION_TESTS=true -e ENV=$(ENV) backend python -m pytest /app/tests/test_security.py -v --tb=short;
 
 up: sync
 	@if [ "$(ENV)" != "prod" ]; then \

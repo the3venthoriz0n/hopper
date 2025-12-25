@@ -128,7 +128,7 @@ def client(db_session: Session, mock_redis) -> Generator[TestClient, None, None]
 def test_user(db_session: Session) -> User:
     """Create a verified test user"""
     user = create_user(
-        email="test@example.com",
+        email="integration-test@example.com",
         password="TestPassword123!",
         db=db_session
     )
@@ -143,7 +143,7 @@ def test_user(db_session: Session) -> User:
 def test_user_2(db_session: Session) -> User:
     """Create a second verified test user for ownership tests"""
     user = create_user(
-        email="test2@example.com",
+        email="integration-test2@example.com",
         password="TestPassword123!",
         db=db_session
     )
@@ -218,14 +218,14 @@ def csrf_token(authenticated_client: TestClient, mock_redis) -> str:
 def two_users(db_session: Session) -> tuple[User, User]:
     """Create two users for ownership tests"""
     user1 = create_user(
-        email="user1@example.com",
+        email="integration-test@example.com",
         password="TestPassword123!",
         db=db_session
     )
     user1.is_email_verified = True
     
     user2 = create_user(
-        email="user2@example.com",
+        email="integration-test2@example.com",
         password="TestPassword123!",
         db=db_session
     )
@@ -238,9 +238,84 @@ def two_users(db_session: Session) -> tuple[User, User]:
     return user1, user2
 
 
+@pytest.fixture(scope="function", autouse=True)
+def auto_mock_stripe():
+    """Automatically mock Stripe for all tests to prevent creating real customers"""
+    with patch('app.services.stripe_service.stripe') as mock_stripe_module:
+        # Mock Customer operations
+        mock_customer = Mock(id="cus_test123", email="test@example.com")
+        mock_stripe_module.Customer.create = Mock(return_value=mock_customer)
+        mock_stripe_module.Customer.retrieve = Mock(return_value=mock_customer)
+        mock_stripe_module.Customer.delete = Mock(return_value=Mock(deleted=True))
+        
+        # Mock Subscription operations
+        mock_subscription = Mock(
+            id="sub_test123",
+            status="active",
+            current_period_start=1234567890,
+            current_period_end=1237159890,
+            customer="cus_test123",
+            cancel_at_period_end=False
+        )
+        mock_stripe_module.Subscription.create = Mock(return_value=mock_subscription)
+        mock_stripe_module.Subscription.retrieve = Mock(return_value=mock_subscription)
+        mock_stripe_module.Subscription.list = Mock(return_value=Mock(data=[]))
+        
+        # Mock SubscriptionItem operations
+        mock_subscription_item = Mock(
+            id="si_test123",
+            price=Mock(id="price_test123", product="prod_test123")
+        )
+        mock_stripe_module.SubscriptionItem.list = Mock(return_value=Mock(data=[mock_subscription_item]))
+        mock_stripe_module.SubscriptionItem.create = Mock(return_value=mock_subscription_item)
+        
+        # Mock Checkout operations
+        mock_stripe_module.Checkout.Session.create = Mock(return_value=Mock(
+            id="cs_test123",
+            url="https://checkout.stripe.com/test"
+        ))
+        mock_stripe_module.Checkout.Session.retrieve = Mock(return_value=Mock(
+            id="cs_test123",
+            customer="cus_test123",
+            subscription="sub_test123"
+        ))
+        mock_stripe_module.Checkout.Session.list = Mock(return_value=Mock(data=[]))
+        
+        # Mock Billing Portal operations
+        mock_stripe_module.billing_portal.Session.create = Mock(return_value=Mock(
+            url="https://billing.stripe.com/test"
+        ))
+        
+        # Mock Webhook operations
+        mock_stripe_module.Webhook.construct_event = Mock(return_value={
+            "id": "evt_test123",
+            "type": "customer.subscription.created",
+            "data": {"object": {}}
+        })
+        
+        # Mock Price operations
+        mock_stripe_module.Price.retrieve = Mock(return_value=Mock(
+            id="price_test123",
+            product="prod_test123",
+            unit_amount=0
+        ))
+        
+        # Mock Product operations
+        mock_stripe_module.Product.retrieve = Mock(return_value=Mock(
+            id="prod_test123",
+            name="Test Product"
+        ))
+        
+        # Mock error classes
+        mock_stripe_module.error.SignatureVerificationError = Exception
+        mock_stripe_module.error.InvalidRequestError = Exception
+        
+        yield mock_stripe_module
+
+
 @pytest.fixture(scope="function")
 def mock_stripe():
-    """Mock Stripe API calls"""
+    """Mock Stripe API calls (explicit fixture for tests that need direct access)"""
     with patch('app.services.stripe_service.stripe') as mock_stripe_module:
         # Mock common Stripe objects
         mock_stripe_module.Customer.create = Mock(return_value=Mock(id="cus_test123"))

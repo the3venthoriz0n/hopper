@@ -5,13 +5,24 @@ import httpx
 import time
 
 
-BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8000")
+# Determine BASE_URL based on environment
+# Priority: 1. TEST_BASE_URL env var, 2. Docker service name, 3. localhost
+if os.getenv("TEST_BASE_URL"):
+    BASE_URL = os.getenv("TEST_BASE_URL")
+elif os.path.exists("/.dockerenv") or os.getenv("DOCKER_CONTAINER"):
+    # Running in Docker - use service name (works for both dev and prod)
+    # The service name is 'backend' in both docker-compose.dev.yml and docker-compose.prod.yml
+    BASE_URL = "http://backend:8000"
+else:
+    # Running locally (not in Docker)
+    BASE_URL = "http://localhost:8000"
+
 # Determine frontend origin based on backend URL
 FRONTEND_ORIGIN = os.getenv("TEST_FRONTEND_ORIGIN")
 if not FRONTEND_ORIGIN:
-    if "api-dev.dunkbox.net" in BASE_URL:
+    if "api-dev.dunkbox.net" in BASE_URL or "dev-hopper-backend" in BASE_URL:
         FRONTEND_ORIGIN = "https://hopper-dev.dunkbox.net"
-    elif "api.dunkbox.net" in BASE_URL:
+    elif "api.dunkbox.net" in BASE_URL or "prod-hopper-backend" in BASE_URL:
         FRONTEND_ORIGIN = "https://hopper.dunkbox.net"
     else:
         FRONTEND_ORIGIN = "http://localhost:3000"
