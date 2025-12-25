@@ -5678,12 +5678,12 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                             const overagePrice = plan.overage_price?.amount_dollars;
                                             
                                             if (overagePrice !== undefined && overagePrice !== null) {
-                                              // Display as: "$3.00/Month (1.5c / token)"
+                                              // Display as: "$3/month (1.5c /token)"
                                               const overageCents = (overagePrice * 100).toFixed(1);
-                                              return `$${monthlyFee.toFixed(2)}/Month (${overageCents}c / token)`;
+                                              return `$${monthlyFee.toFixed(2)}/month (${overageCents}c /token)`;
                                             } else {
                                               // Fallback if overage price not available
-                                              return `$${monthlyFee.toFixed(2)}/Month`;
+                                              return `$${monthlyFee.toFixed(2)}/month`;
                                             }
                                           }
                                         })()}

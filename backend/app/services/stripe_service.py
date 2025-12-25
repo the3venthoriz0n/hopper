@@ -154,7 +154,13 @@ def get_customer_portal_url(user_id: int, return_url: str, db: Session) -> Optio
 def log_stripe_event(event_id: str, event_type: str, payload: dict, db: Session) -> StripeEvent:
     stripe_event = db.query(StripeEvent).filter(StripeEvent.event_id == event_id).first()
     if not stripe_event:
-        stripe_event = StripeEvent(event_id=event_id, event_type=event_type, payload=payload, processed=False)
+        stripe_event = StripeEvent(
+            event_id=event_id,
+            stripe_event_id=event_id,  # Keep both fields in sync
+            event_type=event_type,
+            payload=payload,
+            processed=False
+        )
         db.add(stripe_event)
         db.commit()
         db.refresh(stripe_event)

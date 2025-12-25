@@ -44,6 +44,8 @@ def list_available_plans() -> Dict:
     # Get all primary plans (those with a '{plan}_price' lookup key)
     base_plans = StripeRegistry.get_all_base_plans()
     
+    # Collect and filter plans
+    filtered_plans = []
     for plan_key, config in base_plans.items():
         # Skip unlimited plans and hidden plans
         if plan_key == 'unlimited' or config.get('hidden', False):
@@ -75,7 +77,10 @@ def list_available_plans() -> Dict:
         else:
             plan_data["overage_price"] = None
             
-        plans_list.append(plan_data)
+        filtered_plans.append(plan_data)
+    
+    # Sort plans by price (cheapest to most expensive)
+    plans_list = sorted(filtered_plans, key=lambda x: x["price"]["amount_dollars"])
     
     return {"plans": plans_list}
 
