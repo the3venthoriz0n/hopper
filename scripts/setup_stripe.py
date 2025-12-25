@@ -93,13 +93,29 @@ def get_or_create_meter() -> Any:
     )
 
 def find_or_create_price(product_id: str, config: Dict[str, Any], 
-                         existing_prices: List[Any], is_metered: bool = False, meter_id: Optional[str] = None) -> Any:
+                         existing_prices: List[Any], is_metered: bool = False, 
+                         meter_id: Optional[str] = None, plan_key: Optional[str] = None) -> Any:
     """Finds or creates price using unit_amount_decimal for idempotency."""
     if is_metered:
         target_value = str(config['overage_unit_cents'])
+        lookup_key = f"{plan_key}_overage_price" if plan_key else None
     else:
         target_value = str(int(config['price_total_dollars'] * 100))
+        lookup_key = f"{plan_key}_price" if plan_key else None
 
+    # First try to find by lookup_key if provided
+    if lookup_key:
+        for price in existing_prices:
+            if price.product == product_id and price.active and getattr(price, 'lookup_key', None) == lookup_key:
+                current_val = getattr(price, 'unit_amount_decimal', None)
+                is_usage_metered = getattr(price.recurring, 'usage_type', None) == 'metered'
+                if current_val == target_value and is_usage_metered == is_metered:
+                    if is_metered and getattr(price.recurring, 'meter', None) != meter_id:
+                        continue
+                    print(f"    ✓ Found price by lookup_key: {price.id} ({lookup_key})")
+                    return price
+
+    # Fallback: find by amount and type
     for price in existing_prices:
         if price.product != product_id or not price.active:
             continue
@@ -109,17 +125,26 @@ def find_or_create_price(product_id: str, config: Dict[str, Any],
         
         if current_val == target_value and is_usage_metered == is_metered:
             if is_metered and getattr(price.recurring, 'meter', None) != meter_id:
-                continue 
+                continue
+            # Update existing price with lookup_key if it doesn't have one
+            if lookup_key and not getattr(price, 'lookup_key', None):
+                try:
+                    stripe.Price.modify(price.id, lookup_key=lookup_key)
+                    print(f"    ✓ Added lookup_key to existing price: {price.id} ({lookup_key})")
+                except Exception as e:
+                    print(f"    ⚠️  Could not add lookup_key to {price.id}: {e}")
             print(f"    ✓ Reusing price: {price.id} ({target_value} cents)")
             return price
 
-    print(f"    ➕ Creating price: {target_value} cents (Metered: {is_metered})")
+    print(f"    ➕ Creating price: {target_value} cents (Metered: {is_metered}, lookup_key: {lookup_key})")
     params = {
         "product": product_id,
         "currency": "usd",
         "unit_amount_decimal": target_value,
         "recurring": {"interval": "month"}
     }
+    if lookup_key:
+        params["lookup_key"] = lookup_key
     if is_metered:
         params["recurring"]["usage_type"] = "metered"
         params["recurring"]["meter"] = meter_id
@@ -144,7 +169,7 @@ def create_or_update_products() -> Dict[str, Dict[str, Any]]:
             product = stripe.Product.create(name=config['name'], description=config['description'])
             print(f"  ✓ Created product: {product.id}")
         
-        base_price = find_or_create_price(product.id, config, existing_prices, is_metered=False)
+        base_price = find_or_create_price(product.id, config, existing_prices, is_metered=False, plan_key=key)
         
         plan_config = {
             'name': config['name'],
@@ -155,8 +180,12 @@ def create_or_update_products() -> Dict[str, Dict[str, Any]]:
         }
 
         if config.get('overage_unit_cents') is not None:
-            ov_price = find_or_create_price(product.id, config, existing_prices, is_metered=True, meter_id=meter_id)
+            ov_price = find_or_create_price(product.id, config, existing_prices, is_metered=True, meter_id=meter_id, plan_key=key)
             plan_config['stripe_overage_price_id'] = ov_price.id
+
+        # Preserve hidden flag if present
+        if config.get('hidden'):
+            plan_config['hidden'] = True
 
         results[key] = plan_config
     return results
