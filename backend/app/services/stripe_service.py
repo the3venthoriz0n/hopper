@@ -209,13 +209,24 @@ def get_price_info(price_id: str) -> Optional[Dict[str, Any]]:
     try:
         price = stripe.Price.retrieve(price_id)
         
-        # Extract price information
-        amount = price.unit_amount or 0
+        # Extract price information - handle both unit_amount (cents) and unit_amount_decimal (decimal string)
         currency = price.currency or 'usd'
-        amount_dollars = amount / 100.0
+        
+        # Check for unit_amount_decimal first (for fractional cent prices)
+        unit_amount_decimal = getattr(price, 'unit_amount_decimal', None)
+        if unit_amount_decimal:
+            # unit_amount_decimal is a string in cents (smallest currency unit)
+            # e.g., "300" = 300 cents = $3.00, "1.5" = 1.5 cents = $0.015
+            amount_cents = float(unit_amount_decimal)
+            amount = int(amount_cents)  # Integer cents for amount field (rounds down for fractional)
+            amount_dollars = amount_cents / 100.0  # Convert cents to dollars
+        else:
+            # Fallback to unit_amount (in cents)
+            amount = price.unit_amount or 0
+            amount_dollars = amount / 100.0
         
         # Format price string
-        if amount == 0:
+        if amount_dollars == 0:
             formatted = "Free"
         else:
             formatted = f"${amount_dollars:.2f}"

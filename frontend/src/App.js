@@ -1076,12 +1076,12 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         const overagePrice = plan.overage_price?.amount_dollars;
         
         if (overagePrice !== undefined && overagePrice !== null) {
-          // Display as: "$3.00/month (1.5¢ per token overage)"
+          // Display as: "$3.00/Month (1.5c / token)"
           const overageCents = (overagePrice * 100).toFixed(1);
-          return `$${monthlyFee.toFixed(2)}/month (${overageCents}¢ per token overage)`;
+          return `$${monthlyFee.toFixed(2)}/Month (${overageCents}c / token)`;
         } else {
           // Fallback if overage price not available
-          return `$${monthlyFee.toFixed(2)}/month`;
+          return `$${monthlyFee.toFixed(2)}/Month`;
         }
       };
       
@@ -5606,13 +5606,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   <>
 
                     {/* Available Plans */}
-                    {availablePlans.length > 0 && (
+                    {availablePlans.filter(plan => !plan.hidden && plan.monthly_tokens !== -1).length > 0 && (
                       <div id="subscription-plans" style={{ marginBottom: '1rem' }}>
                         <div style={{ fontSize: '0.85rem', color: HOPPER_COLORS.grey, marginBottom: '0.75rem' }}>
                           Available Plans
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                          {availablePlans.map(plan => {
+                          {availablePlans.filter(plan => !plan.hidden && plan.monthly_tokens !== -1).map(plan => {
                             const isCurrent = subscription.plan_type === plan.key;
                             const canUpgrade = !isCurrent && plan.key !== 'free' && plan.stripe_price_id;
                             const isThisPlanLoading = loadingPlanKey === plan.key; // Only this specific plan is loading
@@ -5678,12 +5678,12 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                             const overagePrice = plan.overage_price?.amount_dollars;
                                             
                                             if (overagePrice !== undefined && overagePrice !== null) {
-                                              // Display as: "$3.00/month (1.5¢ per token overage)"
+                                              // Display as: "$3.00/Month (1.5c / token)"
                                               const overageCents = (overagePrice * 100).toFixed(1);
-                                              return `$${monthlyFee.toFixed(2)}/month (${overageCents}¢ per token overage)`;
+                                              return `$${monthlyFee.toFixed(2)}/Month (${overageCents}c / token)`;
                                             } else {
                                               // Fallback if overage price not available
-                                              return `$${monthlyFee.toFixed(2)}/month`;
+                                              return `$${monthlyFee.toFixed(2)}/Month`;
                                             }
                                           }
                                         })()}

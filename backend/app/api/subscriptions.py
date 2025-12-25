@@ -49,37 +49,6 @@ def get_portal_url(
     return {"url": portal_url}
 
 
-@router.post("/webhook")
-async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
-    """Handle Stripe webhook events
-    
-    Note: This route must be excluded from any global JSON parsing middleware
-    to ensure the request body remains as raw bytes for signature verification.
-    """
-    # Read body as raw bytes (critical for signature verification)
-    # Middleware must not parse JSON before this point
-    payload = await request.body()
-    sig_header = request.headers.get("stripe-signature")
-    
-    if not sig_header:
-        raise HTTPException(400, "Missing stripe-signature header")
-    
-    try:
-        result = process_stripe_webhook(payload, sig_header, db)
-        return result
-    except ValueError as e:
-        # Invalid payload
-        logger.error(f"Invalid webhook payload: {e}")
-        raise HTTPException(400, str(e))
-    except stripe.error.SignatureVerificationError as e:
-        # Invalid signature
-        logger.error(f"Invalid webhook signature: {e}")
-        raise HTTPException(400, "Invalid signature")
-    except Exception as e:
-        # Unexpected error - log but return 200 to prevent retries
-        logger.error(f"Unexpected error processing webhook: {e}", exc_info=True)
-        return {"status": "error", "message": "Webhook processing failed"}
-
 
 # Additional subscription routes (legacy endpoints for compatibility)
 @router.get("/plans")
@@ -216,6 +185,38 @@ def switch_to_free_plan(
 # ============================================================================
 
 stripe_router = APIRouter(prefix="/api/stripe", tags=["stripe"])
+
+
+@stripe_router.post("/webhook")
+async def stripe_webhook_stripe(request: Request, db: Session = Depends(get_db)):
+    """Handle Stripe webhook events (stripe_router endpoint)
+    
+    Note: This route must be excluded from any global JSON parsing middleware
+    to ensure the request body remains as raw bytes for signature verification.
+    """
+    # Read body as raw bytes (critical for signature verification)
+    # Middleware must not parse JSON before this point
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+    
+    if not sig_header:
+        raise HTTPException(400, "Missing stripe-signature header")
+    
+    try:
+        result = process_stripe_webhook(payload, sig_header, db)
+        return result
+    except ValueError as e:
+        # Invalid payload
+        logger.error(f"Invalid webhook payload: {e}")
+        raise HTTPException(400, str(e))
+    except stripe.error.SignatureVerificationError as e:
+        # Invalid signature
+        logger.error(f"Invalid webhook signature: {e}")
+        raise HTTPException(400, "Invalid signature")
+    except Exception as e:
+        # Unexpected error - log but return 200 to prevent retries
+        logger.error(f"Unexpected error processing webhook: {e}", exc_info=True)
+        return {"status": "error", "message": "Webhook processing failed"}
 
 
 @stripe_router.get("/config")

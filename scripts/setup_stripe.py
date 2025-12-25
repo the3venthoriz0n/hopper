@@ -38,7 +38,7 @@ PRODUCTS = {
         'description': '1250 tokens per month',
         'monthly_tokens': 1250,
         'price_total_dollars': 10.0,
-        'overage_unit_cents': 0.8  # 0.8 cents per token ($0.008)
+        'overage_unit_cents': 0.8  # ($0.008)
     },
     'unlimited': {
         'name': 'Unlimited',
@@ -168,6 +168,11 @@ def create_or_update_products() -> Dict[str, Dict[str, Any]]:
         if not product:
             product = stripe.Product.create(name=config['name'], description=config['description'])
             print(f"  ✓ Created product: {product.id}")
+        else:
+            # Update description if it doesn't match (in case token amounts changed)
+            if product.description != config['description']:
+                stripe.Product.modify(product.id, description=config['description'])
+                print(f"  ✓ Updated product description: {product.id}")
         
         base_price = find_or_create_price(product.id, config, existing_prices, is_metered=False, plan_key=key)
         

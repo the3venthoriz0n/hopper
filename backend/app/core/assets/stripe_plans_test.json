@@ -25,6 +25,7 @@
     "monthly_tokens": -1,
     "stripe_product_id": "prod_TbxHLbYi9ilKdQ",
     "stripe_price_id": "price_1SejN2AJugrwwGJA979CsaKS",
-    "stripe_overage_price_id": null
+    "stripe_overage_price_id": null,
+    "hidden": true
   }
 }

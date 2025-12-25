@@ -74,7 +74,8 @@ async def security_middleware(request: Request, call_next):
             path == "/api/auth/logout" or
             path == "/api/auth/me" or
             path == "/api/auth/google/login" or
-            path == "/api/subscriptions/webhook" or
+            path == "/api/subscription/webhook" or
+            path == "/api/stripe/webhook" or
             path == "/metrics" or
             path == "/health"
         )
