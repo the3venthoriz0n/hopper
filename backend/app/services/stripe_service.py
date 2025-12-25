@@ -328,23 +328,27 @@ def create_checkout_session(
         # Validate that the price_id exists in our configuration
         plans = get_plans()
         price_id_found = False
-        plan_type = None
+        plan_config = None
         
-        for plan_key, plan_config in plans.items():
-            if plan_config.get('stripe_price_id') == price_id:
+        for plan_key, config in plans.items():
+            if config.get('stripe_price_id') == price_id:
                 price_id_found = True
-                plan_type = plan_key
+                plan_config = config
                 break
         
         if not price_id_found:
             logger.error(f"Price ID {price_id} not found in plans configuration")
             raise ValueError(f"Invalid price ID: {price_id} is not configured in plans")
         
+        # Get monthly_tokens from plan config, use 1 for unlimited (-1) or if not found
+        monthly_tokens = plan_config.get('monthly_tokens', 1)
+        quantity = monthly_tokens if monthly_tokens > 0 else 1
+        
         # Create checkout session
         session = stripe.checkout.Session.create(
             customer=customer_id,
             payment_method_types=['card'],
-            line_items=[{'price': price_id, 'quantity': 1}],
+            line_items=[{'price': price_id, 'quantity': quantity}],
             mode='subscription',
             success_url=success_url,
             cancel_url=cancel_url,
