@@ -340,9 +340,9 @@ def create_checkout_session(
             logger.error(f"Price ID {price_id} not found in plans configuration")
             raise ValueError(f"Invalid price ID: {price_id} is not configured in plans")
         
-        # Get monthly_tokens from plan config, use 1 for unlimited (-1) or if not found
-        monthly_tokens = plan_config.get('monthly_tokens', 1)
-        quantity = monthly_tokens if monthly_tokens > 0 else 1
+        # Quantity is always 1 - the price is already the full monthly fee
+        # (e.g., $3.00/month for starter, not $3 × 300 tokens)
+        quantity = 1
         
         # Create checkout session
         session = stripe.checkout.Session.create(

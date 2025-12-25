@@ -1065,18 +1065,24 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       const newPlan = availablePlans.find(p => p.key === planKey);
       const currentPlan = availablePlans.find(p => p.key === subscription.plan_type);
       
-      // Format prices for display (new pricing: per-token)
+      // Format prices for display (new pricing: flat monthly fee + overage)
       const formatPlanPrice = (plan) => {
         if (!plan?.price) return null;
         if (plan.key === 'free') return 'Free';
         if (plan.monthly_tokens === -1) return plan.price.formatted;
         
-        // New pricing: amount_dollars is per-token price
-        const perTokenPrice = plan.price.amount_dollars || 0;
-        const monthlyTokens = plan.monthly_tokens || 0;
-        const totalMonthly = perTokenPrice * monthlyTokens;
-        // Display as: "$10.00/month ($0.10/token)"
-        return `$${totalMonthly.toFixed(2)}/month ($${perTokenPrice.toFixed(2)}/token)`;
+        // New pricing: amount_dollars is the flat monthly fee
+        const monthlyFee = plan.price.amount_dollars || 0;
+        const overagePrice = plan.overage_price?.amount_dollars;
+        
+        if (overagePrice !== undefined && overagePrice !== null) {
+          // Display as: "$3.00/month (1.5¢ per token overage)"
+          const overageCents = (overagePrice * 100).toFixed(1);
+          return `$${monthlyFee.toFixed(2)}/month (${overageCents}¢ per token overage)`;
+        } else {
+          // Fallback if overage price not available
+          return `$${monthlyFee.toFixed(2)}/month`;
+        }
       };
       
       const newPlanPrice = formatPlanPrice(newPlan);
@@ -5667,14 +5673,18 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                             // Unlimited plan
                                             return plan.price.formatted;
                                           } else {
-                                            // New pricing: price is per-token, calculate total monthly
-                                            // amount_dollars is the per-token price in dollars (e.g., 0.10 for $0.10/token)
-                                            const perTokenPrice = plan.price.amount_dollars || 0;
-                                            const monthlyTokens = plan.monthly_tokens || 0;
-                                            const totalMonthly = perTokenPrice * monthlyTokens;
+                                            // New pricing: amount_dollars is the flat monthly fee
+                                            const monthlyFee = plan.price.amount_dollars || 0;
+                                            const overagePrice = plan.overage_price?.amount_dollars;
                                             
-                                            // Display as: "$10.00/month ($0.10/token)"
-                                            return `$${totalMonthly.toFixed(2)}/month ($${perTokenPrice.toFixed(2)}/token)`;
+                                            if (overagePrice !== undefined && overagePrice !== null) {
+                                              // Display as: "$3.00/month (1.5¢ per token overage)"
+                                              const overageCents = (overagePrice * 100).toFixed(1);
+                                              return `$${monthlyFee.toFixed(2)}/month (${overageCents}¢ per token overage)`;
+                                            } else {
+                                              // Fallback if overage price not available
+                                              return `$${monthlyFee.toFixed(2)}/month`;
+                                            }
                                           }
                                         })()}
                                       </span>
