@@ -39,9 +39,9 @@ jobs:
           docker images | grep hopper-backend-test || (echo "❌ Image not found!" && exit 1)
           echo "✅ Image verified!"
 
-      - name: Run unit tests
+      - name: Run comprehensive test suite
         run: |
-          echo "🧪 Running unit tests..."
+          echo "🧪 Running comprehensive test suite..."
           # Generate a valid Fernet key for testing (44 chars, base64-encoded)
           TEST_ENCRYPTION_KEY=$(docker run --rm hopper-backend-test:latest python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
           docker run --rm \
@@ -49,8 +49,8 @@ jobs:
             -e ENVIRONMENT=test \
             -e LOG_LEVEL=INFO \
             hopper-backend-test:latest \
-            python -m pytest /app/tests/test_main.py -v
-          echo "✅ Unit tests passed!"
+            python -m pytest /app/tests/ -v --tb=short -m "not skip"
+          echo "✅ Comprehensive test suite passed!"
 
       - name: Start services for security tests
         run: |

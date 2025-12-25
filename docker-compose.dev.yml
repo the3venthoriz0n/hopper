@@ -71,6 +71,7 @@ services:
     depends_on:
       - postgres
       - redis
+      - otel-collector
     # Load environment variables from .env.dev file
     env_file:
       - .env.dev
@@ -138,7 +139,6 @@ services:
     environment:
       - ENVIRONMENT=${ENVIRONMENT:-development}
     depends_on:
-      - backend
       - loki
     networks:
       - hopper_default

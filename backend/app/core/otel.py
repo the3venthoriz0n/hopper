@@ -17,6 +17,12 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Suppress OTEL exporter retry warnings to prevent logging cascades
+# When collector is unavailable, exporter retries cause warnings that trigger
+# logging handlers, which can fail if the logging system is in a bad state
+_otel_exporter_logger = logging.getLogger("opentelemetry.exporter.otlp.proto.grpc.exporter")
+_otel_exporter_logger.setLevel(logging.ERROR)
+
 
 def initialize_otel():
     """Initialize OpenTelemetry providers"""
@@ -69,6 +75,10 @@ def setup_otel_logging():
         from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
         from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
         from opentelemetry.sdk.resources import Resource as LogResource
+        
+        # Suppress log exporter warnings to prevent cascading failures
+        _otel_log_exporter_logger = logging.getLogger("opentelemetry.exporter.otlp.proto.grpc._log_exporter")
+        _otel_log_exporter_logger.setLevel(logging.ERROR)
         
         log_resource = LogResource.create({
             "service.name": settings.OTEL_SERVICE_NAME,

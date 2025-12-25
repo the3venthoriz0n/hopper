@@ -57,13 +57,19 @@ def login_user(client, email, password):
     return response
 
 
-@pytest.mark.skip(reason="Integration test - requires running backend server")
+@pytest.mark.skipif(
+    not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run."
+)
 def test_protected_endpoint_requires_auth(client):
     """Test that protected endpoints require authentication"""
     response = client.get(f"{BASE_URL}/api/destinations", timeout=5.0)
     assert response.status_code == 401
 
-@pytest.mark.skip(reason="Integration test - requires running backend server")
+@pytest.mark.skipif(
+    not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run."
+)
 def test_public_endpoint_accessible(client):
     """Test that public endpoints are accessible"""
     response = client.get(f"{BASE_URL}/api/auth/csrf", timeout=5.0)
@@ -83,7 +89,10 @@ def test_public_endpoint_accessible(client):
     # but it's not guaranteed on all responses - the token in the body is the source of truth
 
 
-@pytest.mark.skip(reason="Integration test - requires running backend server")
+@pytest.mark.skipif(
+    not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run."
+)
 def test_user_registration(client):
     """Test user registration with valid data"""
     test_email = f"hopper-unit-test_{int(time.time())}@hopper-unit-test.com"
@@ -98,7 +107,10 @@ def test_user_registration(client):
         assert data["user"]["id"] is None
 
 
-@pytest.mark.skip(reason="Integration test - requires running backend server")
+@pytest.mark.skipif(
+    not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run."
+)
 def test_login_with_invalid_credentials(client):
     """Test that login fails with invalid credentials"""
     response = client.post(
@@ -109,7 +121,10 @@ def test_login_with_invalid_credentials(client):
     assert response.status_code == 401
 
 
-@pytest.mark.skip(reason="Integration test - requires running backend server")
+@pytest.mark.skipif(
+    not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run."
+)
 def test_session_cookie_set_on_login(client):
     """Test that login sets session cookie (requires email verification)"""
     test_email = f"hopper-unit-test-login_{int(time.time())}@hopper-unit-test.com"
@@ -136,7 +151,10 @@ def test_session_cookie_set_on_login(client):
         assert "user" in response.json()
 
 
-@pytest.mark.skip(reason="Integration test - requires running backend server")
+@pytest.mark.skipif(
+    not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run."
+)
 def test_csrf_protection(client):
     """Test that POST requests without CSRF token are rejected"""
     # This test requires a logged-in user with verified email
@@ -160,7 +178,10 @@ def test_csrf_protection(client):
     # 5. Then test POST with valid CSRF token (should succeed)
 
 
-@pytest.mark.skip(reason="Integration test - requires running backend server")
+@pytest.mark.skipif(
+    not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run."
+)
 def test_auth_me_endpoint(client):
     """Test that /api/auth/me returns user info or None"""
     # Without authentication, should return None user
@@ -169,7 +190,10 @@ def test_auth_me_endpoint(client):
     assert response.json().get("user") is None
 
 
-@pytest.mark.skip(reason="Integration test - requires running backend server")
+@pytest.mark.skipif(
+    not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run."
+)
 def test_logout_invalidates_session(client):
     """Test that logout invalidates the session"""
     # This test requires a logged-in user with verified email

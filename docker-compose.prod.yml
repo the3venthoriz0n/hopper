@@ -69,6 +69,7 @@ services:
     depends_on:
       - postgres
       - redis
+      - otel-collector
     # Load environment variables from .env.prod file
     env_file:
       - .env.prod
@@ -123,7 +124,6 @@ services:
     environment:
       - ENVIRONMENT=${ENVIRONMENT:-production}
     depends_on:
-      - backend
       - loki
     networks:
       - hopper_default
