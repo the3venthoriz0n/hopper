@@ -162,22 +162,40 @@ def check_checkout_status(
         else:
             # Subscription doesn't exist in database - check if it's invalid in Stripe
             try:
-                stripe_sub = stripe.Subscription.retrieve(subscription_id, expand=['items.data.price'])
-                items_data = []
-                if hasattr(stripe_sub, 'items') and stripe_sub.items:
-                    items_data = stripe_sub.items.data if hasattr(stripe_sub.items, 'data') else []
+                # Use SubscriptionItem.list() for reliable items checking (more reliable than expand)
+                sub_items = stripe.SubscriptionItem.list(
+                    subscription=subscription_id,
+                    limit=100
+                )
+                items_count = len(sub_items.data) if sub_items.data else 0
                 
-                if len(items_data) == 0:
-                    logger.error(
-                        f"Subscription {subscription_id} exists in Stripe but has NO ITEMS. "
-                        f"This subscription is invalid and cannot be processed. "
-                        f"Status: {stripe_sub.status}, Customer: {stripe_sub.customer}"
-                    )
+                if items_count == 0:
+                    # Also retrieve subscription for status/customer info
+                    try:
+                        stripe_sub = stripe.Subscription.retrieve(subscription_id)
+                        logger.error(
+                            f"Subscription {subscription_id} exists in Stripe but has NO ITEMS. "
+                            f"This subscription is invalid and cannot be processed. "
+                            f"Status: {stripe_sub.status}, Customer: {stripe_sub.customer if hasattr(stripe_sub, 'customer') else 'unknown'}"
+                        )
+                    except stripe.error.StripeError:
+                        logger.error(
+                            f"Subscription {subscription_id} exists in Stripe but has NO ITEMS. "
+                            f"This subscription is invalid and cannot be processed."
+                        )
                 else:
-                    logger.warning(
-                        f"Subscription {subscription_id} exists in Stripe with {len(items_data)} items but not in database. "
-                        f"Webhook may not have fired yet or failed. Status: {stripe_sub.status}"
-                    )
+                    # Subscription has items but not in database - webhook may not have fired yet
+                    try:
+                        stripe_sub = stripe.Subscription.retrieve(subscription_id)
+                        logger.warning(
+                            f"Subscription {subscription_id} exists in Stripe with {items_count} item(s) but not in database. "
+                            f"Webhook may not have fired yet or failed. Status: {stripe_sub.status}"
+                        )
+                    except stripe.error.StripeError:
+                        logger.warning(
+                            f"Subscription {subscription_id} exists in Stripe with {items_count} item(s) but not in database. "
+                            f"Webhook may not have fired yet or failed."
+                        )
             except stripe.error.StripeError as e:
                 logger.warning(
                     f"Subscription {subscription_id} not found in database and could not be retrieved from Stripe: {e}. "

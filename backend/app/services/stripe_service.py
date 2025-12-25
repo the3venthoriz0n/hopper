@@ -862,7 +862,35 @@ def update_subscription_from_stripe(
             Subscription.stripe_subscription_id == stripe_subscription_id
         ).first()
         
-        # Get plan type from Stripe subscription
+        # Validate subscription has items using SubscriptionItem.list() (most reliable method)
+        try:
+            sub_items = stripe.SubscriptionItem.list(
+                subscription=stripe_subscription_id,
+                limit=100
+            )
+            items_count = len(sub_items.data) if sub_items.data else 0
+            
+            if items_count == 0:
+                logger.error(
+                    f"Subscription {stripe_subscription_id} exists in Stripe but has NO ITEMS. "
+                    f"This subscription is invalid and cannot be processed. "
+                    f"Status: {stripe_sub.status}, Customer: {stripe_sub.customer if hasattr(stripe_sub, 'customer') else 'unknown'}"
+                )
+                return None
+        except stripe.error.StripeError as e:
+            logger.error(f"Error checking subscription items for {stripe_subscription_id}: {e}")
+            return None
+        
+        # Extract customer ID from Stripe subscription
+        customer_id = None
+        if hasattr(stripe_sub, 'customer'):
+            customer_id = stripe_sub.customer if isinstance(stripe_sub.customer, str) else getattr(stripe_sub.customer, 'id', None)
+        
+        if not customer_id:
+            logger.error(f"Subscription {stripe_subscription_id} has no customer ID - cannot process")
+            return None
+        
+        # Get plan type from Stripe subscription items
         plan_type = None
         if hasattr(stripe_sub, 'items') and stripe_sub.items:
             items_data = stripe_sub.items.data if hasattr(stripe_sub.items, 'data') else []
@@ -878,9 +906,36 @@ def update_subscription_from_stripe(
                 logger.warning(f"Subscription {stripe_subscription_id} not found in database and no user_id provided")
                 return None
             
+            # Check if user already has a subscription (upgrade scenario)
+            existing_user_sub = db.query(Subscription).filter(
+                Subscription.user_id == user_id
+            ).first()
+            
+            if existing_user_sub:
+                # User has existing subscription - this is an upgrade
+                old_subscription_id = existing_user_sub.stripe_subscription_id
+                logger.info(
+                    f"User {user_id} upgrading from subscription {old_subscription_id} to {stripe_subscription_id}"
+                )
+                
+                # Cancel old subscription in Stripe if it's active
+                if existing_user_sub.status in ('active', 'trialing'):
+                    try:
+                        cancel_subscription_with_invoice(old_subscription_id, invoice_now=True)
+                        logger.info(f"Canceled old subscription {old_subscription_id} in Stripe")
+                    except Exception as e:
+                        logger.warning(f"Failed to cancel old subscription {old_subscription_id} in Stripe: {e}")
+                
+                # Delete old subscription from database
+                db.delete(existing_user_sub)
+                db.flush()  # Ensure deletion is committed before insert
+                logger.info(f"Deleted old subscription {old_subscription_id} from database")
+            
+            # Now create the new subscription
             subscription = Subscription(
                 user_id=user_id,
                 stripe_subscription_id=stripe_subscription_id,
+                stripe_customer_id=customer_id,
                 plan_type=plan_type or 'free',
                 status=stripe_sub.status,
                 current_period_start=datetime.fromtimestamp(stripe_sub.current_period_start, tz=timezone.utc),
@@ -896,12 +951,84 @@ def update_subscription_from_stripe(
             subscription.cancel_at_period_end = stripe_sub.cancel_at_period_end
             if plan_type:
                 subscription.plan_type = plan_type
+            # Update customer_id if it's missing (defensive fix)
+            if not subscription.stripe_customer_id:
+                subscription.stripe_customer_id = customer_id
         
         db.commit()
         db.refresh(subscription)
         
         return subscription
         
+    except IntegrityError as e:
+        # Handle unique constraint violations (e.g., user_id already exists)
+        db.rollback()
+        error_msg = str(e.orig) if hasattr(e, 'orig') else str(e)
+        
+        if 'subscriptions_user_id_key' in error_msg or 'user_id' in error_msg.lower():
+            # User already has a subscription - this shouldn't happen with our fix, but handle gracefully
+            logger.error(
+                f"Unique constraint violation for user_id when creating subscription {stripe_subscription_id}. "
+                f"This indicates a race condition or the upgrade scenario wasn't handled properly. "
+                f"Error: {error_msg}"
+            )
+            
+            # Try to find existing subscription and update it instead
+            if user_id:
+                existing_sub = db.query(Subscription).filter(
+                    Subscription.user_id == user_id
+                ).first()
+                
+                if existing_sub:
+                    logger.info(
+                        f"Found existing subscription {existing_sub.stripe_subscription_id} for user {user_id}. "
+                        f"Updating to new subscription {stripe_subscription_id}"
+                    )
+                    
+                    # Retrieve subscription from Stripe to get latest data
+                    try:
+                        stripe_sub_retry = stripe.Subscription.retrieve(stripe_subscription_id)
+                        
+                        # Cancel old subscription in Stripe if active
+                        if existing_sub.status in ('active', 'trialing') and existing_sub.stripe_subscription_id != stripe_subscription_id:
+                            try:
+                                cancel_subscription_with_invoice(existing_sub.stripe_subscription_id, invoice_now=True)
+                            except Exception as cancel_err:
+                                logger.warning(f"Failed to cancel old subscription: {cancel_err}")
+                        
+                        # Get customer_id and plan_type from Stripe subscription
+                        customer_id_retry = None
+                        if hasattr(stripe_sub_retry, 'customer'):
+                            customer_id_retry = stripe_sub_retry.customer if isinstance(stripe_sub_retry.customer, str) else getattr(stripe_sub_retry.customer, 'id', None)
+                        
+                        plan_type_retry = None
+                        if hasattr(stripe_sub_retry, 'items') and stripe_sub_retry.items:
+                            items_data = stripe_sub_retry.items.data if hasattr(stripe_sub_retry.items, 'data') else []
+                            if items_data and len(items_data) > 0:
+                                first_item = items_data[0]
+                                if hasattr(first_item, 'price') and first_item.price:
+                                    price_id = first_item.price.id if hasattr(first_item.price, 'id') else None
+                                    plan_type_retry = _get_plan_type_from_price(price_id) if price_id else None
+                        
+                        # Update existing subscription to point to new subscription_id
+                        existing_sub.stripe_subscription_id = stripe_subscription_id
+                        if customer_id_retry:
+                            existing_sub.stripe_customer_id = customer_id_retry
+                        existing_sub.status = stripe_sub_retry.status
+                        existing_sub.current_period_start = datetime.fromtimestamp(stripe_sub_retry.current_period_start, tz=timezone.utc)
+                        existing_sub.current_period_end = datetime.fromtimestamp(stripe_sub_retry.current_period_end, tz=timezone.utc)
+                        existing_sub.cancel_at_period_end = stripe_sub_retry.cancel_at_period_end
+                        if plan_type_retry:
+                            existing_sub.plan_type = plan_type_retry
+                        
+                        db.commit()
+                        db.refresh(existing_sub)
+                        return existing_sub
+                    except stripe.error.StripeError as stripe_err:
+                        logger.error(f"Failed to retrieve subscription {stripe_subscription_id} from Stripe in error handler: {stripe_err}")
+        
+        logger.error(f"Database integrity error updating subscription {stripe_subscription_id}: {error_msg}")
+        return None
     except stripe.error.StripeError as e:
         logger.error(f"Stripe error updating subscription {stripe_subscription_id}: {e}")
         db.rollback()
@@ -1501,6 +1628,28 @@ def handle_subscription_updated(subscription_data: Dict[str, Any], db: Session):
                 f"Subscription update for user {user_id} (subscription {subscription.id}): "
                 f"No existing subscription found in DB (new subscription or first webhook)"
             )
+        
+        # Validate subscription has items using SubscriptionItem.list() (most reliable method)
+        # This prevents processing invalid subscriptions before calling update_subscription_from_stripe
+        try:
+            sub_items = stripe.SubscriptionItem.list(
+                subscription=subscription_id,
+                limit=100
+            )
+            items_count = len(sub_items.data) if sub_items.data else 0
+            
+            if items_count == 0:
+                logger.error(
+                    f"Subscription {subscription_id} exists in Stripe but has NO ITEMS. "
+                    f"This subscription is invalid and cannot be processed. "
+                    f"Status: {subscription.status}, Customer: {subscription.customer if hasattr(subscription, 'customer') else 'unknown'}"
+                )
+                return
+            else:
+                logger.info(f"✅ Subscription {subscription_id} has {items_count} item(s) - proceeding with update")
+        except stripe.error.StripeError as e:
+            logger.error(f"Error checking subscription items for {subscription_id}: {e}")
+            return
         
         # Update subscription in database (this updates period_end if it changed)
         updated_sub = update_subscription_from_stripe(subscription, db, user_id=user_id)
