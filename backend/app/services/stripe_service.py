@@ -616,7 +616,8 @@ def create_stripe_subscription(
     plan_type: str,
     db: Session,
     skip_token_reset: bool = False,
-    preserved_tokens: Optional[int] = None
+    preserved_tokens: Optional[int] = None,
+    preserved_plan_type: Optional[str] = None
 ) -> Optional[Subscription]:
     """Create a Stripe subscription for a user with the specified plan type.
     
@@ -626,6 +627,7 @@ def create_stripe_subscription(
         db: Database session
         skip_token_reset: Whether to skip token reset
         preserved_tokens: Optional preserved tokens balance (for unlimited plan)
+        preserved_plan_type: Optional preserved plan type (for unlimited plan enrollment)
     
     Returns:
         Subscription object or None if creation failed
@@ -704,6 +706,9 @@ def create_stripe_subscription(
         
         if preserved_tokens is not None:
             sub.preserved_tokens_balance = preserved_tokens
+        
+        if preserved_plan_type is not None:
+            sub.preserved_plan_type = preserved_plan_type
         
         db.commit()
         

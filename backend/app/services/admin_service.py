@@ -254,7 +254,8 @@ def enroll_user_unlimited_plan(
     if existing_subscription and existing_subscription.plan_type == 'unlimited':
         return {"message": f"User {target_user_id} already has unlimited plan"}
     
-    # Preserve current token balance before canceling subscriptions and enrolling in unlimited
+    # Preserve current plan type and token balance before canceling subscriptions and enrolling in unlimited
+    preserved_plan_type = existing_subscription.plan_type if existing_subscription else None
     token_balance = get_or_create_token_balance(target_user_id, db)
     preserved_tokens = token_balance.tokens_remaining
     
@@ -262,12 +263,12 @@ def enroll_user_unlimited_plan(
     cancel_all_user_subscriptions(target_user_id, db)
     
     # Create unlimited subscription via Stripe
-    subscription = create_stripe_subscription(target_user_id, "unlimited", db, preserved_tokens=preserved_tokens)
+    subscription = create_stripe_subscription(target_user_id, "unlimited", db, preserved_tokens=preserved_tokens, preserved_plan_type=preserved_plan_type)
     
     if not subscription:
         raise ValueError("Failed to create unlimited subscription")
     
-    logger.info(f"Admin {admin_id} enrolled user {target_user_id} in unlimited plan (preserved {preserved_tokens} tokens)")
+    logger.info(f"Admin {admin_id} enrolled user {target_user_id} in unlimited plan (preserved {preserved_tokens} tokens, previous plan: {preserved_plan_type})")
     
     return {"message": f"User {target_user_id} enrolled in unlimited plan"}
 
@@ -305,12 +306,13 @@ def unenroll_user_unlimited_plan(
     if subscription.plan_type != 'unlimited':
         raise ValueError(f"User is not on unlimited plan (current: {subscription.plan_type})")
     
-    # Get preserved token balance before canceling subscriptions
+    # Get preserved token balance and plan type before canceling subscriptions
     preserved_tokens = subscription.preserved_tokens_balance if subscription.preserved_tokens_balance is not None else 0
+    preserved_plan_type = subscription.preserved_plan_type or "free_daily"  # Default to free_daily for existing unlimited subscriptions
     
-    # Set balance to preserved_tokens before creating free subscription
-    # This ensures that when create_stripe_subscription adds free plan tokens,
-    # we can then set it back to just preserved_tokens (without the free plan tokens)
+    # Set balance to preserved_tokens before creating subscription
+    # This ensures that when create_stripe_subscription adds plan tokens,
+    # we can then set it back to just preserved_tokens (without the plan tokens)
     token_balance = get_or_create_token_balance(target_user_id, db)
     token_balance.tokens_remaining = preserved_tokens
     db.commit()
@@ -329,12 +331,12 @@ def unenroll_user_unlimited_plan(
     # This must happen BEFORE create_stripe_subscription tries to insert a new record
     db.delete(subscription)
     db.commit()
-    logger.info(f"Deleted existing subscription record for user {target_user_id} before creating free subscription")
+    logger.info(f"Deleted existing subscription record for user {target_user_id} before creating {preserved_plan_type} subscription")
     
-    # Now create free subscription (database is clean, no existing record)
+    # Now create subscription with restored plan type (database is clean, no existing record)
     try:
-        free_subscription = create_stripe_subscription(target_user_id, "free", db, skip_token_reset=True)
-        if not free_subscription:
+        restored_subscription = create_stripe_subscription(target_user_id, preserved_plan_type, db, skip_token_reset=True)
+        if not restored_subscription:
             # Check if there are still active subscriptions preventing creation
             if target_user.stripe_customer_id:
                 try:
@@ -352,7 +354,7 @@ def unenroll_user_unlimited_plan(
                 except Exception as e:
                     logger.error(f"Error checking remaining subscriptions: {e}")
             
-            raise ValueError("Failed to create free subscription. Please try again or contact support.")
+            raise ValueError(f"Failed to create {preserved_plan_type} subscription. Please try again or contact support.")
     except ValueError:
         raise
     except Exception as e:
@@ -361,23 +363,23 @@ def unenroll_user_unlimited_plan(
     
     # After create_stripe_subscription, we need to set tokens correctly
     # Since we used skip_token_reset=True, tokens weren't modified by create_stripe_subscription
-    # We want the final balance to be just preserved_tokens (not preserved_tokens + free_plan_tokens)
+    # We want the final balance to be just preserved_tokens (not preserved_tokens + plan tokens)
     token_balance = get_or_create_token_balance(target_user_id, db)
-    free_plan_tokens = get_plan_tokens('free')
+    restored_plan_tokens = get_plan_tokens(preserved_plan_type)
     
     # Set tokens_remaining to preserved_tokens
     token_balance.tokens_remaining = preserved_tokens
     
-    # Set monthly_tokens to preserved_tokens (or free plan tokens if preserved is less)
+    # Set monthly_tokens to preserved_tokens (or restored plan tokens if preserved is less)
     # This ensures the counter shows the correct starting balance
-    token_balance.monthly_tokens = max(preserved_tokens, free_plan_tokens)
+    token_balance.monthly_tokens = max(preserved_tokens, restored_plan_tokens) if restored_plan_tokens > 0 else preserved_tokens
     
-    # Ensure tokens_used_this_period is 0 (fresh start on free plan)
+    # Ensure tokens_used_this_period is 0 (fresh start on restored plan)
     token_balance.tokens_used_this_period = 0
     
     # Update period to match new subscription
-    token_balance.period_start = free_subscription.current_period_start
-    token_balance.period_end = free_subscription.current_period_end
+    token_balance.period_start = restored_subscription.current_period_start
+    token_balance.period_end = restored_subscription.current_period_end
     token_balance.updated_at = datetime.now(timezone.utc)
     
     db.commit()
@@ -389,7 +391,7 @@ def unenroll_user_unlimited_plan(
     
     logger.info(
         f"Admin {admin_id} unenrolled user {target_user_id} from unlimited plan "
-        f"(restored {preserved_tokens} preserved tokens, moved to free plan without adding free plan tokens)"
+        f"(restored {preserved_tokens} preserved tokens, moved to {preserved_plan_type} plan without adding plan tokens)"
     )
     
     return {"message": f"User {target_user_id} unenrolled from unlimited plan"}
