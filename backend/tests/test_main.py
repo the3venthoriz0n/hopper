@@ -225,16 +225,18 @@ class TestStripeFunctionality:
         from app.models import User, Subscription
         from sqlalchemy.orm import Session
         
-        # Mock StripeRegistry to return free plan config
-        mock_registry_get.return_value = {
-            "price_id": "price_free",
-            "tokens": 10,
-            "name": "Free",
-            "description": "Free plan",
-            "amount_dollars": 0.0,
-            "currency": "USD",
-            "formatted": "Free"
-        }
+        # Mock StripeRegistry to return free_daily plan config
+        mock_registry_get.side_effect = lambda key: {
+            "free_daily_price": {
+                "price_id": "price_free_daily",
+                "tokens": 10,
+                "name": "Free Daily",
+                "description": "Free daily plan",
+                "amount_dollars": 0.0,
+                "currency": "USD",
+                "formatted": "Free"
+            }
+        }.get(key) if key == "free_daily_price" else None
         
         # Mock Stripe subscription response
         mock_subscription = Mock()
@@ -276,7 +278,7 @@ class TestStripeFunctionality:
             if isinstance(obj, Subscription):
                 obj.id = 1
                 obj.user_id = 1
-                obj.plan_type = "free"
+                obj.plan_type = "free_daily"
                 obj.stripe_subscription_id = 'sub_test123'
                 obj.stripe_customer_id = 'cus_test123'
                 obj.status = 'active'
@@ -293,7 +295,7 @@ class TestStripeFunctionality:
                 mock_sub = Mock(spec=Subscription)
                 mock_sub.id = 1
                 mock_sub.user_id = 1
-                mock_sub.plan_type = "free"
+                mock_sub.plan_type = "free_daily"
                 mock_sub.stripe_subscription_id = 'sub_test123'
                 mock_sub.stripe_customer_id = 'cus_test123'
                 mock_sub.status = 'active'
@@ -314,7 +316,7 @@ class TestStripeFunctionality:
         
         mock_db.commit.side_effect = commit_with_switch
 
-        result = create_stripe_subscription(1, "free", mock_db)
+        result = create_stripe_subscription(1, "free_daily", mock_db)
         
         assert result is not None
         mock_stripe.Subscription.create.assert_called_once()
@@ -601,9 +603,9 @@ class TestCheckoutAndBilling:
         assert result["id"] == "cs_test123"
         mock_stripe.checkout.Session.create.assert_called_once()
     
-    @patch('app.services.stripe_service.stripe')
+    @patch('app.services.subscription_service.stripe.checkout.Session.retrieve')
     @patch('app.services.stripe_service.settings')
-    def test_checkout_status_check(self, mock_settings, mock_stripe, test_user, db_session):
+    def test_checkout_status_check(self, mock_settings, mock_retrieve, test_user, db_session):
         """Test check_checkout_status"""
         mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
         from app.services.subscription_service import check_checkout_status
@@ -625,7 +627,7 @@ class TestCheckoutAndBilling:
         mock_session.payment_status = "paid"
         mock_session.mode = "subscription"
         mock_session.subscription = "sub_test123"
-        mock_stripe.checkout.Session.retrieve.return_value = mock_session
+        mock_retrieve.return_value = mock_session
         
         result = check_checkout_status("cs_test123", test_user.id, db_session)
         

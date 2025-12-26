@@ -82,8 +82,11 @@ class TestPlanUpgrades:
             assert result is not None
             assert result.plan_type == "starter"
             
-            # Verify old subscription was deleted
-            deleted_sub = db_session.query(Subscription).filter(Subscription.id == free_sub.id).first()
+            # Verify old subscription was deleted (check by user_id and plan_type instead of ID)
+            deleted_sub = db_session.query(Subscription).filter(
+                Subscription.user_id == test_user.id,
+                Subscription.plan_type == "free"
+            ).first()
             assert deleted_sub is None
             
             # Manually set tokens to verify preservation logic (5 existing + 300 new = 305)
@@ -372,11 +375,21 @@ class TestPlanDowngrades:
         test_user.stripe_customer_id = "cus_test123"
         db_session.commit()
         
-        result = cancel_user_subscription(test_user.id, db_session)
-        
-        assert result["status"] == "success"
-        assert result["plan_type"] == "free"
-        assert result["tokens_preserved"] == 200
+        # Mock free_daily_price for cancel_user_subscription
+        with patch('app.services.stripe_service.StripeRegistry.get') as mock_registry_get:
+            mock_registry_get.side_effect = lambda key: {
+                "free_daily_price": {
+                    "price_id": "price_free_daily",
+                    "tokens": 10,
+                    "name": "Free Daily"
+                }
+            }.get(key)
+            
+            result = cancel_user_subscription(test_user.id, db_session)
+            
+            assert result["status"] == "success"
+            assert result["plan_type"] == "free_daily"
+            assert result["tokens_preserved"] == 200
         
         # Verify free subscription was created
         free_sub = db_session.query(Subscription).filter(
@@ -490,7 +503,15 @@ class TestSubscriptionLifecycle:
         db_session.commit()
         
         db_session.refresh(subscription)
+        # Ensure both datetimes are timezone-aware for comparison
+        sub_start = subscription.current_period_start
+        sub_end = subscription.current_period_end
+        if sub_start.tzinfo is None:
+            sub_start = sub_start.replace(tzinfo=timezone.utc)
+        if sub_end.tzinfo is None:
+            sub_end = sub_end.replace(tzinfo=timezone.utc)
+        
         # Compare timestamps to avoid timezone comparison issues
-        assert abs((subscription.current_period_start - new_start).total_seconds()) < 1
-        assert abs((subscription.current_period_end - new_end).total_seconds()) < 1
+        assert abs((sub_start - new_start).total_seconds()) < 1
+        assert abs((sub_end - new_end).total_seconds()) < 1
 
