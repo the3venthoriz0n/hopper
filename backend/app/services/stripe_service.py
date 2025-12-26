@@ -313,3 +313,49 @@ def create_free_subscription(user_id: int, db: Session, skip_token_reset: bool =
         from app.services.token_service import ensure_tokens_synced_for_subscription
         ensure_tokens_synced_for_subscription(user_id, sub.stripe_subscription_id, db)
     return sub
+
+def cancel_all_user_subscriptions(user_id: int, db: Session, invoice_now: bool = True):
+    """Cancel all Stripe subscriptions for a user."""
+    subscriptions = db.query(Subscription).filter(Subscription.user_id == user_id).all()
+    
+    for subscription in subscriptions:
+        # Skip free subscriptions (they don't have real Stripe subscriptions)
+        if subscription.plan_type == 'free':
+            continue
+        
+        # Only cancel if it's a real Stripe subscription (not free/unlimited placeholders)
+        if subscription.stripe_subscription_id and not subscription.stripe_subscription_id.startswith('free_') and not subscription.stripe_subscription_id.startswith('unlimited_'):
+            try:
+                cancel_subscription_with_invoice(subscription.stripe_subscription_id, invoice_now=invoice_now)
+                logger.info(f"Canceled Stripe subscription {subscription.stripe_subscription_id} for user {user_id}")
+            except Exception as e:
+                logger.warning(f"Failed to cancel Stripe subscription {subscription.stripe_subscription_id} for user {user_id}: {e}")
+                # Continue with other subscriptions even if one fails
+
+def create_unlimited_subscription(user_id: int, preserved_tokens: int, db: Session) -> Optional[Subscription]:
+    """Create an unlimited subscription for a user (admin operation)."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        return None
+    
+    # Ensure user has a stripe_customer_id (required by model)
+    if not user.stripe_customer_id:
+        # For unlimited subscriptions, we can use a placeholder if no Stripe customer exists
+        user.stripe_customer_id = f"unlimited_{user_id}"
+        db.commit()
+    
+    sub = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+    if not sub:
+        sub = Subscription(user_id=user_id)
+        db.add(sub)
+    
+    sub.plan_type = "unlimited"
+    sub.status = "active"
+    sub.stripe_subscription_id = f"unlimited_{user_id}_{int(datetime.now().timestamp())}"
+    sub.stripe_customer_id = user.stripe_customer_id
+    sub.current_period_start = datetime.now(timezone.utc)
+    sub.current_period_end = datetime.now(timezone.utc) + timedelta(days=365)  # 1 year for unlimited
+    sub.preserved_tokens_balance = preserved_tokens
+    db.commit()
+    
+    return sub
