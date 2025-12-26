@@ -155,8 +155,20 @@ class TestOwnershipValidation:
 class TestSubscriptionFlow:
     """Test subscription and token initialization"""
     
-    def test_get_current_subscription_auto_creates_free(self, authenticated_client, test_user, db_session):
+    @patch('app.services.stripe_service.StripeRegistry.get')
+    def test_get_current_subscription_auto_creates_free(self, mock_registry_get, authenticated_client, test_user, db_session):
         """Test /api/subscription/current auto-creates free subscription for new user"""
+        # Mock StripeRegistry to return free plan config
+        mock_registry_get.return_value = {
+            "price_id": "price_free",
+            "tokens": 10,
+            "name": "Free",
+            "description": "Free plan",
+            "amount_dollars": 0.0,
+            "currency": "USD",
+            "formatted": "Free"
+        }
+        
         # Verify user has no subscription initially
         subscription = db_session.query(Subscription).filter(Subscription.user_id == test_user.id).first()
         assert subscription is None
@@ -404,8 +416,20 @@ class TestWordbankNormalization:
 class TestHappyPathIntegration:
     """Test complete user journey"""
     
-    def test_new_user_journey(self, client, db_session, mock_redis, mock_stripe):
+    @patch('app.services.stripe_service.StripeRegistry.get')
+    def test_new_user_journey(self, mock_registry_get, client, db_session, mock_redis, mock_stripe):
         """Test complete new user journey from registration to settings"""
+        # Mock StripeRegistry to return free plan config
+        mock_registry_get.return_value = {
+            "price_id": "price_free",
+            "tokens": 10,
+            "name": "Free",
+            "description": "Free plan",
+            "amount_dollars": 0.0,
+            "currency": "USD",
+            "formatted": "Free"
+        }
+        
         # 1. Register user
         register_response = client.post(
             "/api/auth/register",
@@ -441,6 +465,7 @@ class TestHappyPathIntegration:
         sub_response = client.get("/api/subscription/current")
         assert sub_response.status_code == status.HTTP_200_OK
         sub_data = sub_response.json()
+        assert sub_data["subscription"] is not None
         assert sub_data["subscription"]["plan_type"] == "free"
         
         # Update cookies from subscription response (in case session was updated)

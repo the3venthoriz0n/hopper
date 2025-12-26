@@ -304,8 +304,20 @@ class TestTokenService:
         result = check_tokens_available(test_user.id, 1000, db_session)
         assert result is True
     
-    def test_reset_tokens_for_subscription_sets_monthly_tokens(self, test_user, db_session):
+    @patch('app.services.stripe_service.StripeRegistry.get')
+    def test_reset_tokens_for_subscription_sets_monthly_tokens(self, mock_registry_get, test_user, db_session):
         """Test reset_tokens_for_subscription() sets correct monthly tokens"""
+        # Mock StripeRegistry to return free plan config
+        mock_registry_get.return_value = {
+            "price_id": "price_free",
+            "tokens": 10,
+            "name": "Free",
+            "description": "Free plan",
+            "amount_dollars": 0.0,
+            "currency": "USD",
+            "formatted": "Free"
+        }
+        
         subscription = Subscription(
             user_id=test_user.id,
             stripe_subscription_id="sub_test123",
@@ -338,9 +350,26 @@ class TestTokenService:
 class TestSubscriptionService:
     """Test subscription service logic"""
     
-    def test_process_stripe_webhook_subscription_created(self, test_user, db_session, mock_stripe):
+    @patch('app.services.stripe_service.StripeRegistry')
+    def test_process_stripe_webhook_subscription_created(self, mock_registry_class, test_user, db_session, mock_stripe):
         """Test process_stripe_webhook() with customer.subscription.created creates subscription"""
-        from app.services.stripe_service import get_plan_price_id
+        # Mock StripeRegistry to return free plan config
+        mock_registry_instance = Mock()
+        mock_registry_instance._cache = {
+            "free_price": {
+                "price_id": "price_free",
+                "tokens": 10,
+                "name": "Free",
+                "description": "Free plan",
+                "amount_dollars": 0.0,
+                "currency": "USD",
+                "formatted": "Free"
+            }
+        }
+        mock_registry_class._cache = mock_registry_instance._cache
+        mock_registry_class.get = Mock(side_effect=lambda key: mock_registry_instance._cache.get(key))
+        
+        price_id = "price_free"
         
         # Mock Stripe event
         event_payload = {
@@ -356,7 +385,7 @@ class TestSubscriptionService:
                     "items": {
                         "data": [{
                             "price": {
-                                "id": get_plan_price_id("free") or "price_test123"
+                                "id": price_id
                             }
                         }]
                     },
@@ -376,9 +405,10 @@ class TestSubscriptionService:
         mock_subscription.status = "active"
         mock_subscription.current_period_start = int(datetime.now(timezone.utc).timestamp())
         mock_subscription.current_period_end = int((datetime.now(timezone.utc) + timedelta(days=30)).timestamp())
-        mock_subscription.items.data = [Mock(price=Mock(id=get_plan_price_id("free") or "price_test123"))]
+        mock_subscription.items.data = [Mock(price=Mock(id=price_id))]
         mock_subscription.metadata = {"user_id": str(test_user.id)}
         mock_stripe.Subscription.retrieve.return_value = mock_subscription
+        mock_stripe.SubscriptionItem.list.return_value = Mock(data=[Mock(price=Mock(id=price_id))])
         
         with patch('app.core.config.settings.STRIPE_WEBHOOK_SECRET', 'whsec_test123'):
             with patch('app.services.stripe_service.settings.STRIPE_WEBHOOK_SECRET', 'whsec_test123'):
@@ -468,8 +498,218 @@ class TestSubscriptionService:
                         db_session
                     )
     
-    def test_get_current_subscription_with_auto_repair_creates_free(self, test_user, db_session, mock_stripe):
+    @patch('app.services.stripe_service.StripeRegistry')
+    def test_webhook_subscription_updated(self, mock_registry_class, test_user, db_session, mock_stripe):
+        """Test subscription.updated webhook event"""
+        # Mock StripeRegistry
+        mock_registry_instance = Mock()
+        mock_registry_instance._cache = {
+            "starter_price": {
+                "price_id": "price_starter",
+                "tokens": 300,
+                "name": "Starter"
+            }
+        }
+        mock_registry_class._cache = mock_registry_instance._cache
+        mock_registry_class.get = Mock(side_effect=lambda key: mock_registry_instance._cache.get(key))
+        
+        price_id = "price_starter"
+        
+        event_payload = {
+            "id": "evt_test456",
+            "type": "customer.subscription.updated",
+            "data": {
+                "object": {
+                    "id": "sub_test123",
+                    "customer": "cus_test123",
+                    "status": "active",
+                    "current_period_start": int(datetime.now(timezone.utc).timestamp()),
+                    "current_period_end": int((datetime.now(timezone.utc) + timedelta(days=30)).timestamp())
+                }
+            }
+        }
+        
+        test_user.stripe_customer_id = "cus_test123"
+        db_session.commit()
+        
+        mock_subscription = Mock()
+        mock_subscription.id = "sub_test123"
+        mock_subscription.status = "active"
+        mock_subscription.current_period_start = int(datetime.now(timezone.utc).timestamp())
+        mock_subscription.current_period_end = int((datetime.now(timezone.utc) + timedelta(days=30)).timestamp())
+        mock_subscription.items.data = [Mock(price=Mock(id=price_id))]
+        mock_stripe.Subscription.retrieve.return_value = mock_subscription
+        mock_stripe.SubscriptionItem.list.return_value = Mock(data=[Mock(price=Mock(id=price_id))])
+        
+        with patch('app.core.config.settings.STRIPE_WEBHOOK_SECRET', 'whsec_test123'):
+            with patch('app.services.stripe_service.settings.STRIPE_WEBHOOK_SECRET', 'whsec_test123'):
+                with patch('app.services.subscription_service.stripe.Webhook.construct_event', return_value=event_payload):
+                    import time
+                    timestamp = str(int(time.time()))
+                    result = process_stripe_webhook(
+                        b'{"test": "payload"}',
+                        f"t={timestamp},v1=test_signature",
+                        db_session
+                    )
+                    
+                    assert result["status"] == "success"
+    
+    def test_webhook_subscription_deleted(self, test_user, db_session, mock_stripe):
+        """Test subscription.deleted webhook event"""
+        subscription = Subscription(
+            user_id=test_user.id,
+            stripe_subscription_id="sub_test123",
+            stripe_customer_id="cus_test123",
+            plan_type="starter",
+            status="active",
+            current_period_start=datetime.now(timezone.utc),
+            current_period_end=datetime.now(timezone.utc) + timedelta(days=30)
+        )
+        db_session.add(subscription)
+        db_session.commit()
+        
+        event_payload = {
+            "id": "evt_test789",
+            "type": "customer.subscription.deleted",
+            "data": {
+                "object": {
+                    "id": "sub_test123",
+                    "customer": "cus_test123"
+                }
+            }
+        }
+        
+        with patch('app.core.config.settings.STRIPE_WEBHOOK_SECRET', 'whsec_test123'):
+            with patch('app.services.stripe_service.settings.STRIPE_WEBHOOK_SECRET', 'whsec_test123'):
+                with patch('app.services.subscription_service.stripe.Webhook.construct_event', return_value=event_payload):
+                    import time
+                    timestamp = str(int(time.time()))
+                    result = process_stripe_webhook(
+                        b'{"test": "payload"}',
+                        f"t={timestamp},v1=test_signature",
+                        db_session
+                    )
+                    
+                    assert result["status"] == "success"
+                    
+                    # Verify subscription status updated
+                    db_session.refresh(subscription)
+                    assert subscription.status == "canceled"
+    
+    def test_webhook_invoice_payment_succeeded(self, test_user, db_session, mock_stripe):
+        """Test invoice.payment_succeeded webhook event"""
+        subscription = Subscription(
+            user_id=test_user.id,
+            stripe_subscription_id="sub_test123",
+            stripe_customer_id="cus_test123",
+            plan_type="starter",
+            status="active",
+            current_period_start=datetime.now(timezone.utc),
+            current_period_end=datetime.now(timezone.utc) + timedelta(days=30)
+        )
+        db_session.add(subscription)
+        db_session.commit()
+        
+        event_payload = {
+            "id": "evt_invoice123",
+            "type": "invoice.payment_succeeded",
+            "data": {
+                "object": {
+                    "id": "in_test123",
+                    "subscription": "sub_test123"
+                }
+            }
+        }
+        
+        with patch('app.core.config.settings.STRIPE_WEBHOOK_SECRET', 'whsec_test123'):
+            with patch('app.services.stripe_service.settings.STRIPE_WEBHOOK_SECRET', 'whsec_test123'):
+                with patch('app.services.subscription_service.stripe.Webhook.construct_event', return_value=event_payload):
+                    with patch('app.services.token_service.ensure_tokens_synced_for_subscription') as mock_sync:
+                        import time
+                        timestamp = str(int(time.time()))
+                        result = process_stripe_webhook(
+                            b'{"test": "payload"}',
+                            f"t={timestamp},v1=test_signature",
+                            db_session
+                        )
+                        
+                        assert result["status"] == "success"
+                        mock_sync.assert_called_once_with(test_user.id, "sub_test123", db_session)
+    
+    def test_webhook_invoice_payment_failed(self, db_session, mock_stripe):
+        """Test invoice.payment_failed webhook event"""
+        event_payload = {
+            "id": "evt_invoice_fail",
+            "type": "invoice.payment_failed",
+            "data": {
+                "object": {
+                    "id": "in_fail123",
+                    "subscription": "sub_test123"
+                }
+            }
+        }
+        
+        with patch('app.core.config.settings.STRIPE_WEBHOOK_SECRET', 'whsec_test123'):
+            with patch('app.services.stripe_service.settings.STRIPE_WEBHOOK_SECRET', 'whsec_test123'):
+                with patch('app.services.subscription_service.stripe.Webhook.construct_event', return_value=event_payload):
+                    import time
+                    timestamp = str(int(time.time()))
+                    result = process_stripe_webhook(
+                        b'{"test": "payload"}',
+                        f"t={timestamp},v1=test_signature",
+                        db_session
+                    )
+                    
+                    assert result["status"] == "success"
+    
+    def test_webhook_checkout_completed(self, test_user, db_session, mock_stripe):
+        """Test checkout.session.completed webhook event"""
+        test_user.stripe_customer_id = None
+        db_session.commit()
+        
+        event_payload = {
+            "id": "evt_checkout123",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "id": "cs_test123",
+                    "customer": "cus_new123",
+                    "metadata": {"user_id": str(test_user.id)}
+                }
+            }
+        }
+        
+        with patch('app.core.config.settings.STRIPE_WEBHOOK_SECRET', 'whsec_test123'):
+            with patch('app.services.stripe_service.settings.STRIPE_WEBHOOK_SECRET', 'whsec_test123'):
+                with patch('app.services.subscription_service.stripe.Webhook.construct_event', return_value=event_payload):
+                    import time
+                    timestamp = str(int(time.time()))
+                    result = process_stripe_webhook(
+                        b'{"test": "payload"}',
+                        f"t={timestamp},v1=test_signature",
+                        db_session
+                    )
+                    
+                    assert result["status"] == "success"
+                    
+                    # Verify customer ID was set
+                    db_session.refresh(test_user)
+                    assert test_user.stripe_customer_id == "cus_new123"
+    
+    @patch('app.services.stripe_service.StripeRegistry.get')
+    def test_get_current_subscription_with_auto_repair_creates_free(self, mock_registry_get, test_user, db_session, mock_stripe):
         """Test get_current_subscription_with_auto_repair() creates free plan if missing"""
+        # Mock StripeRegistry to return free plan config
+        mock_registry_get.return_value = {
+            "price_id": "price_free",
+            "tokens": 10,
+            "name": "Free",
+            "description": "Free plan",
+            "amount_dollars": 0.0,
+            "currency": "USD",
+            "formatted": "Free"
+        }
+        
         # Verify no subscription exists
         subscription = db_session.query(Subscription).filter(
             Subscription.user_id == test_user.id
