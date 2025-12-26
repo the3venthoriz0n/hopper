@@ -13,7 +13,7 @@ from app.services.auth_service import get_user_by_id
 from app.services.stripe_service import (
     StripeRegistry,
     get_price_info, 
-    create_free_subscription, 
+    create_stripe_subscription, 
     cancel_subscription_with_invoice,
     create_checkout_session, 
     get_customer_portal_url, 
@@ -167,7 +167,7 @@ def cancel_user_subscription(user_id: int, db: Session) -> Dict:
     db.commit()
     
     # Create new free plan
-    free_sub = create_free_subscription(user_id, db, skip_token_reset=True)
+    free_sub = create_stripe_subscription(user_id, "free", db, skip_token_reset=True)
     
     # Restore balance to the new free record
     token_balance = get_or_create_token_balance(user_id, db)
@@ -219,7 +219,7 @@ def get_current_subscription_with_auto_repair(user_id: int, db: Session) -> Dict
     
     subscription_info = get_subscription_info(user_id, db)
     if not subscription_info:
-        create_free_subscription(user_id, db)
+        create_stripe_subscription(user_id, "free", db)
         subscription_info = get_subscription_info(user_id, db)
     
     token_balance = get_token_balance(user_id, db)

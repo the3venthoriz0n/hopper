@@ -198,7 +198,7 @@ class TestSubscriptionFlow:
         db_session.commit()
         
         # Call endpoint - should update existing subscription, not create duplicate
-        with patch('app.services.stripe_service.create_free_subscription') as mock_create:
+        with patch('app.services.stripe_service.create_stripe_subscription') as mock_create:
             mock_sub = Mock()
             mock_sub.id = "sub_free123"
             mock_sub.status = "active"

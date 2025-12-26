@@ -19,7 +19,7 @@ from app.services.subscription_service import (
 from app.services.settings_service import (
     add_wordbank_word, remove_wordbank_word, clear_wordbank
 )
-from app.services.stripe_service import create_free_subscription
+from app.services.stripe_service import create_stripe_subscription
 
 
 @pytest.mark.critical
@@ -476,8 +476,8 @@ class TestSubscriptionService:
         ).first()
         assert subscription is None
         
-        # Mock create_free_subscription - patch where it's used (subscription_service imports it)
-        with patch('app.services.subscription_service.create_free_subscription') as mock_create:
+        # Mock create_stripe_subscription - patch where it's used (subscription_service imports it)
+        with patch('app.services.subscription_service.create_stripe_subscription') as mock_create:
             # Create actual Subscription object that will be returned
             mock_sub = Subscription(
                 user_id=test_user.id,
@@ -518,10 +518,10 @@ class TestSubscriptionService:
         db_session.commit()
         
         # Call auto-repair
-        with patch('app.services.subscription_service.create_free_subscription') as mock_create:
+        with patch('app.services.subscription_service.create_stripe_subscription') as mock_create:
             # Mock should not be called if subscription exists (even if deleted)
-            # Actually, get_subscription_info might return None for canceled, so it might call create_free_subscription
-            # But create_free_subscription should update existing, not create duplicate
+            # Actually, get_subscription_info might return None for canceled, so it might call create_stripe_subscription
+            # But create_stripe_subscription should update existing, not create duplicate
             mock_sub = Mock()
             mock_sub.plan_type = "free"
             mock_sub.status = "active"

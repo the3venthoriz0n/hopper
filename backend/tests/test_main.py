@@ -225,7 +225,7 @@ class TestStripeFunctionality:
     def test_create_free_subscription(self, mock_get_plans, mock_get_price, mock_settings, mock_stripe, mock_update_sub, mock_ensure_customer, mock_reset_tokens):
         """Test creating a free subscription"""
         mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
-        from app.services.stripe_service import create_free_subscription
+        from app.services.stripe_service import create_stripe_subscription
         from app.models import User, Subscription
         from sqlalchemy.orm import Session
         
@@ -266,7 +266,7 @@ class TestStripeFunctionality:
         mock_update_sub.return_value = mock_new_sub
         mock_reset_tokens.return_value = True
 
-        result = create_free_subscription(1, mock_db)
+        result = create_stripe_subscription(1, "free", mock_db)
         
         assert result is not None
         mock_stripe.Subscription.create.assert_called_once()

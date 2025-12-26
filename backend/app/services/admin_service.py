@@ -242,7 +242,7 @@ def enroll_user_unlimited_plan(
     Raises:
         ValueError: If user not found or enrollment fails
     """
-    from app.services.stripe_service import cancel_all_user_subscriptions, create_unlimited_subscription
+    from app.services.stripe_service import cancel_all_user_subscriptions, create_stripe_subscription
     from app.services.token_service import get_or_create_token_balance
     
     target_user = db.query(User).filter(User.id == target_user_id).first()
@@ -262,7 +262,7 @@ def enroll_user_unlimited_plan(
     cancel_all_user_subscriptions(target_user_id, db)
     
     # Create unlimited subscription via Stripe
-    subscription = create_unlimited_subscription(target_user_id, preserved_tokens, db)
+    subscription = create_stripe_subscription(target_user_id, "unlimited", db, preserved_tokens=preserved_tokens)
     
     if not subscription:
         raise ValueError("Failed to create unlimited subscription")
@@ -291,7 +291,7 @@ def unenroll_user_unlimited_plan(
         ValueError: If user not found, has no subscription, or is not on unlimited plan
     """
     import stripe
-    from app.services.stripe_service import create_free_subscription
+    from app.services.stripe_service import create_stripe_subscription
     from app.services.token_service import get_or_create_token_balance, get_plan_tokens
     
     target_user = db.query(User).filter(User.id == target_user_id).first()
@@ -309,7 +309,7 @@ def unenroll_user_unlimited_plan(
     preserved_tokens = subscription.preserved_tokens_balance if subscription.preserved_tokens_balance is not None else 0
     
     # Set balance to preserved_tokens before creating free subscription
-    # This ensures that when create_free_subscription adds free plan tokens,
+    # This ensures that when create_stripe_subscription adds free plan tokens,
     # we can then set it back to just preserved_tokens (without the free plan tokens)
     token_balance = get_or_create_token_balance(target_user_id, db)
     token_balance.tokens_remaining = preserved_tokens
@@ -326,14 +326,14 @@ def unenroll_user_unlimited_plan(
             # Continue anyway - we'll delete the DB record and create new subscription
     
     # Delete existing subscription record from database to avoid unique constraint violation
-    # This must happen BEFORE create_free_subscription tries to insert a new record
+    # This must happen BEFORE create_stripe_subscription tries to insert a new record
     db.delete(subscription)
     db.commit()
     logger.info(f"Deleted existing subscription record for user {target_user_id} before creating free subscription")
     
     # Now create free subscription (database is clean, no existing record)
     try:
-        free_subscription = create_free_subscription(target_user_id, db, skip_token_reset=True)
+        free_subscription = create_stripe_subscription(target_user_id, "free", db, skip_token_reset=True)
         if not free_subscription:
             # Check if there are still active subscriptions preventing creation
             if target_user.stripe_customer_id:
@@ -359,8 +359,8 @@ def unenroll_user_unlimited_plan(
         logger.error(f"Error unenrolling user {target_user_id} from unlimited plan: {e}", exc_info=True)
         raise ValueError(f"Failed to unenroll from unlimited plan: {str(e)}") from e
     
-    # After create_free_subscription, we need to set tokens correctly
-    # Since we used skip_token_reset=True, tokens weren't modified by create_free_subscription
+    # After create_stripe_subscription, we need to set tokens correctly
+    # Since we used skip_token_reset=True, tokens weren't modified by create_stripe_subscription
     # We want the final balance to be just preserved_tokens (not preserved_tokens + free_plan_tokens)
     token_balance = get_or_create_token_balance(target_user_id, db)
     free_plan_tokens = get_plan_tokens('free')
@@ -420,7 +420,7 @@ def switch_user_plan(
     """
     import stripe
     from app.services.stripe_service import (
-        cancel_all_user_subscriptions, create_free_subscription, create_unlimited_subscription,
+        cancel_all_user_subscriptions, create_stripe_subscription,
         get_plans, get_plan_price_id, cancel_subscription_with_invoice,
         create_stripe_customer
     )
@@ -465,7 +465,7 @@ def switch_user_plan(
     new_subscription = None
     if plan_key == 'free':
         # Create free subscription (skip token reset - we'll preserve tokens)
-        new_subscription = create_free_subscription(target_user_id, db, skip_token_reset=True)
+        new_subscription = create_stripe_subscription(target_user_id, "free", db, skip_token_reset=True)
         if new_subscription:
             # Preserve tokens and set monthly_tokens correctly
             free_plan_tokens = get_plan_tokens('free')
@@ -479,7 +479,7 @@ def switch_user_plan(
             db.commit()
     elif plan_key == 'unlimited':
         # Create unlimited subscription
-        new_subscription = create_unlimited_subscription(target_user_id, preserved_tokens, db)
+        new_subscription = create_stripe_subscription(target_user_id, "unlimited", db, preserved_tokens=preserved_tokens)
     else:
         # Create paid subscription via Stripe
         price_id = get_plan_price_id(plan_key)

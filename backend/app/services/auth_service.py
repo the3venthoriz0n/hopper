@@ -160,12 +160,12 @@ def get_or_create_oauth_user(email: str, db: Session = None) -> Tuple[User, bool
         
         # Create Stripe customer and free subscription for new user
         try:
-            from app.services.stripe_service import create_stripe_customer, create_free_subscription
+            from app.services.stripe_service import create_stripe_customer, create_stripe_subscription
             import logging
             logger = logging.getLogger(__name__)
             
             create_stripe_customer(user.email, user.id, db)
-            create_free_subscription(user.id, db)
+            create_stripe_subscription(user.id, "free", db)
             logger.info(f"Created Stripe customer and free subscription for OAuth user {user.id}")
         except Exception as e:
             # Log error but don't fail user creation
@@ -626,7 +626,7 @@ def verify_email_with_stripe_setup(email: str, code: str, db: Session) -> dict:
         ValueError: If invalid code or user not found
     """
     import logging
-    from app.services.stripe_service import create_stripe_customer, create_free_subscription
+    from app.services.stripe_service import create_stripe_customer, create_stripe_subscription
     
     logger = logging.getLogger(__name__)
     
@@ -642,7 +642,7 @@ def verify_email_with_stripe_setup(email: str, code: str, db: Session) -> dict:
     # Ensure Stripe customer and free subscription exist
     try:
         create_stripe_customer(user.email, user.id, db)
-        create_free_subscription(user.id, db)
+        create_stripe_subscription(user.id, "free", db)
     except Exception as e:
         logger.warning(f"Failed to create Stripe customer/subscription for user {user.id}: {e}")
     
