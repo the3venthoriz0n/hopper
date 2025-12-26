@@ -291,10 +291,20 @@ def handle_subscription_created(subscription_data: Any, db: Session):
         return
 
     # 5. Database Atomic Update
-    sub_record = db.query(Subscription).filter(Subscription.user_id == user.id).first()
+    # Query by stripe_subscription_id first (most specific - handles webhook race conditions)
+    sub_record = db.query(Subscription).filter(Subscription.stripe_subscription_id == sub_id).first()
+    
+    # If not found, query by user_id (might be updating existing subscription)
+    if not sub_record:
+        sub_record = db.query(Subscription).filter(Subscription.user_id == user.id).first()
+    
+    # Only create new if absolutely no record exists
     if not sub_record:
         sub_record = Subscription(user_id=user.id)
         db.add(sub_record)
+        logger.info(f"Creating new subscription record for user {user.id} with subscription {sub_id}")
+    else:
+        logger.info(f"Updating existing subscription record for user {user.id} with subscription {sub_id}")
 
     sub_record.stripe_subscription_id = sub_id
     sub_record.plan_type = plan_key
@@ -623,26 +633,34 @@ def create_stripe_subscription(
         logger.error(str(e))
         return None
     
-    existing_sub = db.query(Subscription).filter(Subscription.user_id == user_id).first()
-    if existing_sub and existing_sub.stripe_subscription_id and not existing_sub.stripe_subscription_id.startswith('free_') and not existing_sub.stripe_subscription_id.startswith('unlimited_'):
-        # If same plan_type, return existing subscription
-        if existing_sub.plan_type == plan_type:
-            logger.info(f"User {user_id} already has a Stripe subscription for plan '{plan_type}': {existing_sub.stripe_subscription_id}")
-            return existing_sub
+    # Get ALL existing subscriptions for this user
+    existing_subs = db.query(Subscription).filter(Subscription.user_id == user_id).all()
+    
+    if existing_subs:
+        # Check if user already has the same plan type
+        for existing_sub in existing_subs:
+            if existing_sub.plan_type == plan_type:
+                logger.info(f"User {user_id} already has a subscription for plan '{plan_type}': {existing_sub.stripe_subscription_id}")
+                return existing_sub
         
-        # Cancel existing subscription before creating new one
-        logger.info(f"User {user_id} has existing subscription {existing_sub.stripe_subscription_id} for plan '{existing_sub.plan_type}', canceling before creating new '{plan_type}' subscription")
-        try:
-            cancel_subscription_with_invoice(existing_sub.stripe_subscription_id, invoice_now=True)
-            logger.info(f"Canceled existing subscription {existing_sub.stripe_subscription_id} for user {user_id}")
-        except Exception as e:
-            logger.warning(f"Failed to cancel existing subscription {existing_sub.stripe_subscription_id} for user {user_id}: {e}")
-            # Continue with creation anyway
+        # Cancel all existing Stripe subscriptions (if they have real Stripe IDs)
+        for existing_sub in existing_subs:
+            # Cancel Stripe subscription if it has a real ID (not a placeholder)
+            if (existing_sub.stripe_subscription_id and 
+                not existing_sub.stripe_subscription_id.startswith('free_') and 
+                not existing_sub.stripe_subscription_id.startswith('unlimited_')):
+                logger.info(f"User {user_id} has existing subscription {existing_sub.stripe_subscription_id} for plan '{existing_sub.plan_type}', canceling before creating new '{plan_type}' subscription")
+                try:
+                    cancel_subscription_with_invoice(existing_sub.stripe_subscription_id, invoice_now=True)
+                    logger.info(f"Canceled existing subscription {existing_sub.stripe_subscription_id} for user {user_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to cancel subscription {existing_sub.stripe_subscription_id}: {e}")
         
-        # Delete old subscription record from database
-        db.delete(existing_sub)
+        # Delete ALL existing subscription records from database
+        for existing_sub in existing_subs:
+            db.delete(existing_sub)
         db.commit()
-        existing_sub = None
+        logger.info(f"Deleted {len(existing_subs)} existing subscription record(s) for user {user_id}")
     
     try:
         subscription = stripe.Subscription.create(
@@ -651,9 +669,22 @@ def create_stripe_subscription(
             metadata={"user_id": str(user_id), "plan_type": plan_type}
         )
         
-        sub = existing_sub if existing_sub else Subscription(user_id=user_id)
-        if not existing_sub:
+        # ROOT CAUSE FIX: After creating Stripe subscription, webhook may have already created the record
+        # Query again to check if subscription record exists (by user_id OR by stripe_subscription_id)
+        # This handles race conditions with webhooks and concurrent requests
+        sub = db.query(Subscription).filter(
+            (Subscription.user_id == user_id) | 
+            (Subscription.stripe_subscription_id == subscription.id)
+        ).first()
+        
+        if not sub:
+            # No record exists, create new one
+            sub = Subscription(user_id=user_id)
             db.add(sub)
+            logger.info(f"Creating new subscription record for user {user_id}")
+        else:
+            # Record already exists (webhook or concurrent request created it), update it
+            logger.info(f"Subscription record already exists for user {user_id} (likely created by webhook), updating it")
         
         sub.plan_type = plan_type
         sub.status = subscription.status
