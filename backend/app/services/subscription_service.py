@@ -236,7 +236,7 @@ def get_current_subscription_with_auto_repair(user_id: int, db: Session) -> Dict
     
     subscription_info = get_subscription_info(user_id, db)
     if not subscription_info:
-        create_stripe_subscription(user_id, "free", db)
+        create_stripe_subscription(user_id, "free_daily", db)
         subscription_info = get_subscription_info(user_id, db)
     
     token_balance = get_token_balance(user_id, db)

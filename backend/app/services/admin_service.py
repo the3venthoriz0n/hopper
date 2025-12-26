@@ -463,12 +463,12 @@ def switch_user_plan(
     
     # Create new subscription based on plan type
     new_subscription = None
-    if plan_key == 'free':
-        # Create free subscription (skip token reset - we'll preserve tokens)
-        new_subscription = create_stripe_subscription(target_user_id, "free", db, skip_token_reset=True)
+    if plan_key == 'free' or plan_key == 'free_daily':
+        # Create free_daily subscription (skip token reset - we'll preserve tokens)
+        new_subscription = create_stripe_subscription(target_user_id, "free_daily", db, skip_token_reset=True)
         if new_subscription:
             # Preserve tokens and set monthly_tokens correctly
-            free_plan_tokens = get_plan_tokens('free')
+            free_plan_tokens = get_plan_tokens('free_daily')
             token_balance = get_or_create_token_balance(target_user_id, db)
             token_balance.tokens_remaining = preserved_tokens
             token_balance.monthly_tokens = max(preserved_tokens, free_plan_tokens)
