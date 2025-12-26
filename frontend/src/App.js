@@ -820,14 +820,43 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       ]);
       
       setSubscription(subscriptionRes.data.subscription);
-      // Only update token balance if we got valid data (preserve old value while loading)
+      // Always set token balance - default to 0 if missing
       if (subscriptionRes.data.token_balance) {
         setTokenBalance(subscriptionRes.data.token_balance);
+      } else {
+        // Default token balance when no subscription exists
+        setTokenBalance({
+          tokens_remaining: 0,
+          tokens_used_this_period: 0,
+          monthly_tokens: 0,
+          overage_tokens: 0,
+          unlimited: false,
+          period_start: null,
+          period_end: null
+        });
       }
       setAvailablePlans(plansRes.data.plans || []);
     } catch (err) {
       console.error('Error loading subscription:', err);
-      // Don't clear token balance on error - keep displaying old value
+      // On error, set safe defaults
+      setSubscription(null);
+      setTokenBalance({
+        tokens_remaining: 0,
+        tokens_used_this_period: 0,
+        monthly_tokens: 0,
+        overage_tokens: 0,
+        unlimited: false,
+        period_start: null,
+        period_end: null
+      });
+      // Still try to load plans even on error
+      try {
+        const plansRes = await axios.get(`${API}/subscription/plans`);
+        setAvailablePlans(plansRes.data.plans || []);
+      } catch (plansErr) {
+        console.error('Error loading plans:', plansErr);
+        setAvailablePlans([]);
+      }
     }
   }, [API, user]);
 
@@ -1057,7 +1086,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   // Handle subscription upgrade
   const handleUpgrade = async (planKey) => {
     // Check if user has an active subscription that will be canceled
-    if (subscription && subscription.status === 'active' && subscription.plan_type !== 'free' && subscription.plan_type !== 'unlimited') {
+    if (subscription && subscription.status === 'active' && subscription.plan_type && subscription.plan_type !== 'free' && subscription.plan_type !== 'unlimited') {
       // Show confirmation dialog
       const planName = availablePlans.find(p => p.key === planKey)?.name || planKey;
       const currentPlanName = availablePlans.find(p => p.key === subscription.plan_type)?.name || subscription.plan_type;
@@ -2286,7 +2315,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     
     // Check token balance before uploading
     // Only block free plan users - paid plans (starter/creator) allow overage
-    if (tokenBalance && !tokenBalance.unlimited && subscription && subscription.plan_type === 'free') {
+    if (tokenBalance && !tokenBalance.unlimited && subscription && subscription.plan_type && subscription.plan_type === 'free') {
       // Get pending videos (pending, failed, or uploading status)
       const pendingVideos = videos.filter(v => 
         v.status === 'pending' || v.status === 'failed' || v.status === 'uploading'
@@ -5602,18 +5631,28 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   )}
                 </div>
 
-                {subscription ? (
-                  <>
-
-                    {/* Available Plans */}
-                    {availablePlans.filter(plan => !plan.hidden && plan.tokens !== -1).length > 0 && (
-                      <div id="subscription-plans" style={{ marginBottom: '1rem' }}>
-                        <div style={{ fontSize: '0.85rem', color: HOPPER_COLORS.grey, marginBottom: '0.75rem' }}>
-                          Available Plans
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                          {availablePlans.filter(plan => !plan.hidden && plan.tokens !== -1).map(plan => {
-                            const isCurrent = subscription.plan_type === plan.key;
+                {/* Available Plans - Always show, even if subscription is null */}
+                {availablePlans.filter(plan => !plan.hidden && plan.tokens !== -1).length > 0 && (
+                  <div id="subscription-plans" style={{ marginBottom: '1rem' }}>
+                    <div style={{ fontSize: '0.85rem', color: HOPPER_COLORS.grey, marginBottom: '0.75rem' }}>
+                      Available Plans
+                    </div>
+                    {!subscription && (
+                      <div style={{ 
+                        padding: '0.75rem', 
+                        marginBottom: '0.5rem',
+                        background: 'rgba(239, 68, 68, 0.1)',
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
+                        borderRadius: '6px',
+                        fontSize: '0.75rem',
+                        color: HOPPER_COLORS.error
+                      }}>
+                        ⚠️ No active subscription. Please select a plan below.
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      {availablePlans.filter(plan => !plan.hidden && plan.tokens !== -1).map(plan => {
+                        const isCurrent = subscription && subscription.plan_type === plan.key;
                             const canUpgrade = !isCurrent && plan.key !== 'free' && plan.stripe_price_id;
                             const isThisPlanLoading = loadingPlanKey === plan.key; // Only this specific plan is loading
                             return (
@@ -5628,8 +5667,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                   display: 'flex',
                                   justifyContent: 'space-between',
                                   alignItems: 'center',
-                                  cursor: canUpgrade && !isThisPlanLoading ? 'pointer' : 'default',
-                                  transition: canUpgrade ? 'all 0.2s ease' : 'none',
+                                  cursor: (canUpgrade || !subscription) && !isThisPlanLoading ? 'pointer' : 'default',
+                                  transition: (canUpgrade || !subscription) ? 'all 0.2s ease' : 'none',
                                   opacity: isThisPlanLoading ? 0.6 : 1
                                 }}
                                 onMouseEnter={(e) => {
@@ -5705,7 +5744,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                     }}>
                                       CURRENT
                                     </span>
-                                    {subscription.plan_type !== 'free' && subscription.status === 'active' && (
+                                    {subscription && subscription.plan_type !== 'free' && subscription.status === 'active' && (
                                       <button
                                         onClick={(e) => {
                                           e.stopPropagation();
@@ -5761,7 +5800,41 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                   }}>
                                     {isThisPlanLoading ? '⏳' : '⬆️ Upgrade'}
                                   </span>
-                                ) : plan.key === 'free' && subscription.plan_type !== 'free' ? (
+                                ) : !subscription ? (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleUpgrade(plan.key);
+                                    }}
+                                    disabled={isThisPlanLoading}
+                                    style={{
+                                      padding: '0.5rem 0.75rem',
+                                      background: 'rgba(99, 102, 241, 0.5)',
+                                      border: '1px solid rgba(99, 102, 241, 0.7)',
+                                      borderRadius: '4px',
+                                      color: '#fff',
+                                      cursor: isThisPlanLoading ? 'not-allowed' : 'pointer',
+                                      fontSize: '0.75rem',
+                                      fontWeight: '600',
+                                      transition: 'all 0.2s ease',
+                                      opacity: isThisPlanLoading ? 0.6 : 1
+                                    }}
+                                    onMouseEnter={(e) => {
+                                      if (!isThisPlanLoading) {
+                                        e.currentTarget.style.background = 'rgba(99, 102, 241, 0.7)';
+                                        e.currentTarget.style.border = '1px solid rgba(99, 102, 241, 0.9)';
+                                      }
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      if (!isThisPlanLoading) {
+                                        e.currentTarget.style.background = 'rgba(99, 102, 241, 0.5)';
+                                        e.currentTarget.style.border = '1px solid rgba(99, 102, 241, 0.7)';
+                                      }
+                                    }}
+                                  >
+                                    {isThisPlanLoading ? '⏳' : 'Select Plan'}
+                                  </button>
+                                ) : plan.key === 'free' && subscription && subscription.plan_type !== 'free' ? (
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -5814,12 +5887,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         </div>
                       </div>
                     )}
-                  </>
-                ) : (
-                  <div style={{ textAlign: 'center', padding: '1rem', color: HOPPER_COLORS.grey }}>
-                    Loading subscription info...
-                  </div>
-                )}
               </div>
 
               {/* Danger Zone (collapsed by default) */}

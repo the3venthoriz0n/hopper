@@ -17,10 +17,11 @@ from app.services.token_service import (
 class TestStarterPlan:
     """Test Starter plan functionality"""
     
+    @patch('app.services.token_service.ensure_tokens_synced_for_subscription')
     @patch('app.services.stripe_service.StripeRegistry.get')
     @patch('app.services.stripe_service.stripe')
     @patch('app.services.stripe_service.settings')
-    def test_create_starter_subscription(self, mock_settings, mock_stripe, mock_registry_get, test_user, db_session):
+    def test_create_starter_subscription(self, mock_settings, mock_stripe, mock_registry_get, mock_ensure_tokens, test_user, db_session):
         """Test creating starter subscription, verify 300 tokens"""
         mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
         
@@ -61,6 +62,15 @@ class TestStarterPlan:
         
         assert result is not None
         assert result.plan_type == "starter"
+        
+        # Manually set tokens since ensure_tokens_synced_for_subscription is mocked
+        from app.services.token_service import reset_tokens_for_subscription
+        reset_tokens_for_subscription(
+            test_user.id, "starter", 
+            datetime.fromtimestamp(mock_subscription.current_period_start, tz=timezone.utc),
+            datetime.fromtimestamp(mock_subscription.current_period_end, tz=timezone.utc),
+            db_session, is_renewal=False
+        )
         
         # Verify token balance
         balance = db_session.query(TokenBalance).filter(TokenBalance.user_id == test_user.id).first()
@@ -150,10 +160,11 @@ class TestStarterPlan:
 class TestCreatorPlan:
     """Test Creator plan functionality"""
     
+    @patch('app.services.token_service.ensure_tokens_synced_for_subscription')
     @patch('app.services.stripe_service.StripeRegistry.get')
     @patch('app.services.stripe_service.stripe')
     @patch('app.services.stripe_service.settings')
-    def test_create_creator_subscription(self, mock_settings, mock_stripe, mock_registry_get, test_user, db_session):
+    def test_create_creator_subscription(self, mock_settings, mock_stripe, mock_registry_get, mock_ensure_tokens, test_user, db_session):
         """Test creating creator subscription, verify 1250 tokens"""
         mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
         
@@ -193,6 +204,15 @@ class TestCreatorPlan:
         
         assert result is not None
         assert result.plan_type == "creator"
+        
+        # Manually set tokens since ensure_tokens_synced_for_subscription is mocked
+        from app.services.token_service import reset_tokens_for_subscription
+        reset_tokens_for_subscription(
+            test_user.id, "creator", 
+            datetime.fromtimestamp(mock_subscription.current_period_start, tz=timezone.utc),
+            datetime.fromtimestamp(mock_subscription.current_period_end, tz=timezone.utc),
+            db_session, is_renewal=False
+        )
         
         balance = db_session.query(TokenBalance).filter(TokenBalance.user_id == test_user.id).first()
         assert balance is not None

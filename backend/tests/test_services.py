@@ -501,6 +501,19 @@ class TestSubscriptionService:
     @patch('app.services.stripe_service.StripeRegistry')
     def test_webhook_subscription_updated(self, mock_registry_class, test_user, db_session, mock_stripe):
         """Test subscription.updated webhook event"""
+        # Create subscription first so it can be updated
+        existing_sub = Subscription(
+            user_id=test_user.id,
+            stripe_subscription_id="sub_test123",
+            stripe_customer_id="cus_test123",
+            plan_type="starter",
+            status="active",
+            current_period_start=datetime.now(timezone.utc),
+            current_period_end=datetime.now(timezone.utc) + timedelta(days=30)
+        )
+        db_session.add(existing_sub)
+        db_session.commit()
+        
         # Mock StripeRegistry
         mock_registry_instance = Mock()
         mock_registry_instance._cache = {
@@ -544,15 +557,16 @@ class TestSubscriptionService:
         with patch('app.core.config.settings.STRIPE_WEBHOOK_SECRET', 'whsec_test123'):
             with patch('app.services.stripe_service.settings.STRIPE_WEBHOOK_SECRET', 'whsec_test123'):
                 with patch('app.services.subscription_service.stripe.Webhook.construct_event', return_value=event_payload):
-                    import time
-                    timestamp = str(int(time.time()))
-                    result = process_stripe_webhook(
-                        b'{"test": "payload"}',
-                        f"t={timestamp},v1=test_signature",
-                        db_session
-                    )
-                    
-                    assert result["status"] == "success"
+                    with patch('app.services.token_service.ensure_tokens_synced_for_subscription') as mock_sync:
+                        import time
+                        timestamp = str(int(time.time()))
+                        result = process_stripe_webhook(
+                            b'{"test": "payload"}',
+                            f"t={timestamp},v1=test_signature",
+                            db_session
+                        )
+                        
+                        assert result["status"] == "success"
     
     def test_webhook_subscription_deleted(self, test_user, db_session, mock_stripe):
         """Test subscription.deleted webhook event"""
@@ -696,9 +710,14 @@ class TestSubscriptionService:
                     db_session.refresh(test_user)
                     assert test_user.stripe_customer_id == "cus_new123"
     
+    @patch('app.services.token_service.ensure_tokens_synced_for_subscription')
     @patch('app.services.stripe_service.StripeRegistry.get')
-    def test_get_current_subscription_with_auto_repair_creates_free(self, mock_registry_get, test_user, db_session, mock_stripe):
+    @patch('app.services.stripe_service.stripe')
+    @patch('app.services.stripe_service.settings')
+    def test_get_current_subscription_with_auto_repair_creates_free(self, mock_settings, mock_stripe, mock_registry_get, mock_ensure_tokens, test_user, db_session):
         """Test get_current_subscription_with_auto_repair() creates free plan if missing"""
+        mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
+        
         # Mock StripeRegistry to return free plan config
         mock_registry_get.return_value = {
             "price_id": "price_free",
@@ -710,37 +729,27 @@ class TestSubscriptionService:
             "formatted": "Free"
         }
         
+        # Mock Stripe subscription
+        mock_subscription = Mock()
+        mock_subscription.id = 'sub_free123'
+        mock_subscription.status = 'active'
+        mock_subscription.current_period_start = int(datetime.now(timezone.utc).timestamp())
+        mock_subscription.current_period_end = int((datetime.now(timezone.utc) + timedelta(days=30)).timestamp())
+        mock_stripe.Subscription.create.return_value = mock_subscription
+        
+        test_user.stripe_customer_id = "cus_test123"
+        db_session.commit()
+        
         # Verify no subscription exists
         subscription = db_session.query(Subscription).filter(
             Subscription.user_id == test_user.id
         ).first()
         assert subscription is None
         
-        # Mock create_stripe_subscription - patch where it's used (subscription_service imports it)
-        with patch('app.services.subscription_service.create_stripe_subscription') as mock_create:
-            # Create actual Subscription object that will be returned
-            mock_sub = Subscription(
-                user_id=test_user.id,
-                stripe_subscription_id="sub_free123",
-                stripe_customer_id="cus_test123",
-                plan_type="free",
-                status="active",
-                current_period_start=datetime.now(timezone.utc),
-                current_period_end=datetime.now(timezone.utc) + timedelta(days=30)
-            )
-            # Make the mock add the subscription to DB when called, so get_subscription_info can find it
-            def create_and_add(user_id, db):
-                db.add(mock_sub)
-                db.commit()
-                db.refresh(mock_sub)
-                return mock_sub
-            mock_create.side_effect = create_and_add
-            
-            result = get_current_subscription_with_auto_repair(test_user.id, db_session)
-            
-            assert "subscription" in result
-            assert result["subscription"] is not None
-            mock_create.assert_called_once()
+        result = get_current_subscription_with_auto_repair(test_user.id, db_session)
+        
+        assert "subscription" in result
+        assert result["subscription"] is not None
     
     def test_auto_repair_updates_existing_deleted_subscription(self, test_user, db_session, mock_stripe):
         """Test auto-repair updates existing deleted subscription instead of creating duplicate"""

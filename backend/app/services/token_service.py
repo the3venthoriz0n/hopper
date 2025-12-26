@@ -560,6 +560,9 @@ def handle_subscription_renewal(user_id: int, subscription: Subscription, old_pe
     
     # Check if new period_end is in the future (renewals advance to future periods)
     now = datetime.now(timezone.utc)
+    # Ensure both datetimes are timezone-aware for comparison
+    if new_period_end.tzinfo is None:
+        new_period_end = new_period_end.replace(tzinfo=timezone.utc)
     if new_period_end <= now:
         logger.debug(
             f"Period advanced for user {user_id} but new period_end ({new_period_end}) is not in the future. "

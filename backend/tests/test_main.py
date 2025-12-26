@@ -15,6 +15,8 @@ if str(backend_dir) not in sys.path:
 from app.utils.templates import replace_template_placeholders
 from app.services.video_service import cleanup_video_file
 from app.core.security import get_client_identifier
+from app.models.subscription import Subscription
+from app.models.token_balance import TokenBalance
 
 
 class TestTemplatePlaceholders:
@@ -251,27 +253,66 @@ class TestStripeFunctionality:
         mock_user.stripe_customer_id = 'cus_test123'
         mock_user.email = 'test@example.com'
         
-        # Mock database queries: 1st call: Find User, 2nd call: Check existing Sub
-        mock_db.query.return_value.filter.return_value.first.side_effect = [
-            mock_user,  # Required by stripe_service to verify user exists
-            None        # Returns None so it proceeds to create a new sub
-        ]
+        # Mock database queries - create separate query chains for User and Subscription
+        def query_side_effect(model):
+            if model == User:
+                result = Mock()
+                result.filter.return_value.first.return_value = mock_user
+                return result
+            elif model == Subscription:
+                result = Mock()
+                # First call: check existing subscriptions (returns empty list)
+                result.filter.return_value.all.return_value = []
+                # Subsequent calls: return None (no existing found)
+                result.filter.return_value.first.return_value = None
+                return result
+            return Mock()
+        
+        mock_db.query.side_effect = query_side_effect
         
         # Mock adding subscription to DB
-        mock_new_sub = Mock(spec=Subscription)
-        mock_new_sub.id = 1
-        mock_new_sub.user_id = 1
-        mock_new_sub.plan_type = "free"
-        mock_new_sub.stripe_subscription_id = 'sub_test123'
-        mock_new_sub.stripe_customer_id = 'cus_test123'
-        mock_new_sub.status = 'active'
-        mock_new_sub.current_period_start = datetime.fromtimestamp(mock_subscription.current_period_start, tz=timezone.utc)
-        mock_new_sub.current_period_end = datetime.fromtimestamp(mock_subscription.current_period_end, tz=timezone.utc)
-        
-        def add_subscription(obj):
+        def add_side_effect(obj):
             # Simulate adding to DB
-            pass
-        mock_db.add.side_effect = add_subscription
+            if isinstance(obj, Subscription):
+                obj.id = 1
+                obj.user_id = 1
+                obj.plan_type = "free"
+                obj.stripe_subscription_id = 'sub_test123'
+                obj.stripe_customer_id = 'cus_test123'
+                obj.status = 'active'
+                obj.current_period_start = datetime.fromtimestamp(mock_subscription.current_period_start, tz=timezone.utc)
+                obj.current_period_end = datetime.fromtimestamp(mock_subscription.current_period_end, tz=timezone.utc)
+        
+        mock_db.add.side_effect = add_side_effect
+        
+        # After commit, queries should return the new subscription
+        def query_after_commit(model):
+            if model == Subscription:
+                result = Mock()
+                # Create a mock subscription that will be returned
+                mock_sub = Mock(spec=Subscription)
+                mock_sub.id = 1
+                mock_sub.user_id = 1
+                mock_sub.plan_type = "free"
+                mock_sub.stripe_subscription_id = 'sub_test123'
+                mock_sub.stripe_customer_id = 'cus_test123'
+                mock_sub.status = 'active'
+                mock_sub.current_period_start = datetime.fromtimestamp(mock_subscription.current_period_start, tz=timezone.utc)
+                mock_sub.current_period_end = datetime.fromtimestamp(mock_subscription.current_period_end, tz=timezone.utc)
+                
+                # After commit, return the subscription
+                result.filter.return_value.first.return_value = mock_sub
+                result.filter.return_value.all.return_value = [mock_sub]
+                return result
+            return query_side_effect(model)
+        
+        # After first commit, switch to returning the subscription
+        original_commit = mock_db.commit
+        def commit_with_switch():
+            original_commit()
+            mock_db.query.side_effect = query_after_commit
+        
+        mock_db.commit.side_effect = commit_with_switch
 
         result = create_stripe_subscription(1, "free", mock_db)
         
@@ -373,6 +414,7 @@ class TestStripeFunctionality:
         mock_price.product.description = 'Free plan'
         mock_price.product.metadata = {'tokens': '10', 'hidden': 'false'}
         
+        # Mock the expand parameter properly
         mock_stripe.Price.list.return_value = Mock(data=[mock_price])
         
         # Clear cache and sync
@@ -382,7 +424,10 @@ class TestStripeFunctionality:
         # Verify registry was populated
         assert len(StripeRegistry._cache) > 0
         assert 'free_price' in StripeRegistry._cache
+        # Verify Price.list was called with expand parameter
         mock_stripe.Price.list.assert_called_once()
+        call_args = mock_stripe.Price.list.call_args
+        assert 'expand' in call_args.kwargs or 'data.product' in str(call_args)
     
     @patch('app.services.stripe_service.StripeRegistry.get')
     def test_stripe_registry_get_plan(self, mock_registry_get):
@@ -441,9 +486,17 @@ class TestStripeFunctionality:
         mock_price2.unit_amount = 300
         mock_price2.currency = 'usd'
         mock_price2.recurring = {'interval': 'month'}
+        # Mock the expand parameter - need to set product on each price
+        mock_price1.product = Mock()
+        mock_price1.product.id = 'prod_free'
+        mock_price1.product.name = 'Free'
+        mock_price1.product.description = 'Free plan'
+        mock_price1.product.metadata = {'tokens': '10', 'hidden': 'false'}
+        
         mock_price2.product = Mock()
         mock_price2.product.id = 'prod_starter'
         mock_price2.product.name = 'Starter'
+        mock_price2.product.description = 'Starter plan'
         mock_price2.product.metadata = {'tokens': '300', 'hidden': 'false'}
         
         mock_stripe.Price.list.return_value = Mock(data=[mock_price1, mock_price2])
@@ -477,6 +530,7 @@ class TestStripeFunctionality:
         mock_price1.product = Mock()
         mock_price1.product.id = 'prod_visible'
         mock_price1.product.name = 'Visible'
+        mock_price1.product.description = 'Visible plan'
         mock_price1.product.metadata = {'tokens': '10', 'hidden': 'false'}
         
         mock_price2 = Mock()
@@ -488,6 +542,7 @@ class TestStripeFunctionality:
         mock_price2.product = Mock()
         mock_price2.product.id = 'prod_hidden'
         mock_price2.product.name = 'Hidden'
+        mock_price2.product.description = 'Hidden plan'
         mock_price2.product.metadata = {'tokens': '10', 'hidden': 'true'}
         
         mock_stripe.Price.list.return_value = Mock(data=[mock_price1, mock_price2])
