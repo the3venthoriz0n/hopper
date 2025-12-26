@@ -128,10 +128,6 @@ def create_checkout_session(user_id: int, plan_type: str, success_url: str, canc
     if not user:
         raise ValueError("User not found")
 
-    # Don't cancel subscriptions here - wait until new subscription is successfully created
-    # This prevents users from losing their subscription if they cancel the checkout flow
-    # Cancellation will happen in handle_subscription_created webhook handler
-
     line_items = _build_subscription_items(plan_type)
 
     checkout_params = {
@@ -240,23 +236,14 @@ def handle_checkout_completed(session: Any, db: Session):
             db.commit()
 
 def handle_subscription_created(subscription_data: Any, db: Session):
-    """
-    Robust handler for subscription creation.
-    Fixes 'missing items' by using SubscriptionItem.list and API retrieval.
-    """
-    # 1. Identity Extraction
+    """Robust handler for subscription creation."""
     sub_id = _get_stripe_value(subscription_data, 'id')
     if not sub_id:
         logger.error("No subscription ID found in event data")
         return
 
-    # 2. PROACTIVE DATA RETRIEVAL (The Root Cause Fix)
-    # Webhooks are often "thin". Fetch the full object and the items list explicitly.
     try:
-        # Fetch the sub with expanded prices
         stripe_sub = stripe.Subscription.retrieve(sub_id, expand=['items.data.price'])
-        
-        # Best Practice: Use the explicit list method for metered/complex items
         sub_items = stripe.SubscriptionItem.list(subscription=sub_id, limit=20)
         items_data = sub_items.data
     except Exception as e:
@@ -267,7 +254,6 @@ def handle_subscription_created(subscription_data: Any, db: Session):
         logger.error(f"Subscription {sub_id} has NO items. Cannot process plan type.")
         return
 
-    # 3. Customer & User Resolution
     customer_id = _get_stripe_value(stripe_sub, 'customer')
     if isinstance(customer_id, dict):
         customer_id = customer_id.get('id')
@@ -277,12 +263,9 @@ def handle_subscription_created(subscription_data: Any, db: Session):
         logger.warning(f"No user found for customer {customer_id}")
         return
 
-    # 4. Map Plan Type (DRY Registry lookup)
-    # We look for the 'base' price (the one that isn't the overage price)
     price_id = None
     for item in items_data:
         p_id = _get_stripe_value(_get_stripe_value(item, 'price'), 'id')
-        # Check if this ID is a base price in our registry
         for key, data in StripeRegistry._cache.items():
             if data.get("price_id") == p_id and not key.endswith('_overage_price'):
                 price_id = p_id
@@ -294,36 +277,35 @@ def handle_subscription_created(subscription_data: Any, db: Session):
         logger.error(f"Could not map any items in {sub_id} to a known registry plan.")
         return
 
-    # 5. Cancel any other active subscriptions for this user BEFORE creating/updating the new one
-    # This prevents multiple active subscriptions when user upgrades via checkout
-    # Only cancel subscriptions that are different from the one we're creating
-    existing_active = db.query(Subscription).filter(
-        Subscription.user_id == user.id,
-        Subscription.status == 'active',
-        Subscription.stripe_subscription_id != sub_id
-    ).all()
-    
-    for existing_sub in existing_active:
-        if existing_sub.stripe_subscription_id:
-            try:
-                logger.info(f"Canceling existing subscription {existing_sub.stripe_subscription_id} for user {user.id} (new subscription {sub_id} being created)")
-                cancel_subscription_with_invoice(existing_sub.stripe_subscription_id, invoice_now=True)
-                existing_sub.status = "canceled"
-            except Exception as e:
-                logger.warning(f"Failed to cancel existing subscription {existing_sub.stripe_subscription_id}: {e}")
-    
-    if existing_active:
-        db.commit()
+    # Cancel other active subscriptions if this is a new subscription
+    existing_new_sub = db.query(Subscription).filter(
+        Subscription.stripe_subscription_id == sub_id
+    ).first()
 
-    # 6. Database Atomic Update
-    # Query by stripe_subscription_id first (most specific - handles webhook race conditions)
+    if not existing_new_sub:
+        existing_active = db.query(Subscription).filter(
+            Subscription.user_id == user.id,
+            Subscription.status == 'active',
+            Subscription.stripe_subscription_id != sub_id
+        ).all()
+        
+        for existing_sub in existing_active:
+            if existing_sub.stripe_subscription_id:
+                try:
+                    logger.info(f"Canceling existing subscription {existing_sub.stripe_subscription_id} for user {user.id} (new subscription {sub_id} being created)")
+                    cancel_subscription_with_invoice(existing_sub.stripe_subscription_id, invoice_now=True)
+                    existing_sub.status = "canceled"
+                except Exception as e:
+                    logger.warning(f"Failed to cancel existing subscription {existing_sub.stripe_subscription_id}: {e}")
+        
+        if existing_active:
+            db.commit()
+
     sub_record = db.query(Subscription).filter(Subscription.stripe_subscription_id == sub_id).first()
     
-    # If not found, query by user_id (might be updating existing subscription)
     if not sub_record:
         sub_record = db.query(Subscription).filter(Subscription.user_id == user.id).first()
     
-    # Only create new if absolutely no record exists
     if not sub_record:
         sub_record = Subscription(user_id=user.id)
         db.add(sub_record)
@@ -335,7 +317,6 @@ def handle_subscription_created(subscription_data: Any, db: Session):
     sub_record.plan_type = plan_key
     sub_record.status = _get_stripe_value(stripe_sub, 'status', 'active')
     
-    # Update Metered Item ID (if exists) for usage reporting later
     overage_config = StripeRegistry.get(f"{plan_key}_overage_price")
     if overage_config:
         for item in items_data:
@@ -343,7 +324,6 @@ def handle_subscription_created(subscription_data: Any, db: Session):
                 sub_record.stripe_metered_item_id = item.id
                 break
 
-    # 7. Timestamp Sync
     start_ts = _get_stripe_value(stripe_sub, 'current_period_start')
     end_ts = _get_stripe_value(stripe_sub, 'current_period_end')
     if start_ts:
@@ -355,8 +335,6 @@ def handle_subscription_created(subscription_data: Any, db: Session):
         db.commit()
         logger.info(f"✅ Subscription {sub_id} synced. Plan: {plan_key}")
         
-        # 8. Grant Initial Tokens (Only for new subs)
-        # This calls your token logic to add the initial monthly allowance
         from app.services.token_service import ensure_tokens_synced_for_subscription
         ensure_tokens_synced_for_subscription(user.id, sub_id, db)
         
