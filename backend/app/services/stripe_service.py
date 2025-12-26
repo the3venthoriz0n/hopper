@@ -461,7 +461,7 @@ def record_token_usage_to_stripe(user_id: int, tokens: int, db: Session) -> bool
             return False
         
         # Unlimited and free plans don't have metered usage
-        if subscription.plan_type in ('unlimited', 'free'):
+        if subscription.plan_type in ('unlimited', 'free', 'free_daily'):
             logger.debug(f"⏭️  User {user_id} on {subscription.plan_type} plan (no metered usage)")
             return True
         

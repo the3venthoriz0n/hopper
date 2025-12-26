@@ -107,7 +107,7 @@ def check_tokens_available(user_id: int, tokens_required: int, db: Session) -> b
     Check if user has enough tokens available.
     
     For paid plans (starter, creator): Returns True if user can use tokens (included + overage allowed)
-    For free plan: Returns True only if included tokens are available (hard limit, no overage)
+    For free plans (free, free_daily): Returns True only if included tokens are available (hard limit, no overage)
     For unlimited plan: Always returns True
     
     Returns:
@@ -124,8 +124,8 @@ def check_tokens_available(user_id: int, tokens_required: int, db: Session) -> b
     
     balance = get_or_create_token_balance(user_id, db)
     
-    # Free plan has hard limit - must have enough included tokens
-    if subscription and subscription.plan_type == 'free':
+    # Free plans have hard limit - must have enough included tokens
+    if subscription and subscription.plan_type in ('free', 'free_daily'):
         return balance.tokens_remaining >= tokens_required
     
     # Paid plans (starter, creator) allow overage - always return True
@@ -196,9 +196,9 @@ def deduct_tokens(
         included_tokens_used = min(tokens, max(0, balance.tokens_remaining))
         overage_tokens_used = max(0, tokens - included_tokens_used)
         
-        # Check if free plan is trying to go over limit (free plan has hard limit, no overage)
+        # Check if free plan is trying to go over limit (free plans have hard limit, no overage)
         plan_monthly_tokens = get_plan_tokens(subscription.plan_type) if subscription else 0
-        if subscription and subscription.plan_type == 'free' and overage_tokens_used > 0:
+        if subscription and subscription.plan_type in ('free', 'free_daily') and overage_tokens_used > 0:
             logger.warning(
                 f"Free plan user {user_id} attempted to use {tokens} tokens but only has {balance.tokens_remaining} remaining. "
                 f"Free plan has hard limit, blocking overage."
@@ -234,7 +234,7 @@ def deduct_tokens(
         # This must happen AFTER committing the token deduction so we have accurate usage counts
         # Always call for paid plans (function will calculate overage based on total usage vs included tokens)
         # The function will only report to Stripe if there's actual overage
-        if subscription and subscription.plan_type not in ('free', 'unlimited'):
+        if subscription and subscription.plan_type not in ('free', 'free_daily', 'unlimited'):
             from app.services.stripe_service import record_token_usage_to_stripe
             # Pass total tokens used - function will calculate overage incrementally
             # It compares tokens_used_this_period vs included_tokens to determine overage
