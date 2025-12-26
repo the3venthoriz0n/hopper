@@ -407,6 +407,59 @@ def delete_stripe_customer(customer_id: str) -> bool:
         logger.error(f"Failed to delete Stripe customer {customer_id}: {e}")
         return False
 
+def record_token_usage_to_stripe(user_id: int, tokens: int, db: Session) -> bool:
+    """Record token usage to Stripe metered billing for overage charges.
+    
+    Args:
+        user_id: User ID
+        tokens: Number of tokens used (for logging, actual overage calculated from balance)
+        db: Database session
+    
+    Returns:
+        True if successfully recorded, False otherwise
+    """
+    if not settings.STRIPE_SECRET_KEY:
+        logger.warning("Stripe not configured, skipping token usage recording")
+        return False
+    
+    try:
+        subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+        if not subscription:
+            logger.warning(f"User {user_id} has no subscription, cannot record token usage")
+            return False
+        
+        if subscription.plan_type in ('free', 'unlimited'):
+            return False
+        
+        if not subscription.stripe_customer_id or subscription.stripe_customer_id.startswith('free_') or subscription.stripe_customer_id.startswith('unlimited_'):
+            logger.warning(f"User {user_id} has no valid Stripe customer ID")
+            return False
+        
+        from app.services.token_service import get_or_create_token_balance, get_plan_tokens
+        
+        balance = get_or_create_token_balance(user_id, db)
+        included_tokens = get_plan_tokens(subscription.plan_type)
+        
+        overage_tokens = max(0, balance.tokens_used_this_period - included_tokens)
+        
+        if overage_tokens <= 0:
+            return True
+        
+        stripe.billing.MeterEvent.create(
+            event_name="hopper_tokens",
+            identifier={
+                "stripe_customer_id": subscription.stripe_customer_id
+            },
+            value=overage_tokens
+        )
+        
+        logger.info(f"Recorded {overage_tokens} overage tokens to Stripe for user {user_id} (customer: {subscription.stripe_customer_id})")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to record token usage to Stripe for user {user_id}: {e}")
+        return False
+
 def create_stripe_subscription(
     user_id: int,
     plan_type: str,
