@@ -24,10 +24,10 @@ class TestPlanUpgrades:
         
         # Mock StripeRegistry
         mock_registry_get.side_effect = lambda key: {
-            "free_price": {
-                "price_id": "price_free",
+            "free_daily_price": {
+                "price_id": "price_free_daily",
                 "tokens": 10,
-                "name": "Free"
+                "name": "Free Daily"
             },
             "starter_price": {
                 "price_id": "price_starter",
@@ -40,12 +40,12 @@ class TestPlanUpgrades:
             }
         }.get(key)
         
-        # Create free subscription with 5 tokens remaining
+        # Create free_daily subscription with 5 tokens remaining
         free_sub = Subscription(
             user_id=test_user.id,
-            stripe_subscription_id="sub_free123",
+            stripe_subscription_id="sub_free_daily123",
             stripe_customer_id="cus_test123",
-            plan_type="free",
+            plan_type="free_daily",
             status="active",
             current_period_start=datetime.now(timezone.utc),
             current_period_end=datetime.now(timezone.utc) + timedelta(days=30)
@@ -85,7 +85,7 @@ class TestPlanUpgrades:
             # Verify old subscription was deleted (check by user_id and plan_type instead of ID)
             deleted_sub = db_session.query(Subscription).filter(
                 Subscription.user_id == test_user.id,
-                Subscription.plan_type == "free"
+                Subscription.plan_type == "free_daily"
             ).first()
             assert deleted_sub is None
             
@@ -247,7 +247,7 @@ class TestPlanDowngrades:
     @patch('app.services.stripe_service.stripe')
     @patch('app.services.stripe_service.settings')
     def test_downgrade_paid_to_free(self, mock_settings, mock_stripe, mock_registry_get, test_user, db_session):
-        """Test downgrade to free, preserve tokens"""
+        """Test downgrade to free_daily, preserve tokens"""
         mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
         
         mock_registry_get.side_effect = lambda key: {
@@ -256,10 +256,10 @@ class TestPlanDowngrades:
                 "tokens": 300,
                 "name": "Starter"
             },
-            "free_price": {
-                "price_id": "price_free",
+            "free_daily_price": {
+                "price_id": "price_free_daily",
                 "tokens": 10,
-                "name": "Free"
+                "name": "Free Daily"
             }
         }.get(key)
         
@@ -297,10 +297,10 @@ class TestPlanDowngrades:
         db_session.commit()
         
         with patch('app.services.token_service.ensure_tokens_synced_for_subscription') as mock_sync:
-            result = create_stripe_subscription(test_user.id, "free", db_session)
+            result = create_stripe_subscription(test_user.id, "free_daily", db_session)
             
             assert result is not None
-            assert result.plan_type == "free"
+            assert result.plan_type == "free_daily"
             
             # Manually set tokens to verify preservation logic (150 existing + 10 new = 160)
             from app.services.token_service import reset_tokens_for_subscription
@@ -396,7 +396,7 @@ class TestPlanDowngrades:
             Subscription.user_id == test_user.id
         ).first()
         assert free_sub is not None
-        assert free_sub.plan_type == "free"
+        assert free_sub.plan_type == "free_daily"
 
 
 @pytest.mark.high

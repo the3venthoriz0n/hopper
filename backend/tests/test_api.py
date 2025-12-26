@@ -157,13 +157,13 @@ class TestSubscriptionFlow:
     
     @patch('app.services.stripe_service.StripeRegistry.get')
     def test_get_current_subscription_auto_creates_free(self, mock_registry_get, authenticated_client, test_user, db_session):
-        """Test /api/subscription/current auto-creates free subscription for new user"""
-        # Mock StripeRegistry to return free plan config
+        """Test /api/subscription/current auto-creates free_daily subscription for new user"""
+        # Mock StripeRegistry to return free_daily plan config
         mock_registry_get.return_value = {
-            "price_id": "price_free",
+            "price_id": "price_free_daily",
             "tokens": 10,
-            "name": "Free",
-            "description": "Free plan",
+            "name": "Free Daily",
+            "description": "Free daily plan",
             "amount_dollars": 0.0,
             "currency": "USD",
             "formatted": "Free"
@@ -180,12 +180,12 @@ class TestSubscriptionFlow:
         data = response.json()
         assert "subscription" in data
         assert data["subscription"] is not None
-        assert data["subscription"]["plan_type"] == "free"
+        assert data["subscription"]["plan_type"] == "free_daily"
         
         # Verify subscription was created in database
         subscription = db_session.query(Subscription).filter(Subscription.user_id == test_user.id).first()
         assert subscription is not None
-        assert subscription.plan_type == "free"
+        assert subscription.plan_type == "free_daily"
         
         # Verify token balance was initialized
         token_balance = db_session.query(TokenBalance).filter(TokenBalance.user_id == test_user.id).first()
@@ -218,13 +218,13 @@ class TestSubscriptionFlow:
         # Call endpoint - should update existing subscription, not create duplicate
         with patch('app.services.stripe_service.create_stripe_subscription') as mock_create:
             mock_sub = Mock()
-            mock_sub.id = "sub_free123"
+            mock_sub.id = "sub_free_daily123"
             mock_sub.status = "active"
             mock_sub.current_period_start = int(datetime.now(timezone.utc).timestamp())
             mock_sub.current_period_end = int((datetime.now(timezone.utc) + timedelta(days=30)).timestamp())
             mock_create.return_value = Mock(
-                stripe_subscription_id="sub_free123",
-                plan_type="free",
+                stripe_subscription_id="sub_free_daily123",
+                plan_type="free_daily",
                 status="active",
                 current_period_start=datetime.now(timezone.utc),
                 current_period_end=datetime.now(timezone.utc) + timedelta(days=30)
@@ -425,12 +425,12 @@ class TestHappyPathIntegration:
     @patch('app.services.stripe_service.StripeRegistry.get')
     def test_new_user_journey(self, mock_registry_get, client, db_session, mock_redis, mock_stripe):
         """Test complete new user journey from registration to settings"""
-        # Mock StripeRegistry to return free plan config
+        # Mock StripeRegistry to return free_daily plan config
         mock_registry_get.return_value = {
-            "price_id": "price_free",
+            "price_id": "price_free_daily",
             "tokens": 10,
-            "name": "Free",
-            "description": "Free plan",
+            "name": "Free Daily",
+            "description": "Free daily plan",
             "amount_dollars": 0.0,
             "currency": "USD",
             "formatted": "Free"
@@ -467,12 +467,12 @@ class TestHappyPathIntegration:
         # Set cookies on the client instance so they persist automatically
         client.cookies.update(login_response.cookies)
         
-        # 4. Get subscription (auto-creates free plan)
+        # 4. Get subscription (auto-creates free_daily plan)
         sub_response = client.get("/api/subscription/current")
         assert sub_response.status_code == status.HTTP_200_OK
         sub_data = sub_response.json()
         assert sub_data["subscription"] is not None
-        assert sub_data["subscription"]["plan_type"] == "free"
+        assert sub_data["subscription"]["plan_type"] == "free_daily"
         
         # Update cookies from subscription response (in case session was updated)
         client.cookies.update(sub_response.cookies)
