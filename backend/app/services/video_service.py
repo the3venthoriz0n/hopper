@@ -955,13 +955,42 @@ def get_tiktok_creator_info(access_token: str):
     )
     
     if response.status_code != 200:
-        error = response.json().get("error", {})
+        content_type = response.headers.get("content-type", "unknown")
+        response_text = response.text[:500] if response.text else "(empty response)"
+        
+        try:
+            error = response.json().get("error", {})
+            error_code = error.get("code", "unknown")
+            error_message = error.get("message", response_text)
+            raise Exception(
+                f"Failed to query creator info (HTTP {response.status_code}): "
+                f"{error_code} - {error_message}"
+            )
+        except json.JSONDecodeError:
+            raise Exception(
+                f"Failed to query creator info (HTTP {response.status_code}): "
+                f"Non-JSON response. Content-Type: {content_type}, "
+                f"Response: {response_text}"
+            )
+    
+    if not response.text or not response.text.strip():
         raise Exception(
-            f"Failed to query creator info: {error.get('code', 'unknown')} - "
-            f"{error.get('message', response.text)}"
+            f"Failed to query creator info (HTTP {response.status_code}): "
+            f"Empty response body from TikTok API"
         )
     
-    response_json = response.json()
+    try:
+        response_json = response.json()
+    except json.JSONDecodeError as e:
+        content_type = response.headers.get("content-type", "unknown")
+        response_preview = response.text[:500] if response.text else "(empty)"
+        raise Exception(
+            f"Failed to parse creator info response (HTTP {response.status_code}): "
+            f"Invalid JSON. Content-Type: {content_type}, "
+            f"Response preview: {response_preview}, "
+            f"JSON error: {str(e)}"
+        )
+    
     tiktok_logger.debug(f"TikTok creator_info API response: {response_json}")
     
     creator_info = response_json.get("data", {})
