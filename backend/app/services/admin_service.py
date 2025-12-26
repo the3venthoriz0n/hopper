@@ -418,13 +418,11 @@ def switch_user_plan(
     Raises:
         ValueError: If user not found, invalid plan, or switch fails
     """
-    import stripe
     from app.services.stripe_service import (
         cancel_all_user_subscriptions, create_stripe_subscription,
-        get_plans, get_plan_price_id, cancel_subscription_with_invoice,
-        create_stripe_customer
+        get_plans, cancel_subscription_with_invoice
     )
-    from app.services.token_service import reset_tokens_for_subscription, get_or_create_token_balance, get_plan_tokens
+    from app.services.token_service import get_or_create_token_balance, get_plan_tokens
     
     target_user = db.query(User).filter(User.id == target_user_id).first()
     if not target_user:
@@ -481,55 +479,20 @@ def switch_user_plan(
         # Create unlimited subscription
         new_subscription = create_stripe_subscription(target_user_id, "unlimited", db, preserved_tokens=preserved_tokens)
     else:
-        # Create paid subscription via Stripe
-        price_id = get_plan_price_id(plan_key)
-        if not price_id:
-            raise ValueError(f"Plan {plan_key} is not configured with a Stripe price")
+        # Create paid subscription via Stripe using create_stripe_subscription
+        new_subscription = create_stripe_subscription(target_user_id, plan_key, db, skip_token_reset=True)
+        if not new_subscription:
+            raise ValueError(f"Failed to create subscription for plan {plan_key}")
         
-        # Create subscription in Stripe
-        customer_id = target_user.stripe_customer_id
-        if not customer_id:
-            customer_id = create_stripe_customer(target_user.email, target_user_id, db)
-            if not customer_id:
-                raise ValueError("Failed to create Stripe customer")
-        
-        stripe_subscription = stripe.Subscription.create(
-            customer=customer_id,
-            items=[{'price': price_id}],
-            metadata={'user_id': str(target_user_id)},
-        )
-        
-        # Create subscription record in database
-        new_subscription = Subscription(
-            user_id=target_user_id,
-            stripe_subscription_id=stripe_subscription.id,
-            stripe_customer_id=customer_id,
-            plan_type=plan_key,
-            status=stripe_subscription.status,
-            current_period_start=datetime.fromtimestamp(stripe_subscription.current_period_start, tz=timezone.utc),
-            current_period_end=datetime.fromtimestamp(stripe_subscription.current_period_end, tz=timezone.utc),
-            cancel_at_period_end=False,
-        )
-        db.add(new_subscription)
-        db.commit()
-        db.refresh(new_subscription)
-        
-        # Reset tokens for new subscription (preserve existing tokens)
-        reset_tokens_for_subscription(
-            target_user_id,
-            plan_key,
-            new_subscription.current_period_start,
-            new_subscription.current_period_end,
-            db,
-            is_renewal=False
-        )
-        
-        # Preserve tokens
-        token_balance = get_or_create_token_balance(target_user_id, db)
+        # Preserve tokens and set monthly_tokens correctly
         plan_tokens = get_plan_tokens(plan_key)
+        token_balance = get_or_create_token_balance(target_user_id, db)
         token_balance.tokens_remaining = preserved_tokens
         token_balance.monthly_tokens = max(preserved_tokens, plan_tokens)
         token_balance.tokens_used_this_period = 0
+        token_balance.period_start = new_subscription.current_period_start
+        token_balance.period_end = new_subscription.current_period_end
+        token_balance.updated_at = datetime.now(timezone.utc)
         db.commit()
     
     if not new_subscription:

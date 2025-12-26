@@ -205,7 +205,7 @@ def create_subscription_checkout(user_id: int, plan_key: str, frontend_url: str,
     
     return create_checkout_session(
         user_id=user_id,
-        price_id=plan_config["price_id"],
+        plan_type=plan_key,
         success_url=success_url,
         cancel_url=cancel_url,
         db=db

@@ -411,7 +411,7 @@ def delete_user_account(user_id: int, db: Session) -> dict:
     from app.models.video import Video
     from app.models.setting import Setting
     from app.models.oauth_token import OAuthToken
-    from app.services.stripe_service import cancel_all_user_subscriptions
+    from app.services.stripe_service import cancel_all_user_subscriptions, delete_stripe_customer
     from app.db.redis import delete_all_user_sessions, invalidate_all_user_caches
     
     security_logger = logging.getLogger("security")
@@ -441,6 +441,14 @@ def delete_user_account(user_id: int, db: Session) -> dict:
     except Exception as e:
         security_logger.warning(f"Failed to cancel Stripe subscriptions for user {user_id}: {e}")
         # Continue with deletion even if Stripe cancellation fails
+    
+    # Delete Stripe customer (this automatically cancels all subscriptions)
+    if user.stripe_customer_id and not user.stripe_customer_id.startswith('free_') and not user.stripe_customer_id.startswith('unlimited_'):
+        try:
+            delete_stripe_customer(user.stripe_customer_id)
+        except Exception as e:
+            security_logger.warning(f"Failed to delete Stripe customer for user {user_id}: {e}")
+            # Continue with deletion even if Stripe customer deletion fails
     
     # Delete all Redis data (sessions, caches, etc.)
     try:

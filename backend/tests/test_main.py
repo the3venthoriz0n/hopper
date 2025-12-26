@@ -222,7 +222,7 @@ class TestStripeFunctionality:
     @patch('app.services.stripe_service.settings')
     @patch('app.services.stripe_service.get_plan_price_id')
     @patch('app.services.stripe_service.get_plans')
-    def test_create_free_subscription(self, mock_get_plans, mock_get_price, mock_settings, mock_stripe, mock_update_sub, mock_ensure_customer, mock_reset_tokens):
+    def test_create_stripe_subscription(self, mock_get_plans, mock_get_price, mock_settings, mock_stripe, mock_update_sub, mock_ensure_customer, mock_reset_tokens):
         """Test creating a free subscription"""
         mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
         from app.services.stripe_service import create_stripe_subscription
