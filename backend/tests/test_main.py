@@ -218,12 +218,10 @@ class TestStripeFunctionality:
     @patch('app.services.stripe_service.StripeRegistry.get')
     @patch('app.services.stripe_service.stripe')
     @patch('app.services.stripe_service.settings')
-    def test_create_stripe_subscription(self, mock_settings, mock_stripe, mock_registry_get, mock_create_customer, mock_ensure_tokens):
-        """Test creating a free subscription"""
+    def test_create_stripe_subscription(self, mock_settings, mock_stripe, mock_registry_get, mock_create_customer, mock_ensure_tokens, test_user, db_session):
+        """Test creating a free_daily subscription"""
         mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
         from app.services.stripe_service import create_stripe_subscription
-        from app.models import User, Subscription
-        from sqlalchemy.orm import Session
         
         # Mock StripeRegistry to return free_daily plan config
         mock_registry_get.side_effect = lambda key: {
@@ -249,76 +247,15 @@ class TestStripeFunctionality:
         mock_create_customer.return_value = 'cus_test123'
         mock_ensure_tokens.return_value = True
         
-        mock_db = Mock(spec=Session)
-        mock_user = Mock(spec=User)
-        mock_user.id = 1
-        mock_user.stripe_customer_id = 'cus_test123'
-        mock_user.email = 'test@example.com'
-        
-        # Mock database queries - create separate query chains for User and Subscription
-        def query_side_effect(model):
-            if model == User:
-                result = Mock()
-                result.filter.return_value.first.return_value = mock_user
-                return result
-            elif model == Subscription:
-                result = Mock()
-                # First call: check existing subscriptions (returns empty list)
-                result.filter.return_value.all.return_value = []
-                # Subsequent calls: return None (no existing found)
-                result.filter.return_value.first.return_value = None
-                return result
-            return Mock()
-        
-        mock_db.query.side_effect = query_side_effect
-        
-        # Mock adding subscription to DB
-        def add_side_effect(obj):
-            # Simulate adding to DB
-            if isinstance(obj, Subscription):
-                obj.id = 1
-                obj.user_id = 1
-                obj.plan_type = "free_daily"
-                obj.stripe_subscription_id = 'sub_test123'
-                obj.stripe_customer_id = 'cus_test123'
-                obj.status = 'active'
-                obj.current_period_start = datetime.fromtimestamp(mock_subscription.current_period_start, tz=timezone.utc)
-                obj.current_period_end = datetime.fromtimestamp(mock_subscription.current_period_end, tz=timezone.utc)
-        
-        mock_db.add.side_effect = add_side_effect
-        
-        # After commit, queries should return the new subscription
-        def query_after_commit(model):
-            if model == Subscription:
-                result = Mock()
-                # Create a mock subscription that will be returned
-                mock_sub = Mock(spec=Subscription)
-                mock_sub.id = 1
-                mock_sub.user_id = 1
-                mock_sub.plan_type = "free_daily"
-                mock_sub.stripe_subscription_id = 'sub_test123'
-                mock_sub.stripe_customer_id = 'cus_test123'
-                mock_sub.status = 'active'
-                mock_sub.current_period_start = datetime.fromtimestamp(mock_subscription.current_period_start, tz=timezone.utc)
-                mock_sub.current_period_end = datetime.fromtimestamp(mock_subscription.current_period_end, tz=timezone.utc)
-                
-                # After commit, return the subscription
-                result.filter.return_value.first.return_value = mock_sub
-                result.filter.return_value.all.return_value = [mock_sub]
-                return result
-            return query_side_effect(model)
-        
-        # After first commit, switch to returning the subscription
-        original_commit = mock_db.commit
-        def commit_with_switch():
-            original_commit()
-            mock_db.query.side_effect = query_after_commit
-        
-        mock_db.commit.side_effect = commit_with_switch
+        # Set user's customer ID
+        test_user.stripe_customer_id = 'cus_test123'
+        db_session.commit()
 
-        result = create_stripe_subscription(1, "free_daily", mock_db)
+        result = create_stripe_subscription(test_user.id, "free_daily", db_session)
         
         assert result is not None
+        assert result.plan_type == "free_daily"
+        assert result.stripe_subscription_id == 'sub_test123'
         mock_stripe.Subscription.create.assert_called_once()
         mock_ensure_tokens.assert_called_once()
 

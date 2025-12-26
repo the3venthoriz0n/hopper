@@ -548,6 +548,7 @@ class TestSubscriptionService:
         mock_subscription = Mock()
         mock_subscription.id = "sub_test123"
         mock_subscription.status = "active"
+        mock_subscription.customer = "cus_test123"  # Must be a string, not a Mock object
         mock_subscription.current_period_start = int(datetime.now(timezone.utc).timestamp())
         mock_subscription.current_period_end = int((datetime.now(timezone.utc) + timedelta(days=30)).timestamp())
         mock_subscription.items.data = [Mock(price=Mock(id=price_id))]
