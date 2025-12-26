@@ -238,84 +238,100 @@ def handle_checkout_completed(session: Any, db: Session):
             user.stripe_customer_id = customer_id
             db.commit()
 
-def handle_subscription_created(subscription: Any, db: Session):
-    # Get subscription ID for logging
-    subscription_id = getattr(subscription, 'id', None) or (subscription.get('id') if isinstance(subscription, dict) else None) or 'unknown'
-    
-    # 1. Get Customer - handle both string ID and expanded object
-    customer_id = getattr(subscription, 'customer', None)
-    if not customer_id:
-        # Sometimes customer is an object if expanded, get the ID
-        customer_obj = getattr(subscription, 'customer', None)
-        if customer_obj and not isinstance(customer_obj, str):
-            customer_id = getattr(customer_obj, 'id', None)
-        elif isinstance(subscription, dict):
-            customer_id = subscription.get('customer')
-            if isinstance(customer_id, dict):
-                customer_id = customer_id.get('id')
-    
-    if not customer_id:
-        logger.warning(f"Subscription missing customer field: {subscription_id}")
+def handle_subscription_created(subscription_data: Any, db: Session):
+    """
+    Robust handler for subscription creation.
+    Fixes 'missing items' by using SubscriptionItem.list and API retrieval.
+    """
+    # 1. Identity Extraction
+    sub_id = _get_stripe_value(subscription_data, 'id')
+    if not sub_id:
+        logger.error("No subscription ID found in event data")
         return
-    
+
+    # 2. PROACTIVE DATA RETRIEVAL (The Root Cause Fix)
+    # Webhooks are often "thin". Fetch the full object and the items list explicitly.
+    try:
+        # Fetch the sub with expanded prices
+        stripe_sub = stripe.Subscription.retrieve(sub_id, expand=['items.data.price'])
+        
+        # Best Practice: Use the explicit list method for metered/complex items
+        sub_items = stripe.SubscriptionItem.list(subscription=sub_id, limit=20)
+        items_data = sub_items.data
+    except Exception as e:
+        logger.error(f"Critical: Could not retrieve subscription {sub_id} from Stripe: {e}")
+        return
+
+    if not items_data:
+        logger.error(f"Subscription {sub_id} has NO items. Cannot process plan type.")
+        return
+
+    # 3. Customer & User Resolution
+    customer_id = _get_stripe_value(stripe_sub, 'customer')
+    if isinstance(customer_id, dict):
+        customer_id = customer_id.get('id')
+        
     user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
     if not user:
+        logger.warning(f"No user found for customer {customer_id}")
         return
-    
-    # 2. Safe Items Access - Stripe Subscriptions always have an 'items' property which contains a 'data' list
-    items_obj = getattr(subscription, 'items', None)
-    if items_obj:
-        items_data = getattr(items_obj, 'data', [])
-    else:
-        # Fallback for dict-like access if it's not a Stripe Object
-        if isinstance(subscription, dict):
-            items_data = subscription.get('items', {}).get('data', [])
-        else:
-            items_data = []
-    
-    if not items_data or not items_data[0]:
-        logger.warning(f"Subscription missing items data: {subscription_id}")
-        return
-    
-    # 3. Get the Price ID from the first item
-    first_item = items_data[0]
-    # Handle both object and dict access for the price
-    price_obj = getattr(first_item, 'price', None) or (first_item.get('price') if isinstance(first_item, dict) else None)
-    
-    if not price_obj:
-        logger.warning(f"Subscription missing price object: {subscription_id}")
-        return
-    
-    price_id = getattr(price_obj, 'id', None) or (price_obj.get('id') if isinstance(price_obj, dict) else None)
-    
+
+    # 4. Map Plan Type (DRY Registry lookup)
+    # We look for the 'base' price (the one that isn't the overage price)
+    price_id = None
+    for item in items_data:
+        p_id = _get_stripe_value(_get_stripe_value(item, 'price'), 'id')
+        # Check if this ID is a base price in our registry
+        for key, data in StripeRegistry._cache.items():
+            if data.get("price_id") == p_id and not key.endswith('_overage_price'):
+                price_id = p_id
+                plan_key = key.replace("_price", "")
+                break
+        if price_id: break
+
     if not price_id:
-        logger.warning(f"Subscription missing price_id: {subscription_id}")
+        logger.error(f"Could not map any items in {sub_id} to a known registry plan.")
         return
-    
-    plan_key = "free"
-    for key, data in StripeRegistry._cache.items():
-        if data["price_id"] == price_id:
-            plan_key = key.replace("_price", "")
-            break
-    
+
+    # 5. Database Atomic Update
     sub_record = db.query(Subscription).filter(Subscription.user_id == user.id).first()
     if not sub_record:
         sub_record = Subscription(user_id=user.id)
         db.add(sub_record)
-    
-    sub_record.stripe_subscription_id = _get_stripe_value(subscription, 'id')
+
+    sub_record.stripe_subscription_id = sub_id
     sub_record.plan_type = plan_key
-    sub_record.status = _get_stripe_value(subscription, 'status', 'active')
+    sub_record.status = _get_stripe_value(stripe_sub, 'status', 'active')
     
-    current_period_start = _get_stripe_value(subscription, 'current_period_start')
-    current_period_end = _get_stripe_value(subscription, 'current_period_end')
-    
-    if current_period_start:
-        sub_record.current_period_start = datetime.fromtimestamp(current_period_start, tz=timezone.utc)
-    if current_period_end:
-        sub_record.current_period_end = datetime.fromtimestamp(current_period_end, tz=timezone.utc)
-    
-    db.commit()
+    # Update Metered Item ID (if exists) for usage reporting later
+    overage_config = StripeRegistry.get(f"{plan_key}_overage_price")
+    if overage_config:
+        for item in items_data:
+            if _get_stripe_value(_get_stripe_value(item, 'price'), 'id') == overage_config['price_id']:
+                sub_record.stripe_metered_item_id = item.id
+                break
+
+    # 6. Timestamp Sync
+    start_ts = _get_stripe_value(stripe_sub, 'current_period_start')
+    end_ts = _get_stripe_value(stripe_sub, 'current_period_end')
+    if start_ts:
+        sub_record.current_period_start = datetime.fromtimestamp(start_ts, tz=timezone.utc)
+    if end_ts:
+        sub_record.current_period_end = datetime.fromtimestamp(end_ts, tz=timezone.utc)
+
+    try:
+        db.commit()
+        logger.info(f"✅ Subscription {sub_id} synced. Plan: {plan_key}")
+        
+        # 7. Grant Initial Tokens (Only for new subs)
+        # This calls your token logic to add the initial monthly allowance
+        from app.services.token_service import ensure_tokens_synced_for_subscription
+        ensure_tokens_synced_for_subscription(user.id, sub_id, db)
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Database error saving subscription {sub_id}: {e}")
+
 
 def handle_subscription_updated(subscription: Any, db: Session):
     handle_subscription_created(subscription, db)
