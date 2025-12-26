@@ -34,16 +34,30 @@ class StripeRegistry:
             for p in prices:
                 if p.lookup_key:
                     prod = p.product
+                    
+                    # Calculate amount_dollars - handle both regular and metered prices
+                    amount_dollars = 0.0
+                    if p.unit_amount:
+                        amount_dollars = p.unit_amount / 100.0
+                    elif hasattr(p, 'unit_amount_decimal') and p.unit_amount_decimal:
+                        # For metered prices, unit_amount_decimal is a string (e.g., "1.5" = 1.5 cents)
+                        amount_dollars = float(p.unit_amount_decimal) / 100.0
+                    
+                    # Format the price display
+                    if amount_dollars > 0:
+                        formatted = f"${amount_dollars:.2f}"
+                    else:
+                        formatted = "Free"
+                    
                     new_cache[p.lookup_key] = {
                         "price_id": p.id,
                         "product_id": prod.id,
                         "name": prod.name,
-                        # Updated to look for 'tokens' instead of 'monthly_tokens'
                         "tokens": int(prod.metadata.get('tokens', 0)),
                         "hidden": prod.metadata.get('hidden', 'false').lower() == 'true',
-                        "amount_dollars": p.unit_amount / 100.0 if p.unit_amount else 0.0,
+                        "amount_dollars": amount_dollars,
                         "currency": p.currency.upper(),
-                        "formatted": f"${p.unit_amount/100.0:.2f}" if p.unit_amount else "Free"
+                        "formatted": formatted
                     }
             cls._cache = new_cache
             cls._last_sync = datetime.now(timezone.utc)
@@ -66,23 +80,6 @@ class StripeRegistry:
             for k, v in cls._cache.items() 
             if k.endswith('_price') and not k.endswith('_overage_price')
         }
-
-# ============================================================================
-# UTILITY FUNCTIONS (Including missing video_service helper)
-# ============================================================================
-
-def calculate_tokens_from_bytes(file_size_bytes: int) -> int:
-    """
-    Calculates token cost based on video size. 
-    Required by video_service.py.
-    Example: 1 token per 100MB, minimum 1 token.
-    """
-    if file_size_bytes <= 0:
-        return 0
-    # Logic: 1 token per 100MB (100 * 1024 * 1024 bytes)
-    mb_size = file_size_bytes / (1024 * 1024)
-    tokens = max(1, int(mb_size / 100))
-    return tokens
 
 # ============================================================================
 # CORE STRIPE OPERATIONS

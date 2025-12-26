@@ -37,8 +37,7 @@ from app.db.redis import (
 )
 from app.models.oauth_token import OAuthToken
 from app.models.video import Video
-from app.services.stripe_service import calculate_tokens_from_bytes
-from app.services.token_service import check_tokens_available, get_token_balance, deduct_tokens
+from app.services.token_service import check_tokens_available, get_token_balance, deduct_tokens, calculate_tokens_from_bytes
 from app.utils.encryption import decrypt
 from app.utils.templates import (
     replace_template_placeholders, get_video_title, get_video_description

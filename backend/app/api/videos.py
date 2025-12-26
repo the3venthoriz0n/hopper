@@ -18,7 +18,7 @@ from app.db.helpers import (
 from app.db.redis import set_upload_progress
 from app.db.session import get_db
 from app.models.video import Video
-from app.services.stripe_service import calculate_tokens_from_bytes
+from app.services.token_service import calculate_tokens_from_bytes
 from app.services.video_service import (
     DESTINATION_UPLOADERS, build_upload_context, build_video_response,
     check_upload_success, cleanup_video_file, record_platform_error,

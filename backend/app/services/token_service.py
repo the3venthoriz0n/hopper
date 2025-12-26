@@ -15,6 +15,20 @@ from app.services.stripe_service import StripeRegistry
 logger = logging.getLogger(__name__)
 
 
+def calculate_tokens_from_bytes(file_size_bytes: int) -> int:
+    """
+    Calculates token cost based on video size. 
+    Required by video_service.py.
+    Example: 1 token per 100MB, minimum 1 token.
+    """
+    if file_size_bytes <= 0:
+        return 0
+    # Logic: 1 token per 100MB (100 * 1024 * 1024 bytes)
+    mb_size = file_size_bytes / (1024 * 1024)
+    tokens = max(1, int(mb_size / 100))
+    return tokens
+
+
 def get_plan_tokens(plan_type: str) -> int:
     """Get token allocation for a plan type from StripeRegistry"""
     plan_config = StripeRegistry.get(f"{plan_type}_price")

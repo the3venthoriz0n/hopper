@@ -1069,7 +1069,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       const formatPlanPrice = (plan) => {
         if (!plan?.price) return null;
         if (plan.key === 'free') return 'Free';
-        if (plan.monthly_tokens === -1) return plan.price.formatted;
+        if (plan.tokens === -1) return plan.price.formatted;
         
         // New pricing: amount_dollars is the flat monthly fee
         const monthlyFee = plan.price.amount_dollars || 0;
@@ -5606,13 +5606,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   <>
 
                     {/* Available Plans */}
-                    {availablePlans.filter(plan => !plan.hidden && plan.monthly_tokens !== -1).length > 0 && (
+                    {availablePlans.filter(plan => !plan.hidden && plan.tokens !== -1).length > 0 && (
                       <div id="subscription-plans" style={{ marginBottom: '1rem' }}>
                         <div style={{ fontSize: '0.85rem', color: HOPPER_COLORS.grey, marginBottom: '0.75rem' }}>
                           Available Plans
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                          {availablePlans.filter(plan => !plan.hidden && plan.monthly_tokens !== -1).map(plan => {
+                          {availablePlans.filter(plan => !plan.hidden && plan.tokens !== -1).map(plan => {
                             const isCurrent = subscription.plan_type === plan.key;
                             const canUpgrade = !isCurrent && plan.key !== 'free' && plan.stripe_price_id;
                             const isThisPlanLoading = loadingPlanKey === plan.key; // Only this specific plan is loading
@@ -5669,7 +5669,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                         {(() => {
                                           if (plan.key === 'free') {
                                             return 'Free';
-                                          } else if (plan.monthly_tokens === -1) {
+                                          } else if (plan.tokens === -1) {
                                             // Unlimited plan
                                             return plan.price.formatted;
                                           } else {
@@ -5691,7 +5691,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                     )}
                                   </div>
                                   <div style={{ fontSize: '0.75rem', color: HOPPER_COLORS.grey }}>
-                                    {plan.monthly_tokens === -1 ? 'Unlimited tokens' : `${plan.monthly_tokens} tokens/month`}
+                                    {plan.tokens === -1 ? 'Unlimited tokens' : `${plan.tokens} tokens/month`}
                                   </div>
                                 </div>
                                 {isCurrent ? (
