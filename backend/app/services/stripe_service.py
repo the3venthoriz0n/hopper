@@ -35,6 +35,10 @@ class StripeRegistry:
                 if p.lookup_key:
                     prod = p.product
                     
+                    # Filter out archived products
+                    if prod.metadata.get('internal_status') == 'archived_legacy':
+                        continue
+                    
                     # Calculate amount_dollars - handle both regular and metered prices
                     amount_dollars = 0.0
                     if p.unit_amount:
@@ -49,12 +53,20 @@ class StripeRegistry:
                     else:
                         formatted = "Free"
                     
+                    # Get recurring interval from price
+                    recurring_interval = None
+                    if hasattr(p, 'recurring') and p.recurring:
+                        recurring_interval = p.recurring.get('interval')
+                    
                     new_cache[p.lookup_key] = {
                         "price_id": p.id,
                         "product_id": prod.id,
                         "name": prod.name,
+                        "description": prod.description or "",
                         "tokens": int(prod.metadata.get('tokens', 0)),
                         "hidden": prod.metadata.get('hidden', 'false').lower() == 'true',
+                        "max_accrual": int(prod.metadata.get('max_accrual', 0)) if prod.metadata.get('max_accrual') else None,
+                        "recurring_interval": recurring_interval,
                         "amount_dollars": amount_dollars,
                         "currency": p.currency.upper(),
                         "formatted": formatted
@@ -78,7 +90,7 @@ class StripeRegistry:
         return {
             k.replace('_price', ''): v 
             for k, v in cls._cache.items() 
-            if k.endswith('_price') and not k.endswith('_overage_price')
+            if k.endswith('_price') and not k.endswith('_overage_price') and not v.get('hidden', False)
         }
 
 # ============================================================================
@@ -361,6 +373,7 @@ def handle_invoice_payment_succeeded(invoice: Any, db: Session):
         return
     sub_record = db.query(Subscription).filter(Subscription.stripe_subscription_id == subscription_id).first()
     if sub_record:
+        # Daily plans are handled by ensure_tokens_synced_for_subscription which detects them
         from app.services.token_service import ensure_tokens_synced_for_subscription
         ensure_tokens_synced_for_subscription(sub_record.user_id, subscription_id, db)
 

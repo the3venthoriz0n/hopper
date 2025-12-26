@@ -20,21 +20,31 @@ STRIPE_API_VERSION = "2024-11-20.acacia"
 PRODUCTS = {
     'free': {
         'name': 'Free',
-        'description': '100 tokens included',
+        'description': '100 tokens per month',
         'tokens': 100,
         'price_total_dollars': 0,
-        'overage_unit_cents': None
+        'overage_unit_cents': None,
+        'internal_status': 'archived_legacy'
+    },
+    'free_daily': {
+        'name': 'Free',
+        'description': '3 tokens per day, max 10 tokens',
+        'tokens': 3,
+        'price_total_dollars': 0,
+        'overage_unit_cents': None,
+        'recurring_interval': 'day',
+        'max_accrual': 10
     },
     'starter': {
         'name': 'Starter',
-        'description': '300 tokens included',
+        'description': '300 tokens per month',
         'tokens': 300,
         'price_total_dollars': 3.0,
         'overage_unit_cents': 1.5
     },
     'creator': {
         'name': 'Creator',
-        'description': '1250 tokens included',
+        'description': '1250 tokens per month',
         'tokens': 1250,
         'price_total_dollars': 10.0,
         'overage_unit_cents': 0.8
@@ -107,6 +117,8 @@ def find_or_create_price(product_id: str, config: Dict[str, Any],
         target_value = str(int(config['price_total_dollars'] * 100))
         lookup_key = f"{plan_key}_price"
 
+    recurring_interval = config.get('recurring_interval', 'month')
+
     # Search for existing active price with this lookup_key
     for price in existing_prices:
         if getattr(price, 'lookup_key', None) == lookup_key and price.active:
@@ -128,7 +140,7 @@ def find_or_create_price(product_id: str, config: Dict[str, Any],
         "product": product_id,
         "currency": "usd",
         "unit_amount_decimal": target_value,
-        "recurring": {"interval": "month"},
+        "recurring": {"interval": recurring_interval},
         "lookup_key": lookup_key,
         "transfer_lookup_key": True,
         "metadata": metadata
@@ -145,7 +157,7 @@ def sync_stripe_resources():
     meter_id = meter.id if meter else None
     
     all_products = stripe.Product.list(limit=100).data
-    existing_products = {p.name: p for p in all_products if p.active}
+    existing_products = {p.name: p for p in all_products}
     # List prices and expand product to check metadata
     existing_prices = stripe.Price.list(limit=100, active=True).data
 
@@ -160,6 +172,14 @@ def sync_stripe_resources():
         if config.get('hidden'):
             metadata["hidden"] = "true"
         
+        # Add max_accrual to metadata if present
+        if config.get('max_accrual'):
+            metadata["max_accrual"] = str(config['max_accrual'])
+        
+        # Add internal_status to metadata if present
+        if config.get('internal_status'):
+            metadata["internal_status"] = config['internal_status']
+        
         if not product:
             product = stripe.Product.create(
                 name=config['name'], 
@@ -170,15 +190,25 @@ def sync_stripe_resources():
         else:
             # Update product if description or metadata changed
             current_hidden = "true" if config.get('hidden') else "false"
+            current_internal_status = config.get('internal_status', '')
+            product_internal_status = product.metadata.get('internal_status', '')
+            
             if (product.description != config['description'] or 
                 product.metadata.get("tokens") != metadata.get("tokens") or
-                product.metadata.get("hidden", "false") != current_hidden):
+                product.metadata.get("hidden", "false") != current_hidden or
+                product_internal_status != current_internal_status or
+                product.metadata.get("max_accrual") != metadata.get("max_accrual")):
                 stripe.Product.modify(
                     product.id, 
                     description=config['description'],
                     metadata=metadata
                 )
                 print(f"  ✓ Updated product metadata/description: {product.id}")
+        
+        # Deactivate product if it has archived_legacy status
+        if config.get('internal_status') == 'archived_legacy' and product.active:
+            stripe.Product.modify(product.id, active=False)
+            print(f"  ✓ Deactivated archived product: {product.id}")
         
         # 2. Base Price Sync (updates Price metadata too)
         find_or_create_price(product.id, config, existing_prices, is_metered=False, plan_key=key)

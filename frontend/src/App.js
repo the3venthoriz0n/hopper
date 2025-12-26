@@ -5691,7 +5691,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                     )}
                                   </div>
                                   <div style={{ fontSize: '0.75rem', color: HOPPER_COLORS.grey }}>
-                                    {plan.tokens === -1 ? 'Unlimited tokens' : `${plan.tokens} tokens/month`}
+                                    {plan.description || (plan.tokens === -1 ? 'Unlimited tokens' : `${plan.tokens} tokens/month`)}
                                   </div>
                                 </div>
                                 {isCurrent ? (

@@ -55,7 +55,10 @@ def list_available_plans() -> Dict:
         plan_data = {
             "key": plan_key,
             "name": config["name"],
+            "description": config.get("description", ""),
             "tokens": config["tokens"],
+            "recurring_interval": config.get("recurring_interval", "month"),
+            "max_accrual": config.get("max_accrual"),
             "stripe_price_id": config["price_id"],
             "price": {
                 "amount": int(config["amount_dollars"] * 100),

@@ -349,6 +349,86 @@ def add_tokens(
             db.close()
 
 
+def handle_daily_token_grant(user_id: int, subscription_id: str, db: Session) -> bool:
+    """
+    Handle daily token grant for daily free plan with banking logic.
+    
+    Grants 3 tokens per day but caps total balance at max_accrual (10 tokens).
+    If user has 8 tokens and receives 3, they get 2 tokens (capped at 10).
+    
+    Args:
+        user_id: User ID
+        subscription_id: Stripe subscription ID
+        db: Database session
+        
+    Returns:
+        True if tokens were granted successfully, False otherwise
+    """
+    try:
+        subscription = db.query(Subscription).filter(
+            Subscription.stripe_subscription_id == subscription_id
+        ).first()
+        
+        if not subscription:
+            logger.warning(f"Subscription {subscription_id} not found for daily token grant")
+            return False
+        
+        if subscription.plan_type != 'free_daily':
+            logger.debug(f"Subscription {subscription_id} is not free_daily plan, skipping daily grant")
+            return False
+        
+        plan_config = StripeRegistry.get(f"{subscription.plan_type}_price")
+        if not plan_config:
+            logger.error(f"Plan config not found for {subscription.plan_type}")
+            return False
+        
+        daily_tokens = plan_config.get("tokens", 3)
+        max_accrual = plan_config.get("max_accrual", 10)
+        
+        balance = get_or_create_token_balance(user_id, db)
+        current_balance = balance.tokens_remaining
+        
+        # Calculate tokens to add with banking cap
+        tokens_to_add = min(daily_tokens, max_accrual - current_balance)
+        
+        if tokens_to_add <= 0:
+            logger.info(
+                f"Daily token grant for user {user_id}: current balance {current_balance} "
+                f"already at or above max_accrual {max_accrual}, no tokens added"
+            )
+            return True
+        
+        # Add tokens with metadata indicating it's a daily grant
+        metadata = {
+            'grant_type': 'daily',
+            'subscription_id': subscription_id,
+            'daily_tokens': daily_tokens,
+            'max_accrual': max_accrual,
+            'capped': tokens_to_add < daily_tokens
+        }
+        
+        result = add_tokens(
+            user_id=user_id,
+            tokens=tokens_to_add,
+            transaction_type='grant',
+            metadata=metadata,
+            db=db
+        )
+        
+        if result:
+            logger.info(
+                f"Daily token grant for user {user_id}: added {tokens_to_add} tokens "
+                f"(would be {daily_tokens} but capped at {max_accrual}), "
+                f"balance: {current_balance} -> {current_balance + tokens_to_add}"
+            )
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in daily token grant for user {user_id}: {e}", exc_info=True)
+        return False
+
+
 def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: datetime, period_end: datetime, db: Session, is_renewal: bool = False) -> bool:
     """
     Reset or add monthly tokens for a user's subscription period.
@@ -617,6 +697,31 @@ def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db
         if not subscription:
             logger.debug(f"Subscription {subscription_id} not found in database for user {user_id}")
             return False
+        
+        # Handle daily plans differently (they grant tokens daily, not monthly)
+        if subscription.plan_type == 'free_daily':
+            # Check if tokens were already granted today for this subscription
+            period_duration = (subscription.current_period_end - subscription.current_period_start).total_seconds()
+            is_daily = period_duration < 2 * 24 * 3600  # Less than 2 days
+            
+            if is_daily:
+                # Check for daily grant today
+                today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+                recent_grants = db.query(TokenTransaction).filter(
+                    TokenTransaction.user_id == user_id,
+                    TokenTransaction.transaction_type == 'grant',
+                    TokenTransaction.created_at >= today_start
+                ).all()
+                
+                # Check if any grant today is for this subscription
+                for grant in recent_grants:
+                    grant_metadata = grant.transaction_metadata or {}
+                    if grant_metadata.get('subscription_id') == subscription_id and grant_metadata.get('grant_type') == 'daily':
+                        logger.info(f"Daily tokens already granted today for user {user_id}, subscription {subscription_id}")
+                        return True
+                
+                # Grant daily tokens
+                return handle_daily_token_grant(user_id, subscription_id, db)
         
         # Check if token balance period matches subscription period
         token_balance = get_or_create_token_balance(user_id, db)
