@@ -127,14 +127,22 @@ def check_checkout_status(session_id: str, user_id: int, db: Session) -> Dict:
     }
 
 def cancel_user_subscription(user_id: int, db: Session) -> Dict:
-    """Cancel the user's subscription and switch to free plan while preserving tokens."""
+    """Cancel the user's subscription and switch to free_daily plan while preserving tokens."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise ValueError("User account no longer exists")
     
     subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
-    if not subscription or subscription.plan_type == 'free':
-        return {"status": "success", "message": "Already on free plan", "plan_type": "free"}
+    # Prevent canceling free plans (both 'free' and 'free_daily')
+    if not subscription:
+        raise ValueError("No active subscription found")
+    
+    if subscription.plan_type in ('free', 'free_daily'):
+        return {
+            "status": "error",
+            "message": "Cannot cancel free plan. Free plans cannot be canceled.",
+            "plan_type": subscription.plan_type
+        }
     
     # Capture balance before cancellation
     token_balance = get_or_create_token_balance(user_id, db)
@@ -160,7 +168,7 @@ def cancel_user_subscription(user_id: int, db: Session) -> Dict:
         balance_before=current_tokens,
         balance_after=current_tokens,
         transaction_metadata={
-            'plan_type': 'free',
+            'plan_type': 'free_daily',
             'tokens_preserved': True,
             'preserved_amount': current_tokens,
             'cancel_subscription': True
@@ -169,13 +177,14 @@ def cancel_user_subscription(user_id: int, db: Session) -> Dict:
     db.add(preserve_transaction)
     db.commit()
     
-    # Create new free plan
-    free_sub = create_stripe_subscription(user_id, "free", db, skip_token_reset=True)
+    # Create new free_daily plan
+    free_sub = create_stripe_subscription(user_id, "free_daily", db, skip_token_reset=True)
     
-    # Restore balance to the new free record
+    # Restore balance to the new free_daily record
     token_balance = get_or_create_token_balance(user_id, db)
     token_balance.tokens_remaining = current_tokens
-    token_balance.tokens = max(current_tokens, StripeRegistry.get("free_price")["tokens"] if StripeRegistry.get("free_price") else 100)
+    free_daily_config = StripeRegistry.get("free_daily_price")
+    token_balance.tokens = max(current_tokens, free_daily_config["tokens"] if free_daily_config else 100)
     token_balance.tokens_used_this_period = 0
     token_balance.period_start = free_sub.current_period_start
     token_balance.period_end = free_sub.current_period_end
@@ -183,7 +192,7 @@ def cancel_user_subscription(user_id: int, db: Session) -> Dict:
     db.commit()
     return {
         "status": "success",
-        "plan_type": "free",
+        "plan_type": "free_daily",
         "tokens_preserved": current_tokens
     }
 

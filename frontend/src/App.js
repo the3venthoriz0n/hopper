@@ -1240,13 +1240,22 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     try {
       const res = await axios.post(`${API}/subscription/cancel`);
       if (res.data.status === 'success') {
-        setMessage(`✅ ${res.data.message}`);
+        setMessage(`✅ ${res.data.message || 'Subscription canceled successfully'}`);
         // Reload subscription data to reflect the change
         await loadSubscription();
         setNotification({
           type: 'success',
           title: 'Subscription Canceled',
           message: `Your subscription has been canceled and you've been switched to the free plan. Your ${res.data.tokens_preserved || 0} tokens have been preserved.`
+        });
+        setTimeout(() => setNotification(null), 5000);
+      } else if (res.data.status === 'error') {
+        // Handle error response (e.g., trying to cancel free plan)
+        setMessage(`❌ ${res.data.message || 'Failed to cancel subscription'}`);
+        setNotification({
+          type: 'error',
+          title: 'Cancel Failed',
+          message: res.data.message || 'Cannot cancel this subscription.'
         });
         setTimeout(() => setNotification(null), 5000);
       }
@@ -5744,7 +5753,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                     }}>
                                       CURRENT
                                     </span>
-                                    {subscription && subscription.plan_type !== 'free' && subscription.status === 'active' && (
+                                    {subscription && subscription.plan_type !== 'free' && subscription.plan_type !== 'free_daily' && subscription.status === 'active' && (
                                       <button
                                         onClick={(e) => {
                                           e.stopPropagation();

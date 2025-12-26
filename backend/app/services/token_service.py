@@ -196,6 +196,22 @@ def deduct_tokens(
         included_tokens_used = min(tokens, max(0, balance.tokens_remaining))
         overage_tokens_used = max(0, tokens - included_tokens_used)
         
+        # Don't allow overage if user has no subscription
+        if not subscription:
+            if overage_tokens_used > 0:
+                logger.warning(
+                    f"User {user_id} has no subscription but attempted to use {tokens} tokens "
+                    f"(would require {overage_tokens_used} overage tokens). Blocking overage."
+                )
+                return False
+            # If no subscription and no overage needed, still allow if they have tokens
+            if balance.tokens_remaining < tokens:
+                logger.warning(
+                    f"User {user_id} has no subscription and insufficient tokens. "
+                    f"Required: {tokens}, Available: {balance.tokens_remaining}"
+                )
+                return False
+        
         # Check if free plan is trying to go over limit (free plans have hard limit, no overage)
         plan_monthly_tokens = get_plan_tokens(subscription.plan_type) if subscription else 0
         if subscription and subscription.plan_type in ('free', 'free_daily') and overage_tokens_used > 0:
@@ -204,6 +220,16 @@ def deduct_tokens(
                 f"Free plan has hard limit, blocking overage."
             )
             return False
+        
+        # Only allow overage for paid plans (starter, creator) with active subscription
+        if overage_tokens_used > 0:
+            if not subscription or subscription.plan_type not in ('starter', 'creator'):
+                logger.warning(
+                    f"User {user_id} attempted to use {overage_tokens_used} overage tokens but "
+                    f"subscription is {subscription.plan_type if subscription else 'None'}. "
+                    f"Overage only allowed for starter/creator plans."
+                )
+                return False
         
         # Deduct tokens (included tokens first, can go to 0 or negative for overage tracking)
         balance.tokens_remaining -= included_tokens_used
