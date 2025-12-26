@@ -165,8 +165,8 @@ def get_or_create_oauth_user(email: str, db: Session = None) -> Tuple[User, bool
             logger = logging.getLogger(__name__)
             
             create_stripe_customer(user.email, user.id, db)
-            create_stripe_subscription(user.id, "free", db)
-            logger.info(f"Created Stripe customer and free subscription for OAuth user {user.id}")
+            create_stripe_subscription(user.id, "free_daily", db)
+            logger.info(f"Created Stripe customer and free_daily subscription for OAuth user {user.id}")
         except Exception as e:
             # Log error but don't fail user creation
             import logging
@@ -650,7 +650,7 @@ def verify_email_with_stripe_setup(email: str, code: str, db: Session) -> dict:
     # Ensure Stripe customer and free subscription exist
     try:
         create_stripe_customer(user.email, user.id, db)
-        create_stripe_subscription(user.id, "free", db)
+        create_stripe_subscription(user.id, "free_daily", db)
     except Exception as e:
         logger.warning(f"Failed to create Stripe customer/subscription for user {user.id}: {e}")
     
