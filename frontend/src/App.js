@@ -5654,12 +5654,11 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                     fontSize: '0.95rem', 
                                     fontWeight: '600', 
                                     color: 'white',
-                                    textTransform: 'capitalize',
                                     display: 'flex',
                                     alignItems: 'center',
                                     gap: '0.5rem'
                                   }}>
-                                    <span>{plan.key}</span>
+                                    <span>{plan.name}</span>
                                     {plan.price && (
                                       <span style={{ 
                                         fontSize: '0.85rem', 
