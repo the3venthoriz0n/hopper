@@ -175,6 +175,24 @@ def mark_stripe_event_processed(event_id: str, db: Session, error_message: str =
         db.commit()
 
 # ============================================================================
+# STRIPE OBJECT ACCESS HELPER
+# ============================================================================
+
+def _get_stripe_value(obj: Any, key: str, default=None):
+    """Safely extract value from Stripe object (supports both dict and attribute access)."""
+    if obj is None:
+        return default
+    # Try attribute access first (Stripe objects)
+    if hasattr(obj, key):
+        value = getattr(obj, key, default)
+        if value is not None:
+            return value
+    # Fall back to dict access
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return default
+
+# ============================================================================
 # SUBSCRIPTION HANDLERS
 # ============================================================================
 
@@ -195,51 +213,88 @@ def cancel_subscription_with_invoice(subscription_id: str, invoice_now: bool = T
     return stripe.Subscription.delete(subscription_id, invoice_now=invoice_now)
 
 def handle_checkout_completed(session: Any, db: Session):
-    user_id = session.metadata.get("user_id")
-    if not user_id: return
+    metadata = _get_stripe_value(session, 'metadata', {})
+    user_id = _get_stripe_value(metadata, 'user_id') if isinstance(metadata, dict) else None
+    if not user_id:
+        return
     user = db.query(User).filter(User.id == user_id).first()
     if user:
-        user.stripe_customer_id = session.customer
-        db.commit()
+        customer_id = _get_stripe_value(session, 'customer')
+        if customer_id:
+            user.stripe_customer_id = customer_id
+            db.commit()
 
 def handle_subscription_created(subscription: Any, db: Session):
-    user = db.query(User).filter(User.stripe_customer_id == subscription.customer).first()
-    if not user: return
-    price_id = subscription["items"]["data"][0]["price"]["id"]
+    customer_id = _get_stripe_value(subscription, 'customer')
+    if not customer_id:
+        logger.warning(f"Subscription missing customer field: {_get_stripe_value(subscription, 'id')}")
+        return
+    
+    user = db.query(User).filter(User.stripe_customer_id == customer_id).first()
+    if not user:
+        return
+    
+    items = _get_stripe_value(subscription, 'items', {})
+    items_data = _get_stripe_value(items, 'data', [])
+    if not items_data or not items_data[0]:
+        logger.warning(f"Subscription missing items data: {_get_stripe_value(subscription, 'id')}")
+        return
+    
+    price = _get_stripe_value(items_data[0], 'price', {})
+    price_id = _get_stripe_value(price, 'id')
+    if not price_id:
+        logger.warning(f"Subscription missing price_id: {_get_stripe_value(subscription, 'id')}")
+        return
+    
     plan_key = "free"
     for key, data in StripeRegistry._cache.items():
         if data["price_id"] == price_id:
             plan_key = key.replace("_price", "")
             break
+    
     sub_record = db.query(Subscription).filter(Subscription.user_id == user.id).first()
     if not sub_record:
         sub_record = Subscription(user_id=user.id)
         db.add(sub_record)
-    sub_record.stripe_subscription_id = subscription.id
+    
+    sub_record.stripe_subscription_id = _get_stripe_value(subscription, 'id')
     sub_record.plan_type = plan_key
-    sub_record.status = subscription.status
-    sub_record.current_period_start = datetime.fromtimestamp(subscription.current_period_start, tz=timezone.utc)
-    sub_record.current_period_end = datetime.fromtimestamp(subscription.current_period_end, tz=timezone.utc)
+    sub_record.status = _get_stripe_value(subscription, 'status', 'active')
+    
+    current_period_start = _get_stripe_value(subscription, 'current_period_start')
+    current_period_end = _get_stripe_value(subscription, 'current_period_end')
+    
+    if current_period_start:
+        sub_record.current_period_start = datetime.fromtimestamp(current_period_start, tz=timezone.utc)
+    if current_period_end:
+        sub_record.current_period_end = datetime.fromtimestamp(current_period_end, tz=timezone.utc)
+    
     db.commit()
 
 def handle_subscription_updated(subscription: Any, db: Session):
     handle_subscription_created(subscription, db)
 
 def handle_subscription_deleted(subscription: Any, db: Session):
-    sub_record = db.query(Subscription).filter(Subscription.stripe_subscription_id == subscription.id).first()
+    subscription_id = _get_stripe_value(subscription, 'id')
+    if not subscription_id:
+        return
+    sub_record = db.query(Subscription).filter(Subscription.stripe_subscription_id == subscription_id).first()
     if sub_record:
         sub_record.status = "canceled"
         db.commit()
 
 def handle_invoice_payment_succeeded(invoice: Any, db: Session):
-    if not invoice.subscription: return
-    sub_record = db.query(Subscription).filter(Subscription.stripe_subscription_id == invoice.subscription).first()
+    subscription_id = _get_stripe_value(invoice, 'subscription')
+    if not subscription_id:
+        return
+    sub_record = db.query(Subscription).filter(Subscription.stripe_subscription_id == subscription_id).first()
     if sub_record:
         from app.services.token_service import ensure_tokens_synced_for_subscription
-        ensure_tokens_synced_for_subscription(sub_record.user_id, invoice.subscription, db)
+        ensure_tokens_synced_for_subscription(sub_record.user_id, subscription_id, db)
 
 def handle_invoice_payment_failed(invoice: Any, db: Session):
-    logger.warning(f"Payment failed for invoice {invoice.id}")
+    invoice_id = _get_stripe_value(invoice, 'id', 'unknown')
+    logger.warning(f"Payment failed for invoice {invoice_id}")
 
 def create_free_subscription(user_id: int, db: Session, skip_token_reset: bool = False) -> Optional[Subscription]:
     user = db.query(User).filter(User.id == user_id).first()
