@@ -85,7 +85,7 @@ down:
 	@$(COMPOSE) down $(SERVICE)
 
 rebuild: down sync
-	@if [ "$(ENV)" != "prod" ]; then \
+	@if [ "$(ENV)" != "prod" ] && [ -z "$(SKIP_TESTS)" ]; then \
 		$(MAKE) test ENV=$(ENV); \
 	fi
 	@echo "🔨 Rebuilding $(ENV) from scratch..."
