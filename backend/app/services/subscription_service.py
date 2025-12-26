@@ -190,16 +190,21 @@ def create_subscription_checkout(user_id: int, plan_key: str, frontend_url: str,
     if not plan_config:
         raise ValueError(f"Invalid plan: {plan_key}")
     
-    # Check for active paid subscription
-    existing_subscription = db.query(Subscription).filter(Subscription.user_id == user_id, Subscription.status == 'active').first()
+    # Check if user is trying to upgrade to the same plan they already have
+    existing_subscription = db.query(Subscription).filter(
+        Subscription.user_id == user_id, 
+        Subscription.status == 'active'
+    ).first()
     
-    if existing_subscription and existing_subscription.plan_type != 'free':
+    if existing_subscription and existing_subscription.plan_type == plan_key:
+        # User already has this plan, return error
         portal_url = get_customer_portal_url(user_id, f"{frontend_url}/app/subscription", db)
         return {
-            "error": "User already has an active subscription",
+            "error": f"You already have an active {plan_key} subscription",
             "portal_url": portal_url
         }
     
+    # Allow upgrade/downgrade - create_stripe_subscription will handle canceling existing subscriptions
     success_url = f"{frontend_url}/app/subscription/success?session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{frontend_url}/app/subscription"
     
