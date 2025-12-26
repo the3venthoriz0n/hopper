@@ -443,7 +443,7 @@ def delete_user_account(user_id: int, db: Session) -> dict:
         # Continue with deletion even if Stripe cancellation fails
     
     # Delete Stripe customer (this automatically cancels all subscriptions)
-    if user.stripe_customer_id and not user.stripe_customer_id.startswith('free_') and not user.stripe_customer_id.startswith('unlimited_'):
+    if user.stripe_customer_id:
         try:
             delete_stripe_customer(user.stripe_customer_id)
         except Exception as e:

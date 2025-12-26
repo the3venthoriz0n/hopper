@@ -128,6 +128,10 @@ def create_checkout_session(user_id: int, plan_type: str, success_url: str, canc
     if not user:
         raise ValueError("User not found")
 
+    # Cancel existing active subscriptions before creating checkout session
+    # This prevents multiple active subscriptions when user upgrades via checkout
+    cancel_all_user_subscriptions(user_id, db, status_filter='active', update_db_status=True)
+
     line_items = _build_subscription_items(plan_type)
 
     checkout_params = {
@@ -376,7 +380,7 @@ def create_stripe_customer(email: str, user_id: int, db: Session) -> Optional[st
         if not user:
             return None
         
-        if user.stripe_customer_id and not user.stripe_customer_id.startswith('free_') and not user.stripe_customer_id.startswith('unlimited_'):
+        if user.stripe_customer_id:
             return user.stripe_customer_id
         
         customer = stripe.Customer.create(
@@ -451,7 +455,7 @@ def record_token_usage_to_stripe(user_id: int, tokens: int, db: Session) -> bool
         
         # Get customer ID from subscription
         customer_id = subscription.stripe_customer_id
-        if not customer_id or customer_id.startswith('free_') or customer_id.startswith('unlimited_'):
+        if not customer_id:
             logger.warning(f"❌ Subscription {subscription.stripe_subscription_id} has no valid customer ID, skipping usage recording")
             return False
         
@@ -618,7 +622,7 @@ def create_stripe_subscription(
     if not user:
         return None
     
-    if not user.stripe_customer_id or user.stripe_customer_id.startswith('free_') or user.stripe_customer_id.startswith('unlimited_'):
+    if not user.stripe_customer_id:
         if not user.email:
             logger.error(f"User {user_id} does not have an email address")
             return None
@@ -643,18 +647,8 @@ def create_stripe_subscription(
                 logger.info(f"User {user_id} already has a subscription for plan '{plan_type}': {existing_sub.stripe_subscription_id}")
                 return existing_sub
         
-        # Cancel all existing Stripe subscriptions (if they have real Stripe IDs)
-        for existing_sub in existing_subs:
-            # Cancel Stripe subscription if it has a real ID (not a placeholder)
-            if (existing_sub.stripe_subscription_id and 
-                not existing_sub.stripe_subscription_id.startswith('free_') and 
-                not existing_sub.stripe_subscription_id.startswith('unlimited_')):
-                logger.info(f"User {user_id} has existing subscription {existing_sub.stripe_subscription_id} for plan '{existing_sub.plan_type}', canceling before creating new '{plan_type}' subscription")
-                try:
-                    cancel_subscription_with_invoice(existing_sub.stripe_subscription_id, invoice_now=True)
-                    logger.info(f"Canceled existing subscription {existing_sub.stripe_subscription_id} for user {user_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to cancel subscription {existing_sub.stripe_subscription_id}: {e}")
+        # Cancel all existing Stripe subscriptions
+        cancel_all_user_subscriptions(user_id, db, invoice_now=True)
         
         # Delete ALL existing subscription records from database
         for existing_sub in existing_subs:
@@ -711,16 +705,40 @@ def create_stripe_subscription(
         logger.error(f"Failed to create Stripe subscription for user {user_id} with plan '{plan_type}': {e}")
         return None
 
-def cancel_all_user_subscriptions(user_id: int, db: Session, invoice_now: bool = True):
-    """Cancel all Stripe subscriptions for a user."""
-    subscriptions = db.query(Subscription).filter(Subscription.user_id == user_id).all()
+def cancel_all_user_subscriptions(user_id: int, db: Session, invoice_now: bool = True, status_filter: Optional[str] = None, update_db_status: bool = False) -> int:
+    """Cancel Stripe subscriptions for a user.
     
+    Args:
+        user_id: User ID
+        db: Database session
+        invoice_now: Whether to invoice immediately for metered usage
+        status_filter: Optional status filter (e.g., 'active' to only cancel active subscriptions)
+        update_db_status: If True, mark subscriptions as 'canceled' in DB after canceling in Stripe
+    
+    Returns:
+        Number of subscriptions canceled
+    """
+    query = db.query(Subscription).filter(Subscription.user_id == user_id)
+    if status_filter:
+        query = query.filter(Subscription.status == status_filter)
+    subscriptions = query.all()
+    
+    canceled_count = 0
     for subscription in subscriptions:
-        if subscription.stripe_subscription_id and not subscription.stripe_subscription_id.startswith('unlimited_'):
+        if subscription.stripe_subscription_id:
             try:
                 cancel_subscription_with_invoice(subscription.stripe_subscription_id, invoice_now=invoice_now)
                 logger.info(f"Canceled Stripe subscription {subscription.stripe_subscription_id} for user {user_id}")
+                canceled_count += 1
+                
+                if update_db_status:
+                    subscription.status = "canceled"
             except Exception as e:
                 logger.warning(f"Failed to cancel Stripe subscription {subscription.stripe_subscription_id} for user {user_id}: {e}")
                 # Continue with other subscriptions even if one fails
+    
+    if update_db_status and canceled_count > 0:
+        db.commit()
+    
+    return canceled_count
 
