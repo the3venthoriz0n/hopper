@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db.helpers import get_user_videos, get_user_settings, update_video
 from app.models.video import Video
+from app.services.token_service import check_tokens_available, get_token_balance, calculate_tokens_from_bytes
 from app.services.video.helpers import (
     build_upload_context, check_upload_success, record_platform_error
 )
@@ -128,6 +129,22 @@ async def upload_all_pending_videos(
         
         for video in pending_videos:
             video_id = video.id
+            
+            # Check token availability before uploading (only if tokens not already consumed)
+            if video.tokens_consumed == 0:
+                # Use stored tokens_required with fallback for backward compatibility
+                tokens_required = video.tokens_required if video.tokens_required is not None else calculate_tokens_from_bytes(video.file_size_bytes) if video.file_size_bytes else 0
+                
+                if tokens_required > 0 and not check_tokens_available(user_id, tokens_required, db):
+                    balance_info = get_token_balance(user_id, db)
+                    tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
+                    error_msg = f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining"
+                    upload_logger.error(
+                        f"Upload blocked for user {user_id}, video {video_id} ({video.filename}): {error_msg}"
+                    )
+                    update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+                    videos_failed += 1
+                    continue
             
             # Set status to uploading before starting
             update_video(video_id, user_id, db=db, status="uploading")

@@ -694,7 +694,7 @@ def credentials_to_oauth_token_data(creds: Credentials, client_id: str = None,
     }
 
 
-def add_user_video(user_id: int, filename: str, path: str, generated_title: str = None, generated_description: str = None, file_size_bytes: int = None, tokens_consumed: int = None, db: Session = None) -> Video:
+def add_user_video(user_id: int, filename: str, path: str, generated_title: str = None, generated_description: str = None, file_size_bytes: int = None, tokens_required: int = None, tokens_consumed: int = None, db: Session = None) -> Video:
     """Add a video to user's queue
     
     Args:
@@ -704,6 +704,7 @@ def add_user_video(user_id: int, filename: str, path: str, generated_title: str 
         generated_title: Generated title (optional)
         generated_description: Generated description (optional) - prevents re-randomization
         file_size_bytes: File size in bytes (optional)
+        tokens_required: Tokens required for this upload (optional, calculated when added to queue)
         tokens_consumed: Tokens consumed for this upload (optional)
         db: Database session (if None, creates its own - for backward compatibility)
     """
@@ -721,6 +722,7 @@ def add_user_video(user_id: int, filename: str, path: str, generated_title: str 
             generated_title=generated_title,
             generated_description=generated_description,
             file_size_bytes=file_size_bytes,
+            tokens_required=tokens_required,
             tokens_consumed=tokens_consumed
         )
         db.add(video)

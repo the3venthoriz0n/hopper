@@ -16,7 +16,7 @@ from app.db.helpers import (
     add_user_video
 )
 from app.models.video import Video
-from app.services.token_service import calculate_tokens_from_bytes
+from app.services.token_service import calculate_tokens_from_bytes, check_tokens_available, get_token_balance
 from app.utils.templates import replace_template_placeholders
 from app.utils.video_tokens import verify_video_access_token
 from app.services.video.helpers import build_video_response
@@ -180,11 +180,18 @@ async def handle_file_upload(
             )
             raise Exception(f"Failed to save video file: {str(e)}")
     
-    # Calculate tokens required for this upload (1 token = 10MB)
+    # Calculate tokens required for this upload (1 token = 100MB)
     tokens_required = calculate_tokens_from_bytes(file_size)
     
-    # NOTE: We don't check tokens here - tokens are deducted when video is successfully uploaded to platforms
-    # This allows users to queue videos and manage their uploads without immediately consuming tokens
+    # Check token availability before adding to queue
+    if not check_tokens_available(user_id, tokens_required, db):
+        balance_info = get_token_balance(user_id, db)
+        tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
+        error_msg = f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining"
+        upload_logger.warning(
+            f"Video upload blocked for user {user_id}: {file.filename} - {error_msg}"
+        )
+        raise ValueError(error_msg)
     
     # Generate YouTube title and description (to prevent re-randomization)
     filename_no_ext = file.filename.rsplit('.', 1)[0]
@@ -230,6 +237,7 @@ async def handle_file_upload(
     # only charged ONCE (on first successful platform upload). The video.tokens_consumed field
     # tracks this to prevent double-charging across multiple platforms.
     # NOTE: Tokens are NOT deducted here - they're deducted when video is successfully uploaded to platforms
+    # tokens_required is stored to avoid recalculation (DRY principle)
     video = add_user_video(
         user_id=user_id,
         filename=file.filename,
@@ -237,6 +245,7 @@ async def handle_file_upload(
         generated_title=youtube_title,
         generated_description=youtube_description,
         file_size_bytes=file_size,
+        tokens_required=tokens_required,  # Store calculated value to avoid recalculation
         tokens_consumed=0,  # Don't consume tokens yet - only on successful upload
         db=db
     )

@@ -21,6 +21,7 @@ class Video(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     scheduled_time = Column(DateTime(timezone=True))  # For scheduled uploads
     file_size_bytes = Column(BigInteger, nullable=True)  # File size for token calculation
+    tokens_required = Column(Integer, nullable=True)  # Tokens required for this upload (calculated once when added to queue)
     tokens_consumed = Column(Integer, nullable=True)  # Tokens consumed for this upload
     
     # Relationship

@@ -30,9 +30,10 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         return
     
     # Check token balance before uploading (only if tokens not already consumed)
-    if video.file_size_bytes and video.tokens_consumed == 0:
-        tokens_required = calculate_tokens_from_bytes(video.file_size_bytes)
-        if not check_tokens_available(user_id, tokens_required, db):
+    if video.tokens_consumed == 0:
+        # Use stored tokens_required with fallback for backward compatibility
+        tokens_required = video.tokens_required if video.tokens_required is not None else (calculate_tokens_from_bytes(video.file_size_bytes) if video.file_size_bytes else 0)
+        if tokens_required > 0 and not check_tokens_available(user_id, tokens_required, db):
             balance_info = get_token_balance(user_id, db)
             tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
             error_msg = f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining"
@@ -381,9 +382,11 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             successful_uploads_counter.inc()
             
             # Deduct tokens after successful upload (only if not already deducted)
-            if video.file_size_bytes and video.tokens_consumed == 0:
-                tokens_required = calculate_tokens_from_bytes(video.file_size_bytes)
-                deduct_tokens(
+            if video.tokens_consumed == 0:
+                # Use stored tokens_required with fallback for backward compatibility
+                tokens_required = video.tokens_required if video.tokens_required is not None else (calculate_tokens_from_bytes(video.file_size_bytes) if video.file_size_bytes else 0)
+                if tokens_required > 0:
+                    deduct_tokens(
                     user_id=user_id,
                     tokens=tokens_required,
                     transaction_type='upload',
