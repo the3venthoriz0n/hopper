@@ -25,9 +25,8 @@ from app.db.helpers import (
 )
 from app.db.redis import redis_client
 from app.services.auth_service import get_user_by_id
-from app.services.video_service import (
-    get_google_client_config, _parse_and_save_tiktok_token_response
-)
+from app.services.video.helpers import get_google_client_config
+from app.services.video.platforms.tiktok_api import _parse_and_save_tiktok_token_response
 
 # Loggers
 logger = logging.getLogger(__name__)

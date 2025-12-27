@@ -14,7 +14,7 @@ from app.db.helpers import (
     get_oauth_token, check_token_expiration, oauth_token_to_credentials,
     credentials_to_oauth_token_data, save_oauth_token
 )
-from app.services.video_service import _ensure_fresh_token, _fetch_creator_info_safe
+from app.services.video.platforms.tiktok_api import _ensure_fresh_token, _fetch_creator_info_safe
 from app.utils.encryption import decrypt
 
 tiktok_logger = logging.getLogger("tiktok")

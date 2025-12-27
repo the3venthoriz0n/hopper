@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def calculate_tokens_from_bytes(file_size_bytes: int) -> int:
     """
     Calculates token cost based on video size. 
-    Required by video_service.py.
+    Required by video service.
     Example: 1 token per 100MB, minimum 1 token.
     """
     if file_size_bytes <= 0:

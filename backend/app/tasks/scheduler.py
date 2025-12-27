@@ -10,8 +10,9 @@ from app.models.subscription import Subscription
 from app.models.token_balance import TokenBalance
 from app.models.video import Video
 from app.services.token_service import reset_tokens_for_subscription
-from app.services.video_service import (
-    DESTINATION_UPLOADERS, build_upload_context, check_upload_success, cleanup_video_file
+from app.services.video import (
+    DESTINATION_UPLOADERS,
+    build_upload_context, check_upload_success, cleanup_video_file
 )
 
 # Import Prometheus metrics from centralized location

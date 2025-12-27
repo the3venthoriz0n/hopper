@@ -118,8 +118,8 @@ async def upload_all_pending_videos(
         upload_logger.error(error_msg)
         raise ValueError(error_msg)
     
-    # Import DESTINATION_UPLOADERS from video_service (will be updated later)
-    from app.services.video_service import DESTINATION_UPLOADERS
+    # Import DESTINATION_UPLOADERS from video module
+    from app.services.video import DESTINATION_UPLOADERS
     
     # If upload immediately is enabled, upload all at once to all enabled destinations
     if upload_immediately:
@@ -262,8 +262,8 @@ async def retry_failed_upload(
     if not enabled_destinations:
         raise ValueError("No enabled destinations. Enable at least one destination first.")
     
-    # Import DESTINATION_UPLOADERS from video_service (will be updated later)
-    from app.services.video_service import DESTINATION_UPLOADERS
+    # Import DESTINATION_UPLOADERS from video module
+    from app.services.video import DESTINATION_UPLOADERS
     
     # Upload to all enabled destinations
     succeeded_destinations = []

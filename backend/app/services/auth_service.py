@@ -18,7 +18,7 @@ from app.db.redis import (
     set_password_reset_token, get_password_reset_email, delete_password_reset_token,
     delete_all_user_sessions, invalidate_all_user_caches, redis_client
 )
-from app.services.video_service import get_google_client_config
+from app.services.video.helpers import get_google_client_config
 
 logger = logging.getLogger(__name__)
 

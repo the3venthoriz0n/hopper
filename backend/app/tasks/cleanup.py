@@ -8,7 +8,7 @@ from app.core.config import settings
 from app.db.helpers import get_all_scheduled_videos
 from app.db.session import SessionLocal
 from app.models.video import Video
-from app.services.video_service import cleanup_video_file
+from app.services.video.helpers import cleanup_video_file
 
 # Import Prometheus metrics from centralized location
 from app.core.metrics import (

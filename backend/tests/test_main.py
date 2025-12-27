@@ -13,7 +13,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from app.utils.templates import replace_template_placeholders
-from app.services.video_service import cleanup_video_file
+from app.services.video.helpers import cleanup_video_file
 from app.core.security import get_client_identifier
 from app.models.subscription import Subscription
 from app.models.token_balance import TokenBalance
@@ -135,7 +135,7 @@ class TestVideoCleanup:
         mock_video.path = "/protected/file.mp4"
         mock_video.filename = "file.mp4"
         
-        with patch('app.services.video_service.Path') as mock_path:
+        with patch('app.services.video.helpers.Path') as mock_path:
             mock_path_instance = MagicMock()
             mock_path_instance.resolve.return_value = mock_path_instance
             mock_path.return_value = mock_path_instance

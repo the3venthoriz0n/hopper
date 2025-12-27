@@ -10,7 +10,7 @@ from app.models.subscription import Subscription
 from app.models.token_transaction import TokenTransaction
 from app.models.video import Video
 from app.services.token_service import get_token_balance
-from app.services.video_service import cleanup_video_file
+from app.services.video.helpers import cleanup_video_file
 
 logger = logging.getLogger(__name__)
 cleanup_logger = logging.getLogger("cleanup")

@@ -19,12 +19,14 @@ from app.db.redis import set_upload_progress
 from app.db.session import get_db
 from app.models.video import Video
 from app.services.token_service import calculate_tokens_from_bytes
-from app.services.video_service import (
-    DESTINATION_UPLOADERS, build_upload_context, build_video_response,
-    check_upload_success, cleanup_video_file, record_platform_error,
+from app.services.video import (
+    DESTINATION_UPLOADERS,
+    build_upload_context, build_video_response, check_upload_success,
+    cleanup_video_file, record_platform_error,
     handle_file_upload, delete_video_files, serve_video_file,
     upload_all_pending_videos, retry_failed_upload, cancel_scheduled_videos,
-    recompute_video_title, update_video_settings
+    recompute_video_title, update_video_settings,
+    recompute_all_videos_for_platform
 )
 from app.utils.templates import replace_template_placeholders
 from app.utils.video_tokens import verify_video_access_token
@@ -165,7 +167,6 @@ def recompute_all_videos(
     
     Platform can be: youtube, tiktok, instagram
     """
-    from app.services.video_service import recompute_all_videos_for_platform
     
     try:
         updated_count = recompute_all_videos_for_platform(user_id, platform, db)
