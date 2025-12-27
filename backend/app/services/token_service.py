@@ -117,6 +117,10 @@ def check_tokens_available(user_id: int, tokens_required: int, db: Session) -> b
     if not user:
         return False
     
+    # Handle edge case: 0 tokens required should still pass (free videos)
+    if tokens_required <= 0:
+        return True
+    
     # Unlimited plan bypasses check
     subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
     if subscription and subscription.plan_type == 'unlimited':
@@ -125,7 +129,8 @@ def check_tokens_available(user_id: int, tokens_required: int, db: Session) -> b
     balance = get_or_create_token_balance(user_id, db)
     
     # Free plans have hard limit - must have enough included tokens
-    if subscription and subscription.plan_type in ('free', 'free_daily'):
+    # Also handle case where subscription is None (treat as free plan with hard limit)
+    if not subscription or subscription.plan_type in ('free', 'free_daily'):
         return balance.tokens_remaining >= tokens_required
     
     # Paid plans (starter, creator) allow overage - always return True
