@@ -1325,6 +1325,16 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     return Math.max(1, tokens); // Minimum 1 token
   };
 
+  // Calculate total token cost for all queued videos
+  const calculateQueueTokenCost = () => {
+    return videos
+      .filter(v => (v.status === 'pending' || v.status === 'scheduled') && v.tokens_consumed === 0)
+      .reduce((total, video) => {
+        const tokens = video.tokens_required || calculateTokens(video.file_size_bytes || 0);
+        return total + tokens;
+      }, 0);
+  };
+
   // Format file size for display
   const formatFileSize = (bytes) => {
     if (!bytes) return '0 B';
@@ -1965,6 +1975,15 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           });
           // Auto-dismiss after 10 seconds
           setTimeout(() => setNotification(null), 10000);
+        } else if (err.response?.status === 400 && (errorMsg.includes('Insufficient tokens') || errorMsg.includes('Insufficient'))) {
+          // Token limit error - show popup notification
+          setNotification({
+            type: 'error',
+            title: 'Insufficient Tokens',
+            message: errorMsg,
+            videoFilename: file.name
+          });
+          setTimeout(() => setNotification(null), 15000);
         } else if (err.response?.status === 402 || err.response?.status === 403) {
           // Payment required or forbidden - token-related errors
           if (errorMsg.includes('token') || errorMsg.includes('Insufficient')) {
@@ -3831,7 +3850,14 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       {message && <div className="message">{message}</div>}
       <div className="card">
         <div className="queue-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-          <h2 style={{ margin: 0 }}>Queue ({videos.length})</h2>
+          <h2 style={{ margin: 0 }}>
+            Queue ({videos.length})
+            {calculateQueueTokenCost() > 0 && (
+              <span style={{ marginLeft: '0.5rem', fontSize: '0.9rem', color: HOPPER_COLORS.grey, fontWeight: '400' }}>
+                • {calculateQueueTokenCost()} {calculateQueueTokenCost() === 1 ? 'token' : 'tokens'}
+              </span>
+            )}
+          </h2>
           <div className="queue-buttons" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             {videos.length > 0 && videos.some(v => v.status === 'uploaded' || v.status === 'completed') && (
               <button

@@ -150,11 +150,13 @@ def check_tokens_available(user_id: int, tokens_required: int, db: Session, incl
                 )
                 total_tokens_required += video_tokens
     
-    # When queueing (include_queued_videos=True), all plans must have enough tokens
-    # for the total including all queued videos. This prevents users from queuing more
-    # than they can afford, regardless of plan type.
+    # When queueing (include_queued_videos=True), check based on plan type
     if include_queued_videos:
-        return balance.tokens_remaining >= total_tokens_required
+        # Free plans have hard limit - must have enough tokens for total including queued
+        if not subscription or subscription.plan_type in ('free', 'free_daily'):
+            return balance.tokens_remaining >= total_tokens_required
+        # Paid plans allow overage - can queue unlimited videos (overage charged at upload)
+        return True
     
     # Free plans have hard limit - must have enough included tokens
     # Also handle case where subscription is None (treat as free plan with hard limit)
