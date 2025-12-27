@@ -186,9 +186,20 @@ async def handle_file_upload(
     # Check token availability before adding to queue
     # For free plans, include queued videos to prevent queuing more than user can afford
     if not check_tokens_available(user_id, tokens_required, db, include_queued_videos=True):
+        # Calculate total for accurate error message
+        from app.db.helpers import get_user_videos
+        queued_videos = get_user_videos(user_id, db=db)
+        total_tokens_required = tokens_required
+        for video in queued_videos:
+            if video.status in ('pending', 'scheduled') and video.tokens_consumed == 0:
+                video_tokens = video.tokens_required if video.tokens_required is not None else (
+                    calculate_tokens_from_bytes(video.file_size_bytes) if video.file_size_bytes else 0
+                )
+                total_tokens_required += video_tokens
+        
         balance_info = get_token_balance(user_id, db)
         tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
-        error_msg = f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining"
+        error_msg = f"Insufficient tokens: Need {total_tokens_required} tokens total (including {total_tokens_required - tokens_required} from queued videos) but only have {tokens_remaining} remaining"
         upload_logger.warning(
             f"Video upload blocked for user {user_id}: {file.filename} - {error_msg}"
         )

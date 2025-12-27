@@ -1318,20 +1318,12 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   }, [API, user, loadSubscription]);
 
   // Calculate tokens required for a file (1 token = 10MB)
-  const calculateTokens = (fileSizeBytes) => {
-    if (!fileSizeBytes) return 0;
-    const sizeMB = fileSizeBytes / (1024 * 1024);
-    const tokens = Math.ceil(sizeMB / 10);
-    return Math.max(1, tokens); // Minimum 1 token
-  };
-
-  // Calculate total token cost for all queued videos
+  // Calculate total token cost for all queued videos (uses backend-calculated tokens_required)
   const calculateQueueTokenCost = () => {
     return videos
       .filter(v => (v.status === 'pending' || v.status === 'scheduled') && v.tokens_consumed === 0)
       .reduce((total, video) => {
-        const tokens = video.tokens_required || calculateTokens(video.file_size_bytes || 0);
-        return total + tokens;
+        return total + (video.tokens_required || 0);
       }, 0);
   };
 
@@ -1860,8 +1852,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       return;
     }
     
-    // Calculate tokens required for this file (for display purposes)
-    const tokensRequired = calculateTokens(file.size);
+    // Tokens will be calculated by backend and returned in response
     
     const form = new FormData();
     form.append('file', file);
@@ -1910,6 +1901,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           return [...withoutTemp, res.data];
         });
         
+        // Get tokens_required from backend response
+        const tokensRequired = res.data.tokens_required || 0;
         setMessage(`✅ Added ${file.name} to queue (will cost ${tokensRequired} ${tokensRequired === 1 ? 'token' : 'tokens'} on upload)`);
       } catch (err) {
         setVideos(prev => prev.filter(v => v.id !== tempId));
@@ -2354,8 +2347,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       const totalTokensRequired = pendingVideos
         .filter(v => v.tokens_consumed === 0)
         .reduce((sum, video) => {
-          const tokensForVideo = calculateTokens(video.file_size_bytes);
-          return sum + tokensForVideo;
+          return sum + (video.tokens_required || 0);
         }, 0);
       
       // Free plan has hard limit - block if not enough tokens
@@ -3850,13 +3842,26 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       {message && <div className="message">{message}</div>}
       <div className="card">
         <div className="queue-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-          <h2 style={{ margin: 0 }}>
+          <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             Queue ({videos.length})
-            {calculateQueueTokenCost() > 0 && (
-              <span style={{ marginLeft: '0.5rem', fontSize: '0.9rem', color: HOPPER_COLORS.grey, fontWeight: '400' }}>
-                • {calculateQueueTokenCost()} {calculateQueueTokenCost() === 1 ? 'token' : 'tokens'}
-              </span>
-            )}
+            <span style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '4px',
+              padding: '0.5rem 0.75rem',
+              background: 'rgba(99, 102, 241, 0.15)',
+              border: '1px solid rgba(99, 102, 241, 0.3)',
+              borderRadius: '6px',
+              fontSize: '0.75rem',
+              color: HOPPER_COLORS.grey,
+              fontWeight: '500',
+              height: '32px',
+              minWidth: '32px',
+              boxSizing: 'border-box'
+            }}>
+              🪙 {calculateQueueTokenCost()}
+            </span>
           </h2>
           <div className="queue-buttons" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             {videos.length > 0 && videos.some(v => v.status === 'uploaded' || v.status === 'completed') && (
@@ -4173,7 +4178,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                               </div>
                               <div className="video-detail-row">
                                 <span className="video-detail-key">Tokens:</span>
-                                <span className="video-detail-value video-detail-tokens">{v.tokens_consumed || calculateTokens(v.file_size_bytes)}</span>
+                                <span className="video-detail-value video-detail-tokens">{v.tokens_consumed || v.tokens_required || 0}</span>
                               </div>
                             </>
                           )}
@@ -4325,7 +4330,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       minWidth: '32px',
                       boxSizing: 'border-box'
                     }}>
-                      🪙 {v.tokens_consumed || calculateTokens(v.file_size_bytes)}
+                      🪙 {v.tokens_consumed || v.tokens_required || 0}
                     </div>
                   )}
                   <button 

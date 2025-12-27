@@ -112,6 +112,7 @@ def build_video_response(video: Video, all_settings: Dict[str, Dict], all_tokens
         "error": video.error,
         "scheduled_time": video.scheduled_time.isoformat() if video.scheduled_time else None,
         "file_size_bytes": video.file_size_bytes,
+        "tokens_required": video.tokens_required,
         "tokens_consumed": video.tokens_consumed or 0
     }
     
