@@ -184,7 +184,8 @@ async def handle_file_upload(
     tokens_required = calculate_tokens_from_bytes(file_size)
     
     # Check token availability before adding to queue
-    if not check_tokens_available(user_id, tokens_required, db):
+    # For free plans, include queued videos to prevent queuing more than user can afford
+    if not check_tokens_available(user_id, tokens_required, db, include_queued_videos=True):
         balance_info = get_token_balance(user_id, db)
         tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
         error_msg = f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining"
