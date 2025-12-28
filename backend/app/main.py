@@ -22,7 +22,7 @@ setup_logging()
 logger = get_logger(__name__)
 
 # Import routers
-from app.api import auth, oauth, videos, subscriptions, tokens, admin, monitoring
+from app.api import auth, oauth, videos, subscriptions, tokens, admin, monitoring, email
 from app.api import settings as settings_router
 
 
@@ -57,6 +57,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Redis connection failed: {e}")
         raise
+    
+    # Validate email service configuration
+    from app.services.email_service import validate_email_config
+    
+    is_valid, error = validate_email_config()
+    if not is_valid:
+        logger.warning(f"Email service not configured: {error}")
+        logger.warning("Password reset emails will not be sent")
+    else:
+        logger.info("Email service configured successfully")
     
     # Instrument SQLAlchemy
     instrument_sqlalchemy(engine)
@@ -110,6 +120,7 @@ app.include_router(subscriptions.stripe_router)  # Separate router for /api/stri
 app.include_router(tokens.router)
 app.include_router(admin.router)
 app.include_router(monitoring.router)
+app.include_router(email.router)
 
 # Security middleware
 app.middleware("http")(security_middleware)

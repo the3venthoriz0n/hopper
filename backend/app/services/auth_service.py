@@ -720,10 +720,19 @@ def forgot_password_with_email(email: str, db: Session) -> dict:
     
     # Send email if token was generated
     if reset_token:
+        email_sent = False
         try:
-            send_password_reset_email(email, reset_token)
-        except Exception:
-            logger.warning(f"Failed to send password reset email to {email}", exc_info=True)
+            email_sent = send_password_reset_email(email, reset_token)
+            if not email_sent:
+                logger.error(f"Failed to send password reset email to {email}: email service returned False")
+        except Exception as e:
+            logger.error(f"Exception sending password reset email to {email}: {e}", exc_info=True)
+            email_sent = False
+        
+        if not email_sent:
+            logger.error(f"Password reset email failed for {email} - check RESEND_API_KEY and email service configuration")
+        
+        logger.info(f"Password reset email {'successfully sent' if email_sent else 'failed'} to {email}")
     
     return {"message": "If this email is registered, a password reset email has been sent."}
 

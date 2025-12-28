@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     
     # Email (Resend)
     RESEND_API_KEY: str = ""
+    RESEND_WEBHOOK_SECRET: str = ""
     
     # Security
     # Note: Using ENCRYPTION_KEY for Fernet (Database encryption).

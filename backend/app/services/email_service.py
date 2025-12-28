@@ -8,6 +8,22 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def validate_email_config() -> tuple[bool, str]:
+    """
+    Validate email service configuration.
+    
+    Returns:
+        tuple: (is_valid, error_message)
+    """
+    if not settings.RESEND_API_KEY:
+        return False, "RESEND_API_KEY is not set in environment variables"
+    
+    if not settings.FRONTEND_URL:
+        return False, "FRONTEND_URL is not set in environment variables"
+    
+    return True, ""
+
+
 def send_verification_email(email: str, code: str) -> bool:
     """
     Send an email verification code using Resend.
@@ -60,7 +76,8 @@ def send_password_reset_email(email: str, token: str) -> bool:
         bool: True on success, False on failure
     """
     if not settings.RESEND_API_KEY:
-        logger.warning("RESEND_API_KEY is not set; skipping password reset email")
+        error_msg = "RESEND_API_KEY is not set; skipping password reset email"
+        logger.error(error_msg)
         return False
 
     try:
