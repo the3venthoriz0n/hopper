@@ -19,13 +19,13 @@ def calculate_tokens_from_bytes(file_size_bytes: int) -> int:
     """
     Calculates token cost based on video size. 
     Required by video service.
-    Example: 1 token per 100MB, minimum 1 token.
+    Example: 1 token per 10MB, minimum 1 token.
     """
     if file_size_bytes <= 0:
         return 0
-    # Logic: 1 token per 100MB (100 * 1024 * 1024 bytes)
+    # Logic: 1 token per 10MB (10 * 1024 * 1024 bytes)
     mb_size = file_size_bytes / (1024 * 1024)
-    tokens = max(1, int(mb_size / 100))
+    tokens = max(1, int(mb_size / 10))
     return tokens
 
 

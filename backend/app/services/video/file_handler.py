@@ -180,14 +180,13 @@ async def handle_file_upload(
             )
             raise Exception(f"Failed to save video file: {str(e)}")
     
-    # Calculate tokens required for this upload (1 token = 100MB)
+    # Calculate tokens required for this upload (1 token = 10MB)
     tokens_required = calculate_tokens_from_bytes(file_size)
     
     # Check token availability before adding to queue
     # For free plans, include queued videos to prevent queuing more than user can afford
     if not check_tokens_available(user_id, tokens_required, db, include_queued_videos=True):
         # Calculate total for accurate error message
-        from app.db.helpers import get_user_videos
         queued_videos = get_user_videos(user_id, db=db)
         total_tokens_required = tokens_required
         for video in queued_videos:
