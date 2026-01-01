@@ -139,8 +139,10 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         
         # Get settings: per-video custom > destination settings
         location_id = custom_settings.get('location_id', instagram_settings.get('location_id', ''))
+        media_type = custom_settings.get('media_type', instagram_settings.get('media_type', 'REELS'))
+        share_to_feed = custom_settings.get('share_to_feed', instagram_settings.get('share_to_feed', True))
         
-        instagram_logger.info(f"Uploading {video.filename} to Instagram")
+        instagram_logger.info(f"Uploading {video.filename} to Instagram as {media_type}")
         set_upload_progress(user_id, video_id, 10)
         
         # Read video file
@@ -151,16 +153,18 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         set_upload_progress(user_id, video_id, 20)
         
         async with httpx.AsyncClient(timeout=300.0) as client:
-            # Step 1: Create resumable upload container
-            container_url = f"{INSTAGRAM_GRAPH_API_BASE}/v21.0/{business_account_id}/media"
+            container_url = f"{INSTAGRAM_GRAPH_API_BASE}/{business_account_id}/media"
             container_params = {
-                "media_type": "REELS",
+                "media_type": media_type,
                 "upload_type": "resumable",
                 "caption": caption
             }
             
             if location_id:
                 container_params["location_id"] = location_id
+            
+            if media_type == "REELS":
+                container_params["share_to_feed"] = share_to_feed
             
             container_headers = {
                 "Authorization": f"Bearer {access_token.strip()}",
@@ -229,7 +233,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             set_upload_progress(user_id, video_id, 40)
             
             # Step 2: Upload video to rupload.facebook.com
-            upload_url = f"https://rupload.facebook.com/ig-api-upload/v21.0/{container_id}"
+            upload_url = f"https://rupload.facebook.com/instagram_api_upload/{container_id}"
             upload_headers = {
                 "Authorization": f"OAuth {access_token}",
                 "offset": "0",
@@ -290,7 +294,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             await asyncio.sleep(5)
             
             # Check container status
-            status_url = f"{INSTAGRAM_GRAPH_API_BASE}/v21.0/{container_id}"
+            status_url = f"{INSTAGRAM_GRAPH_API_BASE}/{container_id}"
             status_params = {
                 "fields": "status_code"
             }
@@ -318,7 +322,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             set_upload_progress(user_id, video_id, 85)
             
             # Step 4: Publish the container
-            publish_url = f"{INSTAGRAM_GRAPH_API_BASE}/v21.0/{business_account_id}/media_publish"
+            publish_url = f"{INSTAGRAM_GRAPH_API_BASE}/{business_account_id}/media_publish"
             publish_params = {
                 "creation_id": container_id
             }

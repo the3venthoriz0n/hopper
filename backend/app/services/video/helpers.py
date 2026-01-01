@@ -211,7 +211,9 @@ def build_video_response(video: Video, all_settings: Dict[str, Dict], all_tokens
             'caption': caption[:2200] if len(caption) > 2200 else caption,
             'location_id': custom_settings.get('location_id', instagram_settings.get('location_id', '')),
             'disable_comments': instagram_settings.get('disable_comments', False),
-            'disable_likes': instagram_settings.get('disable_likes', False)
+            'disable_likes': instagram_settings.get('disable_likes', False),
+            'media_type': custom_settings.get('media_type', instagram_settings.get('media_type', 'REELS')),
+            'share_to_feed': custom_settings.get('share_to_feed', instagram_settings.get('share_to_feed', True))
         }
         video_dict['instagram_caption'] = caption[:2200] if len(caption) > 2200 else caption
     else:

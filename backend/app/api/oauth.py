@@ -1,5 +1,7 @@
 """OAuth API routes for Google, YouTube, TikTok, and Instagram authentication"""
+import json
 import logging
+from urllib.parse import quote
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
@@ -21,7 +23,6 @@ from app.services.oauth_service import (
     disconnect_platform,
     get_tiktok_music_usage_confirmed, confirm_tiktok_music_usage
 )
-from app.utils.oauth_templates import get_instagram_callback_html
 
 # Loggers
 logger = logging.getLogger(__name__)
@@ -233,55 +234,35 @@ def auth_instagram(request: Request, user_id: int = Depends(require_auth)):
 async def auth_instagram_callback(
     request: Request,
     response: Response,
+    code: str = None,
     state: str = None,
     error: str = None,
-    error_description: str = None
+    error_description: str = None,
+    db: Session = Depends(get_db)
 ):
-    """Handle Instagram OAuth callback (via Facebook Login for Business)
+    """Handle Instagram OAuth callback (Instagram Login)"""
     
-    Facebook Login for Business uses token-based flow with URL fragments.
-    Tokens are in the fragment (#access_token=...), not query parameters.
-    We serve HTML that extracts tokens from fragment and POSTs to backend.
-    """
+    instagram_logger.info("Received Instagram callback")
+    instagram_logger.debug(f"Callback query params: code={'present' if code else 'MISSING'}, state={state}, error={error}")
     
-    instagram_logger.info("Received Instagram/Facebook callback")
-    instagram_logger.debug(f"Callback query params: state={state}, error={error}, error_description={error_description}")
-    instagram_logger.debug(f"Full callback URL: {request.url}")
-    
-    # Check for errors from Facebook
     if error:
-        error_msg = f"Facebook OAuth error: {error}"
+        error_msg = f"Instagram OAuth error: {error}"
         if error_description:
             error_msg += f" - {error_description}"
         instagram_logger.error(error_msg)
         return RedirectResponse(f"{settings.FRONTEND_URL}?error=instagram_auth_failed&reason={error}")
     
-    # Serve HTML page to extract tokens from URL fragment and forward user_id
-    html_content = get_instagram_callback_html(state)
-    return HTMLResponse(content=html_content)
-
-
-@router.post("/instagram/complete")
-async def complete_instagram_auth(request: Request, response: Response, db: Session = Depends(get_db)):
-    """Complete Instagram authentication after receiving tokens from callback page"""
     try:
-        body = await request.json()
-        access_token = body.get("access_token")
-        long_lived_token = body.get("long_lived_token")
-        state = body.get("state")
-        
-        if not access_token:
-            instagram_logger.error("Missing access_token in complete auth request")
-            return {"success": False, "error": "Missing access token"}
-        
-        result = await complete_instagram_oauth_flow(access_token, long_lived_token, state, db)
-        return result
+        result = await complete_instagram_oauth_flow(code, state, db)
+        status_param = quote(json.dumps(result.get("instagram", {})))
+        redirect_url = f"{settings.FRONTEND_URL}/app?connected=instagram&status={status_param}"
+        return RedirectResponse(redirect_url)
     except ValueError as e:
         instagram_logger.error(f"Instagram OAuth error: {e}")
-        return {"success": False, "error": str(e)}
+        return RedirectResponse(f"{settings.FRONTEND_URL}?error=instagram_auth_failed&reason={str(e)}")
     except Exception as e:
-        instagram_logger.error(f"Complete auth exception: {str(e)}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        instagram_logger.error(f"Callback exception: {str(e)}", exc_info=True)
+        return RedirectResponse(f"{settings.FRONTEND_URL}/app?error=instagram_auth_failed")
 
 
 @router.get("/instagram/account")

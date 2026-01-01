@@ -41,9 +41,9 @@ class Settings(BaseSettings):
     TIKTOK_CLIENT_KEY: str = ""
     TIKTOK_CLIENT_SECRET: str = ""
     
-    # Instagram/Facebook OAuth
-    FACEBOOK_APP_ID: str = ""
-    FACEBOOK_APP_SECRET: str = ""
+    # Instagram OAuth (Direct Instagram Login - No Facebook Page required)
+    INSTAGRAM_APP_ID: str = ""
+    INSTAGRAM_APP_SECRET: str = ""
     
     # Stripe
     STRIPE_SECRET_KEY: str = ""
@@ -72,10 +72,10 @@ class Settings(BaseSettings):
     TIKTOK_RATE_LIMIT_REQUESTS: int = 6
     TIKTOK_RATE_LIMIT_WINDOW: int = 60  # seconds
     
-    # Instagram API Configuration
-    INSTAGRAM_AUTH_URL: str = "https://www.facebook.com/v21.0/dialog/oauth"
-    INSTAGRAM_TOKEN_URL: str = "https://graph.facebook.com/v21.0/oauth/access_token"
-    INSTAGRAM_GRAPH_API_BASE: str = "https://graph.facebook.com"
+    # Instagram API Configuration (Instagram Login)
+    INSTAGRAM_AUTH_URL: str = "https://api.instagram.com/oauth/authorize"
+    INSTAGRAM_TOKEN_URL: str = "https://api.instagram.com/oauth/access_token"
+    INSTAGRAM_GRAPH_API_BASE: str = "https://graph.instagram.com"
     
     # Redis locking
     TOKEN_REFRESH_LOCK_TIMEOUT: int = 10  # seconds
@@ -118,8 +118,7 @@ TIKTOK_INIT_UPLOAD_URL = f"{settings.TIKTOK_API_BASE}/post/publish/video/init/"
 TIKTOK_STATUS_URL = f"{settings.TIKTOK_API_BASE}/post/publish/video/status/fetch/"
 
 INSTAGRAM_SCOPES = [
-    "instagram_basic",
-    "instagram_content_publish",
-    "pages_read_engagement",
-    "pages_show_list"
+    "instagram_business_basic",
+    "instagram_business_content_publish",
+    "instagram_business_manage_comments"
 ]
