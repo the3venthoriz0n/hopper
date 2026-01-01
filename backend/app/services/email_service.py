@@ -1,13 +1,11 @@
 """Email service - SMTP/Transactional email logic"""
 import logging
-import hmac
-import hashlib
-import base64
 import json
 from typing import Optional, Dict, Any
 from urllib.parse import quote
 from datetime import datetime, timezone
 import resend
+from svix.webhooks import Webhook, WebhookVerificationError
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.email_event import EmailEvent
@@ -158,57 +156,31 @@ def send_password_reset_email(email: str, token: str) -> bool:
     return _send_email(email, "Reset your hopper password", html)
 
 
-def verify_resend_signature(payload: bytes, svix_id: str, svix_timestamp: str, svix_signature: str) -> bool:
-    """Verify Resend webhook signature using Svix format (HMAC-SHA256)
+def verify_resend_signature(payload: bytes, headers: dict) -> bool:
+    """Verify Resend webhook signature using Svix library
     
-    Resend uses Svix for webhook signing. The signature is computed as:
-    HMAC-SHA256(timestamp + "." + id + "." + payload, secret)
+    Args:
+        payload: Raw request body as bytes
+        headers: Request headers dict (must include svix-id, svix-timestamp, svix-signature)
     
-    The svix-signature header can contain multiple signatures separated by spaces.
-    Format: "v1,signature1 v1,signature2"
+    Returns:
+        bool: True if signature is valid, False otherwise
     """
     if not settings.RESEND_WEBHOOK_SECRET:
         logger.warning("Cannot verify webhook signature: RESEND_WEBHOOK_SECRET not set")
         return False
     
-    if not svix_id or not svix_timestamp or not svix_signature:
-        return False
-    
     try:
-        # Svix signature format: "v1,signature1 v1,signature2" (can have multiple)
-        # We need to check if any of the signatures match
-        signature_parts = svix_signature.split(" ")
-        
-        # Create the signed payload: timestamp.id.payload (all as bytes)
-        # Svix format requires: timestamp + "." + id + "." + payload (all bytes)
-        timestamp_bytes = svix_timestamp.encode('utf-8')
-        id_bytes = svix_id.encode('utf-8')
-        signed_payload = timestamp_bytes + b'.' + id_bytes + b'.' + payload
-        
-        # Compute expected signature using HMAC-SHA256, then base64 encode
-        # Svix signatures are base64 encoded, not hex
-        hmac_digest = hmac.new(
-            settings.RESEND_WEBHOOK_SECRET.encode('utf-8'),
-            signed_payload,
-            hashlib.sha256
-        ).digest()
-        expected_signature = base64.b64encode(hmac_digest).decode('utf-8')
-        
-        # Check each signature in the header
-        for sig_part in signature_parts:
-            if not sig_part.startswith("v1,"):
-                continue
-            
-            # Extract the signature value (after "v1,") - it's base64 encoded
-            provided_signature = sig_part.split(",", 1)[1] if "," in sig_part else None
-            if provided_signature and hmac.compare_digest(expected_signature, provided_signature):
-                logger.debug(f"Resend webhook signature verified successfully")
-                return True
-        
-        logger.warning(f"Resend webhook signature verification failed - no matching signature found")
+        wh = Webhook(settings.RESEND_WEBHOOK_SECRET)
+        # Svix verify() expects payload as bytes and headers as dict
+        wh.verify(payload, headers)
+        logger.debug("Resend webhook signature verified successfully")
+        return True
+    except WebhookVerificationError as e:
+        logger.error(f"Resend webhook signature verification failed: {e}")
         return False
     except Exception as e:
-        logger.error(f"Error verifying Resend signature: {e}", exc_info=True)
+        logger.error(f"Unexpected error during webhook verification: {e}", exc_info=True)
         return False
 
 
@@ -242,14 +214,24 @@ def mark_email_event_processed(resend_event_id: str, db: Session, error_message:
         db.commit()
 
 
-def process_resend_webhook(payload: bytes, svix_id: str, svix_timestamp: str, svix_signature: str, db: Session) -> Dict[str, Any]:
+def process_resend_webhook(payload: bytes, headers: dict, db: Session) -> Dict[str, Any]:
     """Process Resend webhook event with idempotency logging
     
     Resend uses Svix for webhook signing with three headers:
     - svix-id: Unique message ID
     - svix-timestamp: Timestamp
     - svix-signature: Signature(s) in format "v1,sig1 v1,sig2"
+    
+    Args:
+        payload: Raw request body as bytes
+        headers: Request headers dict
+        db: Database session
     """
+    # Extract Svix headers for validation
+    svix_id = headers.get("svix-id")
+    svix_timestamp = headers.get("svix-timestamp")
+    svix_signature = headers.get("svix-signature")
+    
     # In production, require all Svix headers if secret is configured
     if settings.RESEND_WEBHOOK_SECRET and settings.ENVIRONMENT == "production":
         if not svix_id or not svix_timestamp or not svix_signature:
@@ -258,7 +240,7 @@ def process_resend_webhook(payload: bytes, svix_id: str, svix_timestamp: str, sv
     
     # Verify webhook signature if all headers are present
     if svix_id and svix_timestamp and svix_signature:
-        if not verify_resend_signature(payload, svix_id, svix_timestamp, svix_signature):
+        if not verify_resend_signature(payload, headers):
             if settings.RESEND_WEBHOOK_SECRET:
                 logger.error("Invalid Resend webhook signature")
                 raise ValueError("Invalid signature")

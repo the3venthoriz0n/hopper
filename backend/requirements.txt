@@ -37,3 +37,4 @@ stripe==10.0.0
 python-dotenv==1.0.0
 # Email (Resend)
 resend==2.1.0
+svix>=1.0.0
