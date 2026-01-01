@@ -58,12 +58,19 @@ def _send_email(to: str, subject: str, html: str) -> bool:
             }
         )
         
-        # Check response for success - Resend returns object with 'id' field on success
-        if response and hasattr(response, 'id') and response.id:
-            logger.info(f"Email sent successfully to {to} (id: {response.id})")
+        # Check response for success - Resend returns dict with 'id' field on success
+        # Handle both dict and object responses
+        email_id = None
+        if isinstance(response, dict):
+            email_id = response.get('id')
+        elif hasattr(response, 'id'):
+            email_id = response.id
+        
+        if email_id:
+            logger.info(f"Email sent successfully to {to} (id: {email_id})")
             return True
         else:
-            logger.error(f"Email send returned invalid response: {response}")
+            logger.error(f"Email send returned invalid response: {response} (type: {type(response)})")
             return False
             
     except Exception as exc:
@@ -123,7 +130,7 @@ def send_password_reset_email(email: str, token: str) -> bool:
     </p>
     """
     
-    return _send_email(email, "Reset your Hopper password", html)
+    return _send_email(email, "Reset your hopper password", html)
 
 
 def verify_resend_signature(payload: bytes, signature: str) -> bool:
@@ -194,12 +201,13 @@ def mark_email_event_processed(resend_event_id: str, db: Session, error_message:
 
 def process_resend_webhook(payload: bytes, signature: str, db: Session) -> Dict[str, Any]:
     """Process Resend webhook event with idempotency logging"""
-    if not signature:
+    # In development, allow webhooks without signature if secret not set
+    if not signature and settings.RESEND_WEBHOOK_SECRET:
         logger.warning("Resend webhook received without signature header")
         raise ValueError("Missing resend-signature header")
     
     # Verify webhook signature (allow in dev if secret not set, but log warning)
-    if not verify_resend_signature(payload, signature):
+    if signature and not verify_resend_signature(payload, signature):
         if settings.RESEND_WEBHOOK_SECRET:
             logger.error("Invalid Resend webhook signature")
             raise ValueError("Invalid signature")

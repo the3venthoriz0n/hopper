@@ -153,7 +153,8 @@ def get_or_create_oauth_user(email: str, db: Session = None) -> Tuple[User, bool
             return existing_user, False
         
         # Create new OAuth user (no password)
-        user = User(email=email, password_hash=None)
+        # OAuth providers verify emails, so mark as verified automatically
+        user = User(email=email, password_hash=None, is_email_verified=True)
         db.add(user)
         db.commit()
         db.refresh(user)
@@ -961,6 +962,13 @@ def complete_google_oauth_login(code: str, state: str, request: Request, db: Ses
     
     # Get or create user by email (links accounts automatically)
     user, is_new = get_or_create_oauth_user(email, db=db)
+    
+    # Ensure OAuth users are marked as email verified (handles existing users created before this fix)
+    # OAuth providers verify emails, so we should trust their verification
+    if not user.is_email_verified:
+        user.is_email_verified = True
+        db.commit()
+        logger.info(f"Marked OAuth user {user.email} (ID: {user.id}) as email verified")
     
     # Create session
     session_id = secrets.token_urlsafe(32)
