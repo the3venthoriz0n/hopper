@@ -126,9 +126,10 @@ def client(db_session: Session, mock_redis) -> Generator[TestClient, None, None]
 
 @pytest.fixture(scope="function")
 def test_user(db_session: Session) -> User:
-    """Create a verified test user"""
+    """Create a verified test user using Resend test email"""
+    # Use RESEND_TEST_DELIVERED for test user (defined below in this file)
     user = create_user(
-        email="integration-test@example.com",
+        email="delivered@resend.dev",
         password="TestPassword123!",
         db=db_session
     )
@@ -141,9 +142,10 @@ def test_user(db_session: Session) -> User:
 
 @pytest.fixture(scope="function")
 def test_user_2(db_session: Session) -> User:
-    """Create a second verified test user for ownership tests"""
+    """Create a second verified test user for ownership tests using Resend test email"""
+    # Use a variant of RESEND_TEST_DELIVERED with +2 suffix for second user
     user = create_user(
-        email="integration-test2@example.com",
+        email="delivered+test2@resend.dev",
         password="TestPassword123!",
         db=db_session
     )
@@ -216,16 +218,16 @@ def csrf_token(authenticated_client: TestClient, mock_redis) -> str:
 
 @pytest.fixture(scope="function")
 def two_users(db_session: Session) -> tuple[User, User]:
-    """Create two users for ownership tests"""
+    """Create two users for ownership tests using Resend test emails"""
     user1 = create_user(
-        email="test-user-1@example.com",
+        email="delivered+user1@resend.dev",
         password="TestPassword123!",
         db=db_session
     )
     user1.is_email_verified = True
     
     user2 = create_user(
-        email="test-user-2@example.com",
+        email="delivered+user2@resend.dev",
         password="TestPassword123!",
         db=db_session
     )
@@ -243,7 +245,7 @@ def auto_mock_stripe():
     """Automatically mock Stripe for all tests to prevent creating real customers"""
     with patch('app.services.stripe_service.stripe') as mock_stripe_module:
         # Mock Customer operations
-        mock_customer = Mock(id="cus_test123", email="test@example.com")
+        mock_customer = Mock(id="cus_test123", email="delivered@resend.dev")
         mock_stripe_module.Customer.create = Mock(return_value=mock_customer)
         mock_stripe_module.Customer.retrieve = Mock(return_value=mock_customer)
         mock_stripe_module.Customer.delete = Mock(return_value=Mock(deleted=True))
@@ -358,44 +360,12 @@ def mock_email_service():
         yield mock_resend
 
 
-# Resend test email addresses for integration testing
+# Resend test email addresses - use these in ALL tests to avoid fake addresses
 # See: https://resend.com/docs/dashboard/emails/send-test-emails
+# 
+# RESEND_TEST_DELIVERED: Email will be successfully delivered (use for normal flows)
+# RESEND_TEST_BOUNCED: Email will hard bounce with SMTP 550 error (use for bounce testing)
+# RESEND_TEST_COMPLAINED: Email will be marked as spam (use for complaint testing)
 RESEND_TEST_DELIVERED = "delivered@resend.dev"
 RESEND_TEST_BOUNCED = "bounced@resend.dev"
 RESEND_TEST_COMPLAINED = "complained@resend.dev"
-
-
-def get_test_email(base: str, label: str) -> str:
-    """Create labeled test email: base+label@resend.dev
-    
-    Args:
-        base: Base email name (e.g., 'delivered', 'bounced', 'complained')
-        label: Label to add after + symbol for tracking
-        
-    Returns:
-        Labeled test email address
-        
-    Example:
-        get_test_email('delivered', 'test1') -> 'delivered+test1@resend.dev'
-    """
-    if base.endswith("@resend.dev"):
-        base = base.replace("@resend.dev", "")
-    return f"{base}+{label}@resend.dev"
-
-
-def should_use_real_email_tests() -> bool:
-    """Check if tests should use real Resend test emails
-    
-    Returns True if:
-    - RESEND_API_KEY is set
-    - USE_REAL_EMAIL_TESTS environment variable is set to 'true' or '1'
-    
-    Otherwise returns False (use mocked email service)
-    """
-    import os
-    from app.core.config import settings
-    
-    use_real = os.getenv('USE_REAL_EMAIL_TESTS', '').lower() in ('true', '1', 'yes')
-    has_api_key = bool(settings.RESEND_API_KEY)
-    
-    return use_real and has_api_key

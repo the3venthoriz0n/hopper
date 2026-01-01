@@ -2,6 +2,7 @@
 import pytest
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.exc import IntegrityError
+from tests.conftest import RESEND_TEST_DELIVERED
 
 from app.models.user import User
 from app.models.subscription import Subscription
@@ -268,7 +269,7 @@ class TestConstraints:
         """Test unique email constraint (duplicate email -> IntegrityError)"""
         # Create first user directly in DB to test constraint
         user1 = User(
-            email="duplicate@example.com",
+            email=RESEND_TEST_DELIVERED,
             password_hash="hashed_password"
         )
         db_session.add(user1)
@@ -277,7 +278,7 @@ class TestConstraints:
         # Try to create second user with same email directly in DB
         with pytest.raises(IntegrityError):
             user2 = User(
-                email="duplicate@example.com",
+                email=RESEND_TEST_DELIVERED,
                 password_hash="hashed_password2"
             )
             db_session.add(user2)

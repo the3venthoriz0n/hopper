@@ -9,6 +9,7 @@ from app.models.subscription import Subscription
 from app.models.token_balance import TokenBalance
 from app.models.video import Video
 from app.models.setting import Setting
+from tests.conftest import RESEND_TEST_DELIVERED
 
 
 @pytest.mark.critical
@@ -439,7 +440,7 @@ class TestHappyPathIntegration:
         # 1. Register user
         register_response = client.post(
             "/api/auth/register",
-            json={"email": "newuser@example.com", "password": "TestPassword123!"}
+            json={"email": RESEND_TEST_DELIVERED, "password": "TestPassword123!"}
         )
         assert register_response.status_code == status.HTTP_200_OK
         data = register_response.json()
@@ -447,19 +448,19 @@ class TestHappyPathIntegration:
         
         # 2. Verify email - get verification code from Redis mock
         from app.db.redis import get_email_verification_code
-        verification_code = get_email_verification_code("newuser@example.com")
+        verification_code = get_email_verification_code(RESEND_TEST_DELIVERED)
         
         if verification_code:
             # Verify email using the code
             from app.services.auth_service import complete_email_verification
-            user = complete_email_verification("newuser@example.com", db_session)
+            user = complete_email_verification(RESEND_TEST_DELIVERED, db_session)
             assert user is not None
             assert user.is_email_verified is True
         
         # 3. Login
         login_response = client.post(
             "/api/auth/login",
-            json={"email": "newuser@example.com", "password": "TestPassword123!"}
+            json={"email": RESEND_TEST_DELIVERED, "password": "TestPassword123!"}
         )
         assert login_response.status_code == status.HTTP_200_OK
         assert "session_id" in login_response.cookies
