@@ -2,6 +2,7 @@
 import logging
 import hmac
 import hashlib
+import base64
 import json
 from typing import Optional, Dict, Any
 from urllib.parse import quote
@@ -12,6 +13,30 @@ from app.core.config import settings
 from app.models.email_event import EmailEvent
 
 logger = logging.getLogger(__name__)
+
+# Resend test email addresses for safe testing
+# See: https://resend.com/docs/dashboard/emails/send-test-emails
+RESEND_TEST_DELIVERED = "delivered@resend.dev"
+RESEND_TEST_BOUNCED = "bounced@resend.dev"
+RESEND_TEST_COMPLAINED = "complained@resend.dev"
+
+
+def get_test_email(base: str, label: str) -> str:
+    """Create labeled test email: base+label@resend.dev
+    
+    Args:
+        base: Base email name (e.g., 'delivered', 'bounced', 'complained')
+        label: Label to add after + symbol for tracking
+        
+    Returns:
+        Labeled test email address
+        
+    Example:
+        get_test_email('delivered', 'test1') -> 'delivered+test1@resend.dev'
+    """
+    if base.endswith("@resend.dev"):
+        base = base.replace("@resend.dev", "")
+    return f"{base}+{label}@resend.dev"
 
 
 def validate_email_config() -> tuple[bool, str]:
@@ -133,39 +158,57 @@ def send_password_reset_email(email: str, token: str) -> bool:
     return _send_email(email, "Reset your hopper password", html)
 
 
-def verify_resend_signature(payload: bytes, signature: str) -> bool:
-    """Verify Resend webhook signature using HMAC-SHA256"""
+def verify_resend_signature(payload: bytes, svix_id: str, svix_timestamp: str, svix_signature: str) -> bool:
+    """Verify Resend webhook signature using Svix format (HMAC-SHA256)
+    
+    Resend uses Svix for webhook signing. The signature is computed as:
+    HMAC-SHA256(timestamp + "." + id + "." + payload, secret)
+    
+    The svix-signature header can contain multiple signatures separated by spaces.
+    Format: "v1,signature1 v1,signature2"
+    """
     if not settings.RESEND_WEBHOOK_SECRET:
         logger.warning("Cannot verify webhook signature: RESEND_WEBHOOK_SECRET not set")
         return False
     
+    if not svix_id or not svix_timestamp or not svix_signature:
+        return False
+    
     try:
-        # Resend signature format: timestamp,hash
-        # Parse: t=timestamp,v1=hash
-        parts = signature.split(",")
-        timestamp = None
-        hash_value = None
+        # Svix signature format: "v1,signature1 v1,signature2" (can have multiple)
+        # We need to check if any of the signatures match
+        signature_parts = svix_signature.split(" ")
         
-        for part in parts:
-            if part.startswith("t="):
-                timestamp = part.split("=")[1]
-            elif part.startswith("v1="):
-                hash_value = part.split("=")[1]
+        # Create the signed payload: timestamp.id.payload (all as bytes)
+        # Svix format requires: timestamp + "." + id + "." + payload (all bytes)
+        timestamp_bytes = svix_timestamp.encode('utf-8')
+        id_bytes = svix_id.encode('utf-8')
+        signed_payload = timestamp_bytes + b'.' + id_bytes + b'.' + payload
         
-        if not timestamp or not hash_value:
-            return False
-        
-        # Create expected signature: HMAC-SHA256(timestamp.payload, webhook_secret)
-        signed_payload = f"{timestamp}.{payload.decode('utf-8')}"
-        expected_signature = hmac.new(
+        # Compute expected signature using HMAC-SHA256, then base64 encode
+        # Svix signatures are base64 encoded, not hex
+        hmac_digest = hmac.new(
             settings.RESEND_WEBHOOK_SECRET.encode('utf-8'),
-            signed_payload.encode('utf-8'),
+            signed_payload,
             hashlib.sha256
-        ).hexdigest()
+        ).digest()
+        expected_signature = base64.b64encode(hmac_digest).decode('utf-8')
         
-        return hmac.compare_digest(expected_signature, hash_value)
+        # Check each signature in the header
+        for sig_part in signature_parts:
+            if not sig_part.startswith("v1,"):
+                continue
+            
+            # Extract the signature value (after "v1,") - it's base64 encoded
+            provided_signature = sig_part.split(",", 1)[1] if "," in sig_part else None
+            if provided_signature and hmac.compare_digest(expected_signature, provided_signature):
+                logger.debug(f"Resend webhook signature verified successfully")
+                return True
+        
+        logger.warning(f"Resend webhook signature verification failed - no matching signature found")
+        return False
     except Exception as e:
-        logger.error(f"Error verifying Resend signature: {e}")
+        logger.error(f"Error verifying Resend signature: {e}", exc_info=True)
         return False
 
 
@@ -199,20 +242,34 @@ def mark_email_event_processed(resend_event_id: str, db: Session, error_message:
         db.commit()
 
 
-def process_resend_webhook(payload: bytes, signature: str, db: Session) -> Dict[str, Any]:
-    """Process Resend webhook event with idempotency logging"""
-    # In development, allow webhooks without signature if secret not set
-    if not signature and settings.RESEND_WEBHOOK_SECRET:
-        logger.warning("Resend webhook received without signature header")
-        raise ValueError("Missing resend-signature header")
+def process_resend_webhook(payload: bytes, svix_id: str, svix_timestamp: str, svix_signature: str, db: Session) -> Dict[str, Any]:
+    """Process Resend webhook event with idempotency logging
     
-    # Verify webhook signature (allow in dev if secret not set, but log warning)
-    if signature and not verify_resend_signature(payload, signature):
-        if settings.RESEND_WEBHOOK_SECRET:
-            logger.error("Invalid Resend webhook signature")
-            raise ValueError("Invalid signature")
-        else:
-            logger.warning("Webhook signature not verified: RESEND_WEBHOOK_SECRET not set")
+    Resend uses Svix for webhook signing with three headers:
+    - svix-id: Unique message ID
+    - svix-timestamp: Timestamp
+    - svix-signature: Signature(s) in format "v1,sig1 v1,sig2"
+    """
+    # In production, require all Svix headers if secret is configured
+    if settings.RESEND_WEBHOOK_SECRET and settings.ENVIRONMENT == "production":
+        if not svix_id or not svix_timestamp or not svix_signature:
+            logger.warning("Resend webhook missing required Svix headers in production")
+            raise ValueError("Missing required Svix headers")
+    
+    # Verify webhook signature if all headers are present
+    if svix_id and svix_timestamp and svix_signature:
+        if not verify_resend_signature(payload, svix_id, svix_timestamp, svix_signature):
+            if settings.RESEND_WEBHOOK_SECRET:
+                logger.error("Invalid Resend webhook signature")
+                raise ValueError("Invalid signature")
+            else:
+                logger.warning("Webhook signature not verified: RESEND_WEBHOOK_SECRET not set")
+    else:
+        # Missing headers - log warning but allow in development
+        if settings.ENVIRONMENT != "production":
+            logger.warning("Webhook received without Svix headers - allowing in development mode")
+        elif settings.RESEND_WEBHOOK_SECRET:
+            logger.warning("Webhook received without Svix headers in production - this is unusual")
     
     try:
         event = json.loads(payload)

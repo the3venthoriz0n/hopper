@@ -357,3 +357,45 @@ def mock_email_service():
         mock_resend.Emails.send = Mock(return_value=Mock(id="email_test123"))
         yield mock_resend
 
+
+# Resend test email addresses for integration testing
+# See: https://resend.com/docs/dashboard/emails/send-test-emails
+RESEND_TEST_DELIVERED = "delivered@resend.dev"
+RESEND_TEST_BOUNCED = "bounced@resend.dev"
+RESEND_TEST_COMPLAINED = "complained@resend.dev"
+
+
+def get_test_email(base: str, label: str) -> str:
+    """Create labeled test email: base+label@resend.dev
+    
+    Args:
+        base: Base email name (e.g., 'delivered', 'bounced', 'complained')
+        label: Label to add after + symbol for tracking
+        
+    Returns:
+        Labeled test email address
+        
+    Example:
+        get_test_email('delivered', 'test1') -> 'delivered+test1@resend.dev'
+    """
+    if base.endswith("@resend.dev"):
+        base = base.replace("@resend.dev", "")
+    return f"{base}+{label}@resend.dev"
+
+
+def should_use_real_email_tests() -> bool:
+    """Check if tests should use real Resend test emails
+    
+    Returns True if:
+    - RESEND_API_KEY is set
+    - USE_REAL_EMAIL_TESTS environment variable is set to 'true' or '1'
+    
+    Otherwise returns False (use mocked email service)
+    """
+    import os
+    from app.core.config import settings
+    
+    use_real = os.getenv('USE_REAL_EMAIL_TESTS', '').lower() in ('true', '1', 'yes')
+    has_api_key = bool(settings.RESEND_API_KEY)
+    
+    return use_real and has_api_key
