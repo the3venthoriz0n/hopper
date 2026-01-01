@@ -63,7 +63,7 @@ test:
 		$(COMPOSE) run --rm backend $(TEST_CMD); \
 	fi
 
-test-security:
+test-integration:
 	@echo "🔒 Running security integration tests for $(ENV) environment..."; \
 	echo "⚠️  Note: These tests require a running backend server"; \
 	$(COMPOSE) run --rm -e RUN_INTEGRATION_TESTS=true -e ENV=$(ENV) backend python -m pytest /app/tests/test_security.py -v --tb=short;
