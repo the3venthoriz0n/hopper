@@ -427,7 +427,8 @@ async def complete_instagram_oauth_flow(code: str, state: str, db: Session) -> D
     redirect_uri = f"{settings.BACKEND_URL.rstrip('/')}/api/auth/instagram/callback"
     
     async with httpx.AsyncClient() as client:
-        token_url = f"{INSTAGRAM_GRAPH_API_BASE}/oauth/access_token"
+        # Step 1: Exchange authorization code for short-lived access token
+        token_url = "https://api.instagram.com/oauth/access_token"
         token_data = {
             "client_id": settings.INSTAGRAM_APP_ID,
             "client_secret": settings.INSTAGRAM_APP_SECRET,
@@ -436,7 +437,7 @@ async def complete_instagram_oauth_flow(code: str, state: str, db: Session) -> D
             "code": code
         }
         
-        instagram_logger.info(f"Exchanging authorization code for access token for user {app_user_id}")
+        instagram_logger.info(f"Exchanging authorization code for short-lived token for user {app_user_id}")
         
         token_response = await client.post(token_url, data=token_data)
         
@@ -446,14 +447,47 @@ async def complete_instagram_oauth_flow(code: str, state: str, db: Session) -> D
             raise ValueError(f"Failed to exchange authorization code: {error_data}")
         
         token_json = token_response.json()
-        access_token = token_json.get("access_token")
-        expires_in = token_json.get("expires_in")
+        # Response format: {"data": [{"access_token": "...", "user_id": "...", "permissions": "..."}]}
+        data = token_json.get("data", [])
+        if not data or len(data) == 0:
+            raise ValueError(f"No token data in response: {token_json}")
         
-        if not access_token:
+        token_data = data[0]
+        short_lived_token = token_data.get("access_token")
+        instagram_user_id = token_data.get("user_id")
+        permissions = token_data.get("permissions", "")
+        
+        if not short_lived_token:
             raise ValueError("No access token in response")
         
-        instagram_logger.info(f"Successfully obtained access token (expires in {expires_in}s)")
+        instagram_logger.info(f"Received short-lived token for Instagram user {instagram_user_id}")
+        instagram_logger.info(f"Granted permissions: {permissions}")
         
+        # Step 2: Exchange short-lived token for long-lived token (60 days)
+        instagram_logger.info("Exchanging short-lived token for long-lived token...")
+        
+        long_lived_url = "https://graph.instagram.com/access_token"
+        long_lived_params = {
+            "grant_type": "ig_exchange_token",
+            "client_secret": settings.INSTAGRAM_APP_SECRET,
+            "access_token": short_lived_token
+        }
+        
+        long_lived_response = await client.get(long_lived_url, params=long_lived_params)
+        
+        if long_lived_response.status_code != 200:
+            error_data = long_lived_response.json() if long_lived_response.headers.get('content-type', '').startswith('application/json') else long_lived_response.text
+            instagram_logger.error(f"Long-lived token exchange failed: {error_data}")
+            raise ValueError(f"Failed to get long-lived token: {error_data}")
+        
+        long_lived_json = long_lived_response.json()
+        access_token = long_lived_json.get("access_token")
+        expires_in = long_lived_json.get("expires_in")
+        token_type = long_lived_json.get("token_type")
+        
+        instagram_logger.info(f"Successfully obtained long-lived token (expires in {expires_in}s / {expires_in // 86400} days)")
+        
+        # Step 3: Get Instagram account info using long-lived token
         me_url = f"{INSTAGRAM_GRAPH_API_BASE}/me"
         me_params = {
             "fields": "id,username,account_type",
@@ -488,7 +522,8 @@ async def complete_instagram_oauth_flow(code: str, state: str, db: Session) -> D
             extra_data={
                 "business_account_id": business_account_id,
                 "username": username,
-                "account_type": account_type
+                "account_type": account_type,
+                "instagram_user_id": instagram_user_id
             },
             db=db
         )

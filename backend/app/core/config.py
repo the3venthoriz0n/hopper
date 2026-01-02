@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     TIKTOK_RATE_LIMIT_WINDOW: int = 60  # seconds
     
     # Instagram API Configuration (Instagram Login)
-    INSTAGRAM_AUTH_URL: str = "https://api.instagram.com/oauth/authorize"
+    INSTAGRAM_AUTH_URL: str = "https://www.instagram.com/oauth/authorize"
     INSTAGRAM_TOKEN_URL: str = "https://api.instagram.com/oauth/access_token"
     INSTAGRAM_GRAPH_API_BASE: str = "https://graph.instagram.com"
     
