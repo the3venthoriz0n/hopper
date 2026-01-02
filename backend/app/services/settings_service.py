@@ -6,11 +6,14 @@ from sqlalchemy.orm import Session
 from app.db.helpers import (
     get_oauth_token, check_token_expiration,
     get_all_oauth_tokens, get_user_settings, set_user_setting, get_user_videos,
+    get_all_user_settings,
     add_wordbank_word as db_add_wordbank_word,
     remove_wordbank_word as db_remove_wordbank_word,
     clear_wordbank as db_clear_wordbank,
     get_wordbank_words_list
 )
+from app.services.event_service import publish_destination_toggled, publish_settings_changed
+from app.services.video.helpers import build_video_response
 
 logger = logging.getLogger(__name__)
 
@@ -50,13 +53,49 @@ def get_destinations_status(user_id: int, db: Session) -> Dict:
 
 
 def toggle_destination(user_id: int, platform: str, enabled: bool, db: Session) -> Dict:
-    """Toggle destination on/off"""
+    """Toggle destination on/off and publish updated video data
+    
+    ROOT CAUSE FIX: When destination is toggled, send updated video data via websocket
+    so frontend immediately has correct upload_properties and platform_statuses.
+    This prevents race conditions and state inconsistencies.
+    """
     set_user_setting(user_id, "destinations", f"{platform}_enabled", enabled, db=db)
     
+    # Get connection status before publishing event
     token = get_oauth_token(user_id, platform, db=db)
+    connected = token is not None
+    
+    try:
+        # Get all videos with updated settings (batch load to prevent N+1)
+        videos = get_user_videos(user_id, db=db)
+        all_settings = get_all_user_settings(user_id, db=db)
+        all_tokens = get_all_oauth_tokens(user_id, db=db)
+        
+        logger.info(f"Building video responses for {len(videos)} videos (user {user_id}, platform {platform})")
+        
+        # Build video responses with updated platform_statuses and upload_properties
+        updated_videos = []
+        for video in videos:
+            try:
+                video_dict = build_video_response(video, all_settings, all_tokens, user_id)
+                updated_videos.append(video_dict)
+            except Exception as e:
+                logger.error(f"Failed to build video response for video {video.id}: {e}", exc_info=True)
+        
+        logger.info(f"Successfully built {len(updated_videos)} video responses")
+        
+        # Publish event with connection status AND updated videos
+        publish_destination_toggled(user_id, platform, enabled, connected, videos=updated_videos)
+        logger.info(f"Published destination_toggled event for user {user_id}, platform {platform}")
+        
+    except Exception as e:
+        logger.error(f"Error in toggle_destination for user {user_id}, platform {platform}: {e}", exc_info=True)
+        # Still publish event even if video data fails, just without videos
+        publish_destination_toggled(user_id, platform, enabled, connected, videos=[])
+    
     return {
         platform: {
-            "connected": token is not None,
+            "connected": connected,
             "enabled": enabled
         }
     }
@@ -83,6 +122,9 @@ def update_settings_batch(user_id: int, category: str, data_dict: Dict[str, Any]
     # Update each setting (including None values to allow clearing)
     for key, value in data_dict.items():
         set_user_setting(user_id, category, key, value, db=db)
+    
+    # Publish event
+    publish_settings_changed(user_id, category)
     
     # Return updated settings
     return get_user_settings(user_id, category, db=db)

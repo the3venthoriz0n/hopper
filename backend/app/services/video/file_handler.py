@@ -263,13 +263,18 @@ async def handle_file_upload(
     
     upload_logger.info(f"Video added to queue for user {user_id}: {file.filename} ({file_size / (1024*1024):.2f} MB, will cost {tokens_required} tokens on upload)")
     
-    # Return the same format as GET /api/videos for consistency
+    # Build video response using the same helper function as GET endpoint
     # Get settings and tokens to compute titles (batch load to prevent N+1)
     all_settings = get_all_user_settings(user_id, db=db)
     all_tokens = get_all_oauth_tokens(user_id, db=db)
+    video_dict = build_video_response(video, all_settings, all_tokens, user_id)
     
-    # Build video response using the same helper function as GET endpoint
-    return build_video_response(video, all_settings, all_tokens, user_id)
+    # Publish event with full video data (prevents race condition with frontend)
+    from app.services.event_service import publish_video_added
+    publish_video_added(user_id, video_dict)
+    
+    # Return the same format as GET /api/videos for consistency
+    return video_dict
 
 
 def delete_video_files(

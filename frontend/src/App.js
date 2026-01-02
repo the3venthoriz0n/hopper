@@ -10,6 +10,7 @@ import Help from './Help';
 import Login from './Login';
 import AdminDashboard from './AdminDashboard';
 import Pricing from './Pricing';
+import { useWebSocket } from './hooks/useWebSocket';
 
 
 // SYSTEM DESIGN: RGB values stored separately for opacity support
@@ -1075,16 +1076,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     }
   }, [user, API, location.pathname, navigate, loadSubscription]);
 
-  // Refresh token balance periodically (every 5 seconds) to keep it updated
-  useEffect(() => {
-    if (!user) return;
-    
-    const tokenRefreshInterval = setInterval(() => {
-      loadSubscription();
-    }, 5000);
-    
-    return () => clearInterval(tokenRefreshInterval);
-  }, [user, loadSubscription]);
+  // Token balance updates are handled via WebSocket events - no polling needed
 
   // Handle subscription upgrade
   const handleUpgrade = async (planKey) => {
@@ -1550,6 +1542,145 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     loadAccount();
   }, [loadDestinations]);
 
+  // WebSocket connection for real-time updates
+  const handleWebSocketMessage = useCallback((message) => {
+    const { event, payload } = message;
+    
+    switch (event) {
+      case 'connected':
+        // WebSocket connected successfully
+        break;
+        
+      case 'video_added':
+        // Add video directly to state (prevents race condition with destination toggles)
+        if (payload.video) {
+          setVideos(prev => [payload.video, ...prev]);
+        }
+        break;
+        
+      case 'video_status_changed':
+        // Update video status in state
+        setVideos(prev => prev.map(v => 
+          v.id === payload.video_id 
+            ? { ...v, status: payload.new_status }
+            : v
+        ));
+        break;
+        
+      case 'video_updated':
+        // Reload videos to get updated computed titles and settings
+        loadVideos();
+        break;
+        
+      case 'video_deleted':
+        // Remove video from state
+        setVideos(prev => prev.filter(v => v.id !== payload.video_id));
+        break;
+        
+      case 'video_title_recomputed':
+        // Update video title in state
+        setVideos(prev => prev.map(v => 
+          v.id === payload.video_id 
+            ? { ...v, youtube_title: payload.new_title, tiktok_title: payload.new_title, instagram_title: payload.new_title }
+            : v
+        ));
+        break;
+        
+      case 'videos_bulk_recomputed':
+        // Reload all videos to get updated titles
+        loadVideos();
+        break;
+        
+      case 'destination_toggled':
+        // ROOT CAUSE FIX: Backend now sends updated videos with correct upload_properties and platform_statuses
+        // This eliminates race conditions and ensures UI immediately reflects the toggled state
+        console.log('🔔 Received destination_toggled event:', payload);
+        console.log('  Platform:', payload.platform);
+        console.log('  Enabled:', payload.enabled);
+        console.log('  Videos count:', payload.videos ? payload.videos.length : 0);
+        
+        const platform = payload.platform;
+        const enabled = payload.enabled;
+        const connected = payload.connected !== undefined ? payload.connected : true;
+        
+        // Update platform enabled/connected state for UI toggles
+        if (platform === 'youtube') {
+          setYoutube(prev => ({ ...prev, enabled, connected }));
+        } else if (platform === 'tiktok') {
+          setTiktok(prev => ({ ...prev, enabled, connected }));
+        } else if (platform === 'instagram') {
+          setInstagram(prev => ({ ...prev, enabled, connected }));
+        }
+        
+        // Update videos with fresh data from backend (includes recomputed upload_properties and platform_statuses)
+        if (payload.videos && Array.isArray(payload.videos)) {
+          console.log('  Updating videos with', payload.videos.length, 'items');
+          setVideos(payload.videos);
+        } else {
+          console.warn('  No videos in payload or not an array, falling back to HTTP reload');
+          // Fallback: reload videos via HTTP if WebSocket data missing
+          loadVideos();
+        }
+        break;
+        
+      case 'upload_progress':
+        // Update upload progress (if we track it in state)
+        // For now, just reload videos to get updated status
+        loadVideos();
+        break;
+        
+      case 'settings_changed':
+        // Reload settings and videos (settings affect computed titles)
+        loadGlobalSettings();
+        if (payload.category === 'youtube') {
+          loadYoutubeSettings();
+        } else if (payload.category === 'tiktok') {
+          loadTiktokSettings();
+        } else if (payload.category === 'instagram') {
+          loadInstagramSettings();
+        }
+        // Reload videos to get updated computed titles
+        loadVideos();
+        break;
+        
+      case 'token_balance_changed':
+        // Update token balance immediately from WebSocket event
+        if (payload.new_balance !== undefined) {
+          setTokenBalance(prev => {
+            const newBalance = {
+              ...prev,
+              tokens_remaining: payload.new_balance
+            };
+            // Update tokens_used_this_period if we can calculate it
+            if (prev && payload.change_amount) {
+              // If tokens were deducted (negative change), increase used count
+              if (payload.change_amount < 0) {
+                newBalance.tokens_used_this_period = (prev.tokens_used_this_period || 0) + Math.abs(payload.change_amount);
+              }
+            }
+            return newBalance;
+          });
+        }
+        // No need to reload full subscription - token balance is updated above
+        break;
+        
+      default:
+        // Unknown event, ignore
+        break;
+    }
+  }, [loadVideos, loadGlobalSettings, loadYoutubeSettings, loadTiktokSettings, loadInstagramSettings, loadSubscription]);
+  
+  // Connect WebSocket when user is authenticated
+  const wsUrl = user ? '/ws' : null;
+  useWebSocket(wsUrl, handleWebSocketMessage, {
+    reconnect: true,
+    reconnectInterval: 3000,
+    maxReconnectAttempts: 10,
+    onError: (error) => {
+      console.error('WebSocket error:', error);
+    }
+  });
+
   // Data loading useEffect - must be declared before conditional returns (Rules of Hooks)
   useEffect(() => {
     // Only load data if user is authenticated
@@ -1579,12 +1710,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       window.history.replaceState({}, '', '/');
     }
     
-    // Poll for video updates every 5 seconds
-    const pollInterval = setInterval(() => {
-      loadVideos();
-    }, 5000);
-    
-    return () => clearInterval(pollInterval);
+    // WebSocket handles all real-time updates - no polling needed
   }, [user, loadDestinations, loadGlobalSettings, loadYoutubeSettings, loadTiktokSettings, loadInstagramSettings, loadVideos, loadYoutubeAccount, loadTiktokAccount, loadInstagramAccount, applyOAuthStatus, loadUploadLimits]);
 
   // Reusable style for flex text containers that extend to the right
@@ -2372,22 +2498,9 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     const isScheduling = !globalSettings.upload_immediately;
     setMessage(isScheduling ? '⏳ Scheduling videos...' : '⏳ Uploading...');
     
-    // Only poll for progress if uploading immediately
-    let pollInterval;
-    if (!isScheduling) {
-      pollInterval = setInterval(async () => {
-        try {
-          const res = await axios.get(`${API}/videos`);
-          setVideos(res.data);
-        } catch (err) {
-          console.error('Error polling videos:', err);
-        }
-      }, 1000);
-    }
-    
+    // WebSocket handles all upload status updates in real-time - no polling needed
     try {
       const res = await axios.post(`${API}/upload`);
-      if (pollInterval) clearInterval(pollInterval);
       
       // Final refresh to get latest video statuses
       const videosRes = await axios.get(`${API}/videos`);
@@ -2437,7 +2550,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         }
       }
     } catch (err) {
-      if (pollInterval) clearInterval(pollInterval);
       const errorMsg = err.response?.data?.detail || err.response?.data?.message || err.message || 'Unknown error';
       console.error('Upload error:', err);
       
@@ -4031,13 +4143,10 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                           // Handle new format: statusData is now {status: "...", error: "..."}
                           const status = typeof statusData === 'object' ? statusData.status : statusData;
                           
-                          // Filter: Only show platforms that are enabled
-                          const isEnabled = 
-                            (platform === 'youtube' && youtube.enabled) ||
-                            (platform === 'tiktok' && tiktok.enabled) ||
-                            (platform === 'instagram' && instagram.enabled);
-                          
-                          if (!isEnabled || status === 'not_enabled') return null;
+                          // ROOT CAUSE FIX: Backend is source of truth - only check platform_statuses
+                          // Don't check separate youtube/tiktok/instagram state to avoid race conditions
+                          // The video's platform_statuses already contains the correct enabled/disabled state
+                          if (status === 'not_enabled') return null;
                           
                           const platformNames = {
                             youtube: 'YouTube',

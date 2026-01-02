@@ -11,6 +11,7 @@ from app.models.user import User
 from app.models.video import Video
 from app.models.subscription import Subscription
 from app.services.stripe_service import StripeRegistry
+from app.services.event_service import publish_token_balance_changed
 
 logger = logging.getLogger(__name__)
 
@@ -221,6 +222,7 @@ def deduct_tokens(
             db.add(transaction)
             db.commit()
             logger.info(f"Token deduction logged for unlimited user {user_id}: {tokens} tokens (unlimited)")
+            # Don't publish event for unlimited users (balance is -1, not meaningful)
             return True
         
         balance = get_or_create_token_balance(user_id, db)
@@ -306,6 +308,15 @@ def deduct_tokens(
             f"({included_tokens_used} from included, {overage_tokens_used} overage) "
             f"(balance: {balance_before} -> {balance_after})"
         )
+        
+        # Publish token balance change event
+        publish_token_balance_changed(
+            user_id=user_id,
+            new_balance=balance_after,
+            change_amount=-tokens,
+            reason=f"{transaction_type} (video_id: {video_id})" if video_id else transaction_type
+        )
+        
         return True
         
     except Exception as e:
@@ -368,6 +379,7 @@ def add_tokens(
             db.add(transaction)
             db.commit()
             logger.info(f"Token addition logged for unlimited user {user_id}: {tokens} tokens (unlimited)")
+            # Don't publish event for unlimited users (balance is -1, not meaningful)
             return True
         
         balance = get_or_create_token_balance(user_id, db)
@@ -398,6 +410,15 @@ def add_tokens(
         # Granted tokens are tracked separately in the database and don't affect billing.
         
         logger.info(f"Tokens added for user {user_id}: {tokens} tokens (balance: {balance_before} -> {balance_after})")
+        
+        # Publish token balance change event
+        publish_token_balance_changed(
+            user_id=user_id,
+            new_balance=balance_after,
+            change_amount=tokens,
+            reason=transaction_type
+        )
+        
         return True
         
     except Exception as e:

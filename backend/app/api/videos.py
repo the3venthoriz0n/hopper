@@ -31,6 +31,10 @@ from app.services.video import (
 from app.utils.templates import replace_template_placeholders
 from app.utils.video_tokens import verify_video_access_token
 from app.schemas.video import VideoUpdateRequest, VideoReorderRequest
+from app.services.event_service import (
+    publish_video_added, publish_video_deleted, publish_video_updated,
+    publish_video_title_recomputed, publish_videos_bulk_recomputed
+)
 
 # Loggers
 upload_logger = logging.getLogger("upload")
@@ -100,6 +104,10 @@ def delete_video_by_id(video_id: int, user_id: int = Depends(require_csrf_new), 
     result = delete_video_files(user_id, video_id=video_id, db=db)
     if result["deleted"] == 0:
         raise HTTPException(404, "Video not found")
+    
+    # Publish event
+    publish_video_deleted(user_id, video_id)
+    
     return {"ok": True}
 
 
@@ -152,7 +160,12 @@ def get_video_file(
 def recompute_video_title_route(video_id: int, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Recompute video title from current template"""
     try:
-        return recompute_video_title(video_id, user_id, db)
+        result = recompute_video_title(video_id, user_id, db)
+        
+        # Publish event
+        publish_video_title_recomputed(user_id, video_id, result.get("title", ""))
+        
+        return result
     except ValueError as e:
         raise HTTPException(404, str(e))
 
@@ -170,6 +183,10 @@ def recompute_all_videos(
     
     try:
         updated_count = recompute_all_videos_for_platform(user_id, platform, db)
+        
+        # Publish event
+        publish_videos_bulk_recomputed(user_id, platform, updated_count)
+        
         return {"ok": True, "updated_count": updated_count}
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -186,10 +203,15 @@ def update_video_settings_route(
     try:
         # Convert Pydantic model to dict, excluding unset fields
         update_data = request.model_dump(exclude_unset=True)
-        return update_video_settings(
+        result = update_video_settings(
             video_id, user_id, db,
             **update_data
         )
+        
+        # Publish event with changes
+        publish_video_updated(user_id, video_id, update_data)
+        
+        return result
     except ValueError as e:
         error_msg = str(e)
         if "not found" in error_msg.lower():

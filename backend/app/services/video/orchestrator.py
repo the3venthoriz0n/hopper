@@ -142,12 +142,23 @@ async def upload_all_pending_videos(
                     upload_logger.error(
                         f"Upload blocked for user {user_id}, video {video_id} ({video.filename}): {error_msg}"
                     )
+                    old_status = video.status
                     update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+                    
+                    # Publish status change event
+                    from app.services.event_service import publish_video_status_changed
+                    publish_video_status_changed(user_id, video_id, old_status, "failed")
+                    
                     videos_failed += 1
                     continue
             
             # Set status to uploading before starting
+            old_status = video.status
             update_video(video_id, user_id, db=db, status="uploading")
+            
+            # Publish status change event
+            from app.services.event_service import publish_video_status_changed
+            publish_video_status_changed(user_id, video_id, old_status, "uploading")
             
             # Initialize platform_errors in custom_settings
             from app.models.video import Video as VideoModel
@@ -192,24 +203,40 @@ async def upload_all_pending_videos(
                 actual_error = updated_video.error
                 
                 if len(succeeded) == len(enabled_destinations):
+                    old_status = updated_video.status
                     update_video(video_id, user_id, db=db, status="uploaded")
+                    
+                    # Publish status change event
+                    from app.services.event_service import publish_video_status_changed
+                    publish_video_status_changed(user_id, video_id, old_status, "uploaded")
+                    
                     videos_succeeded += 1
                 elif len(succeeded) > 0:
                     # Partial success - preserve actual error if it's platform-specific, otherwise list failed destinations
+                    old_status = updated_video.status
+                    from app.services.event_service import publish_video_status_changed
+                    
                     if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
                         update_video(video_id, user_id, db=db, status="failed", error=actual_error)
                     else:
                         # List which destinations succeeded and failed (like old implementation)
                         update_video(video_id, user_id, db=db, status="failed", 
                                    error=f"Partial upload: succeeded ({', '.join(succeeded)}), failed ({', '.join(failed)})")
+                    
+                    publish_video_status_changed(user_id, video_id, old_status, "failed")
                     videos_failed += 1
                 else:
                     # All failed - preserve actual error if it's platform-specific, otherwise list failed destinations
+                    old_status = updated_video.status
+                    from app.services.event_service import publish_video_status_changed
+                    
                     if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
                         update_video(video_id, user_id, db=db, status="failed", error=actual_error)
                     else:
                         update_video(video_id, user_id, db=db, status="failed", 
                                    error=f"Upload failed for all destinations: {', '.join(failed)}")
+                    
+                    publish_video_status_changed(user_id, video_id, old_status, "failed")
                     videos_failed += 1
         
         # Build appropriate message based on results

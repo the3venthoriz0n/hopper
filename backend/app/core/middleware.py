@@ -51,6 +51,12 @@ async def security_middleware(request: Request, call_next):
     
     try:
         path = request.url.path
+        
+        # Skip middleware for WebSocket connections
+        is_websocket = path.startswith("/ws")
+        if is_websocket:
+            return await call_next(request)
+        
         is_callback = (
             "/api/auth/google/login/callback" in path or
             "/api/auth/youtube/callback" in path or

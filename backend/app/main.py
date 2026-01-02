@@ -22,7 +22,7 @@ setup_logging()
 logger = get_logger(__name__)
 
 # Import routers
-from app.api import auth, oauth, videos, subscriptions, tokens, admin, monitoring, email
+from app.api import auth, oauth, videos, subscriptions, tokens, admin, monitoring, email, websocket
 from app.api import settings as settings_router
 
 
@@ -85,6 +85,12 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(cleanup_task())
     logger.info("Cleanup task started")
     
+    # Start WebSocket manager Redis subscription
+    logger.info("Starting WebSocket manager...")
+    from app.services.websocket_service import websocket_manager
+    asyncio.create_task(websocket_manager.start_listening())
+    logger.info("WebSocket manager started")
+    
     yield
     
     # Shutdown
@@ -121,6 +127,7 @@ app.include_router(tokens.router)
 app.include_router(admin.router)
 app.include_router(monitoring.router)
 app.include_router(email.router)
+app.include_router(websocket.router)
 
 # Security middleware
 app.middleware("http")(security_middleware)
