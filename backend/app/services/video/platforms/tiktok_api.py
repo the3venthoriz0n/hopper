@@ -19,7 +19,7 @@ from app.db.helpers import (
 )
 from app.db.redis import (
     increment_rate_limit, get_token_check_cooldown, set_token_check_cooldown,
-    redis_client
+    get_redis_client
 )
 from app.utils.encryption import decrypt
 from app.services.video.config import TOKEN_REFRESH_LOCK_TIMEOUT
@@ -57,12 +57,12 @@ def _distributed_lock(lock_key: str, timeout: int = TOKEN_REFRESH_LOCK_TIMEOUT):
     acquired = False
     
     try:
-        acquired = redis_client.set(lock_key, lock_value, nx=True, ex=timeout)
+        acquired = get_redis_client().set(lock_key, lock_value, nx=True, ex=timeout)
         yield acquired
     finally:
         if acquired:
             try:
-                redis_client.delete(lock_key)
+                get_redis_client().delete(lock_key)
             except Exception as e:
                 tiktok_logger.debug(f"Failed to release lock {lock_key}: {e}")
 

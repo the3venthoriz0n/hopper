@@ -16,8 +16,7 @@ from app.db.session import SessionLocal
 from app.utils.encryption import encrypt, decrypt
 from app.db.redis import (
     get_cached_settings, set_cached_settings, invalidate_settings_cache,
-    get_cached_oauth_token, set_cached_oauth_token, invalidate_oauth_token_cache,
-    redis_client
+    get_cached_oauth_token, set_cached_oauth_token, invalidate_oauth_token_cache
 )
 from app.core.config import settings
 

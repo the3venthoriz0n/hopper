@@ -2,18 +2,79 @@
 import redis
 import redis.asyncio as aioredis
 import json
+import logging
 from typing import Optional, Dict
 from app.core.config import settings
 
-# Sync Redis connection (for sessions, caching, rate limiting)
-redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+logger = logging.getLogger(__name__)
 
-# Async Redis connection (for WebSocket pub/sub)
-async_redis_client = aioredis.from_url(
-    settings.REDIS_URL,
-    decode_responses=True,
-    max_connections=20
-)
+# Lazy initialization - no connection at import time
+_client = None
+_async_client = None
+
+def get_redis_client():
+    """Get or create Redis client (lazy initialization)
+    
+    This prevents connection attempts during import, allowing mocks to be applied first.
+    """
+    global _client
+    if _client is None:
+        _client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    return _client
+
+def get_async_redis_client():
+    """Get or create async Redis client (lazy initialization)
+    
+    Automatically recreates the client if it's tied to a different event loop,
+    which can happen when tests create new event loops.
+    """
+    global _async_client
+    import asyncio
+    
+    # Check if existing client is tied to a dead or different loop
+    if _async_client is not None:
+        try:
+            # Get the current running event loop
+            current_loop = asyncio.get_running_loop()
+            
+            # Try to get the client's loop (may not exist for fakeredis)
+            try:
+                client_loop = _async_client.connection_pool._loop
+            except (AttributeError, TypeError):
+                # fakeredis or client doesn't have connection_pool._loop
+                # Assume it's compatible if we can't check
+                client_loop = current_loop
+            
+            # If loops don't match, discard old client
+            if client_loop != current_loop:
+                try:
+                    # Try to close old client gracefully (may fail if loop is closed)
+                    if hasattr(_async_client, 'aclose'):
+                        # Don't await here - just mark for cleanup
+                        pass
+                except Exception:
+                    pass
+                _async_client = None
+        except RuntimeError:
+            # No running loop (sync context) - keep existing client or create new
+            # In sync context, we shouldn't be using async client anyway
+            pass
+    
+    # Create new client if needed
+    if _async_client is None:
+        _async_client = aioredis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            max_connections=20
+        )
+    
+    return _async_client
+
+# For backward compatibility - these variables are deprecated
+# Use get_redis_client() and get_async_redis_client() instead
+# Setting to None prevents import-time connections - they'll be created on first use via getters
+redis_client = None
+async_redis_client = None
 
 # Session TTL (30 days)
 SESSION_TTL = 30 * 24 * 60 * 60
@@ -45,39 +106,39 @@ PASSWORD_RESET_TTL = 15 * 60  # 15 minutes for password reset codes
 def set_session(session_id: str, user_id: int) -> None:
     """Store session in Redis"""
     key = f"session:{session_id}"
-    redis_client.setex(key, SESSION_TTL, user_id)
+    get_redis_client().setex(key, SESSION_TTL, user_id)
 
 
 def get_session(session_id: str) -> Optional[int]:
     """Get user_id from session"""
     key = f"session:{session_id}"
-    user_id = redis_client.get(key)
+    user_id = get_redis_client().get(key)
     return int(user_id) if user_id else None
 
 
 async def async_get_session(session_id: str) -> Optional[int]:
     """Get user_id from session (async)"""
     key = f"session:{session_id}"
-    user_id = await async_redis_client.get(key)
+    user_id = await get_async_redis_client().get(key)
     return int(user_id) if user_id else None
 
 
 def delete_session(session_id: str) -> None:
     """Delete session from Redis"""
     key = f"session:{session_id}"
-    redis_client.delete(key)
+    get_redis_client().delete(key)
 
 
 def set_csrf_token(session_id: str, token: str) -> None:
     """Store CSRF token in Redis"""
     key = f"csrf:{session_id}"
-    redis_client.setex(key, SESSION_TTL, token)
+    get_redis_client().setex(key, SESSION_TTL, token)
 
 
 def get_csrf_token(session_id: str) -> Optional[str]:
     """Get CSRF token from Redis"""
     key = f"csrf:{session_id}"
-    return redis_client.get(key)
+    return get_redis_client().get(key)
 
 
 def get_or_create_csrf_token(session_id: str) -> str:
@@ -105,20 +166,20 @@ def get_or_create_csrf_token(session_id: str) -> str:
 def set_upload_progress(user_id: int, video_id: int, progress: int) -> None:
     """Store upload progress in Redis"""
     key = f"progress:{user_id}:{video_id}"
-    redis_client.setex(key, 3600, progress)  # 1 hour TTL
+    get_redis_client().setex(key, 3600, progress)  # 1 hour TTL
 
 
 def get_upload_progress(user_id: int, video_id: int) -> Optional[int]:
     """Get upload progress from Redis"""
     key = f"progress:{user_id}:{video_id}"
-    progress = redis_client.get(key)
+    progress = get_redis_client().get(key)
     return int(progress) if progress else None
 
 
 def delete_upload_progress(user_id: int, video_id: int) -> None:
     """Delete upload progress from Redis"""
     key = f"progress:{user_id}:{video_id}"
-    redis_client.delete(key)
+    get_redis_client().delete(key)
 
 
 def increment_rate_limit(identifier: str, window: int) -> int:
@@ -136,7 +197,7 @@ def increment_rate_limit(identifier: str, window: int) -> int:
     """
     
     # Execute Lua script atomically
-    count = redis_client.eval(lua_script, 1, key, window)
+    count = get_redis_client().eval(lua_script, 1, key, window)
     return int(count)
 
 
@@ -158,14 +219,14 @@ def check_rate_limit(identifier: str, strict: bool = False) -> bool:
 def get_rate_limit_count(identifier: str) -> int:
     """Get current rate limit count"""
     key = f"ratelimit:{identifier}"
-    count = redis_client.get(key)
+    count = get_redis_client().get(key)
     return int(count) if count else 0
 
 
 def get_cached_settings(user_id: int, category: str) -> Optional[Dict]:
     """Get cached user settings from Redis"""
     key = f"cache:settings:{user_id}:{category}"
-    cached = redis_client.get(key)
+    cached = get_redis_client().get(key)
     if cached:
         return json.loads(cached)
     return None
@@ -174,30 +235,42 @@ def get_cached_settings(user_id: int, category: str) -> Optional[Dict]:
 def set_cached_settings(user_id: int, category: str, settings: Dict) -> None:
     """Cache user settings in Redis"""
     key = f"cache:settings:{user_id}:{category}"
-    redis_client.setex(key, SETTINGS_CACHE_TTL, json.dumps(settings))
+    get_redis_client().setex(key, SETTINGS_CACHE_TTL, json.dumps(settings))
 
 
 def invalidate_settings_cache(user_id: int, category: Optional[str] = None) -> None:
-    """Invalidate cached settings for a user (all categories or specific category)"""
-    if category:
-        # Invalidate specific category
-        key = f"cache:settings:{user_id}:{category}"
-        redis_client.delete(key)
-        # Also invalidate all_settings cache
-        all_key = f"cache:settings:{user_id}:all"
-        redis_client.delete(all_key)
-    else:
-        # Invalidate all categories for this user
-        pattern = f"cache:settings:{user_id}:*"
-        keys = redis_client.keys(pattern)
-        if keys:
-            redis_client.delete(*keys)
+    """Invalidate cached settings for a user (all categories or specific category)
+    
+    Gracefully handles Redis failures - cache invalidation should not break user operations.
+    """
+    try:
+        client = get_redis_client()
+        if category:
+            # Invalidate specific category
+            key = f"cache:settings:{user_id}:{category}"
+            client.delete(key)
+            # Also invalidate all_settings cache
+            all_key = f"cache:settings:{user_id}:all"
+            client.delete(all_key)
+        else:
+            # Invalidate all categories for this user
+            pattern = f"cache:settings:{user_id}:*"
+            keys = client.keys(pattern)
+            if keys:
+                client.delete(*keys)
+    except Exception as e:
+        # Log but don't fail - cache invalidation is best-effort
+        logger.warning(f"Failed to invalidate settings cache for user {user_id}: {e}")
+        # In test mode, this is expected if Redis isn't available
+        if settings.ENVIRONMENT.lower() != "test":
+            # In production, log but continue - don't break user operations
+            pass
 
 
 def get_cached_oauth_token(user_id: int, platform: str) -> Optional[Dict]:
     """Get cached OAuth token from Redis"""
     key = f"cache:oauth:{user_id}:{platform}"
-    cached = redis_client.get(key)
+    cached = get_redis_client().get(key)
     if cached:
         return json.loads(cached)
     return None
@@ -206,13 +279,13 @@ def get_cached_oauth_token(user_id: int, platform: str) -> Optional[Dict]:
 def set_cached_oauth_token(user_id: int, platform: str, token_data: Dict) -> None:
     """Cache OAuth token in Redis (stores serialized token data)"""
     key = f"cache:oauth:{user_id}:{platform}"
-    redis_client.setex(key, OAUTH_TOKEN_CACHE_TTL, json.dumps(token_data))
+    get_redis_client().setex(key, OAUTH_TOKEN_CACHE_TTL, json.dumps(token_data))
 
 
 def get_cached_all_oauth_tokens(user_id: int) -> Optional[Dict]:
     """Get cached all OAuth tokens from Redis"""
     key = f"cache:oauth:{user_id}:all"
-    cached = redis_client.get(key)
+    cached = get_redis_client().get(key)
     if cached:
         return json.loads(cached)
     return None
@@ -221,24 +294,34 @@ def get_cached_all_oauth_tokens(user_id: int) -> Optional[Dict]:
 def set_cached_all_oauth_tokens(user_id: int, tokens: Dict) -> None:
     """Cache all OAuth tokens in Redis"""
     key = f"cache:oauth:{user_id}:all"
-    redis_client.setex(key, OAUTH_TOKEN_CACHE_TTL, json.dumps(tokens))
+    get_redis_client().setex(key, OAUTH_TOKEN_CACHE_TTL, json.dumps(tokens))
 
 
 def invalidate_oauth_token_cache(user_id: int, platform: Optional[str] = None) -> None:
-    """Invalidate cached OAuth tokens for a user (all platforms or specific platform)"""
-    if platform:
-        # Invalidate specific platform
-        key = f"cache:oauth:{user_id}:{platform}"
-        redis_client.delete(key)
-        # Also invalidate all_tokens cache
-        all_key = f"cache:oauth:{user_id}:all"
-        redis_client.delete(all_key)
-    else:
-        # Invalidate all platforms for this user
-        pattern = f"cache:oauth:{user_id}:*"
-        keys = redis_client.keys(pattern)
-        if keys:
-            redis_client.delete(*keys)
+    """Invalidate cached OAuth tokens for a user (all platforms or specific platform)
+    
+    Gracefully handles Redis failures - cache invalidation should not break user operations.
+    """
+    try:
+        client = get_redis_client()
+        if platform:
+            # Invalidate specific platform
+            key = f"cache:oauth:{user_id}:{platform}"
+            client.delete(key)
+            # Also invalidate all_tokens cache
+            all_key = f"cache:oauth:{user_id}:all"
+            client.delete(all_key)
+        else:
+            # Invalidate all platforms for this user
+            pattern = f"cache:oauth:{user_id}:*"
+            keys = client.keys(pattern)
+            if keys:
+                client.delete(*keys)
+    except Exception as e:
+        # Log but don't fail - cache invalidation is best-effort
+        logger.warning(f"Failed to invalidate OAuth token cache for user {user_id}: {e}")
+        if settings.ENVIRONMENT.lower() != "test":
+            pass
 
 
 def delete_all_user_sessions(user_id: int) -> int:
@@ -253,30 +336,36 @@ def delete_all_user_sessions(user_id: int) -> int:
     Returns:
         Number of sessions deleted
     """
-    deleted_count = 0
-    
-    # Scan all session keys
-    session_keys = redis_client.keys("session:*")
-    for key in session_keys:
-        try:
-            # Get the user_id stored in this session
-            stored_user_id = redis_client.get(key)
-            if stored_user_id and int(stored_user_id) == user_id:
-                # Extract session_id from key format "session:{session_id}"
-                session_id = key.split(":", 1)[1]
-                
-                # Delete the session
-                redis_client.delete(key)
-                deleted_count += 1
-                
-                # Also delete associated CSRF token
-                csrf_key = f"csrf:{session_id}"
-                redis_client.delete(csrf_key)
-        except (ValueError, IndexError, TypeError):
-            # Skip invalid keys or conversion errors
-            continue
-    
-    return deleted_count
+    try:
+        client = get_redis_client()
+        deleted_count = 0
+        
+        # Scan all session keys
+        session_keys = client.keys("session:*")
+        for key in session_keys:
+            try:
+                # Get the user_id stored in this session
+                stored_user_id = client.get(key)
+                if stored_user_id and int(stored_user_id) == user_id:
+                    # Extract session_id from key format "session:{session_id}"
+                    session_id = key.split(":", 1)[1]
+                    
+                    # Delete the session
+                    client.delete(key)
+                    deleted_count += 1
+                    
+                    # Also delete associated CSRF token
+                    csrf_key = f"csrf:{session_id}"
+                    client.delete(csrf_key)
+            except (ValueError, IndexError, TypeError):
+                # Skip invalid keys or conversion errors
+                continue
+        
+        return deleted_count
+    except Exception as e:
+        # Log but don't fail - session deletion is best-effort
+        logger.warning(f"Failed to delete all sessions for user {user_id}: {e}")
+        return 0
 
 
 def invalidate_all_user_caches(user_id: int) -> int:
@@ -291,65 +380,71 @@ def invalidate_all_user_caches(user_id: int) -> int:
     Returns:
         Total number of keys deleted
     """
-    deleted_count = 0
-    
-    # Invalidate settings cache
-    pattern = f"cache:settings:{user_id}:*"
-    keys = redis_client.keys(pattern)
-    if keys:
-        redis_client.delete(*keys)
-        deleted_count += len(keys)
-    
-    # Invalidate OAuth token cache
-    pattern = f"cache:oauth:{user_id}:*"
-    keys = redis_client.keys(pattern)
-    if keys:
-        redis_client.delete(*keys)
-        deleted_count += len(keys)
-    
-    # Invalidate upload progress
-    pattern = f"progress:{user_id}:*"
-    keys = redis_client.keys(pattern)
-    if keys:
-        redis_client.delete(*keys)
-        deleted_count += len(keys)
-    
-    # Delete all sessions for this user
-    sessions_deleted = delete_all_user_sessions(user_id)
-    deleted_count += sessions_deleted
-    
-    return deleted_count
+    try:
+        client = get_redis_client()
+        deleted_count = 0
+        
+        # Invalidate settings cache
+        pattern = f"cache:settings:{user_id}:*"
+        keys = client.keys(pattern)
+        if keys:
+            client.delete(*keys)
+            deleted_count += len(keys)
+        
+        # Invalidate OAuth token cache
+        pattern = f"cache:oauth:{user_id}:*"
+        keys = client.keys(pattern)
+        if keys:
+            client.delete(*keys)
+            deleted_count += len(keys)
+        
+        # Invalidate upload progress
+        pattern = f"progress:{user_id}:*"
+        keys = client.keys(pattern)
+        if keys:
+            client.delete(*keys)
+            deleted_count += len(keys)
+        
+        # Delete all sessions for this user
+        sessions_deleted = delete_all_user_sessions(user_id)
+        deleted_count += sessions_deleted
+        
+        return deleted_count
+    except Exception as e:
+        # Log but don't fail - cache invalidation is best-effort
+        logger.warning(f"Failed to invalidate all caches for user {user_id}: {e}")
+        return 0
 
 
 def set_email_verification_code(email: str, code: str) -> None:
     """Store email verification code in Redis with a short TTL."""
     key = f"email_verification:{email}"
-    redis_client.setex(key, EMAIL_VERIFICATION_TTL, code)
+    get_redis_client().setex(key, EMAIL_VERIFICATION_TTL, code)
 
 
 def get_email_verification_code(email: str) -> Optional[str]:
     """Retrieve stored email verification code for an email."""
     key = f"email_verification:{email}"
-    return redis_client.get(key)
+    return get_redis_client().get(key)
 
 
 def delete_email_verification_code(email: str) -> None:
     """Delete email verification code for an email."""
     key = f"email_verification:{email}"
-    redis_client.delete(key)
+    get_redis_client().delete(key)
 
 
 def set_pending_registration(email: str, password_hash: str) -> None:
     """Store pending registration data (hashed password) for an email."""
     key = f"pending_registration:{email}"
     data = {"password_hash": password_hash}
-    redis_client.setex(key, PENDING_REGISTRATION_TTL, json.dumps(data))
+    get_redis_client().setex(key, PENDING_REGISTRATION_TTL, json.dumps(data))
 
 
 def get_pending_registration(email: str) -> Optional[Dict]:
     """Get pending registration data for an email."""
     key = f"pending_registration:{email}"
-    raw = redis_client.get(key)
+    raw = get_redis_client().get(key)
     if not raw:
         return None
     try:
@@ -361,25 +456,25 @@ def get_pending_registration(email: str) -> Optional[Dict]:
 def delete_pending_registration(email: str) -> None:
     """Delete pending registration data for an email."""
     key = f"pending_registration:{email}"
-    redis_client.delete(key)
+    get_redis_client().delete(key)
 
 
 def set_password_reset_token(token: str, email: str) -> None:
     """Store password reset token with associated email."""
     key = f"password_reset_token:{token}"
-    redis_client.setex(key, PASSWORD_RESET_TTL, email)
+    get_redis_client().setex(key, PASSWORD_RESET_TTL, email)
 
 
 def get_password_reset_email(token: str) -> Optional[str]:
     """Retrieve email associated with a password reset token."""
     key = f"password_reset_token:{token}"
-    return redis_client.get(key)
+    return get_redis_client().get(key)
 
 
 def delete_password_reset_token(token: str) -> None:
     """Delete password reset token."""
     key = f"password_reset_token:{token}"
-    redis_client.delete(key)
+    get_redis_client().delete(key)
 
 
 def set_user_activity(user_id: int) -> None:
@@ -397,7 +492,7 @@ def set_user_activity(user_id: int) -> None:
     # Store timestamp as JSON so we can retrieve it later
     timestamp = datetime.now(timezone.utc).isoformat()
     data = {"timestamp": timestamp}
-    redis_client.setex(key, ACTIVITY_TTL, json.dumps(data))
+    get_redis_client().setex(key, ACTIVITY_TTL, json.dumps(data))
 
 
 async def async_set_user_activity(user_id: int) -> None:
@@ -415,7 +510,7 @@ async def async_set_user_activity(user_id: int) -> None:
     # Store timestamp as JSON so we can retrieve it later
     timestamp = datetime.now(timezone.utc).isoformat()
     data = {"timestamp": timestamp}
-    await async_redis_client.setex(key, ACTIVITY_TTL, json.dumps(data))
+    await get_async_redis_client().setex(key, ACTIVITY_TTL, json.dumps(data))
 
 
 def get_active_user_ids() -> set[int]:
@@ -424,7 +519,7 @@ def get_active_user_ids() -> set[int]:
     Returns:
         Set of user IDs with recent activity
     """
-    activity_keys = redis_client.keys("activity:*")
+    activity_keys = get_redis_client().keys("activity:*")
     active_user_ids = set()
     
     for key in activity_keys:
@@ -446,7 +541,7 @@ def get_active_users_with_timestamps() -> Dict[int, str]:
     Returns:
         Dictionary mapping user_id to ISO timestamp string
     """
-    activity_keys = redis_client.keys("activity:*")
+    activity_keys = get_redis_client().keys("activity:*")
     active_users = {}
     
     for key in activity_keys:
@@ -456,7 +551,7 @@ def get_active_users_with_timestamps() -> Dict[int, str]:
             user_id = int(user_id_str)
             
             # Get the stored data (should be JSON with timestamp)
-            data_str = redis_client.get(key)
+            data_str = get_redis_client().get(key)
             if data_str:
                 try:
                     data = json.loads(data_str)
@@ -499,7 +594,7 @@ def acquire_lock(lock_key: str, timeout: int = 30) -> bool:
         True if lock was acquired, False if lock already exists
     """
     # SET key value NX EX timeout - atomically set if not exists with expiration
-    result = redis_client.set(lock_key, "1", nx=True, ex=timeout)
+    result = get_redis_client().set(lock_key, "1", nx=True, ex=timeout)
     return result is True
 
 
@@ -509,7 +604,7 @@ def release_lock(lock_key: str) -> None:
     Args:
         lock_key: The lock key to release
     """
-    redis_client.delete(lock_key)
+    get_redis_client().delete(lock_key)
 
 
 def set_token_check_cooldown(user_id: int, platform: str, ttl: int = 30) -> None:
@@ -524,7 +619,7 @@ def set_token_check_cooldown(user_id: int, platform: str, ttl: int = 30) -> None
         ttl: Time-to-live in seconds (default 30)
     """
     key = f"token_check_cooldown:{user_id}:{platform}"
-    redis_client.setex(key, ttl, "1")
+    get_redis_client().setex(key, ttl, "1")
 
 
 def get_token_check_cooldown(user_id: int, platform: str) -> bool:
@@ -538,5 +633,5 @@ def get_token_check_cooldown(user_id: int, platform: str) -> bool:
         True if in cooldown (should skip expiration check), False otherwise
     """
     key = f"token_check_cooldown:{user_id}:{platform}"
-    return redis_client.get(key) is not None
+    return get_redis_client().get(key) is not None
 

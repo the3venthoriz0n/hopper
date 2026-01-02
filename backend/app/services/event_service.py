@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from app.db.redis import async_redis_client
+from app.db.redis import get_async_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ async def publish_event(
             logger.warning(f"Large event payload: {event_size} bytes for event {event_type}")
         
         # Publish to Redis using async client
-        result = await async_redis_client.publish(channel, event_json)
+        result = await get_async_redis_client().publish(channel, event_json)
         if result > 0:
             logger.info(f"✓ Event {event_type} published successfully to {channel}: {result} subscriber(s) received it")
         else:

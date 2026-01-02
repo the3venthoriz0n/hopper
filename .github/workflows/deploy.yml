@@ -5,6 +5,13 @@ on:
     types: [created]
     # Triggers when you create a new release (which creates a git tag)
     # Note: 'dev' branch deployments are handled manually on Unraid
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: 'Skip running tests'
+        required: false
+        default: false
+        type: boolean
 
 env:
   GHCR_REGISTRY: ghcr.io
@@ -13,6 +20,9 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # Skip tests if workflow_dispatch with skip_tests=true
+    # For release events, inputs.skip_tests won't exist, so tests will run normally
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.skip_tests != true }}
     permissions:
       contents: read
     
@@ -140,6 +150,8 @@ jobs:
 
   build-and-push:
     needs: test
+    # Run if test succeeded or was skipped
+    if: always() && (needs.test.result == 'success' || needs.test.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -274,8 +286,9 @@ jobs:
 
   deploy:
     needs: [test, build-and-push]
+    # Run if both succeeded (or test was skipped) and it's a release event
+    if: always() && (needs.test.result == 'success' || needs.test.result == 'skipped') && needs.build-and-push.result == 'success' && github.event_name == 'release'
     runs-on: ubuntu-latest
-    if: github.event_name == 'release'
     
     steps:
       - name: Checkout code

@@ -5,7 +5,7 @@ import logging
 from typing import Dict, Set
 from collections import defaultdict
 
-from app.db.redis import async_redis_client
+from app.db.redis import get_async_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +175,7 @@ class WebSocketManager:
     async def start_listening(self) -> None:
         """Initialize a single, permanent global listener using pattern subscription"""
         if not self.pubsub:
-            self.pubsub = async_redis_client.pubsub()
+            self.pubsub = get_async_redis_client().pubsub()
             # Subscribe to ALL user channels globally with pattern
             await self.pubsub.psubscribe("user:*:*")
             logger.info("✓ Subscribed to Redis pattern: user:*:*")

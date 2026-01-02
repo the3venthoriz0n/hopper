@@ -86,51 +86,71 @@ def mock_redis():
             fake_redis.setex(f"csrf:{sid}", 2592000, token)
         return token
     
-    # Patch redis_client and functions in the redis module
-    with patch.object(redis_module, 'redis_client', fake_redis):
-        with patch.object(redis_module, 'set_session', set_session):
-            with patch.object(redis_module, 'get_session', get_session):
-                with patch.object(redis_module, 'delete_session', delete_session):
-                    with patch.object(redis_module, 'set_csrf_token', set_csrf_token):
-                        with patch.object(redis_module, 'get_csrf_token', get_csrf_token):
-                            with patch.object(redis_module, 'get_or_create_csrf_token', get_or_create_csrf_token):
-                                yield fake_redis
+    # Patch both the getter function AND the module-level variable
+    with patch.object(redis_module, 'get_redis_client', return_value=fake_redis):
+        with patch.object(redis_module, 'redis_client', fake_redis):
+            with patch.object(redis_module, 'set_session', set_session):
+                with patch.object(redis_module, 'get_session', get_session):
+                    with patch.object(redis_module, 'delete_session', delete_session):
+                        with patch.object(redis_module, 'set_csrf_token', set_csrf_token):
+                            with patch.object(redis_module, 'get_csrf_token', get_csrf_token):
+                                with patch.object(redis_module, 'get_or_create_csrf_token', get_or_create_csrf_token):
+                                    yield fake_redis
 
 
 @pytest.fixture(scope="function")
 def mock_async_redis():
-    """Mock async Redis client and event publishing"""
-    from unittest.mock import AsyncMock, MagicMock
+    """Mock async Redis client using fakeredis.aioredis"""
+    try:
+        import fakeredis.aioredis
+        # Use fakeredis.aioredis for proper async Redis simulation
+        fake_async_redis = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    except (ImportError, AttributeError):
+        # Fallback to MagicMock if fakeredis.aioredis not available
+        from unittest.mock import AsyncMock, MagicMock
+        fake_async_redis = MagicMock()
+        fake_async_redis.publish = AsyncMock(return_value=1)
+        fake_async_redis.get = AsyncMock(return_value=None)
+        fake_async_redis.set = AsyncMock(return_value=True)
+        fake_async_redis.setex = AsyncMock(return_value=True)
+        fake_async_redis.delete = AsyncMock(return_value=1)
+        
+        # Create pubsub mock
+        fake_pubsub = MagicMock()
+        fake_pubsub.psubscribe = AsyncMock()
+        
+        async def mock_listen():
+            return
+            yield
+        
+        fake_pubsub.listen = mock_listen
+        fake_async_redis.pubsub = MagicMock(return_value=fake_pubsub)
     
-    fake_async_redis = MagicMock()
-    fake_async_redis.publish = AsyncMock(return_value=1)
-    fake_async_redis.get = AsyncMock(return_value=None)
-    fake_async_redis.set = AsyncMock(return_value=True)
-    fake_async_redis.setex = AsyncMock(return_value=True)
-    fake_async_redis.delete = AsyncMock(return_value=1)
-    
-    # Create pubsub mock with proper async iterator for listen()
-    fake_pubsub = MagicMock()
-    fake_pubsub.psubscribe = AsyncMock()
-    
-    # Mock listen() to return an async generator that yields nothing
-    # This prevents "coroutine was never awaited" warnings
-    async def mock_listen():
-        """Mock async generator that yields no messages (tests don't need pub/sub)"""
-        # Return immediately without yielding anything
-        return
-        yield  # Make this an async generator (unreachable but needed for syntax)
-    
-    fake_pubsub.listen = mock_listen
-    fake_async_redis.pubsub = MagicMock(return_value=fake_pubsub)
-    
-    # Patch where async_redis_client is USED, not just where it's DEFINED
-    # This is critical because services import async_redis_client at module level,
-    # creating local references that must be patched separately
-    with patch('app.db.redis.async_redis_client', fake_async_redis):
-        with patch('app.services.event_service.async_redis_client', fake_async_redis):
-            with patch('app.services.websocket_service.async_redis_client', fake_async_redis):
+    # Patch both the getter function AND the module-level variable at the source
+    # This covers ALL services that import from app.db.redis
+    with patch.object(redis_module, 'get_async_redis_client', return_value=fake_async_redis):
+        with patch.object(redis_module, 'async_redis_client', fake_async_redis):
+            try:
                 yield fake_async_redis
+            finally:
+                # CRITICAL: Close async connections before event loop closes
+                try:
+                    if hasattr(fake_async_redis, 'aclose'):
+                        import asyncio
+                        try:
+                            loop = asyncio.get_event_loop()
+                            if not loop.is_closed():
+                                if loop.is_running():
+                                    # Can't await in running loop - fakeredis doesn't need cleanup
+                                    pass
+                                else:
+                                    loop.run_until_complete(fake_async_redis.aclose())
+                        except (RuntimeError, AttributeError, ValueError):
+                            # Event loop issues - fakeredis is in-memory, doesn't need cleanup
+                            pass
+                except Exception:
+                    # Ignore any cleanup errors - fakeredis is in-memory
+                    pass
 
 
 @pytest.fixture(scope="function")

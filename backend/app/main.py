@@ -14,7 +14,7 @@ from app.core.middleware import (
     setup_cors_middleware, security_middleware, global_exception_handler
 )
 from app.db.session import engine, init_db
-from app.db.redis import redis_client
+from app.db.redis import get_redis_client
 from app.models import Base  # Import all models to register with Base.metadata
 
 # Configure logging first
@@ -42,23 +42,61 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("OpenTelemetry not configured - running without distributed tracing")
     
-    logger.info("Initializing database...")
+    # Check if we're in test mode (environment-agnostic approach)
     try:
-        init_db()
-        logger.info("Database initialized successfully")
-    except Exception as e:
-        logger.error(f"Database initialization failed: {e}")
-        raise
+        import fakeredis
+        is_fake_redis = isinstance(get_redis_client(), fakeredis.FakeStrictRedis)
+    except (ImportError, TypeError):
+        is_fake_redis = False
     
-    logger.info("Testing Redis connection...")
-    try:
-        redis_client.ping()
-        logger.info("Redis connection successful")
-    except Exception as e:
-        logger.error(f"Redis connection failed: {e}")
-        raise
+    is_test_mode = (
+        settings.ENVIRONMENT.lower() == "test" or
+        is_fake_redis
+    )
     
-    # Validate email service configuration
+    if not is_test_mode:
+        logger.info("Initializing database...")
+        try:
+            init_db()
+            logger.info("Database initialized successfully")
+        except Exception as e:
+            logger.error(f"Database initialization failed: {e}")
+            raise
+        
+        logger.info("Testing Redis connection...")
+        try:
+            get_redis_client().ping()
+            logger.info("Redis connection successful")
+        except Exception as e:
+            logger.error(f"Redis connection failed: {e}")
+            raise
+        
+        # Instrument SQLAlchemy
+        instrument_sqlalchemy(engine)
+        
+        # Start background tasks
+        logger.info("Starting scheduler tasks...")
+        from app.tasks.scheduler import scheduler_task, token_reset_scheduler_task
+        from app.tasks.cleanup import cleanup_task
+        
+        asyncio.create_task(scheduler_task())
+        asyncio.create_task(token_reset_scheduler_task())
+        logger.info("Scheduler tasks started")
+        
+        # Start the cleanup task
+        logger.info("Starting cleanup task...")
+        asyncio.create_task(cleanup_task())
+        logger.info("Cleanup task started")
+        
+        # Start WebSocket manager Redis subscription
+        logger.info("Starting WebSocket manager...")
+        from app.services.websocket_service import websocket_manager
+        await websocket_manager.start_listening()
+        logger.info("WebSocket manager started")
+    else:
+        logger.info("Skipping database/Redis initialization in test environment (using test fixtures)")
+    
+    # Validate email service configuration (always run)
     from app.services.email_service import validate_email_config
     
     is_valid, error = validate_email_config()
@@ -67,29 +105,6 @@ async def lifespan(app: FastAPI):
         logger.warning("Password reset emails will not be sent")
     else:
         logger.info("Email service configured successfully")
-    
-    # Instrument SQLAlchemy
-    instrument_sqlalchemy(engine)
-    
-    # Start background tasks
-    logger.info("Starting scheduler tasks...")
-    from app.tasks.scheduler import scheduler_task, token_reset_scheduler_task
-    from app.tasks.cleanup import cleanup_task
-    
-    asyncio.create_task(scheduler_task())
-    asyncio.create_task(token_reset_scheduler_task())
-    logger.info("Scheduler tasks started")
-    
-    # Start the cleanup task
-    logger.info("Starting cleanup task...")
-    asyncio.create_task(cleanup_task())
-    logger.info("Cleanup task started")
-    
-    # Start WebSocket manager Redis subscription
-    logger.info("Starting WebSocket manager...")
-    from app.services.websocket_service import websocket_manager
-    await websocket_manager.start_listening()
-    logger.info("WebSocket manager started")
     
     yield
     

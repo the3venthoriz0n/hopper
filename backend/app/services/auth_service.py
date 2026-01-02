@@ -16,7 +16,8 @@ from app.db.redis import (
     get_email_verification_code, delete_email_verification_code,
     set_pending_registration, get_pending_registration, delete_pending_registration,
     set_password_reset_token, get_password_reset_email, delete_password_reset_token,
-    delete_all_user_sessions, invalidate_all_user_caches, redis_client
+    get_redis_client,
+    delete_all_user_sessions, invalidate_all_user_caches
 )
 from app.services.video.helpers import get_google_client_config
 
@@ -891,7 +892,7 @@ def initiate_google_oauth_login(request: Request) -> Dict[str, str]:
     
     # Store state in Redis for verification (5 minutes expiry)
     # Prefix with environment to prevent collisions between dev/prod
-    redis_client.setex(f"{settings.ENVIRONMENT}:google_login_state:{state}", 300, "pending")
+    get_redis_client().setex(f"{settings.ENVIRONMENT}:google_login_state:{state}", 300, "pending")
     
     return {"url": url}
 
@@ -906,14 +907,14 @@ def complete_google_oauth_login(code: str, state: str, request: Request, db: Ses
     # Verify state to prevent CSRF
     # Prefix with environment to prevent collisions between dev/prod
     state_key = f"{settings.ENVIRONMENT}:google_login_state:{state}"
-    state_value = redis_client.get(state_key)
+    state_value = get_redis_client().get(state_key)
     if not state_value:
         # Track failed login attempt (invalid state)
         login_attempts_counter.labels(status="failure", method="google").inc()
         raise ValueError("Invalid state parameter")
     
     # Delete state after verification
-    redis_client.delete(state_key)
+    get_redis_client().delete(state_key)
     
     # Build redirect URI dynamically
     protocol = "https" if request.headers.get("X-Forwarded-Proto") == "https" or settings.ENVIRONMENT == "production" else "http"
