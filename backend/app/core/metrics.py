@@ -213,3 +213,42 @@ def update_active_users_gauge_from_sessions() -> int:
         pass
     
     return active_users
+
+
+def update_active_users_detail_gauge(active_users_data: dict, db) -> None:
+    """
+    Update the active_users_detail_gauge with user emails and last activity timestamps.
+    
+    Args:
+        active_users_data: Dict mapping user_id to ISO timestamp string
+        db: Database session to query user emails
+    """
+    try:
+        from app.models.user import User
+        
+        # Clear existing gauge data by clearing all label combinations
+        active_users_detail_gauge._metrics.clear()
+        
+        # Populate gauge with current active users
+        for user_id, last_activity in active_users_data.items():
+            try:
+                # Get user email from database
+                user = db.query(User).filter(User.id == user_id).first()
+                if user:
+                    # Set gauge with labels - value is always 1 (user is active)
+                    active_users_detail_gauge.labels(
+                        user_id=str(user_id),
+                        user_email=user.email,
+                        last_activity=last_activity
+                    ).set(1)
+            except Exception as e:
+                # Skip users that cause errors but continue processing others
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to update metrics for user {user_id}: {e}")
+                continue
+    except Exception as e:
+        # Never let metric updates break the metrics endpoint
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to update active_users_detail_gauge: {e}", exc_info=True)
