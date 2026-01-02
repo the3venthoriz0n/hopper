@@ -106,9 +106,9 @@ def get_youtube_account(user_id: int = Depends(require_auth), db: Session = Depe
 
 
 @router.post("/youtube/disconnect")
-def disconnect_youtube(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+async def disconnect_youtube(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Disconnect YouTube account"""
-    return disconnect_platform(user_id, "youtube", db)
+    return await disconnect_platform(user_id, "youtube", db)
 
 
 @router.get("/youtube/videos")
@@ -191,9 +191,9 @@ def get_tiktok_music_usage_confirmed_route(user_id: int = Depends(require_auth),
 
 
 @router.post("/tiktok/disconnect")
-def disconnect_tiktok(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+async def disconnect_tiktok(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Disconnect TikTok account"""
-    return disconnect_platform(user_id, "tiktok", db)
+    return await disconnect_platform(user_id, "tiktok", db)
 
 
 @router.get("/tiktok/account")
@@ -272,6 +272,6 @@ async def get_instagram_account(user_id: int = Depends(require_auth), db: Sessio
 
 
 @router.post("/instagram/disconnect")
-def disconnect_instagram(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+async def disconnect_instagram(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Disconnect Instagram account"""
-    return disconnect_platform(user_id, "instagram", db)
+    return await disconnect_platform(user_id, "instagram", db)

@@ -27,6 +27,7 @@ from app.db.redis import redis_client
 from app.services.auth_service import get_user_by_id
 from app.services.video.helpers import get_google_client_config
 from app.services.video.platforms.tiktok_api import _parse_and_save_tiktok_token_response
+from app.utils.encryption import decrypt
 
 # Loggers
 logger = logging.getLogger(__name__)
@@ -63,11 +64,11 @@ def initiate_youtube_oauth_flow(user_id: int, request: Request) -> Dict[str, str
     )
     
     # Store user_id in state parameter
-    # ROOT CAUSE FIX: Add prompt='consent' to force Google to always return refresh_token
-    # Without this, Google only returns refresh_token on first authorization
+    # ROOT CAUSE FIX: Add prompt='select_account consent' to force Google to show account selection
+    # and always return refresh_token. Without this, Google only returns refresh_token on first authorization
     url, state = flow.authorization_url(
         access_type='offline',
-        prompt='consent',
+        prompt='select_account consent',
         state=str(user_id)
     )
     return {"url": url}
@@ -556,11 +557,132 @@ async def complete_instagram_oauth_flow(code: str, state: str, db: Session) -> D
 
 
 # ============================================================================
+# TOKEN REVOCATION HELPERS
+# ============================================================================
+
+async def revoke_youtube_token(access_token: str) -> bool:
+    """Revoke YouTube/Google OAuth token with the provider
+    
+    Args:
+        access_token: The access token to revoke (decrypted)
+        
+    Returns:
+        True if revocation succeeded, False otherwise
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                "https://oauth2.googleapis.com/revoke",
+                params={"token": access_token},
+                headers={"Content-Type": "application/x-www-form-urlencoded"}
+            )
+            if response.status_code == 200:
+                youtube_logger.info("Successfully revoked YouTube token with provider")
+                return True
+            else:
+                youtube_logger.warning(f"YouTube token revocation returned status {response.status_code}: {response.text[:200]}")
+                return False
+    except Exception as e:
+        youtube_logger.warning(f"Failed to revoke YouTube token with provider: {e}")
+        return False
+
+
+async def revoke_tiktok_token(access_token: str) -> bool:
+    """Revoke TikTok OAuth token with the provider
+    
+    Args:
+        access_token: The access token to revoke (decrypted)
+        
+    Returns:
+        True if revocation succeeded, False otherwise
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                "https://open.tiktokapis.com/v2/oauth/revoke/",
+                json={"token": access_token},
+                headers={"Content-Type": "application/json"}
+            )
+            if response.status_code == 200:
+                tiktok_logger.info("Successfully revoked TikTok token with provider")
+                return True
+            else:
+                tiktok_logger.warning(f"TikTok token revocation returned status {response.status_code}: {response.text[:200]}")
+                return False
+    except Exception as e:
+        tiktok_logger.warning(f"Failed to revoke TikTok token with provider: {e}")
+        return False
+
+
+async def revoke_instagram_token(access_token: str, user_id: str) -> bool:
+    """Revoke Instagram OAuth token with the provider
+    
+    Args:
+        access_token: The access token to revoke (decrypted)
+        user_id: The Instagram user ID (business_account_id from extra_data)
+        
+    Returns:
+        True if revocation succeeded, False otherwise
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            # Instagram uses DELETE method to revoke permissions
+            url = f"{INSTAGRAM_GRAPH_API_BASE}/{user_id}/permissions"
+            response = await client.delete(
+                url,
+                params={"access_token": access_token}
+            )
+            if response.status_code == 200:
+                instagram_logger.info(f"Successfully revoked Instagram token with provider for user {user_id}")
+                return True
+            else:
+                instagram_logger.warning(f"Instagram token revocation returned status {response.status_code}: {response.text[:200]}")
+                return False
+    except Exception as e:
+        instagram_logger.warning(f"Failed to revoke Instagram token with provider: {e}")
+        return False
+
+
+# ============================================================================
 # PLATFORM DISCONNECTION
 # ============================================================================
 
-def disconnect_platform(user_id: int, platform: str, db: Session) -> Dict[str, str]:
-    """Disconnect a platform OAuth account and disable destination"""
+async def disconnect_platform(user_id: int, platform: str, db: Session) -> Dict[str, str]:
+    """Disconnect a platform OAuth account and disable destination
+    
+    Revokes the token with the OAuth provider before deleting from our database
+    to ensure users can choose a different account on next connect.
+    """
+    # Get token before deletion so we can revoke it
+    token = get_oauth_token(user_id, platform, db=db)
+    
+    if token:
+        try:
+            # Decrypt access token for revocation
+            access_token = decrypt(token.access_token)
+            
+            if access_token:
+                # Revoke token with OAuth provider (best-effort, don't fail if it errors)
+                if platform == "youtube":
+                    await revoke_youtube_token(access_token)
+                elif platform == "tiktok":
+                    await revoke_tiktok_token(access_token)
+                elif platform == "instagram":
+                    # Get Instagram user ID from extra_data
+                    extra_data = token.extra_data or {}
+                    instagram_user_id = extra_data.get("business_account_id") or extra_data.get("instagram_user_id")
+                    if instagram_user_id:
+                        await revoke_instagram_token(access_token, str(instagram_user_id))
+                    else:
+                        instagram_logger.warning(f"Could not find Instagram user ID in extra_data for user {user_id}, skipping revocation")
+        except ValueError as e:
+            # Decryption failed - log but continue with deletion
+            logger.warning(f"Failed to decrypt token for revocation (user {user_id}, platform {platform}): {e}")
+        except Exception as e:
+            # Any other error during revocation - log but continue
+            logger.warning(f"Error during token revocation (user {user_id}, platform {platform}): {e}")
+    
+    # Delete token from our database and disable destination
     delete_oauth_token(user_id, platform, db=db)
     set_user_setting(user_id, "destinations", f"{platform}_enabled", False, db=db)
     return {"message": "Disconnected"}
