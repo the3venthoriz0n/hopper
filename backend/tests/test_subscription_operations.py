@@ -443,7 +443,8 @@ class TestSubscriptionLifecycle:
         db_session.commit()
         
         # Handle renewal
-        result = handle_subscription_renewal(test_user.id, subscription, old_period_end, db_session)
+        import asyncio
+        result = asyncio.run(handle_subscription_renewal(test_user.id, subscription, old_period_end, db_session))
         
         assert result is True
         
@@ -478,7 +479,8 @@ class TestSubscriptionLifecycle:
         subscription.current_period_end = datetime.now(timezone.utc) + timedelta(days=30)
         
         # Period advanced by 30 days - should be detected as renewal
-        result = handle_subscription_renewal(test_user.id, subscription, old_period_end, db_session)
+        import asyncio
+        result = asyncio.run(handle_subscription_renewal(test_user.id, subscription, old_period_end, db_session))
         
         assert result is True
     

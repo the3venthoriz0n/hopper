@@ -566,7 +566,8 @@ class TestCheckoutAndBilling:
         mock_session.subscription = "sub_test123"
         mock_retrieve.return_value = mock_session
         
-        result = check_checkout_status("cs_test123", test_user.id, db_session)
+        import asyncio
+        result = asyncio.run(check_checkout_status("cs_test123", test_user.id, db_session))
         
         assert result["status"] == "completed"
         assert result["payment_status"] == "paid"

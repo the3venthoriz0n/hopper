@@ -736,7 +736,14 @@ def create_stripe_subscription(
         
         if not skip_token_reset:
             from app.services.token_service import ensure_tokens_synced_for_subscription
-            ensure_tokens_synced_for_subscription(user_id, subscription.id, db)
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                # We're in an async context, create task
+                asyncio.create_task(ensure_tokens_synced_for_subscription(user_id, subscription.id, db))
+            except RuntimeError:
+                # No event loop, safe to use asyncio.run()
+                asyncio.run(ensure_tokens_synced_for_subscription(user_id, subscription.id, db))
         
         logger.info(f"Created Stripe subscription {subscription.id} for plan '{plan_type}' for user {user_id}")
         return sub
