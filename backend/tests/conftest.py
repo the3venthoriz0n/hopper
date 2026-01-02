@@ -26,6 +26,18 @@ from app.services.auth_service import create_user
 from app.db import redis as redis_module
 
 
+@pytest.fixture(autouse=True)
+def reset_redis_singleton():
+    """Force reset Redis singleton before each test to prevent loop mismatches"""
+    # Force the singleton to None before every test starts
+    redis_module._async_client = None
+    redis_module._client = None
+    yield
+    # Cleanup after test
+    redis_module._async_client = None
+    redis_module._client = None
+
+
 # SQLite in-memory database for testing
 TEST_DATABASE_URL = "sqlite:///:memory:"
 

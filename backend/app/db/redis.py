@@ -31,43 +31,30 @@ def get_async_redis_client():
     global _async_client
     import asyncio
     
-    # Check if existing client is tied to a dead or different loop
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No loop is running (shouldn't happen during a test call)
+        # Return None to prevent creating a client without a loop
+        return None
+
+    # If client exists, check if its internal loop matches the current running loop
     if _async_client is not None:
-        try:
-            # Get the current running event loop
-            current_loop = asyncio.get_running_loop()
-            
-            # Try to get the client's loop (may not exist for fakeredis)
-            try:
-                client_loop = _async_client.connection_pool._loop
-            except (AttributeError, TypeError):
-                # fakeredis or client doesn't have connection_pool._loop
-                # Assume it's compatible if we can't check
-                client_loop = current_loop
-            
-            # If loops don't match, discard old client
-            if client_loop != current_loop:
-                try:
-                    # Try to close old client gracefully (may fail if loop is closed)
-                    if hasattr(_async_client, 'aclose'):
-                        # Don't await here - just mark for cleanup
-                        pass
-                except Exception:
-                    pass
-                _async_client = None
-        except RuntimeError:
-            # No running loop (sync context) - keep existing client or create new
-            # In sync context, we shouldn't be using async client anyway
-            pass
-    
-    # Create new client if needed
+        # Look deep into the connection pool's loop reference
+        client_loop = getattr(_async_client.connection_pool, '_loop', None)
+        if client_loop is not current_loop:
+            # Loop mismatch detected! Clear the stale client.
+            _async_client = None
+
     if _async_client is None:
         _async_client = aioredis.from_url(
             settings.REDIS_URL,
             decode_responses=True,
             max_connections=20
         )
-    
+        # Explicitly set the loop on the connection pool for clarity
+        _async_client.connection_pool._loop = current_loop
+        
     return _async_client
 
 # For backward compatibility - these variables are deprecated
