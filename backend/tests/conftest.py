@@ -109,14 +109,28 @@ def mock_async_redis():
     fake_async_redis.setex = AsyncMock(return_value=True)
     fake_async_redis.delete = AsyncMock(return_value=1)
     
-    # Create pubsub mock
+    # Create pubsub mock with proper async iterator for listen()
     fake_pubsub = MagicMock()
     fake_pubsub.psubscribe = AsyncMock()
-    fake_pubsub.listen = AsyncMock()
+    
+    # Mock listen() to return an async generator that yields nothing
+    # This prevents "coroutine was never awaited" warnings
+    async def mock_listen():
+        """Mock async generator that yields no messages (tests don't need pub/sub)"""
+        # Return immediately without yielding anything
+        return
+        yield  # Make this an async generator (unreachable but needed for syntax)
+    
+    fake_pubsub.listen = mock_listen
     fake_async_redis.pubsub = MagicMock(return_value=fake_pubsub)
     
+    # Patch where async_redis_client is USED, not just where it's DEFINED
+    # This is critical because services import async_redis_client at module level,
+    # creating local references that must be patched separately
     with patch('app.db.redis.async_redis_client', fake_async_redis):
-        yield fake_async_redis
+        with patch('app.services.event_service.async_redis_client', fake_async_redis):
+            with patch('app.services.websocket_service.async_redis_client', fake_async_redis):
+                yield fake_async_redis
 
 
 @pytest.fixture(scope="function")
