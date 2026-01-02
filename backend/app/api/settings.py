@@ -28,7 +28,7 @@ def get_global_settings(user_id: int = Depends(require_auth), db: Session = Depe
 
 
 @router.post("/global/settings")
-def update_global_settings(
+async def update_global_settings(
     settings: GlobalSettingsUpdate,
     user_id: int = Depends(require_csrf_new),
     db: Session = Depends(get_db)
@@ -36,7 +36,7 @@ def update_global_settings(
     """Update global settings"""
     # Convert Pydantic model to dict, excluding unset fields
     update_data = settings.model_dump(exclude_unset=True)
-    return update_settings_batch(user_id, "global", update_data, db)
+    return await update_settings_batch(user_id, "global", update_data, db)
 
 
 @router.post("/global/wordbank")
@@ -73,7 +73,7 @@ def get_youtube_settings(user_id: int = Depends(require_auth), db: Session = Dep
 
 
 @router.post("/youtube/settings")
-def update_youtube_settings(
+async def update_youtube_settings(
     settings: YouTubeSettingsUpdate,
     user_id: int = Depends(require_csrf_new),
     db: Session = Depends(get_db)
@@ -81,7 +81,7 @@ def update_youtube_settings(
     """Update YouTube upload settings"""
     # Convert Pydantic model to dict, excluding unset fields
     update_data = settings.model_dump(exclude_unset=True)
-    return update_settings_batch(user_id, "youtube", update_data, db)
+    return await update_settings_batch(user_id, "youtube", update_data, db)
 
 
 @router.get("/tiktok/settings")
@@ -91,7 +91,7 @@ def get_tiktok_settings(user_id: int = Depends(require_auth), db: Session = Depe
 
 
 @router.post("/tiktok/settings")
-def update_tiktok_settings(
+async def update_tiktok_settings(
     settings: TikTokSettingsUpdate,
     user_id: int = Depends(require_csrf_new),
     db: Session = Depends(get_db)
@@ -108,7 +108,7 @@ def update_tiktok_settings(
         if privacy_level is not None and isinstance(privacy_level, TikTokPrivacyLevel):
             update_data["privacy_level"] = privacy_level.value
     
-    return update_settings_batch(user_id, "tiktok", update_data, db)
+    return await update_settings_batch(user_id, "tiktok", update_data, db)
 
 
 @router.get("/instagram/settings")
@@ -118,7 +118,7 @@ def get_instagram_settings(user_id: int = Depends(require_auth), db: Session = D
 
 
 @router.post("/instagram/settings")
-def update_instagram_settings(
+async def update_instagram_settings(
     settings: InstagramSettingsUpdate,
     user_id: int = Depends(require_csrf_new),
     db: Session = Depends(get_db)
@@ -126,7 +126,7 @@ def update_instagram_settings(
     """Update Instagram upload settings"""
     # Convert Pydantic model to dict, excluding unset fields
     update_data = settings.model_dump(exclude_unset=True)
-    return update_settings_batch(user_id, "instagram", update_data, db)
+    return await update_settings_batch(user_id, "instagram", update_data, db)
 
 
 # ============================================================================
@@ -147,31 +147,31 @@ def get_destinations(user_id: int = Depends(require_auth), db: Session = Depends
 
 
 @destinations_router.post("/youtube/toggle")
-def toggle_youtube(
+async def toggle_youtube(
     request: ToggleDestinationRequest,
     user_id: int = Depends(require_csrf_new),
     db: Session = Depends(get_db)
 ):
     """Toggle YouTube destination on/off"""
-    return toggle_destination(user_id, "youtube", request.enabled, db)
+    return await toggle_destination(user_id, "youtube", request.enabled, db)
 
 
 @destinations_router.post("/tiktok/toggle")
-def toggle_tiktok(
+async def toggle_tiktok(
     request: ToggleDestinationRequest,
     user_id: int = Depends(require_csrf_new),
     db: Session = Depends(get_db)
 ):
     """Toggle TikTok destination on/off"""
-    return toggle_destination(user_id, "tiktok", request.enabled, db)
+    return await toggle_destination(user_id, "tiktok", request.enabled, db)
 
 
 @destinations_router.post("/instagram/toggle")
-def toggle_instagram(
+async def toggle_instagram(
     request: ToggleDestinationRequest,
     user_id: int = Depends(require_csrf_new),
     db: Session = Depends(get_db)
 ):
     """Toggle Instagram destination on/off"""
-    return toggle_destination(user_id, "instagram", request.enabled, db)
+    return await toggle_destination(user_id, "instagram", request.enabled, db)
 

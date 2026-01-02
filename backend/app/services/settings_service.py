@@ -52,7 +52,7 @@ def get_destinations_status(user_id: int, db: Session) -> Dict:
     return status
 
 
-def toggle_destination(user_id: int, platform: str, enabled: bool, db: Session) -> Dict:
+async def toggle_destination(user_id: int, platform: str, enabled: bool, db: Session) -> Dict:
     """Toggle destination on/off and publish updated video data
     
     ROOT CAUSE FIX: When destination is toggled, send updated video data via websocket
@@ -92,13 +92,13 @@ def toggle_destination(user_id: int, platform: str, enabled: bool, db: Session) 
         logger.info(f"Successfully built {len(updated_videos)} video responses")
         
         # Publish event with connection status AND updated videos
-        publish_destination_toggled(user_id, platform, enabled, connected, videos=updated_videos)
+        await publish_destination_toggled(user_id, platform, enabled, connected, videos=updated_videos)
         logger.info(f"Published destination_toggled event for user {user_id}, platform {platform}")
         
     except Exception as e:
         logger.error(f"Error in toggle_destination for user {user_id}, platform {platform}: {e}", exc_info=True)
         # Still publish event even if video data fails, just without videos
-        publish_destination_toggled(user_id, platform, enabled, connected, videos=[])
+        await publish_destination_toggled(user_id, platform, enabled, connected, videos=[])
     
     return {
         platform: {
@@ -112,7 +112,7 @@ def toggle_destination(user_id: int, platform: str, enabled: bool, db: Session) 
 # SETTINGS BATCH UPDATES
 # ============================================================================
 
-def update_settings_batch(user_id: int, category: str, data_dict: Dict[str, Any], db: Session) -> Dict:
+async def update_settings_batch(user_id: int, category: str, data_dict: Dict[str, Any], db: Session) -> Dict:
     """Update multiple settings at once in a batch
     
     Args:
@@ -131,7 +131,7 @@ def update_settings_batch(user_id: int, category: str, data_dict: Dict[str, Any]
         set_user_setting(user_id, category, key, value, db=db)
     
     # Publish event
-    publish_settings_changed(user_id, category)
+    await publish_settings_changed(user_id, category)
     
     # Return updated settings
     return get_user_settings(user_id, category, db=db)

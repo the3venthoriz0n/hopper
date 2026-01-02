@@ -118,10 +118,7 @@ async def scheduler_task():
                                             logger.debug(f"  Uploading to {dest_name}...")
                                             # Pass user_id, video_id, and db session - uploader functions need db
                                             # ROOT CAUSE FIX: Pass db session to uploader functions so they don't receive None
-                                            if dest_name == "instagram":
-                                                await uploader_func(user_id, video_id, db=db)
-                                            else:
-                                                uploader_func(user_id, video_id, db=db)
+                                            await uploader_func(user_id, video_id, db=db)
                                             
                                             # Expire the video object from this session to force fresh query
                                             # The upload function uses its own session, so we need to refresh
@@ -363,7 +360,7 @@ async def token_reset_scheduler_task():
                             logger.info(f"Updated subscription period for user {subscription.user_id}: {period_start} -> {period_end}")
                         
                         logger.info(f"Resetting tokens for user {subscription.user_id} (subscription {subscription.id}, plan: {subscription.plan_type}), is_renewal={is_renewal}")
-                        reset_tokens_for_subscription(
+                        await reset_tokens_for_subscription(
                             subscription.user_id,
                             subscription.plan_type,
                             period_start,

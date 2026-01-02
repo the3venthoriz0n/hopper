@@ -53,7 +53,7 @@ def create_user_endpoint(
 
 
 @router.post("/users/{user_id}/grant-tokens")
-def grant_tokens_endpoint(
+async def grant_tokens_endpoint(
     user_id: int,
     request_data: GrantTokensRequest,
     admin_user: User = Depends(require_admin),
@@ -64,13 +64,13 @@ def grant_tokens_endpoint(
         raise HTTPException(400, "Amount must be positive")
     
     try:
-        return grant_tokens_admin(user_id, request_data.amount, request_data.reason, admin_user.id, db)
+        return await grant_tokens_admin(user_id, request_data.amount, request_data.reason, admin_user.id, db)
     except ValueError as e:
         raise HTTPException(404, str(e))
 
 
 @router.post("/users/{user_id}/deduct-tokens")
-def deduct_tokens_endpoint(
+async def deduct_tokens_endpoint(
     user_id: int,
     request_data: DeductTokensRequest,
     admin_user: User = Depends(require_admin),
@@ -81,7 +81,7 @@ def deduct_tokens_endpoint(
         raise HTTPException(400, "Token amount must be positive")
     
     try:
-        return deduct_tokens_with_overage_calculation(user_id, request_data.amount, request_data.reason, admin_user.id, db)
+        return await deduct_tokens_with_overage_calculation(user_id, request_data.amount, request_data.reason, admin_user.id, db)
     except ValueError as e:
         error_msg = str(e)
         if "User not found" in error_msg:

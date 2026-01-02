@@ -85,11 +85,24 @@ class WebSocketManager:
         # Elegant async iteration - no blocking, no thread pool!
         async for message in self.pubsub.listen():
             try:
-                if message['type'] != 'message':
+                # Handle async Redis message format
+                # Message can be a dict with 'type', 'channel', 'data' keys
+                # or it might have bytes keys depending on redis.asyncio version
+                if not isinstance(message, dict):
+                    logger.warning(f"Unexpected message format: {type(message)}")
                     continue
                 
-                channel = message['channel']
-                data = message['data']
+                # Handle both string and bytes keys
+                message_type = message.get('type') or message.get(b'type')
+                if message_type != 'message' and message_type != b'message':
+                    continue
+                
+                # Handle both string and bytes channel names
+                channel = message.get('channel') or message.get(b'channel')
+                if isinstance(channel, bytes):
+                    channel = channel.decode('utf-8')
+                
+                data = message.get('data') or message.get(b'data')
                 
                 # Extract user_id from channel (format: user:{user_id}:{type})
                 try:

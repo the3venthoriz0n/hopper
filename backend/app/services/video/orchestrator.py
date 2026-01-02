@@ -147,7 +147,7 @@ async def upload_all_pending_videos(
                     
                     # Publish status change event
                     from app.services.event_service import publish_video_status_changed
-                    publish_video_status_changed(user_id, video_id, old_status, "failed")
+                    await publish_video_status_changed(user_id, video_id, old_status, "failed")
                     
                     videos_failed += 1
                     continue
@@ -158,7 +158,7 @@ async def upload_all_pending_videos(
             
             # Publish status change event
             from app.services.event_service import publish_video_status_changed
-            publish_video_status_changed(user_id, video_id, old_status, "uploading")
+            await publish_video_status_changed(user_id, video_id, old_status, "uploading")
             
             # Initialize platform_errors in custom_settings
             from app.models.video import Video as VideoModel
@@ -177,10 +177,7 @@ async def upload_all_pending_videos(
                 uploader_func = DESTINATION_UPLOADERS.get(dest_name)
                 if uploader_func:
                     try:
-                        if dest_name == "instagram":
-                            await uploader_func(user_id, video_id, db=db)
-                        else:
-                            uploader_func(user_id, video_id, db=db)
+                        await uploader_func(user_id, video_id, db=db)
                     except Exception as upload_err:
                         upload_logger.error(f"Upload failed for {dest_name}: {upload_err}")
                         # Record platform-specific error
@@ -208,7 +205,7 @@ async def upload_all_pending_videos(
                     
                     # Publish status change event
                     from app.services.event_service import publish_video_status_changed
-                    publish_video_status_changed(user_id, video_id, old_status, "uploaded")
+                    await publish_video_status_changed(user_id, video_id, old_status, "uploaded")
                     
                     videos_succeeded += 1
                 elif len(succeeded) > 0:
@@ -223,7 +220,7 @@ async def upload_all_pending_videos(
                         update_video(video_id, user_id, db=db, status="failed", 
                                    error=f"Partial upload: succeeded ({', '.join(succeeded)}), failed ({', '.join(failed)})")
                     
-                    publish_video_status_changed(user_id, video_id, old_status, "failed")
+                    await publish_video_status_changed(user_id, video_id, old_status, "failed")
                     videos_failed += 1
                 else:
                     # All failed - preserve actual error if it's platform-specific, otherwise list failed destinations
@@ -236,7 +233,7 @@ async def upload_all_pending_videos(
                         update_video(video_id, user_id, db=db, status="failed", 
                                    error=f"Upload failed for all destinations: {', '.join(failed)}")
                     
-                    publish_video_status_changed(user_id, video_id, old_status, "failed")
+                    await publish_video_status_changed(user_id, video_id, old_status, "failed")
                     videos_failed += 1
         
         # Build appropriate message based on results

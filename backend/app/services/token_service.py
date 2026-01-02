@@ -1,9 +1,10 @@
 """Token service - ledger logic for credits"""
-from sqlalchemy.orm import Session
-from sqlalchemy import and_
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any, List
-import logging
+
+from sqlalchemy import and_
+from sqlalchemy.orm import Session
 
 from app.models.token_balance import TokenBalance
 from app.models.token_transaction import TokenTransaction
@@ -169,7 +170,7 @@ def check_tokens_available(user_id: int, tokens_required: int, db: Session, incl
     return True
 
 
-def deduct_tokens(
+async def deduct_tokens(
     user_id: int,
     tokens: int,
     transaction_type: str = 'upload',
@@ -310,7 +311,7 @@ def deduct_tokens(
         )
         
         # Publish token balance change event
-        publish_token_balance_changed(
+        await publish_token_balance_changed(
             user_id=user_id,
             new_balance=balance_after,
             change_amount=-tokens,
@@ -329,7 +330,7 @@ def deduct_tokens(
             db.close()
 
 
-def add_tokens(
+async def add_tokens(
     user_id: int,
     tokens: int,
     transaction_type: str = 'purchase',
@@ -412,7 +413,7 @@ def add_tokens(
         logger.info(f"Tokens added for user {user_id}: {tokens} tokens (balance: {balance_before} -> {balance_after})")
         
         # Publish token balance change event
-        publish_token_balance_changed(
+        await publish_token_balance_changed(
             user_id=user_id,
             new_balance=balance_after,
             change_amount=tokens,
@@ -431,7 +432,7 @@ def add_tokens(
             db.close()
 
 
-def handle_daily_token_grant(user_id: int, subscription_id: str, db: Session) -> bool:
+async def handle_daily_token_grant(user_id: int, subscription_id: str, db: Session) -> bool:
     """
     Handle daily token grant for daily free plan with banking logic.
     
@@ -489,7 +490,7 @@ def handle_daily_token_grant(user_id: int, subscription_id: str, db: Session) ->
             'capped': tokens_to_add < daily_tokens
         }
         
-        result = add_tokens(
+        result = await add_tokens(
             user_id=user_id,
             tokens=tokens_to_add,
             transaction_type='grant',
@@ -511,7 +512,7 @@ def handle_daily_token_grant(user_id: int, subscription_id: str, db: Session) ->
         return False
 
 
-def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: datetime, period_end: datetime, db: Session, is_renewal: bool = False) -> bool:
+async def reset_tokens_for_subscription(user_id: int, plan_type: str, period_start: datetime, period_end: datetime, db: Session, is_renewal: bool = False) -> bool:
     """
     Reset or add monthly tokens for a user's subscription period.
     
@@ -661,14 +662,15 @@ def handle_subscription_renewal(user_id: int, subscription: Subscription, old_pe
         )
         
         # Reset tokens to monthly allocation on renewal (is_renewal=True ensures reset, not add)
-        result = reset_tokens_for_subscription(
+        import asyncio
+        result = asyncio.run(reset_tokens_for_subscription(
             user_id,
             subscription.plan_type,
             subscription.current_period_start,
             subscription.current_period_end,
             db,
             is_renewal=True  # CRITICAL: This flag ensures tokens are RESET, not added
-        )
+        ))
         
         if result:
             logger.info(f"✅ Renewal token reset completed for user {user_id}")
@@ -805,8 +807,9 @@ def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db
                         logger.info(f"Daily tokens already granted today for user {user_id}, subscription {subscription_id}")
                         return True
                 
-                # Grant daily tokens
-                return handle_daily_token_grant(user_id, subscription_id, db)
+                # Grant daily tokens (sync caller, use asyncio.run)
+                import asyncio
+                return asyncio.run(handle_daily_token_grant(user_id, subscription_id, db))
         
         # Check if token balance period matches subscription period
         token_balance = get_or_create_token_balance(user_id, db)
@@ -964,7 +967,7 @@ def get_token_transactions(user_id: int, limit: int = 50, db: Session = None) ->
             db.close()
 
 
-def grant_tokens_admin(
+async def grant_tokens_admin(
     user_id: int,
     amount: int,
     reason: Optional[str],
@@ -986,13 +989,13 @@ def grant_tokens_admin(
     Raises:
         ValueError: If user not found
     """
-    if not add_tokens(user_id, amount, transaction_type='grant', metadata={'reason': reason}, db=db):
+    if not await add_tokens(user_id, amount, transaction_type='grant', metadata={'reason': reason}, db=db):
         raise ValueError("User not found")
     
     return {"message": f"Granted {amount} tokens to user {user_id}"}
 
 
-def deduct_tokens_with_overage_calculation(
+async def deduct_tokens_with_overage_calculation(
     user_id: int,
     amount: int,
     reason: Optional[str],
@@ -1042,7 +1045,7 @@ def deduct_tokens_with_overage_calculation(
     new_overage = overage_after - overage_before
     
     # Deduct tokens using the standard function (this will trigger meter events if overage)
-    success = deduct_tokens(
+    success = await deduct_tokens(
         user_id=user_id,
         tokens=amount,
         transaction_type='admin_test',

@@ -271,13 +271,13 @@ async def handle_file_upload(
     
     # Publish event with full video data (prevents race condition with frontend)
     from app.services.event_service import publish_video_added
-    publish_video_added(user_id, video_dict)
+    await publish_video_added(user_id, video_dict)
     
     # Return the same format as GET /api/videos for consistency
     return video_dict
 
 
-def delete_video_files(
+async def delete_video_files(
     user_id: int,
     video_id: Optional[int] = None,
     status_filter: Optional[List[str]] = None,
@@ -334,7 +334,7 @@ def delete_video_files(
             
             # Publish video_deleted event for real-time UI updates
             from app.services.event_service import publish_video_deleted
-            publish_video_deleted(user_id, video.id)
+            await publish_video_deleted(user_id, video.id)
         
         db.commit()
         upload_logger.info(f"Deleted {deleted_count} video(s) for user {user_id}")

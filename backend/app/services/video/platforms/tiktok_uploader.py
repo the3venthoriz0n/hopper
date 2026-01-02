@@ -33,7 +33,7 @@ from app.services.video.helpers import (
 tiktok_logger = logging.getLogger("tiktok")
 
 
-def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, session_id: str = None):
+async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, session_id: str = None):
     """Upload a single video to TikTok - queries database directly"""
     # Import metrics from centralized location
     from app.core.metrics import successful_uploads_counter, failed_uploads_gauge
@@ -759,7 +759,7 @@ def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, sess
             # Use stored tokens_required with fallback for backward compatibility
             tokens_required = video.tokens_required if video.tokens_required is not None else (calculate_tokens_from_bytes(video.file_size_bytes) if video.file_size_bytes else 0)
             if tokens_required > 0:
-                deduct_tokens(
+                await deduct_tokens(
                     user_id=user_id,
                     tokens=tokens_required,
                     transaction_type='upload',

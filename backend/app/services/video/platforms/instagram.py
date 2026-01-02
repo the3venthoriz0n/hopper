@@ -390,7 +390,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             if video.tokens_consumed == 0:
                 tokens_required = video.tokens_required if video.tokens_required is not None else (calculate_tokens_from_bytes(video.file_size_bytes) if video.file_size_bytes else 0)
                 if tokens_required > 0:
-                    deduct_tokens(
+                    await deduct_tokens(
                         user_id=user_id,
                         tokens=tokens_required,
                         transaction_type='upload',

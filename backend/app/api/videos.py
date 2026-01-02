@@ -1,5 +1,4 @@
 """Videos API routes"""
-import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -87,26 +86,23 @@ def get_videos(user_id: int = Depends(require_auth), db: Session = Depends(get_d
 
 
 @router.delete("/uploaded")
-def delete_uploaded_videos(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+async def delete_uploaded_videos(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Delete only uploaded/completed videos from user's queue"""
-    return delete_video_files(user_id, status_filter=['uploaded', 'completed'], db=db)
+    return await delete_video_files(user_id, status_filter=['uploaded', 'completed'], db=db)
 
 
 @router.delete("")
-def delete_all_videos(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+async def delete_all_videos(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Delete all videos from user's queue"""
-    return delete_video_files(user_id, exclude_status=['uploading'], db=db)
+    return await delete_video_files(user_id, exclude_status=['uploading'], db=db)
 
 
 @router.delete("/{video_id}")
-def delete_video_by_id(video_id: int, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+async def delete_video_by_id(video_id: int, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Remove video from user's queue"""
-    result = delete_video_files(user_id, video_id=video_id, db=db)
+    result = await delete_video_files(user_id, video_id=video_id, db=db)
     if result["deleted"] == 0:
         raise HTTPException(404, "Video not found")
-    
-    # Publish event
-    publish_video_deleted(user_id, video_id)
     
     return {"ok": True}
 
@@ -157,13 +153,13 @@ def get_video_file(
 
 
 @router.post("/{video_id}/recompute-title")
-def recompute_video_title_route(video_id: int, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+async def recompute_video_title_route(video_id: int, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Recompute video title from current template"""
     try:
         result = recompute_video_title(video_id, user_id, db)
         
         # Publish event
-        publish_video_title_recomputed(user_id, video_id, result.get("title", ""))
+        await publish_video_title_recomputed(user_id, video_id, result.get("title", ""))
         
         return result
     except ValueError as e:
@@ -171,7 +167,7 @@ def recompute_video_title_route(video_id: int, user_id: int = Depends(require_cs
 
 
 @router.post("/recompute-all/{platform}")
-def recompute_all_videos(
+async def recompute_all_videos(
     platform: str,
     user_id: int = Depends(require_csrf_new),
     db: Session = Depends(get_db)
@@ -185,7 +181,7 @@ def recompute_all_videos(
         updated_count = recompute_all_videos_for_platform(user_id, platform, db)
         
         # Publish event
-        publish_videos_bulk_recomputed(user_id, platform, updated_count)
+        await publish_videos_bulk_recomputed(user_id, platform, updated_count)
         
         return {"ok": True, "updated_count": updated_count}
     except ValueError as e:
@@ -193,7 +189,7 @@ def recompute_all_videos(
 
 
 @router.patch("/{video_id}")
-def update_video_settings_route(
+async def update_video_settings_route(
     video_id: int,
     request: VideoUpdateRequest,
     user_id: int = Depends(require_csrf_new),
@@ -209,7 +205,7 @@ def update_video_settings_route(
         )
         
         # Publish event with changes
-        publish_video_updated(user_id, video_id, update_data)
+        await publish_video_updated(user_id, video_id, update_data)
         
         return result
     except ValueError as e:

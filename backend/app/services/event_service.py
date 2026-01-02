@@ -4,18 +4,18 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from app.db.redis import redis_client
+from app.db.redis import async_redis_client
 
 logger = logging.getLogger(__name__)
 
 
-def publish_event(
+async def publish_event(
     user_id: int,
     event_type: str,
     data: Dict[str, Any],
     channel: Optional[str] = None
 ) -> None:
-    """Publish an event to Redis pub/sub for real-time updates
+    """Publish an event to Redis pub/sub for real-time updates (async)
     
     Args:
         user_id: User ID to send event to
@@ -55,8 +55,8 @@ def publish_event(
         if event_size > 1000000:  # 1MB warning
             logger.warning(f"Large event payload: {event_size} bytes for event {event_type}")
         
-        # Publish to Redis
-        result = redis_client.publish(channel, event_json)
+        # Publish to Redis using async client
+        result = await async_redis_client.publish(channel, event_json)
         logger.info(f"Redis publish result: {result} subscribers received event {event_type}")
         
     except Exception as e:
@@ -66,14 +66,14 @@ def publish_event(
 
 # Convenience functions for specific event types
 
-def publish_video_added(user_id: int, video_dict: dict) -> None:
+async def publish_video_added(user_id: int, video_dict: dict) -> None:
     """Publish video_added event with full video data
     
     Args:
         user_id: User ID
         video_dict: Full video response dict from build_video_response()
     """
-    publish_event(
+    await publish_event(
         user_id,
         "video_added",
         {
@@ -82,9 +82,9 @@ def publish_video_added(user_id: int, video_dict: dict) -> None:
     )
 
 
-def publish_video_status_changed(user_id: int, video_id: int, old_status: str, new_status: str) -> None:
+async def publish_video_status_changed(user_id: int, video_id: int, old_status: str, new_status: str) -> None:
     """Publish video_status_changed event"""
-    publish_event(
+    await publish_event(
         user_id,
         "video_status_changed",
         {
@@ -95,9 +95,9 @@ def publish_video_status_changed(user_id: int, video_id: int, old_status: str, n
     )
 
 
-def publish_video_updated(user_id: int, video_id: int, changes: Dict[str, Any]) -> None:
+async def publish_video_updated(user_id: int, video_id: int, changes: Dict[str, Any]) -> None:
     """Publish video_updated event"""
-    publish_event(
+    await publish_event(
         user_id,
         "video_updated",
         {
@@ -107,9 +107,9 @@ def publish_video_updated(user_id: int, video_id: int, changes: Dict[str, Any]) 
     )
 
 
-def publish_video_deleted(user_id: int, video_id: int) -> None:
+async def publish_video_deleted(user_id: int, video_id: int) -> None:
     """Publish video_deleted event"""
-    publish_event(
+    await publish_event(
         user_id,
         "video_deleted",
         {
@@ -118,9 +118,9 @@ def publish_video_deleted(user_id: int, video_id: int) -> None:
     )
 
 
-def publish_video_title_recomputed(user_id: int, video_id: int, new_title: str) -> None:
+async def publish_video_title_recomputed(user_id: int, video_id: int, new_title: str) -> None:
     """Publish video_title_recomputed event"""
-    publish_event(
+    await publish_event(
         user_id,
         "video_title_recomputed",
         {
@@ -130,9 +130,9 @@ def publish_video_title_recomputed(user_id: int, video_id: int, new_title: str) 
     )
 
 
-def publish_videos_bulk_recomputed(user_id: int, platform: str, updated_count: int) -> None:
+async def publish_videos_bulk_recomputed(user_id: int, platform: str, updated_count: int) -> None:
     """Publish videos_bulk_recomputed event"""
-    publish_event(
+    await publish_event(
         user_id,
         "videos_bulk_recomputed",
         {
@@ -142,7 +142,7 @@ def publish_videos_bulk_recomputed(user_id: int, platform: str, updated_count: i
     )
 
 
-def publish_destination_toggled(user_id: int, platform: str, enabled: bool, connected: bool, videos: list = None) -> None:
+async def publish_destination_toggled(user_id: int, platform: str, enabled: bool, connected: bool, videos: list = None) -> None:
     """Publish destination_toggled event with updated video data
     
     ROOT CAUSE FIX: Include updated videos in the event payload so frontend
@@ -166,7 +166,7 @@ def publish_destination_toggled(user_id: int, platform: str, enabled: bool, conn
     except Exception as e:
         logger.error(f"Failed to serialize videos to JSON: {e}", exc_info=True)
     
-    publish_event(
+    await publish_event(
         user_id,
         "destination_toggled",
         {
@@ -178,9 +178,9 @@ def publish_destination_toggled(user_id: int, platform: str, enabled: bool, conn
     )
 
 
-def publish_upload_progress(user_id: int, video_id: int, platform: str, progress_percent: int) -> None:
+async def publish_upload_progress(user_id: int, video_id: int, platform: str, progress_percent: int) -> None:
     """Publish upload_progress event"""
-    publish_event(
+    await publish_event(
         user_id,
         "upload_progress",
         {
@@ -192,9 +192,9 @@ def publish_upload_progress(user_id: int, video_id: int, platform: str, progress
     )
 
 
-def publish_settings_changed(user_id: int, category: str) -> None:
+async def publish_settings_changed(user_id: int, category: str) -> None:
     """Publish settings_changed event"""
-    publish_event(
+    await publish_event(
         user_id,
         "settings_changed",
         {
@@ -203,9 +203,9 @@ def publish_settings_changed(user_id: int, category: str) -> None:
     )
 
 
-def publish_token_balance_changed(user_id: int, new_balance: int, change_amount: int, reason: Optional[str] = None) -> None:
+async def publish_token_balance_changed(user_id: int, new_balance: int, change_amount: int, reason: Optional[str] = None) -> None:
     """Publish token_balance_changed event"""
-    publish_event(
+    await publish_event(
         user_id,
         "token_balance_changed",
         {
