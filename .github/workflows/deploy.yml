@@ -10,7 +10,7 @@ on:
       skip_tests:
         description: 'Skip running tests'
         required: false
-        default: false
+        default: true
         type: boolean
 
 env:
@@ -36,7 +36,8 @@ jobs:
       - name: Build backend image for testing
         uses: docker/build-push-action@v5
         with:
-          context: ./backend
+          context: .
+          file: ./backend/Dockerfile
           push: false
           load: true
           tags: hopper-backend-test:latest
@@ -207,7 +208,8 @@ jobs:
       - name: Build and push backend
         uses: docker/build-push-action@v5
         with:
-          context: ./backend
+          context: .
+          file: ./backend/Dockerfile
           push: true
           tags: |
             ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-backend:${{ steps.tag.outputs.tag }}
@@ -286,8 +288,8 @@ jobs:
 
   deploy:
     needs: [test, build-and-push]
-    # Run if both succeeded (or test was skipped) and it's a release event
-    if: always() && (needs.test.result == 'success' || needs.test.result == 'skipped') && needs.build-and-push.result == 'success' && github.event_name == 'release'
+    # Run if both succeeded (or test was skipped) and it's a release event OR manual workflow_dispatch
+    if: always() && (needs.test.result == 'success' || needs.test.result == 'skipped') && needs.build-and-push.result == 'success' && (github.event_name == 'release' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     
     steps:

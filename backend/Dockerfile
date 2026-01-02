@@ -2,31 +2,41 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Set PYTHONPATH so app module can be imported
+# Set PYTHONPATH so 'app' folder is treated as a package
 ENV PYTHONPATH=/app
+# Prevent Python from writing .pyc files and enable unbuffered logging
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
-# Install ffmpeg (includes ffprobe) for video duration validation
+# Install ffmpeg
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+# 1. Copy requirements first to leverage Docker cache
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the entire app/ directory structure
-# This includes app/core/assets/ with stripe_plans JSON files
-COPY app/ ./app/
+# 2. Copy the app code
+# Your tree shows: backend/app/
+# We want this to end up as /app/app/ inside the container
+COPY backend/app/ ./app/
 
-# Copy test directory and test files (for CI/testing, not included in production)
-# These are only used during test runs, not in production containers
-COPY tests/ ./tests/
-COPY pytest.ini ./
+# 3. Copy support files from the backend folder
+COPY backend/tests/ ./tests/
+COPY backend/pytest.ini ./
+COPY backend/alembic.ini ./
+COPY backend/migrations/ ./migrations/
+
+# 4. Copy the scripts folder from the PROJECT ROOT
+# This matches your tree: ./scripts/ (containing backup-db.sh, setup_stripe.py, etc.)
+COPY scripts/ ./scripts/
 
 EXPOSE 8000
 
-# Use uvicorn with reload for development (ENVIRONMENT=development)
-# For production, use uvicorn without reload
-# --reload enables hot reload, --reload-dir specifies directories to watch
-# Updated to use app.main:app instead of main:app
-CMD ["sh", "-c", "if [ \"$ENVIRONMENT\" = \"development\" ]; then uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app; else uvicorn app.main:app --host 0.0.0.0 --port 8000; fi"]
-
+# Refined CMD: Using the module path app.main:app
+CMD ["sh", "-c", "if [ \"$ENVIRONMENT\" = \"development\" ]; then \
+    uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app; \
+    else \
+    uvicorn app.main:app --host 0.0.0.0 --port 8000; \
+    fi"]
