@@ -529,9 +529,12 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   });
   const [instagramSettings, setInstagramSettings] = useState({
     caption_template: '',
-    location_id: '',
     disable_comments: false,
-    disable_likes: false
+    disable_likes: false,
+    media_type: 'REELS',
+    share_to_feed: true,
+    cover_url: '',
+    audio_name: ''
   });
   const [showSettings, setShowSettings] = useState(false);
   const [showTiktokSettings, setShowTiktokSettings] = useState(false);
@@ -3606,19 +3609,73 @@ function Home({ user, isAdmin, setUser, authLoading }) {
 
             <div className="setting-group">
               <label>
-                Location ID
+                Media Type
                 <span className="tooltip-wrapper">
                   <span className="tooltip-icon">i</span>
-                  <span className="tooltip-text">Optional Instagram location ID for geotagging</span>
+                  <span className="tooltip-text">Choose whether to post as a Reel or regular Video feed post</span>
+                </span>
+              </label>
+              <select
+                value={instagramSettings.media_type || 'REELS'}
+                onChange={(e) => updateInstagramSettings('media_type', e.target.value)}
+                className="select"
+              >
+                <option value="REELS">Reels</option>
+                <option value="VIDEO">Video (Feed Post)</option>
+              </select>
+            </div>
+
+            <div className="setting-group">
+              <label className="checkbox-label">
+                <input 
+                  type="checkbox"
+                  checked={instagramSettings.share_to_feed ?? true}
+                  onChange={(e) => updateInstagramSettings('share_to_feed', e.target.checked)}
+                  className="checkbox"
+                  disabled={instagramSettings.media_type !== 'REELS'}
+                />
+                <span>Share Reel to Feed</span>
+                <span className="tooltip-wrapper" style={{ marginLeft: '8px' }}>
+                  <span className="tooltip-icon">i</span>
+                  <span className="tooltip-text">When enabled, your Reel will also appear in your feed (only applies to Reels)</span>
+                </span>
+              </label>
+            </div>
+
+            <div className="setting-group">
+              <label>
+                Cover Image URL (Optional)
+                <span className="tooltip-wrapper">
+                  <span className="tooltip-icon">i</span>
+                  <span className="tooltip-text">URL to a custom thumbnail image for your video</span>
                 </span>
               </label>
               <input 
                 type="text"
-                value={instagramSettings.location_id || ''}
-                onChange={(e) => setInstagramSettings({...instagramSettings, location_id: e.target.value})}
-                onBlur={(e) => updateInstagramSettings('location_id', e.target.value)}
-                placeholder="Location ID (optional)"
+                value={instagramSettings.cover_url || ''}
+                onChange={(e) => setInstagramSettings({...instagramSettings, cover_url: e.target.value})}
+                onBlur={(e) => updateInstagramSettings('cover_url', e.target.value)}
+                placeholder="https://example.com/image.jpg (optional)"
                 className="input-text"
+              />
+            </div>
+
+            <div className="setting-group">
+              <label>
+                Audio Name (Optional, Reels only)
+                <span className="tooltip-wrapper">
+                  <span className="tooltip-icon">i</span>
+                  <span className="tooltip-text">Name of the audio track for your Reel</span>
+                </span>
+              </label>
+              <input 
+                type="text"
+                value={instagramSettings.audio_name || ''}
+                onChange={(e) => setInstagramSettings({...instagramSettings, audio_name: e.target.value})}
+                onBlur={(e) => updateInstagramSettings('audio_name', e.target.value)}
+                placeholder="Audio track name (optional)"
+                className="input-text"
+                disabled={instagramSettings.media_type !== 'REELS'}
               />
             </div>
 
@@ -4923,7 +4980,16 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               if (overrideValues.title) overrides.title = overrideValues.title;
               if (privacyEl?.value) overrides.privacy_level = privacyEl.value;
             } else if (platform === 'instagram') {
+              const mediaTypeEl = document.getElementById(`dest-override-media-type-${video.id}-${platform}`);
+              const shareToFeedEl = document.getElementById(`dest-override-share-to-feed-${video.id}-${platform}`);
+              const coverUrlEl = document.getElementById(`dest-override-cover-url-${video.id}-${platform}`);
+              const audioNameEl = document.getElementById(`dest-override-audio-name-${video.id}-${platform}`);
+              
               if (overrideValues.caption) overrides.caption = overrideValues.caption;
+              if (mediaTypeEl?.value) overrides.media_type = mediaTypeEl.value;
+              if (shareToFeedEl) overrides.share_to_feed = shareToFeedEl.checked;
+              if (coverUrlEl?.value) overrides.cover_url = coverUrlEl.value;
+              if (audioNameEl?.value) overrides.audio_name = audioNameEl.value;
             }
             
             const success = await saveDestinationOverrides(video.id, platform, overrides);
@@ -5190,13 +5256,21 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                             </div>
                           </div>
                         )}
-                        {platformData.location_id && (
-                          <div>
-                            <span style={metadataLabelStyle}>Location ID:</span>{' '}
-                            <span style={metadataValueStyle}>{platformData.location_id}</span>
-                          </div>
-                        )}
                         <div style={metadataGridStyle}>
+                          <div>
+                            <span style={metadataLabelStyle}>Media Type:</span>{' '}
+                            <span style={metadataValueStyle}>
+                              {platformData.media_type || 'REELS'}
+                            </span>
+                          </div>
+                          {(platformData.media_type === 'REELS' || !platformData.media_type) && (
+                            <div>
+                              <span style={metadataLabelStyle}>Share to Feed:</span>{' '}
+                              <span style={metadataValueStyle}>
+                                {platformData.share_to_feed !== false ? 'Yes' : 'No'}
+                              </span>
+                            </div>
+                          )}
                           <div>
                             <span style={metadataLabelStyle}>Comments:</span>{' '}
                             <span style={metadataValueStyle}>
@@ -5210,6 +5284,18 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                             </span>
                           </div>
                         </div>
+                        {platformData.cover_url && (
+                          <div>
+                            <span style={metadataLabelStyle}>Cover Image:</span>{' '}
+                            <span style={metadataValueStyle}>Custom thumbnail set</span>
+                          </div>
+                        )}
+                        {platformData.audio_name && (
+                          <div>
+                            <span style={metadataLabelStyle}>Audio Name:</span>{' '}
+                            <span style={metadataValueStyle}>{platformData.audio_name}</span>
+                          </div>
+                        )}
                       </div>
                     )}
                     {(!platformData || Object.keys(platformData).length === 0) && (
@@ -5406,6 +5492,52 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                           rows={4}
                           maxLength={2200}
                           className="textarea-text"
+                        />
+                      </div>
+
+                      <div className="setting-group">
+                        <label htmlFor={`dest-override-media-type-${video.id}-${platform}`}>Media Type</label>
+                        <select
+                          id={`dest-override-media-type-${video.id}-${platform}`}
+                          defaultValue={customSettings.media_type || platformData.media_type || 'REELS'}
+                          className="select"
+                        >
+                          <option value="REELS">Reels</option>
+                          <option value="VIDEO">Video (Feed Post)</option>
+                        </select>
+                      </div>
+
+                      <div className="setting-group">
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            id={`dest-override-share-to-feed-${video.id}-${platform}`}
+                            defaultChecked={customSettings.share_to_feed !== undefined ? customSettings.share_to_feed : (platformData.share_to_feed ?? true)}
+                            className="checkbox"
+                          />
+                          <span>Share Reel to Feed</span>
+                        </label>
+                      </div>
+
+                      <div className="setting-group">
+                        <label htmlFor={`dest-override-cover-url-${video.id}-${platform}`}>Cover Image URL (Optional)</label>
+                        <input
+                          type="text"
+                          id={`dest-override-cover-url-${video.id}-${platform}`}
+                          defaultValue={customSettings.cover_url || platformData.cover_url || ''}
+                          placeholder="https://example.com/image.jpg"
+                          className="input-text"
+                        />
+                      </div>
+
+                      <div className="setting-group">
+                        <label htmlFor={`dest-override-audio-name-${video.id}-${platform}`}>Audio Name (Optional, Reels only)</label>
+                        <input
+                          type="text"
+                          id={`dest-override-audio-name-${video.id}-${platform}`}
+                          defaultValue={customSettings.audio_name || platformData.audio_name || ''}
+                          placeholder="Audio track name"
+                          className="input-text"
                         />
                       </div>
                     </>
