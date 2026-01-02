@@ -1,11 +1,19 @@
 """Redis client for session management and caching"""
 import redis
+import redis.asyncio as aioredis
 import json
 from typing import Optional, Dict
 from app.core.config import settings
 
-# Redis connection
+# Sync Redis connection (for sessions, caching, rate limiting)
 redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+
+# Async Redis connection (for WebSocket pub/sub)
+async_redis_client = aioredis.from_url(
+    settings.REDIS_URL,
+    decode_responses=True,
+    max_connections=20
+)
 
 # Session TTL (30 days)
 SESSION_TTL = 30 * 24 * 60 * 60

@@ -4,15 +4,10 @@ import json
 import logging
 from typing import Dict, Set
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
 
-from app.db.redis import redis_client
+from app.db.redis import async_redis_client
 
 logger = logging.getLogger(__name__)
-
-# Thread pool for running synchronous Redis operations
-_executor = ThreadPoolExecutor(max_workers=2)
 
 
 class WebSocketManager:
@@ -22,12 +17,8 @@ class WebSocketManager:
         # Map user_id -> set of WebSocket connections
         self.active_connections: Dict[int, Set] = defaultdict(set)
         
-        # Redis pubsub subscriber
+        # Redis pubsub (async)
         self.pubsub = None
-        self.subscribed_channels: Set[str] = set()
-        
-        # Background task for Redis subscription
-        self.subscription_task = None
     
     async def connect(self, user_id: int, websocket) -> None:
         """Register a WebSocket connection for a user"""
@@ -53,7 +44,7 @@ class WebSocketManager:
     async def _subscribe_user_channels(self, user_id: int) -> None:
         """Subscribe to Redis channels for a user"""
         if not self.pubsub:
-            self.pubsub = redis_client.pubsub()
+            self.pubsub = async_redis_client.pubsub()
         
         channels = [
             f"user:{user_id}:videos",
@@ -63,15 +54,9 @@ class WebSocketManager:
             f"user:{user_id}:tokens"
         ]
         
-        # Run synchronous Redis operations in thread pool
-        def subscribe():
-            for channel in channels:
-                if channel not in self.subscribed_channels:
-                    self.pubsub.subscribe(channel)
-                    self.subscribed_channels.add(channel)
-                    logger.debug(f"Subscribed to Redis channel: {channel}")
-        
-        await asyncio.get_event_loop().run_in_executor(_executor, subscribe)
+        # Simple async subscribe - no thread pool needed!
+        await self.pubsub.subscribe(*channels)
+        logger.debug(f"Subscribed to Redis channels for user {user_id}")
     
     async def _unsubscribe_user_channels(self, user_id: int) -> None:
         """Unsubscribe from Redis channels for a user"""
@@ -86,62 +71,47 @@ class WebSocketManager:
             f"user:{user_id}:tokens"
         ]
         
-        # Run synchronous Redis operations in thread pool
-        def unsubscribe():
-            for channel in channels:
-                if channel in self.subscribed_channels:
-                    self.pubsub.unsubscribe(channel)
-                    logger.debug(f"Unsubscribed from Redis channel: {channel}")
-            # Clear channels from tracking after unsubscribing
-            for channel in channels:
-                self.subscribed_channels.discard(channel)
-        
-        await asyncio.get_event_loop().run_in_executor(_executor, unsubscribe)
+        # Simple async unsubscribe
+        await self.pubsub.unsubscribe(*channels)
+        logger.debug(f"Unsubscribed from Redis channels for user {user_id}")
     
     async def start_listening(self) -> None:
         """Start listening to Redis pub/sub messages and forward to WebSocket clients"""
         if not self.pubsub:
-            self.pubsub = redis_client.pubsub()
+            self.pubsub = async_redis_client.pubsub()
         
         logger.info("WebSocket manager started listening to Redis pub/sub")
         
-        while True:
+        # Elegant async iteration - no blocking, no thread pool!
+        async for message in self.pubsub.listen():
             try:
-                # Run synchronous get_message in thread pool
-                message = await asyncio.get_event_loop().run_in_executor(
-                    _executor,
-                    lambda: self.pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-                )
+                if message['type'] != 'message':
+                    continue
                 
-                if message and message['type'] == 'message':
-                    channel = message['channel'].decode('utf-8') if isinstance(message['channel'], bytes) else message['channel']
-                    data = message['data']
-                    
-                    # Extract user_id from channel (format: user:{user_id}:{type})
-                    try:
-                        user_id = int(channel.split(':')[1])
-                    except (IndexError, ValueError):
-                        logger.warning(f"Invalid channel format: {channel}")
-                        continue
-                    
-                    # Parse event data
-                    try:
-                        if isinstance(data, bytes):
-                            event_data = json.loads(data)
-                        elif isinstance(data, str):
-                            event_data = json.loads(data)
-                        else:
-                            # Already a dict
-                            event_data = data
-                    except json.JSONDecodeError:
-                        logger.warning(f"Failed to parse event data from channel {channel}")
-                        continue
-                    
-                    # Forward to all connections for this user
-                    await self._broadcast_to_user(user_id, event_data)
-                else:
-                    # No message, small sleep to prevent tight loop
-                    await asyncio.sleep(0.1)
+                channel = message['channel']
+                data = message['data']
+                
+                # Extract user_id from channel (format: user:{user_id}:{type})
+                try:
+                    user_id = int(channel.split(':')[1])
+                except (IndexError, ValueError):
+                    logger.warning(f"Invalid channel format: {channel}")
+                    continue
+                
+                # Parse event data
+                try:
+                    if isinstance(data, str):
+                        event_data = json.loads(data)
+                    elif isinstance(data, bytes):
+                        event_data = json.loads(data.decode('utf-8'))
+                    else:
+                        event_data = data
+                except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                    logger.warning(f"Failed to parse event data from channel {channel}: {e}")
+                    continue
+                
+                # Forward to all connections for this user
+                await self._broadcast_to_user(user_id, event_data)
                     
             except Exception as e:
                 logger.error(f"Error in WebSocket manager message loop: {e}", exc_info=True)
@@ -182,4 +152,3 @@ class WebSocketManager:
 
 # Global WebSocket manager instance
 websocket_manager = WebSocketManager()
-
