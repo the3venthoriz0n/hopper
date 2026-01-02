@@ -69,9 +69,9 @@ def db_session() -> Generator[Session, None, None]:
         Base.metadata.drop_all(bind=test_engine)
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="function", autouse=True)
 def mock_redis():
-    """Mock Redis client using fakeredis"""
+    """Mock Redis client using fakeredis (automatically applied to all tests)"""
     fake_redis = fakeredis.FakeStrictRedis(decode_responses=True)
     
     # Helper functions that use fake_redis
@@ -110,9 +110,9 @@ def mock_redis():
                                     yield fake_redis
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="function", autouse=True)
 def mock_async_redis():
-    """Mock async Redis client using fakeredis.aioredis"""
+    """Mock async Redis client using fakeredis.aioredis (automatically applied to all tests)"""
     try:
         import fakeredis.aioredis
         # Use fakeredis.aioredis for proper async Redis simulation
