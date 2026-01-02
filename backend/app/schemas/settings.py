@@ -66,11 +66,12 @@ class TikTokSettingsUpdate(BaseModel):
 class InstagramSettingsUpdate(BaseModel):
     """Schema for updating Instagram settings"""
     caption_template: Optional[str] = Field(None, max_length=2200)
-    location_id: Optional[str] = None
     disable_comments: Optional[bool] = None
     disable_likes: Optional[bool] = None
     media_type: Optional[Literal["REELS", "VIDEO"]] = None
     share_to_feed: Optional[bool] = None
+    cover_url: Optional[str] = None
+    audio_name: Optional[str] = None
 
 
 class AddWordbankWordRequest(BaseModel):

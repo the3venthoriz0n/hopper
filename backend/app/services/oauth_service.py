@@ -447,15 +447,29 @@ async def complete_instagram_oauth_flow(code: str, state: str, db: Session) -> D
             raise ValueError(f"Failed to exchange authorization code: {error_data}")
         
         token_json = token_response.json()
-        # Response format: {"data": [{"access_token": "...", "user_id": "...", "permissions": "..."}]}
-        data = token_json.get("data", [])
-        if not data or len(data) == 0:
-            raise ValueError(f"No token data in response: {token_json}")
         
-        token_data = data[0]
+        # Instagram API can return two formats:
+        # 1. Documented format: {"data": [{"access_token": "...", "user_id": "...", "permissions": "..."}]}
+        # 2. Actual format: {"access_token": "...", "user_id": ..., "permissions": [...]}
+        # Handle both for compatibility
+        
+        if "data" in token_json:
+            # Nested format (documented)
+            data = token_json.get("data", [])
+            if not data or len(data) == 0:
+                raise ValueError(f"No token data in response: {token_json}")
+            token_data = data[0]
+        else:
+            # Flat format (actual API response)
+            token_data = token_json
+        
         short_lived_token = token_data.get("access_token")
         instagram_user_id = token_data.get("user_id")
         permissions = token_data.get("permissions", "")
+        
+        # Handle permissions as either string or list
+        if isinstance(permissions, list):
+            permissions = ",".join(permissions)
         
         if not short_lived_token:
             raise ValueError("No access token in response")
