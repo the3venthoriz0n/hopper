@@ -15,38 +15,52 @@ logger = logging.getLogger(__name__)
 def recompute_video_title(
     video_id: int,
     user_id: int,
-    db: Session
+    db: Session,
+    platform: str = 'youtube'
 ) -> Dict[str, Any]:
-    """Recompute video title from current template
+    """Recompute video title from current template for specified platform
+    
+    This clears any manual title override and regenerates from template.
+    All platforms use the unified 'title' field in custom_settings.
     
     Args:
         video_id: Video ID
         user_id: User ID
         db: Database session
+        platform: Platform to recompute for (youtube, tiktok, instagram)
     
     Returns:
         Dict with 'ok' and 'title'
     """
-    # Get video
+    from app.services.video.config import PLATFORM_CONFIG
+    
+    if platform not in PLATFORM_CONFIG:
+        raise ValueError(f"Invalid platform: {platform}")
+    
     videos = get_user_videos(user_id, db=db)
     video = next((v for v in videos if v.id == video_id), None)
     
     if not video:
         raise ValueError("Video not found")
     
-    # Get settings
     global_settings = get_user_settings(user_id, "global", db=db)
-    youtube_settings = get_user_settings(user_id, "youtube", db=db)
+    platform_settings = get_user_settings(user_id, platform, db=db)
     
-    # Remove custom title if exists in custom_settings
-    custom_settings = video.custom_settings or {}
+    # Remove unified title override
+    custom_settings = dict(video.custom_settings or {})
     if "title" in custom_settings:
         del custom_settings["title"]
         update_video(video_id, user_id, db=db, custom_settings=custom_settings)
     
-    # Regenerate title
+    # Get platform's template
+    config = PLATFORM_CONFIG[platform]
+    recompute_fields = config.get('recompute_fields', {})
+    primary_field = list(recompute_fields.keys())[0] if recompute_fields else 'title'
+    field_config = recompute_fields.get(primary_field, {})
+    template_key = field_config.get('template_key', 'title_template')
+    
     filename_no_ext = video.filename.rsplit('.', 1)[0]
-    title_template = youtube_settings.get('title_template', '') or global_settings.get('title_template', '{filename}')
+    title_template = platform_settings.get(template_key, '') or global_settings.get('title_template', '{filename}')
     
     new_title = replace_template_placeholders(
         title_template,
@@ -54,10 +68,12 @@ def recompute_video_title(
         global_settings.get('wordbank', [])
     )
     
-    # Update generated_title in database
+    # Update generated_title
     update_video(video_id, user_id, db=db, generated_title=new_title)
     
-    return {"ok": True, "title": new_title[:100]}
+    # Return with appropriate length limit
+    max_length = 2200 if platform in ['tiktok', 'instagram'] else 100
+    return {"ok": True, "title": new_title[:max_length]}
 
 
 def update_video_settings(
@@ -74,7 +90,11 @@ def update_video_settings(
     allow_comments: Optional[bool] = None,
     allow_duet: Optional[bool] = None,
     allow_stitch: Optional[bool] = None,
-    caption: Optional[str] = None
+    media_type: Optional[str] = None,
+    share_to_feed: Optional[bool] = None,
+    cover_url: Optional[str] = None,
+    disable_comments: Optional[bool] = None,
+    disable_likes: Optional[bool] = None
 ) -> Dict[str, Any]:
     """Update video settings
     
@@ -82,7 +102,7 @@ def update_video_settings(
         video_id: Video ID
         user_id: User ID
         db: Database session
-        title: Optional title override
+        title: Optional title override (unified for all platforms - YouTube/TikTok/Instagram)
         description: Optional description
         tags: Optional tags
         visibility: Optional visibility (public/private/unlisted)
@@ -92,7 +112,11 @@ def update_video_settings(
         allow_comments: Optional allow comments (TikTok)
         allow_duet: Optional allow duet (TikTok)
         allow_stitch: Optional allow stitch (TikTok)
-        caption: Optional caption (Instagram)
+        media_type: Optional media type (Instagram: REELS/VIDEO)
+        share_to_feed: Optional share to feed (Instagram)
+        cover_url: Optional cover image URL (Instagram)
+        disable_comments: Optional disable comments (Instagram)
+        disable_likes: Optional disable likes (Instagram)
     
     Returns:
         Dict with updated video info
@@ -108,8 +132,8 @@ def update_video_settings(
     custom_settings = video.custom_settings or {}
     
     if title is not None:
-        if len(title) > 100:
-            raise ValueError("Title must be 100 characters or less")
+        if len(title) > 2200:
+            raise ValueError("Title must be 2200 characters or less")
         custom_settings["title"] = title
     
     if description is not None:
@@ -144,10 +168,22 @@ def update_video_settings(
         custom_settings["allow_stitch"] = allow_stitch
     
     # Instagram-specific settings
-    if caption is not None:
-        if len(caption) > 2200:
-            raise ValueError("Caption must be 2200 characters or less")
-        custom_settings["caption"] = caption
+    if media_type is not None:
+        if media_type not in ["REELS", "VIDEO"]:
+            raise ValueError("Invalid media_type: must be REELS or VIDEO")
+        custom_settings["media_type"] = media_type
+    
+    if share_to_feed is not None:
+        custom_settings["share_to_feed"] = share_to_feed
+    
+    if cover_url is not None:
+        custom_settings["cover_url"] = cover_url
+    
+    if disable_comments is not None:
+        custom_settings["disable_comments"] = disable_comments
+    
+    if disable_likes is not None:
+        custom_settings["disable_likes"] = disable_likes
     
     # Build update dict
     update_data = {"custom_settings": custom_settings}

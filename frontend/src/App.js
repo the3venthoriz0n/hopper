@@ -474,6 +474,28 @@ function NotFound() {
   );
 }
 
+// Platform configuration - DRY, extensible (matches backend config.py)
+const PLATFORM_CONFIG = {
+  youtube: {
+    enabledKey: 'youtube_enabled',
+    titleField: 'youtube_title',
+    icon: 'youtube',
+    color: '#FF0000',
+  },
+  tiktok: {
+    enabledKey: 'tiktok_enabled',
+    titleField: 'tiktok_title',
+    icon: 'tiktok',
+    color: '#000000',
+  },
+  instagram: {
+    enabledKey: 'instagram_enabled',
+    titleField: 'instagram_caption',
+    icon: 'instagram',
+    color: '#E4405F',
+  },
+};
+
 function Home({ user, isAdmin, setUser, authLoading }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -2391,7 +2413,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       // Recompute the specific field for this video
       // For now, we'll use the single video recompute endpoint
       // and then update the specific field in the override modal
-      await axios.post(`${API}/videos/${videoId}/recompute-title`);
+      await axios.post(`${API}/videos/${videoId}/recompute-title?platform=${platform}`);
       
       // Reload videos to get updated values
       await loadVideos();
@@ -2417,9 +2439,9 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             ...prev,
             [modalKey]: {
               ...(prev[modalKey] || {}),
-              [platform === 'youtube' && field === 'title' ? 'youtube_title' : 
-               field === 'title' ? 'title' : 
-               field === 'caption' ? 'caption' : field]: newValue
+            [platform === 'youtube' && field === 'title' ? 'youtube_title' : 
+             field === 'title' || field === 'caption' ? 'title' : 
+             field]: newValue
             }
           }));
         }
@@ -4185,7 +4207,28 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         <path d="M8 5v14l11-7z" fill="currentColor"/>
                       </svg>
                       <span style={flexTextStyle}>
-                        {v.youtube_title || v.filename}
+                        {(() => {
+                          // Configuration-driven title display (DRY, extensible)
+                          const platforms = [
+                            { name: 'youtube', state: youtube },
+                            { name: 'tiktok', state: tiktok },
+                            { name: 'instagram', state: instagram },
+                          ];
+                          
+                          // Find first enabled platform with a title
+                          for (const { name, state } of platforms) {
+                            if (state.enabled) {
+                              const titleField = PLATFORM_CONFIG[name].titleField;
+                              const title = v[titleField];
+                              if (title) {
+                                return title;
+                              }
+                            }
+                          }
+                          
+                          // Fallback to filename
+                          return v.filename;
+                        })()}
                         {v.title_too_long && (
                           <span className="title-warning" title={`Title truncated from ${v.title_original_length} to 100 characters`}>
                             ⚠️ {v.title_original_length}
@@ -5040,7 +5083,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           } else if (platform === 'tiktok') {
             initial.title = customSettings.title || platformData.title || '';
           } else if (platform === 'instagram') {
-            initial.caption = customSettings.caption || platformData.caption || '';
+            initial.title = customSettings.title || platformData.caption || '';
           }
           setOverrideInputValues(prev => ({ ...prev, [modalKey]: initial }));
         }
@@ -5155,13 +5198,21 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               const mediaTypeEl = document.getElementById(`dest-override-media-type-${video.id}-${platform}`);
               const shareToFeedEl = document.getElementById(`dest-override-share-to-feed-${video.id}-${platform}`);
               const coverUrlEl = document.getElementById(`dest-override-cover-url-${video.id}-${platform}`);
-              // const audioNameEl = document.getElementById(`dest-override-audio-name-${video.id}-${platform}`); // Commented out - removed Audio Name feature
+              const disableCommentsEl = document.getElementById(`dest-override-disable-comments-${video.id}-${platform}`);
+              const disableLikesEl = document.getElementById(`dest-override-disable-likes-${video.id}-${platform}`);
               
-              if (overrideValues.caption) overrides.caption = overrideValues.caption;
+              if (overrideValues.title) overrides.title = overrideValues.title;
               if (mediaTypeEl?.value) overrides.media_type = mediaTypeEl.value;
-              if (shareToFeedEl) overrides.share_to_feed = shareToFeedEl.checked;
+              if (disableCommentsEl !== null) overrides.disable_comments = disableCommentsEl.checked;
+              if (disableLikesEl !== null) overrides.disable_likes = disableLikesEl.checked;
+              
+              // Only include share_to_feed for REELS media type
+              const mediaType = mediaTypeEl?.value || customSettings.media_type || platformData.media_type || 'REELS';
+              if (mediaType === 'REELS' && shareToFeedEl !== null) {
+                overrides.share_to_feed = shareToFeedEl.checked;
+              }
+              
               if (coverUrlEl?.value) overrides.cover_url = coverUrlEl.value;
-              // if (audioNameEl?.value) overrides.audio_name = audioNameEl.value; // Commented out - removed Audio Name feature
             }
             
             const success = await saveDestinationOverrides(video.id, platform, overrides);
@@ -5638,7 +5689,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       <div className="setting-group">
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                           <label htmlFor={`dest-override-caption-${video.id}-${platform}`}>
-                            Caption <span className="char-counter">{(overrideValues.caption || '').length}/2200</span>
+                            Title/Caption <span className="char-counter">{(overrideValues.title || '').length}/2200</span>
                           </label>
                           <button
                             type="button"
@@ -5660,13 +5711,37 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         </div>
                         <textarea
                           id={`dest-override-caption-${video.id}-${platform}`}
-                          value={overrideValues.caption || ''}
-                          onChange={(e) => updateOverrideValue('caption', e.target.value)}
-                          placeholder={platformData.caption || 'Enter caption...'}
+                          value={overrideValues.title || ''}
+                          onChange={(e) => updateOverrideValue('title', e.target.value)}
+                          placeholder={platformData.caption || 'Enter title/caption...'}
                           rows={4}
                           maxLength={2200}
                           className="textarea-text"
                         />
+                      </div>
+
+                      <div className="setting-group">
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            id={`dest-override-disable-comments-${video.id}-${platform}`}
+                            defaultChecked={customSettings.disable_comments !== undefined ? customSettings.disable_comments : (platformData.disable_comments ?? false)}
+                            className="checkbox"
+                          />
+                          <span>Disable Comments</span>
+                        </label>
+                      </div>
+
+                      <div className="setting-group">
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            id={`dest-override-disable-likes-${video.id}-${platform}`}
+                            defaultChecked={customSettings.disable_likes !== undefined ? customSettings.disable_likes : (platformData.disable_likes ?? false)}
+                            className="checkbox"
+                          />
+                          <span>Disable Likes</span>
+                        </label>
                       </div>
 
                       <div className="setting-group">
@@ -5681,17 +5756,24 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         </select>
                       </div>
 
-                      <div className="setting-group">
-                        <label className="checkbox-label">
-                          <input
-                            type="checkbox"
-                            id={`dest-override-share-to-feed-${video.id}-${platform}`}
-                            defaultChecked={customSettings.share_to_feed !== undefined ? customSettings.share_to_feed : (platformData.share_to_feed ?? true)}
-                            className="checkbox"
-                          />
-                          <span>Share Reel to Feed</span>
-                        </label>
-                      </div>
+                      {(() => {
+                        const currentMediaType = customSettings.media_type || platformData.media_type || 'REELS';
+                        if (currentMediaType !== 'REELS') return null;
+                        
+                        return (
+                          <div className="setting-group">
+                            <label className="checkbox-label">
+                              <input
+                                type="checkbox"
+                                id={`dest-override-share-to-feed-${video.id}-${platform}`}
+                                defaultChecked={customSettings.share_to_feed !== undefined ? customSettings.share_to_feed : (platformData.share_to_feed ?? true)}
+                                className="checkbox"
+                              />
+                              <span>Share Reel to Feed</span>
+                            </label>
+                          </div>
+                        );
+                      })()}
 
                       <div className="setting-group">
                         <label htmlFor={`dest-override-cover-url-${video.id}-${platform}`}>Cover Image URL (Optional)</label>

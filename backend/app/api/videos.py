@@ -153,10 +153,15 @@ def get_video_file(
 
 
 @router.post("/{video_id}/recompute-title")
-async def recompute_video_title_route(video_id: int, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
-    """Recompute video title from current template"""
+async def recompute_video_title_route(
+    video_id: int,
+    platform: str = 'youtube',
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
+    """Recompute video title for specified platform"""
     try:
-        result = recompute_video_title(video_id, user_id, db)
+        result = recompute_video_title(video_id, user_id, db, platform)
         
         # Publish event
         await publish_video_title_recomputed(user_id, video_id, result.get("title", ""))

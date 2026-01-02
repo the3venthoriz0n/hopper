@@ -33,7 +33,7 @@ def get_video_title(
     Get video title following consistent priority across all destinations.
     
     Priority order (matches GUI display):
-    1. Per-video custom title (custom_settings['title'])
+    1. Per-video custom title/caption (custom_settings['title'] or custom_settings['caption'])
     2. Generated title (video.generated_title) - already generated once, prevents re-randomization
     3. Destination-specific template (destination_settings[template_key])
     4. Global template (global_settings['title_template'])
@@ -54,7 +54,7 @@ def get_video_title(
     Returns:
         str: The resolved title
     """
-    # Priority 1: Per-video custom title
+    # Priority 1: Per-video custom title (unified across all platforms)
     if 'title' in custom_settings:
         return custom_settings['title']
     

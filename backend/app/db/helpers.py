@@ -785,7 +785,8 @@ def update_video(video_id: int, user_id: int, db: Session = None, **kwargs) -> O
         for key, value in kwargs.items():
             if key == "custom_settings":
                 # custom_settings is being set directly - always flag as modified
-                setattr(video, key, value)
+                # Create a copy to ensure SQLAlchemy detects the change (root cause fix)
+                setattr(video, key, dict(value) if value else {})
                 custom_settings_modified = True
             elif hasattr(video, key):
                 # Direct attribute exists, set it
