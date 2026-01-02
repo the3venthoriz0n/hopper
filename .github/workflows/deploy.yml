@@ -39,9 +39,9 @@ jobs:
           docker images | grep hopper-backend-test || (echo "❌ Image not found!" && exit 1)
           echo "✅ Image verified!"
 
-      - name: Run unit tests
+      - name: Run comprehensive test suite
         run: |
-          echo "🧪 Running unit tests..."
+          echo "🧪 Running comprehensive test suite..."
           # Generate a valid Fernet key for testing (44 chars, base64-encoded)
           TEST_ENCRYPTION_KEY=$(docker run --rm hopper-backend-test:latest python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
           docker run --rm \
@@ -49,8 +49,8 @@ jobs:
             -e ENVIRONMENT=test \
             -e LOG_LEVEL=INFO \
             hopper-backend-test:latest \
-            python -m pytest /app/test_main.py -v
-          echo "✅ Unit tests passed!"
+            python -m pytest /app/tests/ -v --tb=short -m "not skip"
+          echo "✅ Comprehensive test suite passed!"
 
       - name: Start services for security tests
         run: |
@@ -127,7 +127,7 @@ jobs:
             -e TEST_BASE_URL=http://test-backend:8000 \
             -e TEST_FRONTEND_ORIGIN=http://localhost:3000 \
             hopper-backend-test:latest \
-            python -m pytest /app/test_security.py -v
+            python -m pytest /app/tests/test_security.py -v
           echo "✅ Security tests passed!"
 
       - name: Cleanup test services
@@ -331,7 +331,8 @@ jobs:
       - name: Create environment file
         run: |
           ENV="${{ needs.build-and-push.outputs.env }}"
-          
+          # Use the actual tag used in the 'build-and-push' job
+          FULL_TAG="${{ needs.build-and-push.outputs.tag }}"
           # Create .env file with all secrets
           cat > .env.$ENV << 'ENVEOF'
           ENVIRONMENT=${{ needs.build-and-push.outputs.env == 'prod' && 'production' || 'development' }}
@@ -359,7 +360,7 @@ jobs:
           RESEND_FROM_EMAIL=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_RESEND_FROM_EMAIL || secrets.DEV_RESEND_FROM_EMAIL }}
           GRAFANA_PASSWORD=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_GRAFANA_PASSWORD || secrets.DEV_GRAFANA_PASSWORD || 'admin' }}
           GITHUB_REPOSITORY=${{ github.repository }}
-          TAG=${{ steps.vars.outputs.short_tag }}
+          TAG=$FULL_TAG
           GHCR_IMAGE_BACKEND=ghcr.io/${{ github.repository }}/hopper-backend:${{ steps.vars.outputs.short_tag }}
           GHCR_IMAGE_FRONTEND=ghcr.io/${{ github.repository }}/hopper-frontend:${{ steps.vars.outputs.short_tag }}
           GHCR_IMAGE_OTEL=ghcr.io/${{ github.repository }}/hopper-otel:${{ steps.vars.outputs.short_tag }}

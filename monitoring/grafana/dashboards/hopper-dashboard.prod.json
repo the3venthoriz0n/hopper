@@ -138,7 +138,7 @@
             "type": "prometheus",
             "uid": "Prometheus"
           },
-          "expr": "sum(hopper_successful_uploads_total)",
+          "expr": "sum(increase(hopper_successful_uploads_total[$__range]))",
           "refId": "A"
         }
       ],

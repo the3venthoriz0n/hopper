@@ -60,6 +60,7 @@ services:
     image: ${GHCR_IMAGE_BACKEND}
     container_name: prod-hopper-backend
     pull_policy: always
+    # Note: Uses Dockerfile CMD which runs: uvicorn app.main:app (new modular structure)
     ports:
       - "8001:8000"
     volumes:
@@ -68,32 +69,15 @@ services:
     depends_on:
       - postgres
       - redis
+      - otel-collector
+    # Load environment variables from .env.prod file
+    env_file:
+      - .env.prod
     environment:
       - PYTHONUNBUFFERED=1
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - CLOUDFLARE_ACCESS_AUD_TAG=${CLOUDFLARE_ACCESS_AUD_TAG}
-      - CLOUDFLARE_ACCESS_TEAM_DOMAIN=${CLOUDFLARE_ACCESS_TEAM_DOMAIN}
-      - ENVIRONMENT=${ENVIRONMENT}
-      - DOMAIN=${DOMAIN}
-      - FRONTEND_URL=${FRONTEND_URL}
-      - BACKEND_URL=${BACKEND_URL}
-      - RESEND_API_KEY=${RESEND_API_KEY}
-      - RESEND_FROM_EMAIL=${RESEND_FROM_EMAIL}
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      - GOOGLE_PROJECT_ID=${GOOGLE_PROJECT_ID}
-      - TIKTOK_CLIENT_KEY=${TIKTOK_CLIENT_KEY}
-      - TIKTOK_CLIENT_SECRET=${TIKTOK_CLIENT_SECRET}
-      - FACEBOOK_APP_ID=${FACEBOOK_APP_ID}
-      - FACEBOOK_APP_SECRET=${FACEBOOK_APP_SECRET}
+      # Keep variables that need dynamic construction or overrides:
       - DATABASE_URL=postgresql://hopper:${POSTGRES_PASSWORD}@prod-hopper-postgres:5432/hopper
       - REDIS_URL=redis://prod-hopper-redis:6379/0
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
-      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
-      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY}
-      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
-      - STRIPE_PRICING_TABLE_ID=${STRIPE_PRICING_TABLE_ID}
-      - STRIPE_API_VERSION=${STRIPE_API_VERSION:-2024-11-20.acacia}
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://prod-hopper-otel-collector:4317
       - OTEL_SERVICE_NAME=hopper-backend
       - OTEL_RESOURCE_ATTRIBUTES=service.name=hopper-backend,service.version=1.0.0,deployment.environment=${ENVIRONMENT:-production}
@@ -140,7 +124,6 @@ services:
     environment:
       - ENVIRONMENT=${ENVIRONMENT:-production}
     depends_on:
-      - backend
       - loki
     networks:
       - hopper_default

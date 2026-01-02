@@ -6,7 +6,8 @@ set -e
 
 ENV=${1:-prod}
 TAG=${2:-latest}
-# App directory: /opt/hopper-prod for prod, /opt/hopper-dev for dev
+
+# App directory configuration
 if [ "$ENV" == "prod" ]; then
     APP_DIR="/opt/hopper-prod"
 else
@@ -48,21 +49,25 @@ if [ ! -f "$COMPOSE_FILE" ]; then
     exit 1
 fi
 
-# Get GitHub repository from environment or use default
-GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-"USERNAME/REPO"}
+# Set Defaults (Only if not already set by .env file)
+export GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-"the3venthoriz0n/hopper"}
+export TAG=${TAG:-"latest"}
 
-# Set image tags based on git release tag (e.g., v5.0.5)
-# Images are tagged with the git tag directly (matching GitHub workflow)
-export GHCR_IMAGE_BACKEND="ghcr.io/${GITHUB_REPOSITORY}/hopper-backend:${TAG}"
-export GHCR_IMAGE_FRONTEND="ghcr.io/${GITHUB_REPOSITORY}/hopper-frontend:${TAG}"
-export GHCR_IMAGE_OTEL="ghcr.io/${GITHUB_REPOSITORY}/hopper-otel:${TAG}"
-export GHCR_IMAGE_PROMETHEUS="ghcr.io/${GITHUB_REPOSITORY}/hopper-prometheus:${TAG}"
-export GHCR_IMAGE_LOKI="ghcr.io/${GITHUB_REPOSITORY}/hopper-loki:${TAG}"
-export GHCR_IMAGE_GRAFANA="ghcr.io/${GITHUB_REPOSITORY}/hopper-grafana:${TAG}"
+# Set image tags using shell parameter expansion (assign if null or unset)
+# This ensures .env values from GitHub Actions take priority
+: "${GHCR_IMAGE_BACKEND:=ghcr.io/${GITHUB_REPOSITORY}/hopper-backend:${TAG}}"
+: "${GHCR_IMAGE_FRONTEND:=ghcr.io/${GITHUB_REPOSITORY}/hopper-frontend:${TAG}}"
+: "${GHCR_IMAGE_OTEL:=ghcr.io/${GITHUB_REPOSITORY}/hopper-otel:${TAG}}"
+: "${GHCR_IMAGE_PROMETHEUS:=ghcr.io/${GITHUB_REPOSITORY}/hopper-prometheus:${TAG}}"
+: "${GHCR_IMAGE_LOKI:=ghcr.io/${GITHUB_REPOSITORY}/hopper-loki:${TAG}}"
+: "${GHCR_IMAGE_GRAFANA:=ghcr.io/${GITHUB_REPOSITORY}/hopper-grafana:${TAG}}"
+
+# Export for Docker Compose use
+export GHCR_IMAGE_BACKEND GHCR_IMAGE_FRONTEND GHCR_IMAGE_OTEL GHCR_IMAGE_PROMETHEUS GHCR_IMAGE_LOKI GHCR_IMAGE_GRAFANA
 
 echo "🏷️  Using images with tag: ${TAG}"
 
-# Set project name to match makefile convention: $(ENV)-hopper
+# Set project name
 PROJECT_NAME="${ENV}-hopper"
 
 # Pull latest images
@@ -71,7 +76,7 @@ docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" pull || {
     echo "⚠️  Some images failed to pull. Continuing with existing images..."
 }
 
-# Prune old/unused Docker images to free up disk space
+# Prune old/unused Docker images
 echo "🧹 Pruning old Docker images..."
 docker image prune -af --filter "until=168h" || {
     echo "⚠️  Image pruning failed, continuing..."
@@ -120,35 +125,27 @@ check_health() {
                 attempt=$((attempt + 1))
             done
             ;;
-        backend)
+        backend|frontend|nginx)
+            local port=8000
+            [ "$service" != "backend" ] && port=80
+            
             while [ $attempt -le $max_attempts ]; do
-                if docker exec "$container_name" curl -f http://localhost:8000/health >/dev/null 2>&1 || \
-                   docker exec "$container_name" wget -q --spider http://localhost:8000/health >/dev/null 2>&1; then
-                    echo "✅ $service is healthy"
-                    return 0
-                fi
-                # Fallback: check if container is running
-                if [ "$(docker inspect -f '{{.State.Running}}' "$container_name" 2>/dev/null)" = "true" ]; then
-                    if [ $attempt -ge 10 ]; then
-                        echo "⚠️  $service container is running but health endpoint not responding (may be starting)"
+                # Check for curl
+                if docker exec "$container_name" which curl >/dev/null 2>&1; then
+                    if docker exec "$container_name" curl -f http://localhost:$port/health >/dev/null 2>&1; then
+                        echo "✅ $service is healthy"
                         return 0
                     fi
-                fi
-                sleep 2
-                attempt=$((attempt + 1))
-            done
-            ;;
-        frontend|nginx)
-            while [ $attempt -le $max_attempts ]; do
-                if docker exec "$container_name" wget -q --spider http://localhost:80/health >/dev/null 2>&1 || \
-                   docker exec "$container_name" curl -f http://localhost:80/health >/dev/null 2>&1; then
-                    echo "✅ $service is healthy"
-                    return 0
-                fi
-                # Fallback: check if container is running
-                if [ "$(docker inspect -f '{{.State.Running}}' "$container_name" 2>/dev/null)" = "true" ]; then
-                    if [ $attempt -ge 10 ]; then
-                        echo "⚠️  $service container is running but health endpoint not responding (may be starting)"
+                # Check for wget
+                elif docker exec "$container_name" which wget >/dev/null 2>&1; then
+                    if docker exec "$container_name" wget -q --spider http://localhost:$port/health >/dev/null 2>&1; then
+                        echo "✅ $service is healthy"
+                        return 0
+                    fi
+                # Fallback: Is container running?
+                else
+                    if [ "$(docker inspect -f '{{.State.Running}}' "$container_name" 2>/dev/null)" = "true" ]; then
+                        echo "⚠️  $service: No curl/wget, but container is running"
                         return 0
                     fi
                 fi
@@ -157,7 +154,6 @@ check_health() {
             done
             ;;
         *)
-            # Generic health check: just verify container is running
             while [ $attempt -le $max_attempts ]; do
                 if [ "$(docker inspect -f '{{.State.Running}}' "$container_name" 2>/dev/null)" = "true" ]; then
                     echo "✅ $service is running"
@@ -178,66 +174,38 @@ echo ""
 echo "🏥 Performing health checks..."
 HEALTH_CHECK_FAILED=0
 
-# Check critical services first
 check_health postgres || HEALTH_CHECK_FAILED=1
 check_health redis || HEALTH_CHECK_FAILED=1
 check_health backend || HEALTH_CHECK_FAILED=1
 check_health frontend || HEALTH_CHECK_FAILED=1
 check_health nginx || HEALTH_CHECK_FAILED=1
 
-# Check monitoring services (non-critical)
-check_health otel-collector || echo "⚠️  otel-collector health check failed (non-critical)"
-check_health prometheus || echo "⚠️  prometheus health check failed (non-critical)"
-check_health loki || echo "⚠️  loki health check failed (non-critical)"
-check_health grafana || echo "⚠️  grafana health check failed (non-critical)"
+# Check monitoring (non-critical)
+check_health otel-collector || echo "⚠️  otel-collector check failed"
+check_health prometheus || echo "⚠️  prometheus check failed"
+check_health loki || echo "⚠️  loki check failed"
+check_health grafana || echo "⚠️  grafana check failed"
 
-# Check service status
 echo ""
 echo "📊 Service status:"
 docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" ps
 
 if [ $HEALTH_CHECK_FAILED -eq 1 ]; then
-    echo ""
-    echo "❌ Health checks failed for critical services!"
-    echo "📋 Check logs: docker compose -p $PROJECT_NAME -f $COMPOSE_FILE logs"
+    echo "❌ Critical services failed health checks!"
     exit 1
 fi
 
-# Setup database backup cron job (only for prod)
+# Setup cron (Prod only)
 if [ "$ENV" == "prod" ]; then
-    echo ""
-    echo "📦 Setting up database backup cron job..."
     BACKUP_SCRIPT="$APP_DIR/scripts/backup-db.sh"
-    
-    # Make sure backup script is executable
     if [ -f "$BACKUP_SCRIPT" ]; then
         chmod +x "$BACKUP_SCRIPT"
-        
-        # Check if cron job already exists
         if ! crontab -l 2>/dev/null | grep -q "$BACKUP_SCRIPT"; then
-            # Add cron job for daily backup at 2 AM
             (crontab -l 2>/dev/null; echo "0 2 * * * $BACKUP_SCRIPT >> /var/log/hopper-db-backup.log 2>&1") | crontab -
-            echo "✅ Database backup cron job added (daily at 2 AM)"
-        else
-            echo "ℹ️  Database backup cron job already exists"
+            echo "✅ Backup cron job added"
         fi
-        
-        # Create backup directory if it doesn't exist
         mkdir -p "$APP_DIR/backups"
-    else
-        echo "⚠️  Backup script not found: $BACKUP_SCRIPT (cron job not set up)"
     fi
 fi
 
-echo ""
-echo "✅ Deployment complete! All critical services are healthy."
-echo ""
-echo "📋 Useful commands:"
-echo "   View logs: docker compose -p $PROJECT_NAME -f $COMPOSE_FILE logs -f"
-echo "   Check status: docker compose -p $PROJECT_NAME -f $COMPOSE_FILE ps"
-echo "   Rollback to previous version: Run ./deploy.sh $ENV <previous-tag> (e.g., ./deploy.sh prod v5.0.4)"
-if [ "$ENV" == "prod" ]; then
-    echo "   Backup database: cd $APP_DIR && make backup-db"
-    echo "   List backups: cd $APP_DIR && make list-backups"
-fi
-
+echo "✅ Deployment complete!"

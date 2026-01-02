@@ -12,6 +12,7 @@ export GIT_VERSION
 
 # Compose command builder
 COMPOSE = docker compose -p $(ENV)-hopper -f docker-compose.$(ENV).yml --env-file .env.$(ENV)
+TEST_CMD = python -m pytest /app/tests/ -v --tb=short
 
 # Service filter (optional: make logs SERVICE=backend)
 SERVICE ?=
@@ -58,18 +59,14 @@ test:
 	@if [ "$(ENV)" = "prod" ]; then \
 		echo "⏭️  Skipping tests for prod environment (use deploy.sh for production deployments)"; \
 	else \
-		echo "🧪 Building backend image (to ensure pytest is installed)..."; \
-		$(COMPOSE) build backend; \
-		echo "🧪 Running unit tests..."; \
-		$(COMPOSE) run --rm backend python -m pytest /app/test_main.py -v; \
-		echo "✅ All tests passed!"; \
+		echo "🧪 Running comprehensive test suite..."; \
+		$(COMPOSE) run --rm backend $(TEST_CMD); \
 	fi
 
-test-security: 
-	@echo "🔒 Running security tests (requires API to be running)..."
-	@echo "⚠️  Make sure backend is running: make up ENV=$(ENV)"
-	@$(COMPOSE) run --rm -e TEST_BASE_URL=http://backend:8000 backend python -m pytest /app/test_security.py -v
-	@echo "✅ Security tests passed!"
+test-integration:
+	@echo "🔒 Running security integration tests for $(ENV) environment..."; \
+	echo "⚠️  Note: These tests require a running backend server"; \
+	$(COMPOSE) run --rm -e RUN_INTEGRATION_TESTS=true -e ENV=$(ENV) backend python -m pytest /app/tests/test_security.py -v --tb=short;
 
 up: sync
 	@if [ "$(ENV)" != "prod" ]; then \
@@ -88,7 +85,7 @@ down:
 	@$(COMPOSE) down $(SERVICE)
 
 rebuild: down sync
-	@if [ "$(ENV)" != "prod" ]; then \
+	@if [ "$(ENV)" != "prod" ] && [ -z "$(SKIP_TESTS)" ]; then \
 		$(MAKE) test ENV=$(ENV); \
 	fi
 	@echo "🔨 Rebuilding $(ENV) from scratch..."
@@ -146,7 +143,7 @@ setup-stripe:
 		echo "❌ Virtual environment not found. Run: cd backend && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt"; \
 		exit 1; \
 	fi
-	@cd backend && ./venv/bin/python setup_stripe.py --env-file $(ENV)
+	@cd backend && ./venv/bin/python ../scripts/setup_stripe.py --env-file $(ENV)
 	@echo "🔄 Syncing to remote..."
 	@$(MAKE) sync
 	@echo "✅ Stripe setup completed and synced."

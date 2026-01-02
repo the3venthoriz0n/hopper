@@ -79,7 +79,7 @@
   --bg-tertiary: rgba(var(--rgb-secondary), var(--opacity-50));
   --bg-card: var(--color-secondary);
   --bg-hover: rgba(var(--rgb-secondary), var(--opacity-80));
-  --bg-overlay: rgba(var(--rgb-base), var(--opacity-80));
+  --bg-overlay: rgba(var(--rgb-base), var(--opacity-95));
   --bg-overlay-light: rgba(var(--rgb-light), var(--opacity-95));
   
   /* ============================================

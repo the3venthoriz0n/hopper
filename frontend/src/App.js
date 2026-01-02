@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation, Navigate } from 'react-router-dom';
+import Cookies from 'js-cookie';
 import axios from 'axios';
 import './App.css';
 import Terms from './Terms';
@@ -10,10 +11,7 @@ import Login from './Login';
 import AdminDashboard from './AdminDashboard';
 import Pricing from './Pricing';
 
-// Hopper Color Palette - Centralized color constants
-// Custom Palette
-// Update these to change colors throughout the app (matches CSS variables)
-// 
+
 // SYSTEM DESIGN: RGB values stored separately for opacity support
 // Use rgba() helper function for colors with opacity
 export const HOPPER_COLORS = {
@@ -181,8 +179,12 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
   );
 };
 
-// Configure axios to send cookies with every request
+
+// Axios will now automatically read the 'csrf_token_client' cookie 
+// and put it into the 'X-CSRF-Token' header for every request.
 axios.defaults.withCredentials = true;
+axios.defaults.xsrfCookieName = 'csrf_token_client';
+axios.defaults.xsrfHeaderName = 'X-CSRF-Token';
 
 // CSRF Token Management
 let csrfToken = null;
@@ -227,38 +229,24 @@ function useAuth() {
   return { user, isAdmin, setUser, authLoading, checkAuth };
 }
 
-// Intercept GET responses to extract CSRF token
 axios.interceptors.response.use(
-  (response) => {
-    // Extract CSRF token from response header
-    // Axios normalizes headers to lowercase
-    const token = response.headers['x-csrf-token'] || response.headers['X-CSRF-Token'];
-    if (token) {
-      csrfToken = token;
-    }
-    return response;
-  },
-  (error) => {
-    // Handle 401 errors - don't reload the page, let components handle their own auth errors
-    // This prevents annoying page refreshes on login failures and session expirations
-    return Promise.reject(error);
-  }
+  (response) => response,
+  (error) => Promise.reject(error)
 );
 
-// Intercept POST/PATCH/DELETE/PUT requests to add CSRF token
 axios.interceptors.request.use(
   (config) => {
-    // Add CSRF token to state-changing requests
-    if (['post', 'patch', 'delete', 'put'].includes(config.method?.toLowerCase())) {
-      if (csrfToken) {
-        config.headers['X-CSRF-Token'] = csrfToken;
-      }
+    // Read the non-HttpOnly cookie we set in the backend
+    const token = Cookies.get('csrf_token_client');
+    
+    if (token) {
+      config.headers['X-CSRF-Token'] = token;
+      // Optional: console.log("CSRF Token injected:", token);
     }
+    
     return config;
   },
-  (error) => {
-    return Promise.reject(error);
-  }
+  (error) => Promise.reject(error)
 );
 
 // Loading Screen Component
@@ -541,9 +529,12 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   });
   const [instagramSettings, setInstagramSettings] = useState({
     caption_template: '',
-    location_id: '',
     disable_comments: false,
-    disable_likes: false
+    disable_likes: false,
+    media_type: 'REELS',
+    share_to_feed: true,
+    cover_url: '',
+    audio_name: ''
   });
   const [showSettings, setShowSettings] = useState(false);
   const [showTiktokSettings, setShowTiktokSettings] = useState(false);
@@ -575,7 +566,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const [loadingPlanKey, setLoadingPlanKey] = useState(null); // Track which specific plan is loading
   const [notification, setNotification] = useState(null); // For popup notifications
   const [confirmDialog, setConfirmDialog] = useState(null); // For confirmation dialogs
-  const [destinationModal, setDestinationModal] = useState(null); // { videoId, platform, video }
+  const [destinationModal, setDestinationModal] = useState(null);
+  const [overrideInputValues, setOverrideInputValues] = useState({}); // { videoId, platform, video }
   const [expandedDestinationErrors, setExpandedDestinationErrors] = useState(new Set()); // Track which destination errors are expanded
 
   // Check for Google login callback
@@ -831,14 +823,43 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       ]);
       
       setSubscription(subscriptionRes.data.subscription);
-      // Only update token balance if we got valid data (preserve old value while loading)
+      // Always set token balance - default to 0 if missing
       if (subscriptionRes.data.token_balance) {
         setTokenBalance(subscriptionRes.data.token_balance);
+      } else {
+        // Default token balance when no subscription exists
+        setTokenBalance({
+          tokens_remaining: 0,
+          tokens_used_this_period: 0,
+          monthly_tokens: 0,
+          overage_tokens: 0,
+          unlimited: false,
+          period_start: null,
+          period_end: null
+        });
       }
       setAvailablePlans(plansRes.data.plans || []);
     } catch (err) {
       console.error('Error loading subscription:', err);
-      // Don't clear token balance on error - keep displaying old value
+      // On error, set safe defaults
+      setSubscription(null);
+      setTokenBalance({
+        tokens_remaining: 0,
+        tokens_used_this_period: 0,
+        monthly_tokens: 0,
+        overage_tokens: 0,
+        unlimited: false,
+        period_start: null,
+        period_end: null
+      });
+      // Still try to load plans even on error
+      try {
+        const plansRes = await axios.get(`${API}/subscription/plans`);
+        setAvailablePlans(plansRes.data.plans || []);
+      } catch (plansErr) {
+        console.error('Error loading plans:', plansErr);
+        setAvailablePlans([]);
+      }
     }
   }, [API, user]);
 
@@ -1068,7 +1089,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   // Handle subscription upgrade
   const handleUpgrade = async (planKey) => {
     // Check if user has an active subscription that will be canceled
-    if (subscription && subscription.status === 'active' && subscription.plan_type !== 'free' && subscription.plan_type !== 'unlimited') {
+    if (subscription && subscription.status === 'active' && subscription.plan_type && subscription.plan_type !== 'free' && subscription.plan_type !== 'unlimited') {
       // Show confirmation dialog
       const planName = availablePlans.find(p => p.key === planKey)?.name || planKey;
       const currentPlanName = availablePlans.find(p => p.key === subscription.plan_type)?.name || subscription.plan_type;
@@ -1076,18 +1097,24 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       const newPlan = availablePlans.find(p => p.key === planKey);
       const currentPlan = availablePlans.find(p => p.key === subscription.plan_type);
       
-      // Format prices for display (new pricing: per-token)
+      // Format prices for display (new pricing: flat monthly fee + overage)
       const formatPlanPrice = (plan) => {
         if (!plan?.price) return null;
         if (plan.key === 'free') return 'Free';
-        if (plan.monthly_tokens === -1) return plan.price.formatted;
+        if (plan.tokens === -1) return plan.price.formatted;
         
-        // New pricing: amount_dollars is per-token price
-        const perTokenPrice = plan.price.amount_dollars || 0;
-        const monthlyTokens = plan.monthly_tokens || 0;
-        const totalMonthly = perTokenPrice * monthlyTokens;
-        // Display as: "$10.00/month ($0.10/token)"
-        return `$${totalMonthly.toFixed(2)}/month ($${perTokenPrice.toFixed(2)}/token)`;
+        // New pricing: amount_dollars is the flat monthly fee
+        const monthlyFee = plan.price.amount_dollars || 0;
+        const overagePrice = plan.overage_price?.amount_dollars;
+        
+        if (overagePrice !== undefined && overagePrice !== null) {
+          // Display as: "$3.00/Month (1.5c / token)"
+          const overageCents = (overagePrice * 100).toFixed(1);
+          return `$${monthlyFee.toFixed(2)}/Month (${overageCents}c / token)`;
+        } else {
+          // Fallback if overage price not available
+          return `$${monthlyFee.toFixed(2)}/Month`;
+        }
       };
       
       const newPlanPrice = formatPlanPrice(newPlan);
@@ -1216,13 +1243,22 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     try {
       const res = await axios.post(`${API}/subscription/cancel`);
       if (res.data.status === 'success') {
-        setMessage(`✅ ${res.data.message}`);
+        setMessage(`✅ ${res.data.message || 'Subscription canceled successfully'}`);
         // Reload subscription data to reflect the change
         await loadSubscription();
         setNotification({
           type: 'success',
           title: 'Subscription Canceled',
           message: `Your subscription has been canceled and you've been switched to the free plan. Your ${res.data.tokens_preserved || 0} tokens have been preserved.`
+        });
+        setTimeout(() => setNotification(null), 5000);
+      } else if (res.data.status === 'error') {
+        // Handle error response (e.g., trying to cancel free plan)
+        setMessage(`❌ ${res.data.message || 'Failed to cancel subscription'}`);
+        setNotification({
+          type: 'error',
+          title: 'Cancel Failed',
+          message: res.data.message || 'Cannot cancel this subscription.'
         });
         setTimeout(() => setNotification(null), 5000);
       }
@@ -1285,11 +1321,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   }, [API, user, loadSubscription]);
 
   // Calculate tokens required for a file (1 token = 10MB)
-  const calculateTokens = (fileSizeBytes) => {
-    if (!fileSizeBytes) return 0;
-    const sizeMB = fileSizeBytes / (1024 * 1024);
-    const tokens = Math.ceil(sizeMB / 10);
-    return Math.max(1, tokens); // Minimum 1 token
+  // Calculate total token cost for all queued videos (uses backend-calculated tokens_required)
+  const calculateQueueTokenCost = () => {
+    return videos
+      .filter(v => (v.status === 'pending' || v.status === 'scheduled') && v.tokens_consumed === 0)
+      .reduce((total, video) => {
+        return total + (video.tokens_required || 0);
+      }, 0);
   };
 
   // Format file size for display
@@ -1434,7 +1472,20 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const loadGlobalSettings = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/global/settings`);
-      setGlobalSettings(res.data);
+      // Merge with default state to ensure all fields are defined
+      setGlobalSettings({
+        title_template: '{filename}',
+        description_template: 'Uploaded via Hopper',
+        wordbank: [],
+        upload_immediately: true,
+        schedule_mode: 'spaced',
+        schedule_interval_value: 1,
+        schedule_interval_unit: 'hours',
+        schedule_start_time: '',
+        upload_first_immediately: true,
+        allow_duplicates: false,
+        ...res.data
+      });
     } catch (err) {
       console.error('Error loading global settings:', err);
     }
@@ -1566,12 +1617,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
 
   const updateGlobalSettings = async (key, value) => {
     try {
-      const params = new URLSearchParams();
-      // URLSearchParams automatically converts booleans to strings
-      // FastAPI Query() will convert them back to booleans
-      params.append(key, value);
-      const res = await axios.post(`${API}/global/settings?${params.toString()}`);
-      setGlobalSettings(res.data);
+      // Send as JSON body (backend now uses Pydantic schemas)
+      const res = await axios.post(`${API}/global/settings`, { [key]: value });
+      // Merge with current state to ensure all fields are defined
+      setGlobalSettings(prev => ({
+        ...prev,
+        ...res.data
+      }));
       setMessage(`✅ Settings updated`);
     } catch (err) {
       setMessage('❌ Error updating settings');
@@ -1581,9 +1633,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
 
   const updateYoutubeSettings = async (key, value) => {
     try {
-      const params = new URLSearchParams();
-      params.append(key, value);
-      const res = await axios.post(`${API}/youtube/settings?${params.toString()}`);
+      // Send as JSON body (backend now uses Pydantic schemas)
+      const res = await axios.post(`${API}/youtube/settings`, { [key]: value });
       setYoutubeSettings(res.data);
       
       if (key === 'visibility') {
@@ -1619,14 +1670,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
 
   const updateTiktokSettings = async (key, value) => {
     try {
-      const params = new URLSearchParams();
-      // Don't send null or empty string for privacy_level - skip the parameter entirely
+      // Don't send null or empty string for privacy_level - skip the request entirely
       if (key === 'privacy_level' && (!value || value === 'null' || value === '')) {
         // Skip sending empty/null privacy_level to avoid backend validation errors
         return;
       }
-      params.append(key, value);
-      const res = await axios.post(`${API}/tiktok/settings?${params.toString()}`);
+      // Send as JSON body (backend now uses Pydantic schemas)
+      const res = await axios.post(`${API}/tiktok/settings`, { [key]: value });
       setTiktokSettings(res.data);
       
       if (key === 'privacy_level') {
@@ -1643,9 +1693,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
 
   const updateInstagramSettings = async (key, value) => {
     try {
-      const params = new URLSearchParams();
-      params.append(key, value);
-      const res = await axios.post(`${API}/instagram/settings?${params.toString()}`);
+      // Send as JSON body (backend now uses Pydantic schemas)
+      const res = await axios.post(`${API}/instagram/settings`, { [key]: value });
       setInstagramSettings(res.data);
       setMessage(`✅ Instagram settings updated`);
     } catch (err) {
@@ -1696,9 +1745,9 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     setState({ ...currentState, enabled: newEnabled });
     
     try {
-      const params = new URLSearchParams();
-      params.append('enabled', newEnabled);
-      await axios.post(`${API}/destinations/${platform}/toggle?${params.toString()}`);
+      await axios.post(`${API}/destinations/${platform}/toggle`, {
+        enabled: newEnabled
+      });
     } catch (err) {
       console.error(`Error toggling ${platform}:`, err);
       // Revert on error
@@ -1724,10 +1773,10 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       let addedCount = 0;
       for (const word of words) {
         try {
-          const params = new URLSearchParams();
-          params.append('word', word);
-          const res = await axios.post(`${API}/global/wordbank?${params.toString()}`);
-          setGlobalSettings({...globalSettings, wordbank: res.data.wordbank});
+          const res = await axios.post(`${API}/global/wordbank`, {
+            word: word
+          });
+          setGlobalSettings(prev => ({...prev, wordbank: res.data.wordbank}));
           addedCount++;
         } catch (err) {
           console.error(`Error adding word "${word}":`, err);
@@ -1752,7 +1801,10 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const removeWordFromWordbank = async (word) => {
     try {
       await axios.delete(`${API}/global/wordbank/${encodeURIComponent(word)}`);
-      setGlobalSettings({...globalSettings, wordbank: globalSettings.wordbank.filter(w => w !== word)});
+      setGlobalSettings(prev => ({
+        ...prev,
+        wordbank: prev.wordbank.filter(w => w !== word)
+      }));
       setMessage('✅ Word removed from wordbank');
     } catch (err) {
       setMessage('❌ Error removing word');
@@ -1766,7 +1818,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     }
     try {
       await axios.delete(`${API}/global/wordbank`);
-      setGlobalSettings({...globalSettings, wordbank: []});
+      setGlobalSettings(prev => ({...prev, wordbank: []}));
       setMessage('✅ Wordbank cleared');
     } catch (err) {
       setMessage('❌ Error clearing wordbank');
@@ -1803,8 +1855,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       return;
     }
     
-    // Calculate tokens required for this file (for display purposes)
-    const tokensRequired = calculateTokens(file.size);
+    // Tokens will be calculated by backend and returned in response
     
     const form = new FormData();
     form.append('file', file);
@@ -1853,6 +1904,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           return [...withoutTemp, res.data];
         });
         
+        // Get tokens_required from backend response
+        const tokensRequired = res.data.tokens_required || 0;
         setMessage(`✅ Added ${file.name} to queue (will cost ${tokensRequired} ${tokensRequired === 1 ? 'token' : 'tokens'} on upload)`);
       } catch (err) {
         setVideos(prev => prev.filter(v => v.id !== tempId));
@@ -1918,6 +1971,15 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           });
           // Auto-dismiss after 10 seconds
           setTimeout(() => setNotification(null), 10000);
+        } else if (err.response?.status === 400 && (errorMsg.includes('Insufficient tokens') || errorMsg.includes('Insufficient'))) {
+          // Token limit error - show popup notification
+          setNotification({
+            type: 'error',
+            title: 'Insufficient Tokens',
+            message: errorMsg,
+            videoFilename: file.name
+          });
+          setTimeout(() => setNotification(null), 15000);
         } else if (err.response?.status === 402 || err.response?.status === 403) {
           // Payment required or forbidden - token-related errors
           if (errorMsg.includes('token') || errorMsg.includes('Insufficient')) {
@@ -2048,15 +2110,15 @@ function Home({ user, isAdmin, setUser, authLoading }) {
 
   const updateVideoSettings = async (videoId, settings) => {
     try {
-      const params = new URLSearchParams();
+      // Filter out null/undefined values but keep empty strings (for clearing values like scheduled_time)
+      const filteredSettings = {};
       Object.entries(settings).forEach(([key, value]) => {
-        // Include empty strings (for clearing values like scheduled_time)
         if (value !== null && value !== undefined) {
-          params.append(key, value);
+          filteredSettings[key] = value;
         }
       });
       
-      await axios.patch(`${API}/videos/${videoId}?${params.toString()}`);
+      await axios.patch(`${API}/videos/${videoId}`, filteredSettings);
       
       // Reload videos to get updated computed titles
       await loadVideos();
@@ -2072,14 +2134,15 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   // Reusable function for saving destination-specific overrides (DRY)
   const saveDestinationOverrides = async (videoId, platform, overrides) => {
     try {
-      const params = new URLSearchParams();
+      // Filter out null/undefined values
+      const filteredOverrides = {};
       Object.entries(overrides).forEach(([key, value]) => {
         if (value !== null && value !== undefined) {
-          params.append(key, value);
+          filteredOverrides[key] = value;
         }
       });
       
-      await axios.patch(`${API}/videos/${videoId}?${params.toString()}`);
+      await axios.patch(`${API}/videos/${videoId}`, filteredOverrides);
       
       // Reload videos to get updated data
       await loadVideos();
@@ -2116,6 +2179,69 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     } catch (err) {
       setMessage('❌ Error recomputing title');
       console.error('Error recomputing title:', err);
+    }
+  };
+
+  const recomputeAllVideos = async (platform) => {
+    try {
+      const res = await axios.post(`${API}/videos/recompute-all/${platform}`);
+      await loadVideos();
+      const platformName = platform.charAt(0).toUpperCase() + platform.slice(1);
+      setMessage(`✅ Recomputed ${res.data.updated_count} ${platformName} video${res.data.updated_count !== 1 ? 's' : ''}`);
+    } catch (err) {
+      console.error(`Error recomputing ${platform} videos:`, err);
+      const platformName = platform.charAt(0).toUpperCase() + platform.slice(1);
+      setMessage(`❌ Error recomputing ${platformName} videos`);
+    }
+  };
+
+  const recomputeAllYouTube = () => recomputeAllVideos('youtube');
+  const recomputeAllTiktok = () => recomputeAllVideos('tiktok');
+  const recomputeAllInstagram = () => recomputeAllVideos('instagram');
+
+  const recomputeVideoField = async (videoId, platform, field) => {
+    try {
+      // Recompute the specific field for this video
+      // For now, we'll use the single video recompute endpoint
+      // and then update the specific field in the override modal
+      await axios.post(`${API}/videos/${videoId}/recompute-title`);
+      
+      // Reload videos to get updated values
+      await loadVideos();
+      
+      // Update the override input value if modal is open
+      const modalKey = `${videoId}-${platform}`;
+      const videosRes = await axios.get(`${API}/videos`);
+      const updatedVideo = videosRes.data.find(v => v.id === videoId);
+      
+      if (updatedVideo) {
+        const newValue = field === 'title' 
+          ? (platform === 'youtube' ? updatedVideo.youtube_title : updatedVideo.tiktok_title)
+          : field === 'description'
+          ? updatedVideo.youtube_description
+          : field === 'tags'
+          ? updatedVideo.youtube_tags
+          : field === 'caption'
+          ? updatedVideo.instagram_caption
+          : null;
+        
+        if (newValue !== null) {
+          setOverrideInputValues(prev => ({
+            ...prev,
+            [modalKey]: {
+              ...(prev[modalKey] || {}),
+              [platform === 'youtube' && field === 'title' ? 'youtube_title' : 
+               field === 'title' ? 'title' : 
+               field === 'caption' ? 'caption' : field]: newValue
+            }
+          }));
+        }
+      }
+      
+      setMessage(`✅ ${field === 'title' ? 'Title' : field === 'description' ? 'Description' : field === 'tags' ? 'Tags' : 'Caption'} recomputed from template`);
+    } catch (err) {
+      console.error(`Error recomputing ${field}:`, err);
+      setMessage(`❌ Error recomputing ${field}`);
     }
   };
 
@@ -2213,7 +2339,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     
     // Check token balance before uploading
     // Only block free plan users - paid plans (starter/creator) allow overage
-    if (tokenBalance && !tokenBalance.unlimited && subscription && subscription.plan_type === 'free') {
+    if (tokenBalance && !tokenBalance.unlimited && subscription && subscription.plan_type && subscription.plan_type === 'free') {
       // Get pending videos (pending, failed, or uploading status)
       const pendingVideos = videos.filter(v => 
         v.status === 'pending' || v.status === 'failed' || v.status === 'uploading'
@@ -2224,8 +2350,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       const totalTokensRequired = pendingVideos
         .filter(v => v.tokens_consumed === 0)
         .reduce((sum, video) => {
-          const tokensForVideo = calculateTokens(video.file_size_bytes);
-          return sum + tokensForVideo;
+          return sum + (video.tokens_required || 0);
         }, 0);
       
       // Free plan has hard limit - block if not enough tokens
@@ -2279,8 +2404,12 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         return hasTiktokUpload && isUploaded;
       });
       
-      if (res.data.uploaded !== undefined && res.data.uploaded > 0) {
-        setMessage(`✅ Uploaded ${res.data.uploaded} videos!`);
+      if (res.data.videos_uploaded !== undefined && res.data.videos_uploaded > 0) {
+        if (res.data.videos_failed > 0) {
+          setMessage(`⚠️ ${res.data.message || `Uploaded ${res.data.videos_uploaded} video(s), ${res.data.videos_failed} failed`}`);
+        } else {
+          setMessage(`✅ ${res.data.message || `Uploaded ${res.data.videos_uploaded} videos!`}`);
+        }
         // Show notification for TikTok only if TikTok uploads actually succeeded
         if (tiktok.enabled && hasSuccessfulTiktokUploads) {
           setNotification({
@@ -2288,9 +2417,10 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             title: 'Content Processing',
             message: 'Your content has been published successfully. It may take a few minutes for the content to process and be visible on your TikTok profile.',
           });
-          // Auto-dismiss after 15 seconds to ensure users see the important message
           setTimeout(() => setNotification(null), 15000);
         }
+      } else if (res.data.videos_failed > 0) {
+        setMessage(`❌ ${res.data.message || `Upload failed for ${res.data.videos_failed} video(s)`}`);
       } else if (res.data.scheduled !== undefined) {
         setMessage(`✅ ${res.data.scheduled} videos scheduled! ${res.data.message}`);
         // Don't show processing notification for scheduled uploads - they haven't been published yet
@@ -2303,7 +2433,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             title: 'Content Processing',
             message: 'Your content has been published successfully. It may take a few minutes for the content to process and be visible on your TikTok profile.',
           });
-          // Auto-dismiss after 15 seconds to ensure users see the important message
           setTimeout(() => setNotification(null), 15000);
         }
       }
@@ -2347,10 +2476,10 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             maxWidth: '500px',
             padding: '1.25rem',
             background: notification.type === 'error' 
-              ? `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.error, 0.95)} 0%, ${rgba(HOPPER_COLORS.rgb.redDark, 0.95)} 100%)`
+              ? `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.error, 1.0)} 0%, ${rgba(HOPPER_COLORS.rgb.error, 0.9)} 100%)`
               : notification.type === 'info'
-              ? `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.info, 0.95)} 0%, ${rgba(HOPPER_COLORS.rgb.blueDark, 0.95)} 100%)`
-              : `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.success, 0.95)} 0%, ${rgba(HOPPER_COLORS.rgb.greenDark, 0.95)} 100%)`,
+              ? `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.info, 1.0)} 0%, ${rgba(HOPPER_COLORS.rgb.info, 0.9)} 100%)`
+              : `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.success, 1.0)} 0%, ${rgba(HOPPER_COLORS.rgb.success, 0.9)} 100%)`,
             border: notification.type === 'error'
               ? `2px solid ${HOPPER_COLORS.error}`
               : notification.type === 'info'
@@ -2451,7 +2580,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             left: 0,
             right: 0,
             bottom: 0,
-            backgroundColor: rgba(HOPPER_COLORS.rgb.black, 0.6),
+            backgroundColor: 'var(--bg-overlay)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -2523,7 +2652,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 onClick={confirmDialog.onConfirm}
                 style={{
                   padding: '0.75rem 1.5rem',
-                  background: `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.error, 0.9)} 0%, ${rgba(HOPPER_COLORS.rgb.redDark, 0.9)} 100%)`,
+                  background: `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.error, 1.0)} 0%, ${rgba(HOPPER_COLORS.rgb.error, 0.9)} 100%)`,
                   border: `1px solid ${HOPPER_COLORS.error}`,
                   borderRadius: '8px',
                   color: 'white',
@@ -2859,19 +2988,21 @@ function Home({ user, isAdmin, setUser, authLoading }) {
 
               {globalSettings.schedule_mode === 'spaced' && (
                 <div className="setting-group">
-                  <label>
-                    <input
+                  <label className="checkbox-label">
+                    <input 
                       type="checkbox"
                       checked={globalSettings.upload_first_immediately !== false}
                       onChange={(e) => updateGlobalSettings('upload_first_immediately', e.target.checked)}
-                      style={{ marginRight: '8px' }}
+                      className="checkbox"
                     />
-                    Upload first video immediately
-                    <span className="tooltip-wrapper">
-                      <span className="tooltip-icon">i</span>
-                      <span className="tooltip-text">
-                        When checked, the first video uploads immediately and subsequent videos are spaced by the interval.
-                        When unchecked, all videos (including the first) are spaced evenly by the interval.
+                    <span>
+                      Upload first video immediately
+                      <span className="tooltip-wrapper" style={{ marginLeft: '6px' }}>
+                        <span className="tooltip-icon">i</span>
+                        <span className="tooltip-text">
+                          When checked, the first video uploads immediately and subsequent videos are spaced by the interval.
+                          When unchecked, all videos (including the first) are spaced evenly by the interval.
+                        </span>
                       </span>
                     </span>
                   </label>
@@ -3478,19 +3609,73 @@ function Home({ user, isAdmin, setUser, authLoading }) {
 
             <div className="setting-group">
               <label>
-                Location ID
+                Media Type
                 <span className="tooltip-wrapper">
                   <span className="tooltip-icon">i</span>
-                  <span className="tooltip-text">Optional Instagram location ID for geotagging</span>
+                  <span className="tooltip-text">Choose whether to post as a Reel or regular Video feed post</span>
+                </span>
+              </label>
+              <select
+                value={instagramSettings.media_type || 'REELS'}
+                onChange={(e) => updateInstagramSettings('media_type', e.target.value)}
+                className="select"
+              >
+                <option value="REELS">Reels</option>
+                <option value="VIDEO">Video (Feed Post)</option>
+              </select>
+            </div>
+
+            <div className="setting-group">
+              <label className="checkbox-label">
+                <input 
+                  type="checkbox"
+                  checked={instagramSettings.share_to_feed ?? true}
+                  onChange={(e) => updateInstagramSettings('share_to_feed', e.target.checked)}
+                  className="checkbox"
+                  disabled={instagramSettings.media_type !== 'REELS'}
+                />
+                <span>Share Reel to Feed</span>
+                <span className="tooltip-wrapper" style={{ marginLeft: '8px' }}>
+                  <span className="tooltip-icon">i</span>
+                  <span className="tooltip-text">When enabled, your Reel will also appear in your feed (only applies to Reels)</span>
+                </span>
+              </label>
+            </div>
+
+            <div className="setting-group">
+              <label>
+                Cover Image URL (Optional)
+                <span className="tooltip-wrapper">
+                  <span className="tooltip-icon">i</span>
+                  <span className="tooltip-text">URL to a custom thumbnail image for your video</span>
                 </span>
               </label>
               <input 
                 type="text"
-                value={instagramSettings.location_id || ''}
-                onChange={(e) => setInstagramSettings({...instagramSettings, location_id: e.target.value})}
-                onBlur={(e) => updateInstagramSettings('location_id', e.target.value)}
-                placeholder="Location ID (optional)"
+                value={instagramSettings.cover_url || ''}
+                onChange={(e) => setInstagramSettings({...instagramSettings, cover_url: e.target.value})}
+                onBlur={(e) => updateInstagramSettings('cover_url', e.target.value)}
+                placeholder="https://example.com/image.jpg (optional)"
                 className="input-text"
+              />
+            </div>
+
+            <div className="setting-group">
+              <label>
+                Audio Name (Optional, Reels only)
+                <span className="tooltip-wrapper">
+                  <span className="tooltip-icon">i</span>
+                  <span className="tooltip-text">Name of the audio track for your Reel</span>
+                </span>
+              </label>
+              <input 
+                type="text"
+                value={instagramSettings.audio_name || ''}
+                onChange={(e) => setInstagramSettings({...instagramSettings, audio_name: e.target.value})}
+                onBlur={(e) => updateInstagramSettings('audio_name', e.target.value)}
+                placeholder="Audio track name (optional)"
+                className="input-text"
+                disabled={instagramSettings.media_type !== 'REELS'}
               />
             </div>
 
@@ -3714,7 +3899,27 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       {message && <div className="message">{message}</div>}
       <div className="card">
         <div className="queue-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-          <h2 style={{ margin: 0 }}>Queue ({videos.length})</h2>
+          <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            Queue ({videos.length})
+            <span style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '4px',
+              padding: '0.5rem 0.75rem',
+              background: 'rgba(99, 102, 241, 0.15)',
+              border: '1px solid rgba(99, 102, 241, 0.3)',
+              borderRadius: '6px',
+              fontSize: '0.75rem',
+              color: HOPPER_COLORS.grey,
+              fontWeight: '500',
+              height: '32px',
+              minWidth: '32px',
+              boxSizing: 'border-box'
+            }}>
+              🪙 {calculateQueueTokenCost()}
+            </span>
+          </h2>
           <div className="queue-buttons" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             {videos.length > 0 && videos.some(v => v.status === 'uploaded' || v.status === 'completed') && (
               <button
@@ -3822,8 +4027,17 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         marginTop: '4px',
                         flexWrap: 'wrap'
                       }}>
-                        {Object.entries(v.platform_statuses).map(([platform, status]) => {
-                          if (status === 'not_enabled') return null;
+                        {Object.entries(v.platform_statuses).map(([platform, statusData]) => {
+                          // Handle new format: statusData is now {status: "...", error: "..."}
+                          const status = typeof statusData === 'object' ? statusData.status : statusData;
+                          
+                          // Filter: Only show platforms that are enabled
+                          const isEnabled = 
+                            (platform === 'youtube' && youtube.enabled) ||
+                            (platform === 'tiktok' && tiktok.enabled) ||
+                            (platform === 'instagram' && instagram.enabled);
+                          
+                          if (!isEnabled || status === 'not_enabled') return null;
                           
                           const platformNames = {
                             youtube: 'YouTube',
@@ -3853,20 +4067,23 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                             );
                           }
                           
-                          // Determine border color based on status
-                          let borderColor, backgroundColor, title;
+                          // Determine border color based on status using design system colors
+                          let borderColor, backgroundColor, boxShadow, title;
                           if (status === 'success') {
-                            borderColor = '#22c55e'; // Green
-                            backgroundColor = 'rgba(34, 197, 94, 0.1)';
+                            borderColor = HOPPER_COLORS.success;
+                            backgroundColor = rgba(HOPPER_COLORS.rgb.success, 0.1);
+                            boxShadow = `0 0 8px ${rgba(HOPPER_COLORS.rgb.success, 0.4)}`;
                             title = `${platformNames[platform]}: Upload successful - Click to view/edit`;
                           } else if (status === 'failed') {
-                            borderColor = '#ef4444'; // Red
-                            backgroundColor = 'rgba(239, 68, 68, 0.1)';
+                            borderColor = HOPPER_COLORS.error;
+                            backgroundColor = rgba(HOPPER_COLORS.rgb.error, 0.1);
+                            boxShadow = `0 0 8px ${rgba(HOPPER_COLORS.rgb.error, 0.4)}`;
                             title = `${platformNames[platform]}: Upload failed - Click to view errors/edit`;
                           } else {
                             // Pending
-                            borderColor = 'rgba(255, 255, 255, 0.2)';
-                            backgroundColor = 'rgba(255, 255, 255, 0.05)';
+                            borderColor = rgba(HOPPER_COLORS.rgb.white, 0.2);
+                            backgroundColor = rgba(HOPPER_COLORS.rgb.white, 0.05);
+                            boxShadow = 'none';
                             title = `${platformNames[platform]}: Will upload to this platform - Click to configure`;
                           }
                           
@@ -3891,12 +4108,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                 transition: 'all 0.2s ease',
                                 opacity: status === 'pending' ? 0.7 : 1,
                                 minWidth: '32px',
-                                height: '28px'
+                                height: '28px',
+                                boxShadow: boxShadow
                               }}
                               onMouseEnter={(e) => {
                                 if (status === 'pending') {
                                   e.currentTarget.style.opacity = '1';
-                                  e.currentTarget.style.borderColor = 'rgba(99, 102, 241, 0.5)';
+                                  e.currentTarget.style.borderColor = rgba(HOPPER_COLORS.rgb.info, 0.5);
                                 } else {
                                   e.currentTarget.style.transform = 'scale(1.05)';
                                 }
@@ -3904,7 +4122,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                               onMouseLeave={(e) => {
                                 if (status === 'pending') {
                                   e.currentTarget.style.opacity = '0.7';
-                                  e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                                  e.currentTarget.style.borderColor = rgba(HOPPER_COLORS.rgb.white, 0.2);
                                 } else {
                                   e.currentTarget.style.transform = 'scale(1)';
                                 }
@@ -3983,7 +4201,9 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         ) : (
                           <span>Processing...</span>
                         )
-                      ) : v.status === 'scheduled' && v.scheduled_time ? (
+                      ) : v.status === 'failed' ? (
+                        <span style={{ color: HOPPER_COLORS.error }}>Upload Failed</span>
+                      ) : v.scheduled_time ? (
                         <span>Scheduled for {new Date(v.scheduled_time).toLocaleString(undefined, {
                           year: 'numeric',
                           month: 'short',
@@ -3992,8 +4212,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                           minute: '2-digit',
                           second: '2-digit'
                         })}</span>
-                      ) : v.status === 'failed' ? (
-                        <span style={{ color: HOPPER_COLORS.error }}>Upload Failed</span>
                       ) : (
                         <span>{v.status}</span>
                       )}
@@ -4017,7 +4235,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                               </div>
                               <div className="video-detail-row">
                                 <span className="video-detail-key">Tokens:</span>
-                                <span className="video-detail-value video-detail-tokens">{v.tokens_consumed || calculateTokens(v.file_size_bytes)}</span>
+                                <span className="video-detail-value video-detail-tokens">{v.tokens_consumed || v.tokens_required || 0}</span>
                               </div>
                             </>
                           )}
@@ -4169,7 +4387,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                       minWidth: '32px',
                       boxSizing: 'border-box'
                     }}>
-                      🪙 {v.tokens_consumed || calculateTokens(v.file_size_bytes)}
+                      🪙 {v.tokens_consumed || v.tokens_required || 0}
                     </div>
                   )}
                   <button 
@@ -4597,44 +4815,181 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         };
         
         const platformData = video.upload_properties?.[platform] || {};
-        const platformStatus = video.platform_statuses?.[platform] || 'pending';
+        const platformStatusData = video.platform_statuses?.[platform] || {status: 'pending', error: null};
+        // Handle both old format (string) and new format (object)
+        const platformStatus = typeof platformStatusData === 'object' ? platformStatusData.status : platformStatusData;
+        const platformErrorFromStatus = typeof platformStatusData === 'object' ? platformStatusData.error : null;
+        
         // Get error from multiple possible sources
-        let platformError = platformData.error || null;
+        let platformError = platformData.error || platformErrorFromStatus || null;
         if (!platformError && platform === 'tiktok') {
           platformError = video.tiktok_publish_error || null;
         }
-        // If no platform-specific error but video failed, show general error
+        // If no platform-specific error but video failed, try to extract platform-specific error from general error
         if (!platformError && platformStatus === 'failed' && video.error) {
-          platformError = video.error;
+          // Check if the general error message mentions this platform
+          const platformKeywords = {
+            youtube: ['youtube', 'google'],
+            tiktok: ['tiktok'],
+            instagram: ['instagram', 'facebook']
+          };
+          const keywords = platformKeywords[platform] || [];
+          const errorLower = video.error.toLowerCase();
+          
+          // If error mentions this platform, use it
+          if (keywords.some(keyword => errorLower.includes(keyword))) {
+            platformError = video.error;
+          } else if (!video.error.includes('Upload failed for all destinations') && 
+                     !video.error.includes('but failed for others')) {
+            // If error doesn't mention platform but isn't generic, show it anyway
+            platformError = video.error;
+          }
         }
         const customSettings = video.custom_settings || {};
+        
+        // DRY: Helper function to format tags (must be defined before use)
+        const formatTags = (tags) => {
+          if (!tags) return '';
+          if (Array.isArray(tags)) return tags.join(', ');
+          if (typeof tags === 'string') return tags.split(',').map(t => t.trim()).join(', ');
+          return String(tags);
+        };
+        
+        // Get or initialize override input values for character counters
+        const modalKey = `${video.id}-${platform}`;
+        
+        // Initialize values if not already set
+        if (!overrideInputValues[modalKey]) {
+          const initial = {};
+          if (platform === 'youtube') {
+            initial.youtube_title = customSettings.youtube_title || platformData.title || '';
+            initial.description = customSettings.description || platformData.description || '';
+            initial.tags = customSettings.tags || formatTags(platformData.tags) || '';
+          } else if (platform === 'tiktok') {
+            initial.title = customSettings.title || platformData.title || '';
+          } else if (platform === 'instagram') {
+            initial.caption = customSettings.caption || platformData.caption || '';
+          }
+          setOverrideInputValues(prev => ({ ...prev, [modalKey]: initial }));
+        }
+        
+        const overrideValues = overrideInputValues[modalKey] || {};
+        
+        const updateOverrideValue = (key, value) => {
+          setOverrideInputValues(prev => ({
+            ...prev,
+            [modalKey]: {
+              ...(prev[modalKey] || {}),
+              [key]: value
+            }
+          }));
+        };
+        
+        // DRY: Reusable style objects for metadata display
+        const metadataContainerStyle = {
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.75rem',
+          padding: '0.75rem',
+          background: rgba(HOPPER_COLORS.rgb.white, 0.03),
+          border: `1px solid ${rgba(HOPPER_COLORS.rgb.white, 0.1)}`,
+          borderRadius: '6px',
+          fontSize: '0.9rem'
+        };
+        
+        const metadataItemStyle = {
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.5rem'
+        };
+        
+        const metadataLabelStyle = {
+          fontWeight: '600',
+          color: HOPPER_COLORS.light
+        };
+        
+        const metadataValueStyle = {
+          color: HOPPER_COLORS.light
+        };
+        
+        const metadataTextBlockStyle = {
+          marginTop: '0.25rem',
+          padding: '0.5rem',
+          background: rgba(HOPPER_COLORS.rgb.base, 0.2),
+          borderRadius: '4px',
+          color: HOPPER_COLORS.light,
+          maxHeight: '150px',
+          overflowY: 'auto',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word'
+        };
+        
+        const metadataGridStyle = {
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: '0.5rem',
+          marginTop: '0.25rem'
+        };
+        
+        const metadataStatusBadgeStyle = (status) => ({
+          marginTop: '0.5rem',
+          padding: '0.5rem',
+          background: status === 'PUBLISHED' 
+            ? rgba(HOPPER_COLORS.rgb.success, 0.1)
+            : rgba(HOPPER_COLORS.rgb.info, 0.1),
+          borderRadius: '4px',
+          border: `1px solid ${
+            status === 'PUBLISHED' 
+              ? rgba(HOPPER_COLORS.rgb.success, 0.3)
+              : rgba(HOPPER_COLORS.rgb.info, 0.3)
+          }`
+        });
+        
+        const metadataWarningBoxStyle = {
+          marginTop: '0.25rem',
+          padding: '0.5rem',
+          background: rgba(HOPPER_COLORS.rgb.warning, 0.1),
+          borderRadius: '4px',
+          border: `1px solid ${rgba(HOPPER_COLORS.rgb.warning, 0.3)}`
+        };
+        
+        // DRY: Helper function to format boolean values
+        const formatBoolean = (value, undefinedText = 'Not set') => {
+          if (value === undefined || value === null) return undefinedText;
+          return value ? 'Yes' : 'No';
+        };
         
         const handleSaveOverrides = async () => {
           try {
             const overrides = {};
             
             if (platform === 'youtube') {
-              const titleEl = document.getElementById(`dest-override-title-${video.id}-${platform}`);
               const descEl = document.getElementById(`dest-override-description-${video.id}-${platform}`);
               const tagsEl = document.getElementById(`dest-override-tags-${video.id}-${platform}`);
               const visibilityEl = document.getElementById(`dest-override-visibility-${video.id}-${platform}`);
               const madeForKidsEl = document.getElementById(`dest-override-made-for-kids-${video.id}-${platform}`);
               
-              if (titleEl?.value) overrides.title = titleEl.value;
+              if (overrideValues.youtube_title) overrides.title = overrideValues.youtube_title;
               if (descEl?.value) overrides.description = descEl.value;
               if (tagsEl?.value) overrides.tags = tagsEl.value;
               if (visibilityEl?.value) overrides.visibility = visibilityEl.value;
               overrides.made_for_kids = madeForKidsEl?.checked ?? false;
             } else if (platform === 'tiktok') {
-              const titleEl = document.getElementById(`dest-override-title-${video.id}-${platform}`);
               const privacyEl = document.getElementById(`dest-override-privacy-${video.id}-${platform}`);
               
-              if (titleEl?.value) overrides.title = titleEl.value;
+              if (overrideValues.title) overrides.title = overrideValues.title;
               if (privacyEl?.value) overrides.privacy_level = privacyEl.value;
             } else if (platform === 'instagram') {
-              const captionEl = document.getElementById(`dest-override-caption-${video.id}-${platform}`);
+              const mediaTypeEl = document.getElementById(`dest-override-media-type-${video.id}-${platform}`);
+              const shareToFeedEl = document.getElementById(`dest-override-share-to-feed-${video.id}-${platform}`);
+              const coverUrlEl = document.getElementById(`dest-override-cover-url-${video.id}-${platform}`);
+              const audioNameEl = document.getElementById(`dest-override-audio-name-${video.id}-${platform}`);
               
-              if (captionEl?.value) overrides.caption = captionEl.value;
+              if (overrideValues.caption) overrides.caption = overrideValues.caption;
+              if (mediaTypeEl?.value) overrides.media_type = mediaTypeEl.value;
+              if (shareToFeedEl) overrides.share_to_feed = shareToFeedEl.checked;
+              if (coverUrlEl?.value) overrides.cover_url = coverUrlEl.value;
+              if (audioNameEl?.value) overrides.audio_name = audioNameEl.value;
             }
             
             const success = await saveDestinationOverrides(video.id, platform, overrides);
@@ -4646,6 +5001,25 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           }
         };
         
+        // DRY: Reusable button styles
+        const errorButtonBaseStyle = {
+          padding: '0.375rem 0.75rem',
+          background: rgba(HOPPER_COLORS.rgb.error, 0.1),
+          border: `1px solid ${rgba(HOPPER_COLORS.rgb.error, 0.3)}`,
+          borderRadius: '6px',
+          color: HOPPER_COLORS.error,
+          cursor: 'pointer',
+          fontSize: '0.85rem',
+          fontWeight: '500',
+          transition: 'all 0.2s',
+          fontFamily: 'inherit'
+        };
+        
+        const errorButtonHoverStyle = {
+          background: rgba(HOPPER_COLORS.rgb.error, 0.2),
+          borderColor: rgba(HOPPER_COLORS.rgb.error, 0.5)
+        };
+        
         return (
           <div
             style={{
@@ -4654,7 +5028,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               left: 0,
               right: 0,
               bottom: 0,
-              backgroundColor: 'rgba(0, 0, 0, 0.7)',
+              backgroundColor: 'var(--bg-overlay)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -4676,8 +5050,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               <div className="modal-header">
                 <h2>
                   {platformNames[platform]} Upload Details
-                  {platformStatus === 'success' && <span style={{ color: '#22c55e', marginLeft: '8px' }}>✓</span>}
-                  {platformStatus === 'failed' && <span style={{ color: '#ef4444', marginLeft: '8px' }}>✕</span>}
+                  {platformStatus === 'success' && <span style={{ color: HOPPER_COLORS.success, marginLeft: '8px' }}>✓</span>}
+                  {platformStatus === 'failed' && <span style={{ color: HOPPER_COLORS.error, marginLeft: '8px' }}>✕</span>}
                 </h2>
                 <button className="btn-close" onClick={() => setDestinationModal(null)}>×</button>
               </div>
@@ -4701,24 +5075,12 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                             return newSet;
                           });
                         }}
-                        style={{
-                          padding: '0.375rem 0.75rem',
-                          background: 'rgba(239, 68, 68, 0.1)',
-                          border: '1px solid rgba(239, 68, 68, 0.3)',
-                          borderRadius: '6px',
-                          color: '#ef4444',
-                          cursor: 'pointer',
-                          fontSize: '0.85rem',
-                          fontWeight: '500',
-                          transition: 'all 0.2s'
-                        }}
+                        style={errorButtonBaseStyle}
                         onMouseEnter={(e) => {
-                          e.target.style.background = 'rgba(239, 68, 68, 0.2)';
-                          e.target.style.borderColor = 'rgba(239, 68, 68, 0.5)';
+                          Object.assign(e.target.style, errorButtonHoverStyle);
                         }}
                         onMouseLeave={(e) => {
-                          e.target.style.background = 'rgba(239, 68, 68, 0.1)';
-                          e.target.style.borderColor = 'rgba(239, 68, 68, 0.3)';
+                          Object.assign(e.target.style, errorButtonBaseStyle);
                         }}
                       >
                         {expandedDestinationErrors.has(`${video.id}-${platform}`) ? 'Hide Error' : 'Show Error'}
@@ -4728,23 +5090,23 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   <div style={{
                     padding: '0.75rem',
                     background: platformStatus === 'success' 
-                      ? 'rgba(34, 197, 94, 0.1)' 
+                      ? rgba(HOPPER_COLORS.rgb.success, 0.1)
                       : platformStatus === 'failed'
-                      ? 'rgba(239, 68, 68, 0.1)'
-                      : 'rgba(255, 255, 255, 0.05)',
+                      ? rgba(HOPPER_COLORS.rgb.error, 0.1)
+                      : rgba(HOPPER_COLORS.rgb.white, 0.05),
                     border: `1px solid ${
                       platformStatus === 'success'
-                        ? '#22c55e'
+                        ? HOPPER_COLORS.success
                         : platformStatus === 'failed'
-                        ? '#ef4444'
-                        : 'rgba(255, 255, 255, 0.2)'
+                        ? HOPPER_COLORS.error
+                        : rgba(HOPPER_COLORS.rgb.white, 0.2)
                     }`,
                     borderRadius: '6px',
                     color: platformStatus === 'success'
-                      ? '#22c55e'
+                      ? HOPPER_COLORS.success
                       : platformStatus === 'failed'
-                      ? '#ef4444'
-                      : '#999',
+                      ? HOPPER_COLORS.error
+                      : HOPPER_COLORS.grey,
                     fontWeight: '500'
                   }}>
                     {platformStatus === 'success' && '✓ Upload Successful'}
@@ -4759,10 +5121,10 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     <label>{platformNames[platform]} Upload Error</label>
                     <div style={{
                       padding: '0.75rem',
-                      background: 'rgba(239, 68, 68, 0.1)',
-                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      background: rgba(HOPPER_COLORS.rgb.error, 0.1),
+                      border: `1px solid ${rgba(HOPPER_COLORS.rgb.error, 0.3)}`,
                       borderRadius: '6px',
-                      color: '#ef4444',
+                      color: HOPPER_COLORS.error,
                       fontSize: '0.9rem',
                       wordBreak: 'break-word'
                     }}>
@@ -4772,7 +5134,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         <div style={{ fontStyle: 'italic', opacity: 0.8 }}>
                           No detailed error message available. The upload failed but no specific error was captured.
                           {video.error && (
-                            <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid rgba(239, 68, 68, 0.2)' }}>
+                            <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: `1px solid ${rgba(HOPPER_COLORS.rgb.error, 0.2)}` }}>
                               <strong>General error:</strong> {video.error}
                             </div>
                           )}
@@ -4784,166 +5146,402 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 
                 {/* Upload Metadata */}
                 <div className="setting-group">
-                  <label>Current Upload Metadata</label>
-                  <div style={{ 
-                    display: 'flex', 
-                    flexDirection: 'column', 
-                    gap: '0.5rem',
-                    padding: '0.75rem',
-                    background: 'rgba(255, 255, 255, 0.03)',
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
-                    borderRadius: '6px',
-                    fontSize: '0.9rem'
-                  }}>
+                  <label>Upload Metadata</label>
+                  <div style={metadataContainerStyle}>
                     {platform === 'youtube' && (
-                      <>
-                        <div><strong>Title:</strong> {video.youtube_title || video.filename}</div>
+                      <div style={metadataItemStyle}>
+                        <div>
+                          <span style={metadataLabelStyle}>Title:</span>
+                          <div style={metadataTextBlockStyle}>
+                            {platformData.title || video.youtube_title || video.filename}
+                          </div>
+                        </div>
                         {platformData.description && (
-                          <div><strong>Description:</strong> {platformData.description.substring(0, 200)}
-                          {platformData.description.length > 200 && '...'}</div>
+                          <div>
+                            <span style={metadataLabelStyle}>Description:</span>
+                            <div style={metadataTextBlockStyle}>
+                              {platformData.description}
+                            </div>
+                          </div>
                         )}
                         {platformData.tags && (
-                          <div><strong>Tags:</strong> {Array.isArray(platformData.tags) ? platformData.tags.join(', ') : platformData.tags}</div>
+                          <div>
+                            <span style={metadataLabelStyle}>Tags:</span>{' '}
+                            <span style={metadataValueStyle}>{formatTags(platformData.tags)}</span>
+                          </div>
                         )}
                         {platformData.visibility && (
-                          <div><strong>Visibility:</strong> {platformData.visibility}</div>
+                          <div>
+                            <span style={metadataLabelStyle}>Visibility:</span>{' '}
+                            <span style={{...metadataValueStyle, textTransform: 'capitalize'}}>
+                              {platformData.visibility}
+                            </span>
+                          </div>
                         )}
-                      </>
+                        {platformData.made_for_kids !== undefined && (
+                          <div>
+                            <span style={metadataLabelStyle}>Made for Kids:</span>{' '}
+                            <span style={metadataValueStyle}>{formatBoolean(platformData.made_for_kids)}</span>
+                          </div>
+                        )}
+                      </div>
                     )}
                     {platform === 'tiktok' && (
-                      <>
-                        {platformData.title && <div><strong>Title:</strong> {platformData.title}</div>}
-                        {video.tiktok_publish_status && (
-                          <div><strong>Publish Status:</strong> {video.tiktok_publish_status}</div>
+                      <div style={metadataItemStyle}>
+                        {platformData.title && (
+                          <div>
+                            <span style={metadataLabelStyle}>Title:</span>
+                            <div style={{...metadataTextBlockStyle, maxHeight: 'none'}}>
+                              {platformData.title}
+                            </div>
+                          </div>
                         )}
-                      </>
+                        {platformData.privacy_level && (
+                          <div>
+                            <span style={metadataLabelStyle}>Privacy Level:</span>{' '}
+                            <span style={{...metadataValueStyle, textTransform: 'capitalize'}}>
+                              {platformData.privacy_level}
+                            </span>
+                          </div>
+                        )}
+                        <div style={metadataGridStyle}>
+                          <div>
+                            <span style={metadataLabelStyle}>Allow Comments:</span>{' '}
+                            <span style={metadataValueStyle}>{formatBoolean(platformData.allow_comments)}</span>
+                          </div>
+                          <div>
+                            <span style={metadataLabelStyle}>Allow Duet:</span>{' '}
+                            <span style={metadataValueStyle}>{formatBoolean(platformData.allow_duet)}</span>
+                          </div>
+                          <div>
+                            <span style={metadataLabelStyle}>Allow Stitch:</span>{' '}
+                            <span style={metadataValueStyle}>{formatBoolean(platformData.allow_stitch)}</span>
+                          </div>
+                          {platformData.commercial_content_disclosure !== undefined && (
+                            <div>
+                              <span style={metadataLabelStyle}>Commercial Disclosure:</span>{' '}
+                              <span style={metadataValueStyle}>{formatBoolean(platformData.commercial_content_disclosure)}</span>
+                            </div>
+                          )}
+                        </div>
+                        {(platformData.commercial_content_your_brand || platformData.commercial_content_branded) && (
+                          <div style={metadataWarningBoxStyle}>
+                            <strong style={{ color: HOPPER_COLORS.warning }}>Commercial Content:</strong>
+                            <div style={{ marginTop: '0.25rem', color: HOPPER_COLORS.light, fontSize: '0.85rem' }}>
+                              {platformData.commercial_content_your_brand && <div>• Your Brand</div>}
+                              {platformData.commercial_content_branded && <div>• Branded Content</div>}
+                            </div>
+                          </div>
+                        )}
+                        {video.tiktok_publish_status && (
+                          <div style={metadataStatusBadgeStyle(video.tiktok_publish_status)}>
+                            <strong>Publish Status:</strong>{' '}
+                            <span style={{ 
+                              color: video.tiktok_publish_status === 'PUBLISHED' 
+                                ? HOPPER_COLORS.success
+                                : HOPPER_COLORS.info,
+                              textTransform: 'capitalize'
+                            }}>{video.tiktok_publish_status}</span>
+                          </div>
+                        )}
+                      </div>
                     )}
                     {platform === 'instagram' && (
-                      <>
-                        {platformData.caption && <div><strong>Caption:</strong> {platformData.caption}</div>}
-                      </>
+                      <div style={metadataItemStyle}>
+                        {platformData.caption && (
+                          <div>
+                            <span style={metadataLabelStyle}>Caption:</span>
+                            <div style={metadataTextBlockStyle}>
+                              {platformData.caption}
+                            </div>
+                          </div>
+                        )}
+                        <div style={metadataGridStyle}>
+                          <div>
+                            <span style={metadataLabelStyle}>Media Type:</span>{' '}
+                            <span style={metadataValueStyle}>
+                              {platformData.media_type || 'REELS'}
+                            </span>
+                          </div>
+                          {(platformData.media_type === 'REELS' || !platformData.media_type) && (
+                            <div>
+                              <span style={metadataLabelStyle}>Share to Feed:</span>{' '}
+                              <span style={metadataValueStyle}>
+                                {platformData.share_to_feed !== false ? 'Yes' : 'No'}
+                              </span>
+                            </div>
+                          )}
+                          <div>
+                            <span style={metadataLabelStyle}>Comments:</span>{' '}
+                            <span style={metadataValueStyle}>
+                              {platformData.disable_comments ? 'Disabled' : 'Enabled'}
+                            </span>
+                          </div>
+                          <div>
+                            <span style={metadataLabelStyle}>Likes:</span>{' '}
+                            <span style={metadataValueStyle}>
+                              {platformData.disable_likes ? 'Disabled' : 'Enabled'}
+                            </span>
+                          </div>
+                        </div>
+                        {platformData.cover_url && (
+                          <div>
+                            <span style={metadataLabelStyle}>Cover Image:</span>{' '}
+                            <span style={metadataValueStyle}>Custom thumbnail set</span>
+                          </div>
+                        )}
+                        {platformData.audio_name && (
+                          <div>
+                            <span style={metadataLabelStyle}>Audio Name:</span>{' '}
+                            <span style={metadataValueStyle}>{platformData.audio_name}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {(!platformData || Object.keys(platformData).length === 0) && (
+                      <div style={{ 
+                        color: HOPPER_COLORS.grey,
+                        fontStyle: 'italic',
+                        textAlign: 'center',
+                        padding: '1rem'
+                      }}>
+                        No upload metadata available yet. Metadata will be computed when the upload is processed.
+                      </div>
                     )}
                   </div>
                 </div>
                 
                 {/* Override Configuration */}
                 <div className="setting-group">
-                  <label>Destination-Specific Overrides</label>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                    {platform === 'youtube' && (
-                      <>
-                        <div className="form-group">
-                          <label>Title Override</label>
-                          <input
-                            type="text"
-                            id={`dest-override-title-${video.id}-${platform}`}
-                            className="input-text"
-                            defaultValue={customSettings.title || ''}
-                            placeholder="Leave empty to use template"
-                            maxLength="100"
-                          />
-                        </div>
-                        <div className="form-group">
-                          <label>Description Override</label>
-                          <textarea
-                            id={`dest-override-description-${video.id}-${platform}`}
-                            className="textarea-text"
-                            rows="4"
-                            defaultValue={customSettings.description || ''}
-                            placeholder="Leave empty to use template"
-                          />
-                        </div>
-                        <div className="form-group">
-                          <label>Tags Override</label>
-                          <input
-                            type="text"
-                            id={`dest-override-tags-${video.id}-${platform}`}
-                            className="input-text"
-                            defaultValue={customSettings.tags || ''}
-                            placeholder="Comma-separated tags"
-                          />
-                        </div>
-                        <div className="form-group">
-                          <label>Visibility</label>
-                          <select
-                            id={`dest-override-visibility-${video.id}-${platform}`}
-                            className="select"
-                            defaultValue={customSettings.visibility || youtubeSettings.visibility}
-                          >
-                            <option value="private">Private</option>
-                            <option value="unlisted">Unlisted</option>
-                            <option value="public">Public</option>
-                          </select>
-                        </div>
-                        <div className="form-group">
-                          <label className="checkbox-label" style={{ gap: '1rem' }}>
-                            <input
-                              type="checkbox"
-                              id={`dest-override-made-for-kids-${video.id}-${platform}`}
-                              className="checkbox"
-                              defaultChecked={customSettings.made_for_kids ?? youtubeSettings.made_for_kids}
-                            />
-                            <span>Made for Kids</span>
+                  <label>
+                    Override Settings (Optional)
+                    <span className="tooltip-wrapper">
+                      <span className="tooltip-icon">i</span>
+                      <span className="tooltip-text">Override default settings for this video on {platformNames[platform]} only</span>
+                    </span>
+                  </label>
+                  
+                  {platform === 'youtube' && (
+                    <>
+                      <div className="setting-group">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                          <label htmlFor={`dest-override-title-${video.id}-${platform}`}>
+                            Title <span className="char-counter">{(overrideValues.youtube_title || '').length}/100</span>
                           </label>
-                        </div>
-                      </>
-                    )}
-                    
-                    {platform === 'tiktok' && (
-                      <>
-                        <div className="form-group">
-                          <label>Title Override</label>
-                          <input
-                            type="text"
-                            id={`dest-override-title-${video.id}-${platform}`}
-                            className="input-text"
-                            defaultValue={customSettings.title || ''}
-                            placeholder="Leave empty to use template"
-                          />
-                        </div>
-                        <div className="form-group">
-                          <label>Privacy Level</label>
-                          <select
-                            id={`dest-override-privacy-${video.id}-${platform}`}
-                            className="select"
-                            defaultValue={customSettings.privacy_level || ''}
+                          <button
+                            type="button"
+                            onClick={() => recomputeVideoField(video.id, platform, 'title')}
+                            style={{
+                              padding: '0.4rem 0.8rem',
+                              fontSize: '0.85rem',
+                              background: 'rgba(139, 92, 246, 0.2)',
+                              border: '1px solid rgba(139, 92, 246, 0.4)',
+                              borderRadius: '4px',
+                              color: '#8b5cf6',
+                              cursor: 'pointer',
+                              fontWeight: '500'
+                            }}
+                            title="Recompute title from current template"
                           >
-                            <option value="">Use default</option>
-                            {Array.isArray(tiktokCreatorInfo?.privacy_level_options) && 
-                              tiktokCreatorInfo.privacy_level_options.map(option => {
-                                const labelMap = {
-                                  'PUBLIC_TO_EVERYONE': 'Everyone',
-                                  'MUTUAL_FOLLOW_FRIENDS': 'Friends',
-                                  'FOLLOWER_OF_CREATOR': 'Followers',
-                                  'SELF_ONLY': 'Only you'
-                                };
-                                return (
-                                  <option key={option} value={option}>
-                                    {labelMap[option] || option}
-                                  </option>
-                                );
-                              })
-                            }
-                          </select>
+                            🔄 Recompute
+                          </button>
                         </div>
-                      </>
-                    )}
-                    
-                    {platform === 'instagram' && (
-                      <>
-                        <div className="form-group">
-                          <label>Caption Override</label>
-                          <textarea
-                            id={`dest-override-caption-${video.id}-${platform}`}
-                            className="textarea-text"
-                            rows="4"
-                            defaultValue={customSettings.caption || ''}
-                            placeholder="Leave empty to use template"
+                        <input
+                          type="text"
+                          id={`dest-override-title-${video.id}-${platform}`}
+                          value={overrideValues.youtube_title || ''}
+                          onChange={(e) => updateOverrideValue('youtube_title', e.target.value)}
+                          placeholder={platformData.title || video.filename}
+                          maxLength={100}
+                          className="input-text"
+                        />
+                      </div>
+                      
+                      <div className="setting-group">
+                        <label htmlFor={`dest-override-description-${video.id}-${platform}`}>Description</label>
+                        <textarea
+                          id={`dest-override-description-${video.id}-${platform}`}
+                          defaultValue={customSettings.description || platformData.description || ''}
+                          placeholder={platformData.description || 'Enter description...'}
+                          rows={4}
+                          className="textarea-text"
+                        />
+                      </div>
+                      
+                      <div className="setting-group">
+                        <label htmlFor={`dest-override-tags-${video.id}-${platform}`}>Tags (comma-separated)</label>
+                        <input
+                          type="text"
+                          id={`dest-override-tags-${video.id}-${platform}`}
+                          defaultValue={customSettings.tags || formatTags(platformData.tags) || ''}
+                          placeholder={formatTags(platformData.tags) || 'Enter tags...'}
+                          className="input-text"
+                        />
+                      </div>
+                      
+                      <div className="setting-group">
+                        <label htmlFor={`dest-override-visibility-${video.id}-${platform}`}>Visibility</label>
+                        <select
+                          id={`dest-override-visibility-${video.id}-${platform}`}
+                          defaultValue={customSettings.visibility || platformData.visibility || 'private'}
+                          className="select"
+                        >
+                          <option value="private">Private</option>
+                          <option value="unlisted">Unlisted</option>
+                          <option value="public">Public</option>
+                        </select>
+                      </div>
+                      
+                      <div className="setting-group">
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            id={`dest-override-made-for-kids-${video.id}-${platform}`}
+                            defaultChecked={customSettings.made_for_kids !== undefined ? customSettings.made_for_kids : platformData.made_for_kids || false}
+                            className="checkbox"
                           />
+                          <span>Made for Kids</span>
+                        </label>
+                      </div>
+                    </>
+                  )}
+                  
+                  {platform === 'tiktok' && (
+                    <>
+                      <div className="setting-group">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                          <label htmlFor={`dest-override-title-${video.id}-${platform}`}>
+                            Title <span className="char-counter">{(overrideValues.title || '').length}/2200</span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => recomputeVideoField(video.id, platform, 'title')}
+                            style={{
+                              padding: '0.4rem 0.8rem',
+                              fontSize: '0.85rem',
+                              background: 'rgba(139, 92, 246, 0.2)',
+                              border: '1px solid rgba(139, 92, 246, 0.4)',
+                              borderRadius: '4px',
+                              color: '#8b5cf6',
+                              cursor: 'pointer',
+                              fontWeight: '500'
+                            }}
+                            title="Recompute title from current template"
+                          >
+                            🔄 Recompute
+                          </button>
                         </div>
-                      </>
-                    )}
-                  </div>
+                        <input
+                          type="text"
+                          id={`dest-override-title-${video.id}-${platform}`}
+                          value={overrideValues.title || ''}
+                          onChange={(e) => updateOverrideValue('title', e.target.value)}
+                          placeholder={platformData.title || 'Enter title...'}
+                          maxLength={2200}
+                          className="input-text"
+                        />
+                      </div>
+                      
+                      <div className="setting-group">
+                        <label htmlFor={`dest-override-privacy-${video.id}-${platform}`}>Privacy Level</label>
+                        <select
+                          id={`dest-override-privacy-${video.id}-${platform}`}
+                          defaultValue={customSettings.privacy_level || platformData.privacy_level || ''}
+                          className="select"
+                        >
+                          <option value="">Use default</option>
+                          <option value="PUBLIC_TO_EVERYONE">Public to Everyone</option>
+                          <option value="MUTUAL_FOLLOW_FRIENDS">Friends</option>
+                          <option value="FOLLOWER_OF_CREATOR">Followers</option>
+                          <option value="SELF_ONLY">Only you</option>
+                        </select>
+                      </div>
+                    </>
+                  )}
+                  
+                  {platform === 'instagram' && (
+                    <>
+                      <div className="setting-group">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                          <label htmlFor={`dest-override-caption-${video.id}-${platform}`}>
+                            Caption <span className="char-counter">{(overrideValues.caption || '').length}/2200</span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => recomputeVideoField(video.id, platform, 'caption')}
+                            style={{
+                              padding: '0.4rem 0.8rem',
+                              fontSize: '0.85rem',
+                              background: 'rgba(139, 92, 246, 0.2)',
+                              border: '1px solid rgba(139, 92, 246, 0.4)',
+                              borderRadius: '4px',
+                              color: '#8b5cf6',
+                              cursor: 'pointer',
+                              fontWeight: '500'
+                            }}
+                            title="Recompute caption from current template"
+                          >
+                            🔄 Recompute
+                          </button>
+                        </div>
+                        <textarea
+                          id={`dest-override-caption-${video.id}-${platform}`}
+                          value={overrideValues.caption || ''}
+                          onChange={(e) => updateOverrideValue('caption', e.target.value)}
+                          placeholder={platformData.caption || 'Enter caption...'}
+                          rows={4}
+                          maxLength={2200}
+                          className="textarea-text"
+                        />
+                      </div>
+
+                      <div className="setting-group">
+                        <label htmlFor={`dest-override-media-type-${video.id}-${platform}`}>Media Type</label>
+                        <select
+                          id={`dest-override-media-type-${video.id}-${platform}`}
+                          defaultValue={customSettings.media_type || platformData.media_type || 'REELS'}
+                          className="select"
+                        >
+                          <option value="REELS">Reels</option>
+                          <option value="VIDEO">Video (Feed Post)</option>
+                        </select>
+                      </div>
+
+                      <div className="setting-group">
+                        <label className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            id={`dest-override-share-to-feed-${video.id}-${platform}`}
+                            defaultChecked={customSettings.share_to_feed !== undefined ? customSettings.share_to_feed : (platformData.share_to_feed ?? true)}
+                            className="checkbox"
+                          />
+                          <span>Share Reel to Feed</span>
+                        </label>
+                      </div>
+
+                      <div className="setting-group">
+                        <label htmlFor={`dest-override-cover-url-${video.id}-${platform}`}>Cover Image URL (Optional)</label>
+                        <input
+                          type="text"
+                          id={`dest-override-cover-url-${video.id}-${platform}`}
+                          defaultValue={customSettings.cover_url || platformData.cover_url || ''}
+                          placeholder="https://example.com/image.jpg"
+                          className="input-text"
+                        />
+                      </div>
+
+                      <div className="setting-group">
+                        <label htmlFor={`dest-override-audio-name-${video.id}-${platform}`}>Audio Name (Optional, Reels only)</label>
+                        <input
+                          type="text"
+                          id={`dest-override-audio-name-${video.id}-${platform}`}
+                          defaultValue={customSettings.audio_name || platformData.audio_name || ''}
+                          placeholder="Audio track name"
+                          className="input-text"
+                        />
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
               
@@ -5205,18 +5803,28 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   )}
                 </div>
 
-                {subscription ? (
-                  <>
-
-                    {/* Available Plans */}
-                    {availablePlans.length > 0 && (
-                      <div id="subscription-plans" style={{ marginBottom: '1rem' }}>
-                        <div style={{ fontSize: '0.85rem', color: HOPPER_COLORS.grey, marginBottom: '0.75rem' }}>
-                          Available Plans
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                          {availablePlans.map(plan => {
-                            const isCurrent = subscription.plan_type === plan.key;
+                {/* Available Plans - Always show, even if subscription is null */}
+                {availablePlans.filter(plan => !plan.hidden && plan.tokens !== -1).length > 0 && (
+                  <div id="subscription-plans" style={{ marginBottom: '1rem' }}>
+                    <div style={{ fontSize: '0.85rem', color: HOPPER_COLORS.grey, marginBottom: '0.75rem' }}>
+                      Available Plans
+                    </div>
+                    {!subscription && (
+                      <div style={{ 
+                        padding: '0.75rem', 
+                        marginBottom: '0.5rem',
+                        background: 'rgba(239, 68, 68, 0.1)',
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
+                        borderRadius: '6px',
+                        fontSize: '0.75rem',
+                        color: HOPPER_COLORS.error
+                      }}>
+                        ⚠️ No active subscription. Please select a plan below.
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      {availablePlans.filter(plan => !plan.hidden && plan.tokens !== -1).map(plan => {
+                        const isCurrent = subscription && subscription.plan_type === plan.key;
                             const canUpgrade = !isCurrent && plan.key !== 'free' && plan.stripe_price_id;
                             const isThisPlanLoading = loadingPlanKey === plan.key; // Only this specific plan is loading
                             return (
@@ -5231,8 +5839,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                   display: 'flex',
                                   justifyContent: 'space-between',
                                   alignItems: 'center',
-                                  cursor: canUpgrade && !isThisPlanLoading ? 'pointer' : 'default',
-                                  transition: canUpgrade ? 'all 0.2s ease' : 'none',
+                                  cursor: (canUpgrade || !subscription) && !isThisPlanLoading ? 'pointer' : 'default',
+                                  transition: (canUpgrade || !subscription) ? 'all 0.2s ease' : 'none',
                                   opacity: isThisPlanLoading ? 0.6 : 1
                                 }}
                                 onMouseEnter={(e) => {
@@ -5257,12 +5865,11 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                     fontSize: '0.95rem', 
                                     fontWeight: '600', 
                                     color: 'white',
-                                    textTransform: 'capitalize',
                                     display: 'flex',
                                     alignItems: 'center',
                                     gap: '0.5rem'
                                   }}>
-                                    <span>{plan.key}</span>
+                                    <span>{plan.name}</span>
                                     {plan.price && (
                                       <span style={{ 
                                         fontSize: '0.85rem', 
@@ -5272,25 +5879,29 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                         {(() => {
                                           if (plan.key === 'free') {
                                             return 'Free';
-                                          } else if (plan.monthly_tokens === -1) {
+                                          } else if (plan.tokens === -1) {
                                             // Unlimited plan
                                             return plan.price.formatted;
                                           } else {
-                                            // New pricing: price is per-token, calculate total monthly
-                                            // amount_dollars is the per-token price in dollars (e.g., 0.10 for $0.10/token)
-                                            const perTokenPrice = plan.price.amount_dollars || 0;
-                                            const monthlyTokens = plan.monthly_tokens || 0;
-                                            const totalMonthly = perTokenPrice * monthlyTokens;
+                                            // New pricing: amount_dollars is the flat monthly fee
+                                            const monthlyFee = plan.price.amount_dollars || 0;
+                                            const overagePrice = plan.overage_price?.amount_dollars;
                                             
-                                            // Display as: "$10.00/month ($0.10/token)"
-                                            return `$${totalMonthly.toFixed(2)}/month ($${perTokenPrice.toFixed(2)}/token)`;
+                                            if (overagePrice !== undefined && overagePrice !== null) {
+                                              // Display as: "$3/month (1.5c /token)"
+                                              const overageCents = (overagePrice * 100).toFixed(1);
+                                              return `$${monthlyFee.toFixed(2)}/month (${overageCents}c /token)`;
+                                            } else {
+                                              // Fallback if overage price not available
+                                              return `$${monthlyFee.toFixed(2)}/month`;
+                                            }
                                           }
                                         })()}
                                       </span>
                                     )}
                                   </div>
                                   <div style={{ fontSize: '0.75rem', color: HOPPER_COLORS.grey }}>
-                                    {plan.monthly_tokens === -1 ? 'Unlimited tokens' : `${plan.monthly_tokens} tokens/month`}
+                                    {plan.description || (plan.tokens === -1 ? 'Unlimited tokens' : `${plan.tokens} tokens/month`)}
                                   </div>
                                 </div>
                                 {isCurrent ? (
@@ -5305,7 +5916,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                     }}>
                                       CURRENT
                                     </span>
-                                    {subscription.plan_type !== 'free' && subscription.status === 'active' && (
+                                    {subscription && subscription.plan_type !== 'free' && subscription.plan_type !== 'free_daily' && subscription.status === 'active' && (
                                       <button
                                         onClick={(e) => {
                                           e.stopPropagation();
@@ -5361,7 +5972,41 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                                   }}>
                                     {isThisPlanLoading ? '⏳' : '⬆️ Upgrade'}
                                   </span>
-                                ) : plan.key === 'free' && subscription.plan_type !== 'free' ? (
+                                ) : !subscription ? (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleUpgrade(plan.key);
+                                    }}
+                                    disabled={isThisPlanLoading}
+                                    style={{
+                                      padding: '0.5rem 0.75rem',
+                                      background: 'rgba(99, 102, 241, 0.5)',
+                                      border: '1px solid rgba(99, 102, 241, 0.7)',
+                                      borderRadius: '4px',
+                                      color: '#fff',
+                                      cursor: isThisPlanLoading ? 'not-allowed' : 'pointer',
+                                      fontSize: '0.75rem',
+                                      fontWeight: '600',
+                                      transition: 'all 0.2s ease',
+                                      opacity: isThisPlanLoading ? 0.6 : 1
+                                    }}
+                                    onMouseEnter={(e) => {
+                                      if (!isThisPlanLoading) {
+                                        e.currentTarget.style.background = 'rgba(99, 102, 241, 0.7)';
+                                        e.currentTarget.style.border = '1px solid rgba(99, 102, 241, 0.9)';
+                                      }
+                                    }}
+                                    onMouseLeave={(e) => {
+                                      if (!isThisPlanLoading) {
+                                        e.currentTarget.style.background = 'rgba(99, 102, 241, 0.5)';
+                                        e.currentTarget.style.border = '1px solid rgba(99, 102, 241, 0.7)';
+                                      }
+                                    }}
+                                  >
+                                    {isThisPlanLoading ? '⏳' : 'Select Plan'}
+                                  </button>
+                                ) : plan.key === 'free' && subscription && subscription.plan_type !== 'free' ? (
                                   <button
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -5414,12 +6059,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         </div>
                       </div>
                     )}
-                  </>
-                ) : (
-                  <div style={{ textAlign: 'center', padding: '1rem', color: HOPPER_COLORS.grey }}>
-                    Loading subscription info...
-                  </div>
-                )}
               </div>
 
               {/* Danger Zone (collapsed by default) */}
