@@ -26,7 +26,8 @@ from app.services.stripe_service import create_stripe_subscription
 class TestTokenService:
     """Test token service logic"""
     
-    def test_deduct_tokens_decreases_balance(self, test_user, db_session):
+    @pytest.mark.asyncio
+    async def test_deduct_tokens_decreases_balance(self, test_user, db_session, mock_async_redis):
         """Test deduct_tokens() decreases balance correctly"""
         # Create subscription and token balance
         subscription = Subscription(
@@ -52,7 +53,7 @@ class TestTokenService:
         db_session.commit()
         
         # Deduct 5 tokens
-        result = deduct_tokens(test_user.id, 5, db=db_session)
+        result = await deduct_tokens(test_user.id, 5, db=db_session)
         assert result is True
         
         # Verify balance decreased
@@ -67,7 +68,8 @@ class TestTokenService:
         assert transaction is not None
         assert transaction.tokens == -5
     
-    def test_deduct_tokens_with_zero_tokens_returns_false(self, test_user, db_session):
+    @pytest.mark.asyncio
+    async def test_deduct_tokens_with_zero_tokens_returns_false(self, test_user, db_session, mock_async_redis):
         """Test deduct_tokens() with 0 tokens returns False for free plan"""
         # Create subscription and token balance with 0 tokens
         subscription = Subscription(
@@ -93,10 +95,11 @@ class TestTokenService:
         db_session.commit()
         
         # Try to deduct 5 tokens
-        result = deduct_tokens(test_user.id, 5, db=db_session)
+        result = await deduct_tokens(test_user.id, 5, db=db_session)
         assert result is False  # Free plan has hard limit
     
-    def test_deduct_tokens_creates_transaction(self, test_user, db_session):
+    @pytest.mark.asyncio
+    async def test_deduct_tokens_creates_transaction(self, test_user, db_session, mock_async_redis):
         """Test deduct_tokens() creates TokenTransaction record"""
         subscription = Subscription(
             user_id=test_user.id,
@@ -132,7 +135,7 @@ class TestTokenService:
         db_session.commit()
         
         # Deduct tokens
-        deduct_tokens(test_user.id, 3, video_id=video.id, db=db_session)
+        await deduct_tokens(test_user.id, 3, video_id=video.id, db=db_session)
         
         # Verify transaction exists
         transaction = db_session.query(TokenTransaction).filter(
@@ -143,7 +146,8 @@ class TestTokenService:
         assert transaction.transaction_type == "upload"
         assert transaction.tokens == -3
     
-    def test_unlimited_plan_bypasses_deduction(self, test_user, db_session):
+    @pytest.mark.asyncio
+    async def test_unlimited_plan_bypasses_deduction(self, test_user, db_session, mock_async_redis):
         """Test unlimited plan bypasses deduction but still logs transaction"""
         subscription = Subscription(
             user_id=test_user.id,
@@ -158,7 +162,7 @@ class TestTokenService:
         db_session.commit()
         
         # Deduct tokens (should succeed even without balance)
-        result = deduct_tokens(test_user.id, 100, db=db_session)
+        result = await deduct_tokens(test_user.id, 100, db=db_session)
         assert result is True
         
         # Verify transaction was logged
@@ -169,7 +173,8 @@ class TestTokenService:
         assert transaction.balance_before == -1  # Unlimited indicator
         assert transaction.balance_after == -1
     
-    def test_free_plan_cannot_go_negative(self, test_user, db_session):
+    @pytest.mark.asyncio
+    async def test_free_plan_cannot_go_negative(self, test_user, db_session, mock_async_redis):
         """Test free plan cannot go negative (hard limit, no overage)"""
         subscription = Subscription(
             user_id=test_user.id,
@@ -194,10 +199,11 @@ class TestTokenService:
         db_session.commit()
         
         # Try to deduct 10 tokens (only have 5)
-        result = deduct_tokens(test_user.id, 10, db=db_session)
+        result = await deduct_tokens(test_user.id, 10, db=db_session)
         assert result is False  # Free plan blocks overage
     
-    def test_paid_plan_allows_overage(self, test_user, db_session):
+    @pytest.mark.asyncio
+    async def test_paid_plan_allows_overage(self, test_user, db_session, mock_async_redis):
         """Test paid plans allow overage (negative balance)"""
         subscription = Subscription(
             user_id=test_user.id,
@@ -223,7 +229,7 @@ class TestTokenService:
         
         # Deduct 10 tokens (only have 5, should allow overage)
         with patch('app.services.stripe_service.record_token_usage_to_stripe'):
-            result = deduct_tokens(test_user.id, 10, db=db_session)
+            result = await deduct_tokens(test_user.id, 10, db=db_session)
             assert result is True  # Paid plan allows overage
             
             db_session.refresh(balance)
@@ -304,8 +310,9 @@ class TestTokenService:
         result = check_tokens_available(test_user.id, 1000, db_session)
         assert result is True
     
+    @pytest.mark.asyncio
     @patch('app.services.stripe_service.StripeRegistry.get')
-    def test_reset_tokens_for_subscription_sets_monthly_tokens(self, mock_registry_get, test_user, db_session):
+    async def test_reset_tokens_for_subscription_sets_monthly_tokens(self, mock_registry_get, test_user, db_session, mock_async_redis):
         """Test reset_tokens_for_subscription() sets correct monthly tokens"""
         # Mock StripeRegistry to return free plan config
         mock_registry_get.return_value = {
@@ -333,7 +340,7 @@ class TestTokenService:
         period_start = datetime.now(timezone.utc)
         period_end = datetime.now(timezone.utc) + timedelta(days=30)
         
-        result = reset_tokens_for_subscription(
+        result = await reset_tokens_for_subscription(
             test_user.id, "free", period_start, period_end, db_session, is_renewal=True
         )
         assert result is True

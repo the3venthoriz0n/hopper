@@ -98,7 +98,29 @@ def mock_redis():
 
 
 @pytest.fixture(scope="function")
-def client(db_session: Session, mock_redis) -> Generator[TestClient, None, None]:
+def mock_async_redis():
+    """Mock async Redis client and event publishing"""
+    from unittest.mock import AsyncMock, MagicMock
+    
+    fake_async_redis = MagicMock()
+    fake_async_redis.publish = AsyncMock(return_value=1)
+    fake_async_redis.get = AsyncMock(return_value=None)
+    fake_async_redis.set = AsyncMock(return_value=True)
+    fake_async_redis.setex = AsyncMock(return_value=True)
+    fake_async_redis.delete = AsyncMock(return_value=1)
+    
+    # Create pubsub mock
+    fake_pubsub = MagicMock()
+    fake_pubsub.psubscribe = AsyncMock()
+    fake_pubsub.listen = AsyncMock()
+    fake_async_redis.pubsub = MagicMock(return_value=fake_pubsub)
+    
+    with patch('app.db.redis.async_redis_client', fake_async_redis):
+        yield fake_async_redis
+
+
+@pytest.fixture(scope="function")
+def client(db_session: Session, mock_redis, mock_async_redis) -> Generator[TestClient, None, None]:
     """FastAPI test client with test database and mocked Redis"""
     
     # Override get_db dependency to use test database
@@ -156,7 +178,7 @@ def test_user_2(db_session: Session) -> User:
 
 
 @pytest.fixture(scope="function")
-def authenticated_client(client: TestClient, test_user: User, mock_redis) -> TestClient:
+def authenticated_client(client: TestClient, test_user: User, mock_redis, mock_async_redis) -> TestClient:
     """Client with authenticated user session and CSRF token"""
     # First, get CSRF token to establish session
     csrf_response = client.get("/api/auth/csrf")

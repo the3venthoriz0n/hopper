@@ -984,15 +984,34 @@ async def grant_tokens_admin(
         db: Database session
     
     Returns:
-        Dict with success message
+        Dict with success message and balance info
     
     Raises:
         ValueError: If user not found
     """
-    if not await add_tokens(user_id, amount, transaction_type='grant', metadata={'reason': reason}, db=db):
+    target_user = db.query(User).filter(User.id == user_id).first()
+    if not target_user:
         raise ValueError("User not found")
     
-    return {"message": f"Granted {amount} tokens to user {user_id}"}
+    # Get balance before granting
+    balance_before = get_token_balance(user_id, db)
+    if not balance_before:
+        raise ValueError("Could not retrieve user token balance")
+    
+    # Grant tokens
+    if not await add_tokens(user_id, amount, transaction_type='grant', metadata={'reason': reason, 'admin_id': admin_id}, db=db):
+        raise ValueError("Failed to grant tokens")
+    
+    # Get balance after granting
+    balance_after = get_token_balance(user_id, db)
+    
+    logger.info(f"Admin {admin_id} granted {amount} tokens to user {user_id}")
+    
+    return {
+        "message": f"Granted {amount} tokens to user {user_id}",
+        "balance_before": balance_before,
+        "balance_after": balance_after
+    }
 
 
 async def deduct_tokens_with_overage_calculation(

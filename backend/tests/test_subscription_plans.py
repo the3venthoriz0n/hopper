@@ -19,9 +19,10 @@ class TestStarterPlan:
     
     @patch('app.services.token_service.ensure_tokens_synced_for_subscription')
     @patch('app.services.stripe_service.StripeRegistry.get')
+    @pytest.mark.asyncio
     @patch('app.services.stripe_service.stripe')
     @patch('app.services.stripe_service.settings')
-    def test_create_starter_subscription(self, mock_settings, mock_stripe, mock_registry_get, mock_ensure_tokens, test_user, db_session):
+    async def test_create_starter_subscription(self, mock_settings, mock_stripe, mock_registry_get, mock_ensure_tokens, test_user, db_session, mock_async_redis):
         """Test creating starter subscription, verify 300 tokens"""
         mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
         
@@ -65,7 +66,7 @@ class TestStarterPlan:
         
         # Manually set tokens since ensure_tokens_synced_for_subscription is mocked
         from app.services.token_service import reset_tokens_for_subscription
-        reset_tokens_for_subscription(
+        await reset_tokens_for_subscription(
             test_user.id, "starter", 
             datetime.fromtimestamp(mock_subscription.current_period_start, tz=timezone.utc),
             datetime.fromtimestamp(mock_subscription.current_period_end, tz=timezone.utc),
@@ -78,8 +79,9 @@ class TestStarterPlan:
         assert balance.tokens_remaining == 300
         assert balance.monthly_tokens == 300
     
+    @pytest.mark.asyncio
     @patch('app.services.stripe_service.StripeRegistry.get')
-    def test_starter_plan_allows_overage(self, mock_registry_get, test_user, db_session):
+    async def test_starter_plan_allows_overage(self, mock_registry_get, test_user, db_session, mock_async_redis):
         """Test starter plan allows overage tokens"""
         # Mock StripeRegistry
         mock_registry_get.return_value = {
@@ -112,15 +114,16 @@ class TestStarterPlan:
         
         # Try to deduct 10 tokens (only have 5, should allow overage)
         with patch('app.services.stripe_service.record_token_usage_to_stripe'):
-            result = deduct_tokens(test_user.id, 10, db=db_session)
+            result = await deduct_tokens(test_user.id, 10, db=db_session)
             assert result is True  # Paid plan allows overage
             
             db_session.refresh(balance)
             assert balance.tokens_remaining == 0  # Clamped at 0
             assert balance.tokens_used_this_period == 305  # Total used
     
+    @pytest.mark.asyncio
     @patch('app.services.stripe_service.StripeRegistry.get')
-    def test_starter_plan_token_reset(self, mock_registry_get, test_user, db_session):
+    async def test_starter_plan_token_reset(self, mock_registry_get, test_user, db_session, mock_async_redis):
         """Test monthly token reset for starter plan"""
         mock_registry_get.return_value = {
             "price_id": "price_starter",
@@ -143,7 +146,7 @@ class TestStarterPlan:
         period_start = datetime.now(timezone.utc)
         period_end = datetime.now(timezone.utc) + timedelta(days=30)
         
-        result = reset_tokens_for_subscription(
+        result = await reset_tokens_for_subscription(
             test_user.id, "starter", period_start, period_end, db_session, is_renewal=True
         )
         assert result is True
@@ -160,11 +163,12 @@ class TestStarterPlan:
 class TestCreatorPlan:
     """Test Creator plan functionality"""
     
+    @pytest.mark.asyncio
     @patch('app.services.token_service.ensure_tokens_synced_for_subscription')
     @patch('app.services.stripe_service.StripeRegistry.get')
     @patch('app.services.stripe_service.stripe')
     @patch('app.services.stripe_service.settings')
-    def test_create_creator_subscription(self, mock_settings, mock_stripe, mock_registry_get, mock_ensure_tokens, test_user, db_session):
+    async def test_create_creator_subscription(self, mock_settings, mock_stripe, mock_registry_get, mock_ensure_tokens, test_user, db_session, mock_async_redis):
         """Test creating creator subscription, verify 1250 tokens"""
         mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
         
@@ -207,7 +211,7 @@ class TestCreatorPlan:
         
         # Manually set tokens since ensure_tokens_synced_for_subscription is mocked
         from app.services.token_service import reset_tokens_for_subscription
-        reset_tokens_for_subscription(
+        await reset_tokens_for_subscription(
             test_user.id, "creator", 
             datetime.fromtimestamp(mock_subscription.current_period_start, tz=timezone.utc),
             datetime.fromtimestamp(mock_subscription.current_period_end, tz=timezone.utc),
@@ -219,8 +223,9 @@ class TestCreatorPlan:
         assert balance.tokens_remaining == 1250
         assert balance.monthly_tokens == 1250
     
+    @pytest.mark.asyncio
     @patch('app.services.stripe_service.StripeRegistry.get')
-    def test_creator_plan_allows_overage(self, mock_registry_get, test_user, db_session):
+    async def test_creator_plan_allows_overage(self, mock_registry_get, test_user, db_session, mock_async_redis):
         """Test creator plan allows overage tokens"""
         mock_registry_get.return_value = {
             "price_id": "price_creator",
@@ -251,15 +256,16 @@ class TestCreatorPlan:
         db_session.commit()
         
         with patch('app.services.stripe_service.record_token_usage_to_stripe'):
-            result = deduct_tokens(test_user.id, 20, db=db_session)
+            result = await deduct_tokens(test_user.id, 20, db=db_session)
             assert result is True
             
             db_session.refresh(balance)
             assert balance.tokens_remaining == 0
             assert balance.tokens_used_this_period == 1260
     
+    @pytest.mark.asyncio
     @patch('app.services.stripe_service.StripeRegistry.get')
-    def test_creator_plan_token_reset(self, mock_registry_get, test_user, db_session):
+    async def test_creator_plan_token_reset(self, mock_registry_get, test_user, db_session, mock_async_redis):
         """Test monthly token reset for creator plan"""
         mock_registry_get.return_value = {
             "price_id": "price_creator",
@@ -282,7 +288,7 @@ class TestCreatorPlan:
         period_start = datetime.now(timezone.utc)
         period_end = datetime.now(timezone.utc) + timedelta(days=30)
         
-        result = reset_tokens_for_subscription(
+        result = await reset_tokens_for_subscription(
             test_user.id, "creator", period_start, period_end, db_session, is_renewal=True
         )
         assert result is True
@@ -334,8 +340,9 @@ class TestFreeDailyPlan:
         assert result is not None
         assert result.plan_type == "free_daily"
     
+    @pytest.mark.asyncio
     @patch('app.services.stripe_service.StripeRegistry.get')
-    def test_free_daily_daily_token_grant(self, mock_registry_get, test_user, db_session):
+    async def test_free_daily_daily_token_grant(self, mock_registry_get, test_user, db_session, mock_async_redis):
         """Test daily token grant for free_daily plan"""
         mock_registry_get.return_value = {
             "price_id": "price_free_daily",
@@ -356,15 +363,16 @@ class TestFreeDailyPlan:
         db_session.commit()
         
         # Grant daily tokens
-        result = handle_daily_token_grant(test_user.id, "sub_free_daily123", db_session)
+        result = await handle_daily_token_grant(test_user.id, "sub_free_daily123", db_session)
         assert result is True
         
         balance = db_session.query(TokenBalance).filter(TokenBalance.user_id == test_user.id).first()
         assert balance is not None
         assert balance.tokens_remaining == 3
     
+    @pytest.mark.asyncio
     @patch('app.services.stripe_service.StripeRegistry.get')
-    def test_free_daily_max_accrual_cap(self, mock_registry_get, test_user, db_session):
+    async def test_free_daily_max_accrual_cap(self, mock_registry_get, test_user, db_session, mock_async_redis):
         """Test tokens cap at max_accrual (10)"""
         mock_registry_get.return_value = {
             "price_id": "price_free_daily",
@@ -396,15 +404,16 @@ class TestFreeDailyPlan:
         db_session.commit()
         
         # Grant daily tokens (should only add 2 to reach max of 10)
-        result = handle_daily_token_grant(test_user.id, "sub_free_daily123", db_session)
+        result = await handle_daily_token_grant(test_user.id, "sub_free_daily123", db_session)
         assert result is True
         
         db_session.refresh(balance)
         assert balance.tokens_remaining == 10  # Capped at max_accrual
         assert balance.monthly_tokens == 10
     
+    @pytest.mark.asyncio
     @patch('app.services.stripe_service.StripeRegistry.get')
-    def test_free_daily_banking_logic(self, mock_registry_get, test_user, db_session):
+    async def test_free_daily_banking_logic(self, mock_registry_get, test_user, db_session, mock_async_redis):
         """Test tokens don't exceed max_accrual"""
         mock_registry_get.return_value = {
             "price_id": "price_free_daily",
@@ -436,7 +445,7 @@ class TestFreeDailyPlan:
         db_session.commit()
         
         # Try to grant more (should not add any)
-        result = handle_daily_token_grant(test_user.id, "sub_free_daily123", db_session)
+        result = await handle_daily_token_grant(test_user.id, "sub_free_daily123", db_session)
         assert result is True  # Returns True but doesn't add tokens
         
         db_session.refresh(balance)
@@ -482,7 +491,8 @@ class TestUnlimitedPlan:
         assert result is not None
         assert result.plan_type == "unlimited"
     
-    def test_unlimited_plan_bypasses_token_checks(self, test_user, db_session):
+    @pytest.mark.asyncio
+    async def test_unlimited_plan_bypasses_token_checks(self, test_user, db_session, mock_async_redis):
         """Test unlimited plan always allows usage"""
         subscription = Subscription(
             user_id=test_user.id,
@@ -501,7 +511,7 @@ class TestUnlimitedPlan:
         assert result is True
         
         # Deduct tokens (should always succeed)
-        result = deduct_tokens(test_user.id, 10000, db=db_session)
+        result = await deduct_tokens(test_user.id, 10000, db=db_session)
         assert result is True
     
     @patch('app.services.stripe_service.StripeRegistry.get')

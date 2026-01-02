@@ -302,7 +302,7 @@ class TestDataValidation:
         )
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
     
-    def test_valid_tiktok_privacy_enums(self, authenticated_client, csrf_token):
+    def test_valid_tiktok_privacy_enums(self, authenticated_client, csrf_token, mock_async_redis):
         """Test valid TikTok privacy enums are accepted"""
         valid_levels = [
             "PUBLIC_TO_EVERYONE",

@@ -69,7 +69,7 @@ test-integration:
 	$(COMPOSE) run --rm -e RUN_INTEGRATION_TESTS=true -e ENV=$(ENV) backend python -m pytest /app/tests/test_security.py -v --tb=short;
 
 up: sync
-	@if [ "$(ENV)" != "prod" ]; then \
+	@if [ "$(ENV)" != "prod" ] && [ -z "$(SKIP_TESTS)" ]; then \
 		$(MAKE) test ENV=$(ENV); \
 	fi
 	@echo "🚀 Starting $(ENV) environment..."
