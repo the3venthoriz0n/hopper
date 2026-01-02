@@ -27,7 +27,7 @@ PLATFORM_CONFIG = {
     },
     'instagram': {
         'enabled_key': 'instagram_enabled',
-        'id_keys': ['instagram_id', 'instagram_container_id'],
+        'id_keys': ['instagram_id'],
         'error_keywords': ['instagram', 'facebook'],
         'recompute_fields': {
             'caption': {'template_key': 'caption_template', 'field': 'custom_settings', 'custom_key': 'caption'},
