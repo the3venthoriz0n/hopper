@@ -214,6 +214,7 @@ def initiate_tiktok_oauth_flow(user_id: int) -> Dict[str, str]:
         "scope": scope_string,
         "redirect_uri": redirect_uri,
         "state": str(user_id),  # Pass user_id in state
+        "force_login": "1",  # Force account selection on reconnect
     }
     
     query_string = urlencode(params, doseq=False)
@@ -598,10 +599,16 @@ async def revoke_tiktok_token(access_token: str) -> bool:
     """
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
+            # TikTok uses form-encoded data, not JSON, and requires client credentials
             response = await client.post(
                 "https://open.tiktokapis.com/v2/oauth/revoke/",
-                json={"token": access_token},
-                headers={"Content-Type": "application/json"}
+                data={
+                    "client_key": settings.TIKTOK_CLIENT_KEY,
+                    "client_secret": settings.TIKTOK_CLIENT_SECRET,
+                    "token": access_token,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=5.0
             )
             if response.status_code == 200:
                 tiktok_logger.info("Successfully revoked TikTok token with provider")
