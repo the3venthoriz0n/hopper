@@ -57,7 +57,10 @@ async def publish_event(
         
         # Publish to Redis using async client
         result = await async_redis_client.publish(channel, event_json)
-        logger.info(f"Redis publish result: {result} subscribers received event {event_type}")
+        if result > 0:
+            logger.info(f"✓ Event {event_type} published successfully to {channel}: {result} subscriber(s) received it")
+        else:
+            logger.warning(f"⚠ Event {event_type} published to {channel} but no subscribers received it (result={result})")
         
     except Exception as e:
         logger.error(f"Failed to publish event {event_type} for user {user_id}: {e}", exc_info=True)

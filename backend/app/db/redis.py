@@ -55,6 +55,13 @@ def get_session(session_id: str) -> Optional[int]:
     return int(user_id) if user_id else None
 
 
+async def async_get_session(session_id: str) -> Optional[int]:
+    """Get user_id from session (async)"""
+    key = f"session:{session_id}"
+    user_id = await async_redis_client.get(key)
+    return int(user_id) if user_id else None
+
+
 def delete_session(session_id: str) -> None:
     """Delete session from Redis"""
     key = f"session:{session_id}"
@@ -391,6 +398,24 @@ def set_user_activity(user_id: int) -> None:
     timestamp = datetime.now(timezone.utc).isoformat()
     data = {"timestamp": timestamp}
     redis_client.setex(key, ACTIVITY_TTL, json.dumps(data))
+
+
+async def async_set_user_activity(user_id: int) -> None:
+    """Track user activity - sets a heartbeat key with TTL and timestamp (async)
+    
+    This is used to track users who are currently active (using the site).
+    The key automatically expires after ACTIVITY_TTL, so only recent activity is counted.
+    Stores timestamp so we can show actual last login time.
+    
+    Args:
+        user_id: User ID to track activity for
+    """
+    from datetime import datetime, timezone
+    key = f"activity:{user_id}"
+    # Store timestamp as JSON so we can retrieve it later
+    timestamp = datetime.now(timezone.utc).isoformat()
+    data = {"timestamp": timestamp}
+    await async_redis_client.setex(key, ACTIVITY_TTL, json.dumps(data))
 
 
 def get_active_user_ids() -> set[int]:

@@ -2,7 +2,7 @@
 import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Cookie
 
-from app.core.security import get_session
+from app.db.redis import async_get_session, async_set_user_activity
 from app.services.websocket_service import websocket_manager
 
 logger = logging.getLogger(__name__)
@@ -10,12 +10,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ws", tags=["websocket"])
 
 
-def get_user_id_from_session(session_id: str) -> int:
-    """Get user_id from session cookie for WebSocket authentication"""
+async def get_user_id_from_session(session_id: str) -> int:
+    """Get user_id from session cookie for WebSocket authentication (async)"""
     if not session_id:
         raise ValueError("No session_id provided")
     
-    user_id = get_session(session_id)
+    user_id = await async_get_session(session_id)
     if not user_id:
         raise ValueError("Invalid or expired session")
     
@@ -37,7 +37,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str = Cookie(None
             await websocket.close(code=1008, reason="Authentication required")
             return
         
-        user_id = get_user_id_from_session(session_id)
+        user_id = await get_user_id_from_session(session_id)
+        
+        # Track user activity
+        try:
+            await async_set_user_activity(user_id)
+        except Exception:
+            # Never let activity tracking break websocket connection
+            pass
         
         # Register connection
         await websocket_manager.connect(user_id, websocket)

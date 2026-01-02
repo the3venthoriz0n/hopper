@@ -65,6 +65,8 @@ async def toggle_destination(user_id: int, platform: str, enabled: bool, db: Ses
     token = get_oauth_token(user_id, platform, db=db)
     connected = token is not None
     
+    # Build video responses - separate error handling so failures don't prevent event publishing
+    updated_videos = []
     try:
         # Get all videos with updated settings (batch load to prevent N+1)
         videos = get_user_videos(user_id, db=db)
@@ -75,7 +77,6 @@ async def toggle_destination(user_id: int, platform: str, enabled: bool, db: Ses
         
         # Build video responses with updated platform_statuses and upload_properties
         # Deduplicate by video ID to prevent sending duplicates to frontend
-        updated_videos = []
         seen_ids = set()
         for video in videos:
             try:
@@ -90,15 +91,20 @@ async def toggle_destination(user_id: int, platform: str, enabled: bool, db: Ses
                 logger.error(f"Failed to build video response for video {video.id}: {e}", exc_info=True)
         
         logger.info(f"Successfully built {len(updated_videos)} video responses")
-        
-        # Publish event with connection status AND updated videos
-        await publish_destination_toggled(user_id, platform, enabled, connected, videos=updated_videos)
-        logger.info(f"Published destination_toggled event for user {user_id}, platform {platform}")
-        
     except Exception as e:
-        logger.error(f"Error in toggle_destination for user {user_id}, platform {platform}: {e}", exc_info=True)
-        # Still publish event even if video data fails, just without videos
-        await publish_destination_toggled(user_id, platform, enabled, connected, videos=[])
+        # Video building failed, but we'll still publish event without videos
+        logger.error(f"Error building video responses for user {user_id}, platform {platform}: {e}", exc_info=True)
+        updated_videos = []
+    
+    # Publish event - CRITICAL: Don't catch exceptions here, let them propagate
+    # This ensures the endpoint knows if publishing failed
+    try:
+        await publish_destination_toggled(user_id, platform, enabled, connected, videos=updated_videos)
+        logger.info(f"Successfully published destination_toggled event for user {user_id}, platform {platform}, video_count={len(updated_videos)}")
+    except Exception as e:
+        # Log the error but re-raise so the endpoint knows publishing failed
+        logger.error(f"CRITICAL: Failed to publish destination_toggled event for user {user_id}, platform {platform}: {e}", exc_info=True)
+        raise
     
     return {
         platform: {
