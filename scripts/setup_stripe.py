@@ -157,16 +157,22 @@ def sync_stripe_resources():
     meter_id = meter.id if meter else None
     
     all_products = stripe.Product.list(limit=100).data
-    existing_products = {p.name: p for p in all_products}
+    # Build lookup by name AND by plan_key in metadata
+    existing_products_by_name = {p.name: p for p in all_products}
+    existing_products_by_plan_key = {}
+    for p in all_products:
+        plan_key = p.metadata.get('plan_key')
+        if plan_key:
+            existing_products_by_plan_key[plan_key] = p
+    
     # List prices and expand product to check metadata
     existing_prices = stripe.Price.list(limit=100, active=True).data
 
     for key, config in PRODUCTS.items():
-        print(f"Plan: {config['name']}")
+        print(f"Plan: {config['name']} (key: {key})")
         
         # 1. Product Metadata Sync
-        product = existing_products.get(config['name'])
-        metadata = {"tokens": str(config['tokens'])}
+        metadata = {"tokens": str(config['tokens']), "plan_key": key}
         
         # Add hidden flag to metadata if present
         if config.get('hidden'):
@@ -180,7 +186,39 @@ def sync_stripe_resources():
         if config.get('internal_status'):
             metadata["internal_status"] = config['internal_status']
         
+        # Look up product by plan_key first, then by name as fallback
+        product = existing_products_by_plan_key.get(key)
         if not product:
+            product = existing_products_by_name.get(config['name'])
+        
+        # Special handling: if processing 'free_daily' and found an archived 'free' product, convert it
+        if key == 'free_daily' and product:
+            product_plan_key = product.metadata.get('plan_key', '')
+            product_internal_status = product.metadata.get('internal_status', '')
+            # If this is the old 'free' product (no plan_key or has archived_legacy), convert it
+            if product_plan_key != 'free_daily' and (not product_plan_key or product_internal_status == 'archived_legacy'):
+                print(f"  🔄 Converting archived 'free' product to 'free_daily'...")
+                stripe.Product.modify(
+                    product.id,
+                    description=config['description'],
+                    metadata=metadata,
+                    active=True  # Reactivate it
+                )
+                print(f"  ✓ Converted product to free_daily: {product.id}")
+                product = stripe.Product.retrieve(product.id)  # Refresh to get updated metadata
+            elif product_plan_key == 'free_daily':
+                # Already the correct product, just update if needed
+                if (product.description != config['description'] or 
+                    product.metadata.get("tokens") != metadata.get("tokens") or
+                    product.metadata.get("max_accrual") != metadata.get("max_accrual")):
+                    stripe.Product.modify(
+                        product.id, 
+                        description=config['description'],
+                        metadata=metadata
+                    )
+                    print(f"  ✓ Updated product metadata/description: {product.id}")
+        elif not product:
+            # Create new product
             product = stripe.Product.create(
                 name=config['name'], 
                 description=config['description'],
@@ -188,16 +226,22 @@ def sync_stripe_resources():
             )
             print(f"  ✓ Created product: {product.id}")
         else:
-            # Update product if description or metadata changed
+            # Update existing product if description or metadata changed
             current_hidden = "true" if config.get('hidden') else "false"
             current_internal_status = config.get('internal_status', '')
             product_internal_status = product.metadata.get('internal_status', '')
+            product_plan_key = product.metadata.get('plan_key', '')
+            
+            # Update plan_key if missing
+            if product_plan_key != key:
+                metadata["plan_key"] = key
             
             if (product.description != config['description'] or 
                 product.metadata.get("tokens") != metadata.get("tokens") or
                 product.metadata.get("hidden", "false") != current_hidden or
                 product_internal_status != current_internal_status or
-                product.metadata.get("max_accrual") != metadata.get("max_accrual")):
+                product.metadata.get("max_accrual") != metadata.get("max_accrual") or
+                product_plan_key != key):
                 stripe.Product.modify(
                     product.id, 
                     description=config['description'],
@@ -205,8 +249,8 @@ def sync_stripe_resources():
                 )
                 print(f"  ✓ Updated product metadata/description: {product.id}")
         
-        # Deactivate product if it has archived_legacy status
-        if config.get('internal_status') == 'archived_legacy' and product.active:
+        # Deactivate product if it has archived_legacy status (but skip if we just converted it to free_daily)
+        if config.get('internal_status') == 'archived_legacy' and product.active and key != 'free_daily':
             stripe.Product.modify(product.id, active=False)
             print(f"  ✓ Deactivated archived product: {product.id}")
         
