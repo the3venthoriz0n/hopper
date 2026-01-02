@@ -5,7 +5,11 @@ from sqlalchemy.orm import Session
 
 from app.db.helpers import (
     get_oauth_token, check_token_expiration,
-    get_all_oauth_tokens, get_user_settings, set_user_setting, get_user_videos
+    get_all_oauth_tokens, get_user_settings, set_user_setting, get_user_videos,
+    add_wordbank_word as db_add_wordbank_word,
+    remove_wordbank_word as db_remove_wordbank_word,
+    clear_wordbank as db_clear_wordbank,
+    get_wordbank_words_list
 )
 
 logger = logging.getLogger(__name__)
@@ -90,18 +94,8 @@ def update_settings_batch(user_id: int, category: str, data_dict: Dict[str, Any]
 
 def add_wordbank_word(user_id: int, word: str, db: Session) -> Dict:
     """Add a word to the global wordbank"""
-    # Strip whitespace and capitalize
-    word = word.strip().capitalize()
-    if not word:
-        raise ValueError("Word cannot be empty")
-    
-    # Get current wordbank
-    settings = get_user_settings(user_id, "global", db=db)
-    wordbank = settings.get("wordbank", [])
-    
-    if word not in wordbank:
-        wordbank.append(word)
-        set_user_setting(user_id, "global", "wordbank", wordbank, db=db)
+    # Use direct database INSERT operation
+    db_add_wordbank_word(user_id, word, db=db)
     
     # Return updated settings
     return get_user_settings(user_id, "global", db=db)
@@ -109,19 +103,17 @@ def add_wordbank_word(user_id: int, word: str, db: Session) -> Dict:
 
 def remove_wordbank_word(user_id: int, word: str, db: Session) -> Dict:
     """Remove a word from the global wordbank"""
-    # Get current wordbank
-    settings = get_user_settings(user_id, "global", db=db)
-    wordbank = settings.get("wordbank", [])
+    # Use direct database DELETE operation
+    db_remove_wordbank_word(user_id, word, db=db)
     
-    if word in wordbank:
-        wordbank.remove(word)
-        set_user_setting(user_id, "global", "wordbank", wordbank, db=db)
-    
+    # Return updated wordbank
+    wordbank = get_wordbank_words_list(user_id, db=db)
     return {"wordbank": wordbank}
 
 
 def clear_wordbank(user_id: int, db: Session) -> Dict:
     """Clear all words from the global wordbank"""
-    set_user_setting(user_id, "global", "wordbank", [], db=db)
+    # Use direct database DELETE operation
+    db_clear_wordbank(user_id, db=db)
     return {"wordbank": []}
 

@@ -24,4 +24,5 @@ class User(Base):
     subscription = relationship("Subscription", back_populates="user", uselist=False, cascade="all, delete-orphan")
     token_balance = relationship("TokenBalance", back_populates="user", uselist=False, cascade="all, delete-orphan")
     token_transactions = relationship("TokenTransaction", back_populates="user", cascade="all, delete-orphan")
+    wordbank_words = relationship("WordbankWord", back_populates="user", cascade="all, delete-orphan")
 

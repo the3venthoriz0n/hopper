@@ -11,6 +11,7 @@ from app.models.user import User
 from app.models.video import Video
 from app.models.setting import Setting
 from app.models.oauth_token import OAuthToken
+from app.models.wordbank_word import WordbankWord
 from app.db.session import SessionLocal
 from app.utils.encryption import encrypt, decrypt
 from app.db.redis import (
@@ -57,6 +58,16 @@ def get_user_settings(user_id: int, category: str = "global", db: Session = None
             except (json.JSONDecodeError, TypeError):
                 # If not JSON, use as string (legacy data)
                 settings_dict[setting.key] = setting.value
+        
+        # Override wordbank from new table if category is global
+        if category == "global":
+            wordbank_words = get_wordbank_words_list(user_id, db=db)
+            if wordbank_words:
+                # Use new table data
+                settings_dict["wordbank"] = wordbank_words
+            elif "wordbank" not in settings_dict:
+                # No words in new table and no legacy data, default to empty list
+                settings_dict["wordbank"] = []
         
         # Cache the result
         set_cached_settings(user_id, category, settings_dict)
@@ -186,6 +197,14 @@ def get_all_user_settings(user_id: int, db: Session = None) -> Dict[str, Dict[st
             "allow_duplicates": False
         }
         result["global"] = {**global_defaults, **settings_by_category.get("global", {})}
+        
+        # Override wordbank from new table (new table takes precedence)
+        wordbank_words = get_wordbank_words_list(user_id, db=db)
+        if wordbank_words:
+            result["global"]["wordbank"] = wordbank_words
+        elif "wordbank" not in result["global"]:
+            result["global"]["wordbank"] = []
+        
         # Normalize boolean settings (handle legacy string values - one-time conversion)
         boolean_keys = ["allow_duplicates", "upload_immediately", "upload_first_immediately"]
         for key in boolean_keys:
@@ -859,6 +878,184 @@ def get_all_scheduled_videos(db: Session = None) -> Dict[int, List[Video]]:
             videos_by_user[video.user_id].append(video)
         
         return videos_by_user
+    finally:
+        if should_close:
+            db.close()
+
+
+# ============================================================================
+# WORDBANK HELPER FUNCTIONS
+# ============================================================================
+
+def get_wordbank_words(user_id: int, db: Session = None) -> List[WordbankWord]:
+    """Get all wordbank words for a user
+    
+    Args:
+        user_id: User ID
+        db: Database session (if None, creates its own)
+    
+    Returns:
+        List of WordbankWord objects
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
+    try:
+        return db.query(WordbankWord).filter(
+            WordbankWord.user_id == user_id
+        ).order_by(WordbankWord.created_at).all()
+    finally:
+        if should_close:
+            db.close()
+
+
+def get_wordbank_words_list(user_id: int, db: Session = None) -> List[str]:
+    """Get wordbank words as a list of strings (for backward compatibility)
+    
+    Args:
+        user_id: User ID
+        db: Database session (if None, creates its own)
+    
+    Returns:
+        List of word strings
+    """
+    words = get_wordbank_words(user_id, db=db)
+    return [word.word for word in words]
+
+
+def add_wordbank_word(user_id: int, word: str, db: Session = None) -> WordbankWord:
+    """Add a word to the wordbank (direct INSERT operation)
+    
+    Args:
+        user_id: User ID
+        word: Word to add (will be normalized: strip and capitalize)
+        db: Database session (if None, creates its own)
+    
+    Returns:
+        WordbankWord object (or None if duplicate)
+    
+    Raises:
+        ValueError: If word is empty after normalization
+    """
+    # Normalize word
+    normalized_word = word.strip().capitalize()
+    if not normalized_word:
+        raise ValueError("Word cannot be empty")
+    
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
+    try:
+        # Check if word already exists
+        existing = db.query(WordbankWord).filter(
+            WordbankWord.user_id == user_id,
+            WordbankWord.word == normalized_word
+        ).first()
+        
+        if existing:
+            return existing
+        
+        # Insert new word
+        wordbank_word = WordbankWord(
+            user_id=user_id,
+            word=normalized_word
+        )
+        db.add(wordbank_word)
+        db.commit()
+        db.refresh(wordbank_word)
+        
+        # Invalidate settings cache
+        invalidate_settings_cache(user_id, "global")
+        
+        return wordbank_word
+    except Exception as e:
+        if should_close:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        raise
+    finally:
+        if should_close:
+            db.close()
+
+
+def remove_wordbank_word(user_id: int, word: str, db: Session = None) -> bool:
+    """Remove a word from the wordbank (direct DELETE operation)
+    
+    Args:
+        user_id: User ID
+        word: Word to remove (will be normalized: strip and capitalize)
+        db: Database session (if None, creates its own)
+    
+    Returns:
+        True if word was deleted, False if not found
+    """
+    # Normalize word
+    normalized_word = word.strip().capitalize()
+    
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
+    try:
+        wordbank_word = db.query(WordbankWord).filter(
+            WordbankWord.user_id == user_id,
+            WordbankWord.word == normalized_word
+        ).first()
+        
+        if not wordbank_word:
+            return False
+        
+        db.delete(wordbank_word)
+        db.commit()
+        
+        # Invalidate settings cache
+        invalidate_settings_cache(user_id, "global")
+        
+        return True
+    finally:
+        if should_close:
+            db.close()
+
+
+def clear_wordbank(user_id: int, db: Session = None) -> int:
+    """Clear all words from the wordbank (DELETE all for user)
+    
+    Args:
+        user_id: User ID
+        db: Database session (if None, creates its own)
+    
+    Returns:
+        Number of words deleted
+    """
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
+    try:
+        # Get count before deletion
+        count = db.query(WordbankWord).filter(
+            WordbankWord.user_id == user_id
+        ).count()
+        
+        # Delete all words
+        db.query(WordbankWord).filter(
+            WordbankWord.user_id == user_id
+        ).delete()
+        
+        db.commit()
+        
+        # Invalidate settings cache
+        invalidate_settings_cache(user_id, "global")
+        
+        return count
     finally:
         if should_close:
             db.close()
