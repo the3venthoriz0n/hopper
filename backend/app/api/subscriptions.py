@@ -98,14 +98,14 @@ def create_subscription_checkout_route(
 
 
 @router.get("/checkout-status")
-def check_checkout_status_route(
+async def check_checkout_status_route(
     session_id: str = Query(..., description="Stripe checkout session ID"),
     user_id: int = Depends(require_csrf_new),
     db: Session = Depends(get_db)
 ):
     """Check the status of a Stripe checkout session."""
     try:
-        return check_checkout_status(session_id, user_id, db)
+        return await check_checkout_status(session_id, user_id, db)
     except ValueError as e:
         error_msg = str(e)
         if "not configured" in error_msg.lower():
@@ -172,7 +172,7 @@ async def stripe_webhook_endpoint(request: Request, db: Session = Depends(get_db
         raise HTTPException(status_code=400, detail="Missing stripe-signature header")
     
     try:
-        return process_stripe_webhook(payload, sig_header, db)
+        return await process_stripe_webhook(payload, sig_header, db)
     except ValueError as e:
         logger.error(f"Invalid webhook payload: {e}")
         raise HTTPException(status_code=400, detail=str(e))

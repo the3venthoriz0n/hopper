@@ -87,7 +87,7 @@ def list_available_plans() -> Dict:
     
     return {"plans": plans_list}
 
-def check_checkout_status(session_id: str, user_id: int, db: Session) -> Dict:
+async def check_checkout_status(session_id: str, user_id: int, db: Session) -> Dict:
     """Check the status of a Stripe checkout session and verify if subscription was created."""
     if not settings.STRIPE_SECRET_KEY:
         raise ValueError("Stripe not configured")
@@ -116,7 +116,7 @@ def check_checkout_status(session_id: str, user_id: int, db: Session) -> Dict:
         sub = db.query(Subscription).filter(Subscription.stripe_subscription_id == subscription_id).first()
         if sub:
             subscription_created = True
-            ensure_tokens_synced_for_subscription(user_id, subscription_id, db)
+            await ensure_tokens_synced_for_subscription(user_id, subscription_id, db)
 
     return {
         "status": "completed" if session.payment_status == "paid" else "pending",
@@ -245,7 +245,7 @@ def get_current_subscription_with_auto_repair(user_id: int, db: Session) -> Dict
         "token_balance": token_balance,
     }
 
-def process_stripe_webhook(payload: bytes, sig_header: str, db: Session) -> Dict[str, Any]:
+async def process_stripe_webhook(payload: bytes, sig_header: str, db: Session) -> Dict[str, Any]:
     """Process Stripe webhook event with idempotency logging."""
     if not settings.STRIPE_WEBHOOK_SECRET:
         raise ValueError("Webhook secret not configured")
@@ -267,13 +267,13 @@ def process_stripe_webhook(payload: bytes, sig_header: str, db: Session) -> Dict
         if event_type == "checkout.session.completed":
             handle_checkout_completed(data, db)
         elif event_type == "customer.subscription.created":
-            handle_subscription_created(data, db)
+            await handle_subscription_created(data, db)
         elif event_type == "customer.subscription.updated":
-            handle_subscription_updated(data, db)
+            await handle_subscription_updated(data, db)
         elif event_type == "customer.subscription.deleted":
             handle_subscription_deleted(data, db)
         elif event_type == "invoice.payment_succeeded":
-            handle_invoice_payment_succeeded(data, db)
+            await handle_invoice_payment_succeeded(data, db)
         elif event_type == "invoice.payment_failed":
             handle_invoice_payment_failed(data, db)
         

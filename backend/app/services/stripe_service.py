@@ -269,7 +269,7 @@ def handle_checkout_completed(session: Any, db: Session):
             user.stripe_customer_id = customer_id
             db.commit()
 
-def handle_subscription_created(subscription_data: Any, db: Session):
+async def handle_subscription_created(subscription_data: Any, db: Session):
     """Robust handler for subscription creation."""
     sub_id = _get_stripe_value(subscription_data, 'id')
     if not sub_id:
@@ -370,15 +370,15 @@ def handle_subscription_created(subscription_data: Any, db: Session):
         logger.info(f"✅ Subscription {sub_id} synced. Plan: {plan_key}")
         
         from app.services.token_service import ensure_tokens_synced_for_subscription
-        ensure_tokens_synced_for_subscription(user.id, sub_id, db)
+        await ensure_tokens_synced_for_subscription(user.id, sub_id, db)
         
     except Exception as e:
         db.rollback()
         logger.error(f"Database error saving subscription {sub_id}: {e}")
 
 
-def handle_subscription_updated(subscription: Any, db: Session):
-    handle_subscription_created(subscription, db)
+async def handle_subscription_updated(subscription: Any, db: Session):
+    await handle_subscription_created(subscription, db)
 
 def handle_subscription_deleted(subscription: Any, db: Session):
     subscription_id = _get_stripe_value(subscription, 'id')
@@ -389,7 +389,7 @@ def handle_subscription_deleted(subscription: Any, db: Session):
         sub_record.status = "canceled"
         db.commit()
 
-def handle_invoice_payment_succeeded(invoice: Any, db: Session):
+async def handle_invoice_payment_succeeded(invoice: Any, db: Session):
     subscription_id = _get_stripe_value(invoice, 'subscription')
     if not subscription_id:
         return
@@ -397,7 +397,7 @@ def handle_invoice_payment_succeeded(invoice: Any, db: Session):
     if sub_record:
         # Daily plans are handled by ensure_tokens_synced_for_subscription which detects them
         from app.services.token_service import ensure_tokens_synced_for_subscription
-        ensure_tokens_synced_for_subscription(sub_record.user_id, subscription_id, db)
+        await ensure_tokens_synced_for_subscription(sub_record.user_id, subscription_id, db)
 
 def handle_invoice_payment_failed(invoice: Any, db: Session):
     invoice_id = _get_stripe_value(invoice, 'id', 'unknown')

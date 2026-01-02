@@ -1719,22 +1719,21 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       case 'token_balance_changed':
         // Update token balance immediately from WebSocket event
         if (payload.new_balance !== undefined) {
-          setTokenBalance(prev => {
-            const newBalance = {
-              ...prev,
-              tokens_remaining: payload.new_balance
-            };
-            // Update tokens_used_this_period if we can calculate it
-            if (prev && payload.change_amount) {
-              // If tokens were deducted (negative change), increase used count
-              if (payload.change_amount < 0) {
-                newBalance.tokens_used_this_period = (prev.tokens_used_this_period || 0) + Math.abs(payload.change_amount);
-              }
-            }
-            return newBalance;
-          });
+          setTokenBalance(prev => ({
+            ...prev,
+            tokens_remaining: payload.new_balance,
+            // When tokens are deducted (negative change), update tokens_used_this_period
+            tokens_used_this_period: payload.change_amount < 0 
+              ? (prev.tokens_used_this_period || 0) + Math.abs(payload.change_amount)
+              : prev.tokens_used_this_period
+          }));
+          
+          // For token grants (positive change), reload subscription to get updated monthly_tokens
+          // This is necessary because monthly_tokens is also updated in the backend
+          if (payload.change_amount > 0) {
+            loadSubscription();
+          }
         }
-        // No need to reload full subscription - token balance is updated above
         break;
         
       default:
@@ -5713,7 +5712,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                           id={`dest-override-caption-${video.id}-${platform}`}
                           value={overrideValues.title || ''}
                           onChange={(e) => updateOverrideValue('title', e.target.value)}
-                          placeholder={platformData.caption || 'Enter title/caption...'}
+                          placeholder={platformData.caption || video.filename}
                           rows={4}
                           maxLength={2200}
                           className="textarea-text"

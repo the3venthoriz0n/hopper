@@ -290,8 +290,8 @@ function AdminDashboard() {
       setMessage(`✅ Granted ${tokenAmount} tokens`);
       setTokenAmount('');
       setGrantReason('');
-      loadUserDetails(userId);
-      loadUsers();
+      await loadUserDetails(userId);
+      await loadUsers();
     } catch (err) {
       setMessage(`❌ Error: ${err.response?.data?.detail || err.message}`);
     } finally {
@@ -320,8 +320,8 @@ function AdminDashboard() {
       setDeductResult(response.data.transaction);
       setDeductAmount('');
       setDeductReason('');
-      loadUserDetails(userId);
-      loadUsers();
+      await loadUserDetails(userId);
+      await loadUsers();
     } catch (err) {
       setMessage(`❌ Error: ${err.response?.data?.detail || err.message}`);
     } finally {

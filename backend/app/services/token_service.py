@@ -602,7 +602,7 @@ async def reset_tokens_for_subscription(user_id: int, plan_type: str, period_sta
         return False
 
 
-def handle_subscription_renewal(user_id: int, subscription: Subscription, old_period_end: Optional[datetime], db: Session) -> bool:
+async def handle_subscription_renewal(user_id: int, subscription: Subscription, old_period_end: Optional[datetime], db: Session) -> bool:
     """
     Handle subscription renewal by resetting tokens to monthly allocation.
     
@@ -662,15 +662,14 @@ def handle_subscription_renewal(user_id: int, subscription: Subscription, old_pe
         )
         
         # Reset tokens to monthly allocation on renewal (is_renewal=True ensures reset, not add)
-        import asyncio
-        result = asyncio.run(reset_tokens_for_subscription(
+        result = await reset_tokens_for_subscription(
             user_id,
             subscription.plan_type,
             subscription.current_period_start,
             subscription.current_period_end,
             db,
             is_renewal=True  # CRITICAL: This flag ensures tokens are RESET, not added
-        ))
+        )
         
         if result:
             logger.info(f"✅ Renewal token reset completed for user {user_id}")
@@ -755,7 +754,7 @@ def _check_if_tokens_already_added_for_period(
     return False
 
 
-def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db: Session) -> bool:
+async def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db: Session) -> bool:
     """
     Ensure tokens are properly synced for a subscription.
     
@@ -807,9 +806,8 @@ def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db
                         logger.info(f"Daily tokens already granted today for user {user_id}, subscription {subscription_id}")
                         return True
                 
-                # Grant daily tokens (sync caller, use asyncio.run)
-                import asyncio
-                return asyncio.run(handle_daily_token_grant(user_id, subscription_id, db))
+                # Grant daily tokens
+                return await handle_daily_token_grant(user_id, subscription_id, db)
         
         # Check if token balance period matches subscription period
         token_balance = get_or_create_token_balance(user_id, db)
@@ -853,7 +851,7 @@ def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db
         # For regular plans, check if we need to handle renewal first
         # Try to detect and handle renewal using the dedicated handler (single source of truth)
         old_period_end = token_balance.period_end if token_balance.period_end != token_balance.period_start else None
-        renewal_handled = handle_subscription_renewal(user_id, subscription, old_period_end, db)
+        renewal_handled = await handle_subscription_renewal(user_id, subscription, old_period_end, db)
         
         if renewal_handled:
             # Renewal was handled - tokens are already reset
@@ -892,7 +890,7 @@ def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db
                 # New subscription - period is uninitialized or significantly different and in the future
                 # Add monthly tokens (preserves granted tokens)
                 logger.info(f"Token period mismatch for user {user_id}, subscription {subscription_id}. Detected new subscription. Adding {monthly_tokens} tokens to current balance of {token_balance.tokens_remaining}.")
-                return reset_tokens_for_subscription(
+                return await reset_tokens_for_subscription(
                     user_id,
                     subscription.plan_type,
                     subscription.current_period_start,
@@ -913,7 +911,7 @@ def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: str, db
                     db
                 ):
                     logger.info(f"Token amount mismatch for user {user_id}, subscription {subscription_id} (plan: {subscription.plan_type}, current: {token_balance.tokens_remaining}, expected: {monthly_tokens}). No tokens found for this period. Adding {monthly_tokens} tokens.")
-                    return reset_tokens_for_subscription(
+                    return await reset_tokens_for_subscription(
                         user_id,
                         subscription.plan_type,
                         subscription.current_period_start,
@@ -1002,6 +1000,8 @@ async def grant_tokens_admin(
     if not await add_tokens(user_id, amount, transaction_type='grant', metadata={'reason': reason, 'admin_id': admin_id}, db=db):
         raise ValueError("Failed to grant tokens")
     
+    db.expire_all()
+    
     # Get balance after granting
     balance_after = get_token_balance(user_id, db)
     
@@ -1078,6 +1078,8 @@ async def deduct_tokens_with_overage_calculation(
     
     if not success:
         raise ValueError("Failed to deduct tokens")
+    
+    db.expire_all()
     
     # Get balance after deduction
     balance_after = get_token_balance(user_id, db)
