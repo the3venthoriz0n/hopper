@@ -313,11 +313,14 @@ jobs:
             echo "app_dir=/opt/hopper-dev" >> $GITHUB_OUTPUT
           fi
           
-          # Generate short tag
+          # Generate short tag for display/deployment script
+          # For version tags (v5.0.5), use as-is
+          # For fallback tags (prod-e366b5a), use full tag to match image tags
           if [[ "$TAG" =~ ^v[0-9] ]]; then
             echo "short_tag=$TAG" >> $GITHUB_OUTPUT
           else
-            echo "short_tag=$(echo "$TAG" | cut -d'-' -f2-)" >> $GITHUB_OUTPUT
+            # Use full tag to match what was used in build-and-push
+            echo "short_tag=$TAG" >> $GITHUB_OUTPUT
           fi
 
       - name: Set up SSH key
