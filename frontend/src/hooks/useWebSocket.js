@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 
 /**
  * WebSocket hook for real-time updates
@@ -26,11 +26,28 @@ export function useWebSocket(url, onMessage, options = {}) {
   const reconnectAttemptsRef = useRef(0);
   const shouldReconnectRef = useRef(true);
   const onMessageRef = useRef(onMessage);
+  const onOpenRef = useRef(onOpen);
+  const onCloseRef = useRef(onClose);
+  const onErrorRef = useRef(onError);
+  const pingIntervalRef = useRef(null);
+  const [connected, setConnected] = useState(false);
 
-  // Keep onMessage ref updated
+  // Keep callback refs updated
   useEffect(() => {
     onMessageRef.current = onMessage;
   }, [onMessage]);
+
+  useEffect(() => {
+    onOpenRef.current = onOpen;
+  }, [onOpen]);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+  }, [onError]);
 
   const connect = useCallback(() => {
     if (!url) return;
@@ -46,11 +63,31 @@ export function useWebSocket(url, onMessage, options = {}) {
 
       ws.onopen = () => {
         reconnectAttemptsRef.current = 0;
-        if (onOpen) onOpen();
+        setConnected(true);
+        
+        // Start ping interval to keep connection alive
+        pingIntervalRef.current = setInterval(() => {
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            try {
+              wsRef.current.send('ping');
+            } catch (err) {
+              console.error('Failed to send ping:', err);
+            }
+          }
+        }, 30000); // Ping every 30 seconds
+        
+        if (onOpenRef.current) onOpenRef.current();
       };
 
       ws.onmessage = (event) => {
         try {
+          // Handle ping/pong keepalive messages (plain text, not JSON)
+          if (event.data === 'pong' || event.data === 'ping') {
+            // Ignore ping/pong messages - they're just keepalive
+            return;
+          }
+          
+          // Parse JSON messages
           const data = JSON.parse(event.data);
           if (onMessageRef.current) {
             onMessageRef.current(data);
@@ -62,20 +99,28 @@ export function useWebSocket(url, onMessage, options = {}) {
 
       ws.onerror = (error) => {
         console.error('WebSocket error:', error);
-        if (onError) onError(error);
+        if (onErrorRef.current) onErrorRef.current(error);
       };
 
       ws.onclose = (event) => {
-        if (onClose) onClose(event);
+        setConnected(false);
+        
+        // Clear ping interval
+        if (pingIntervalRef.current) {
+          clearInterval(pingIntervalRef.current);
+          pingIntervalRef.current = null;
+        }
+        
+        if (onCloseRef.current) onCloseRef.current(event);
 
         // Attempt reconnection if enabled and not a normal closure
         if (shouldReconnectRef.current && reconnect && event.code !== 1000) {
           if (reconnectAttemptsRef.current < maxReconnectAttempts) {
             reconnectAttemptsRef.current += 1;
-            const delay = Math.min(
-              reconnectInterval * Math.pow(2, reconnectAttemptsRef.current - 1),
-              30000 // Max 30 seconds
-            );
+            // Add jitter to prevent thundering herd
+            const baseDelay = reconnectInterval * Math.pow(2, reconnectAttemptsRef.current - 1);
+            const jitter = Math.random() * 1000; // 0-1 second jitter
+            const delay = Math.min(baseDelay + jitter, 30000); // Max 30 seconds
             
             reconnectTimeoutRef.current = setTimeout(() => {
               console.log(`Reconnecting WebSocket (attempt ${reconnectAttemptsRef.current})...`);
@@ -88,12 +133,20 @@ export function useWebSocket(url, onMessage, options = {}) {
       };
     } catch (error) {
       console.error('Failed to create WebSocket connection:', error);
-      if (onError) onError(error);
+      if (onErrorRef.current) onErrorRef.current(error);
     }
-  }, [url, reconnect, reconnectInterval, maxReconnectAttempts, onOpen, onClose, onError]);
+  }, [url, reconnect, reconnectInterval, maxReconnectAttempts]);
 
   const disconnect = useCallback(() => {
     shouldReconnectRef.current = false;
+    setConnected(false);
+    
+    // Clear ping interval
+    if (pingIntervalRef.current) {
+      clearInterval(pingIntervalRef.current);
+      pingIntervalRef.current = null;
+    }
+    
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
@@ -121,7 +174,7 @@ export function useWebSocket(url, onMessage, options = {}) {
   }, [connect, disconnect]);
 
   return {
-    connected: wsRef.current?.readyState === WebSocket.OPEN,
+    connected,
     send,
     reconnect: connect,
     disconnect,

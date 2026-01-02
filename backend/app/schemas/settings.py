@@ -71,7 +71,7 @@ class InstagramSettingsUpdate(BaseModel):
     media_type: Optional[Literal["REELS", "VIDEO"]] = None
     share_to_feed: Optional[bool] = None
     cover_url: Optional[str] = None
-    audio_name: Optional[str] = None
+    # audio_name: Optional[str] = None  # Commented out - removed Audio Name feature
 
 
 class AddWordbankWordRequest(BaseModel):

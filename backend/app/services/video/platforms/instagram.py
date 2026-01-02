@@ -47,10 +47,11 @@ def _build_container_params(
         share_to_feed = _get_instagram_setting(custom_settings, instagram_settings, 'share_to_feed', True)
         params["share_to_feed"] = share_to_feed
         
+        # Commented out - removed Audio Name feature
         # Optional: audio name for Reels
-        audio_name = _get_instagram_setting(custom_settings, instagram_settings, 'audio_name')
-        if audio_name:
-            params["audio_name"] = audio_name
+        # audio_name = _get_instagram_setting(custom_settings, instagram_settings, 'audio_name')
+        # if audio_name:
+        #     params["audio_name"] = audio_name
     
     # Optional: custom thumbnail (works for both REELS and VIDEO)
     cover_url = _get_instagram_setting(custom_settings, instagram_settings, 'cover_url')

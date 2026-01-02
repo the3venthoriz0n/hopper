@@ -34,15 +34,6 @@ class WebSocketManager:
         self.active_connections[user_id].add(websocket)
         logger.info(f"WebSocket connected for user {user_id} (total connections: {len(self.active_connections[user_id])})")
         
-        # Send a test message to confirm connection works
-        try:
-            await websocket.send_text(json.dumps({
-                "event": "connected",
-                "payload": {"user_id": user_id, "timestamp": datetime.now(timezone.utc).isoformat()}
-            }))
-        except Exception as e:
-            logger.error(f"Failed to send connected event: {e}")
-        
         # Subscribe to user's channels if first connection
         if len(self.active_connections[user_id]) == 1:
             await self._subscribe_user_channels(user_id)
@@ -100,8 +91,10 @@ class WebSocketManager:
             for channel in channels:
                 if channel in self.subscribed_channels:
                     self.pubsub.unsubscribe(channel)
-                    self.subscribed_channels.discard(channel)
                     logger.debug(f"Unsubscribed from Redis channel: {channel}")
+            # Clear channels from tracking after unsubscribing
+            for channel in channels:
+                self.subscribed_channels.discard(channel)
         
         await asyncio.get_event_loop().run_in_executor(_executor, unsubscribe)
     
@@ -133,7 +126,13 @@ class WebSocketManager:
                     
                     # Parse event data
                     try:
-                        event_data = json.loads(data) if isinstance(data, bytes) else json.loads(data)
+                        if isinstance(data, bytes):
+                            event_data = json.loads(data)
+                        elif isinstance(data, str):
+                            event_data = json.loads(data)
+                        else:
+                            # Already a dict
+                            event_data = data
                     except json.JSONDecodeError:
                         logger.warning(f"Failed to parse event data from channel {channel}")
                         continue
@@ -160,7 +159,7 @@ class WebSocketManager:
         }
         message_json = json.dumps(message)
         
-        # Send to all connections (remove dead ones)
+        # Send to all connections (collect dead ones for cleanup)
         dead_connections = set()
         for websocket in self.active_connections[user_id]:
             try:
@@ -169,9 +168,16 @@ class WebSocketManager:
                 logger.debug(f"Failed to send message to WebSocket: {e}")
                 dead_connections.add(websocket)
         
-        # Clean up dead connections
-        for dead_ws in dead_connections:
-            await self.disconnect(user_id, dead_ws)
+        # Clean up dead connections after iteration completes
+        if dead_connections:
+            for dead_ws in dead_connections:
+                self.active_connections[user_id].discard(dead_ws)
+            
+            # If no more connections for this user, unsubscribe from channels
+            if len(self.active_connections[user_id]) == 0:
+                await self._unsubscribe_user_channels(user_id)
+                del self.active_connections[user_id]
+                logger.info(f"All WebSocket connections closed for user {user_id}, unsubscribed from channels")
 
 
 # Global WebSocket manager instance

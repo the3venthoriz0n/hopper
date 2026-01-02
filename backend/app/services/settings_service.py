@@ -74,9 +74,16 @@ def toggle_destination(user_id: int, platform: str, enabled: bool, db: Session) 
         logger.info(f"Building video responses for {len(videos)} videos (user {user_id}, platform {platform})")
         
         # Build video responses with updated platform_statuses and upload_properties
+        # Deduplicate by video ID to prevent sending duplicates to frontend
         updated_videos = []
+        seen_ids = set()
         for video in videos:
             try:
+                if video.id in seen_ids:
+                    logger.warning(f"Duplicate video ID {video.id} detected for user {user_id}, skipping")
+                    continue
+                seen_ids.add(video.id)
+                
                 video_dict = build_video_response(video, all_settings, all_tokens, user_id)
                 updated_videos.append(video_dict)
             except Exception as e:

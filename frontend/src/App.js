@@ -534,8 +534,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     disable_likes: false,
     media_type: 'REELS',
     share_to_feed: true,
-    cover_url: '',
-    audio_name: ''
+    cover_url: ''
+    // audio_name: '' // Commented out - removed Audio Name feature
   });
   const [showSettings, setShowSettings] = useState(false);
   const [showTiktokSettings, setShowTiktokSettings] = useState(false);
@@ -1273,10 +1273,25 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       const res = await axios.get(`${API}/videos`);
       const newData = res.data;
       
+      // Deduplicate in case backend ever returns duplicates
+      const seenIds = new Set();
+      const uniqueData = newData.filter(video => {
+        if (seenIds.has(video.id)) {
+          console.warn(`⚠️ Duplicate video ID from API: ${video.id}, skipping`);
+          return false;
+        }
+        seenIds.add(video.id);
+        return true;
+      });
+      
       setVideos(prevVideos => {
+        // Preserve temp videos during reload
+        const tempVideos = prevVideos.filter(v => typeof v.id === 'string' && v.id.startsWith('temp-'));
+        const tempVideoIds = new Set(tempVideos.map(v => v.id));
+        
         // Check for new token-related failures
         if (prevVideos && prevVideos.length > 0) {
-          newData.forEach(newVideo => {
+          uniqueData.forEach(newVideo => {
             const prevVideo = prevVideos.find(v => v.id === newVideo.id);
             // If video status changed to "failed" with token error
             if (prevVideo && prevVideo.status !== 'failed' && newVideo.status === 'failed') {
@@ -1295,11 +1310,14 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           });
         }
         
-        if (JSON.stringify(prevVideos) === JSON.stringify(newData)) {
-          return prevVideos;
+        // Compare only real videos (excluding temp videos) to determine if state changed
+        const prevRealVideos = prevVideos.filter(v => !tempVideoIds.has(v.id));
+        if (JSON.stringify(prevRealVideos) === JSON.stringify(uniqueData)) {
+          return prevVideos; // No changes to real videos, keep temp videos
         }
         
-        return newData;
+        // Merge: backend videos + temp videos
+        return [...uniqueData, ...tempVideos];
       });
       
       // Refresh token balance when videos change (in case tokens were deducted)
@@ -1552,9 +1570,21 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         break;
         
       case 'video_added':
-        // Add video directly to state (prevents race condition with destination toggles)
+        // ROOT CAUSE FIX: Check if video already exists to prevent duplicates from race condition
+        // Video might already be in state from HTTP response when file upload completes
         if (payload.video) {
-          setVideos(prev => [payload.video, ...prev]);
+          setVideos(prev => {
+            // Check if video already exists (from HTTP response or previous WebSocket event)
+            const existingIndex = prev.findIndex(v => v.id === payload.video.id);
+            if (existingIndex !== -1) {
+              // Update existing video
+              const updated = [...prev];
+              updated[existingIndex] = payload.video;
+              return updated;
+            }
+            // Video doesn't exist, add it
+            return [payload.video, ...prev];
+          });
         }
         break;
         
@@ -1615,7 +1645,28 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         // Update videos with fresh data from backend (includes recomputed upload_properties and platform_statuses)
         if (payload.videos && Array.isArray(payload.videos)) {
           console.log('  Updating videos with', payload.videos.length, 'items');
-          setVideos(payload.videos);
+          
+          // Deduplicate backend videos
+          const seenIds = new Set();
+          const uniqueBackendVideos = payload.videos.filter(video => {
+            if (seenIds.has(video.id)) {
+              console.warn(`⚠️ Duplicate video ID detected: ${video.id}, skipping`);
+              return false;
+            }
+            seenIds.add(video.id);
+            return true;
+          });
+          
+          // Merge with current state: update existing videos, preserve temp videos, add new ones
+          setVideos(prev => {
+            // Start with backend videos (source of truth for real videos)
+            // Preserve temp videos (videos with IDs starting with "temp-")
+            const backendVideoIds = new Set(uniqueBackendVideos.map(v => v.id));
+            const tempVideos = prev.filter(v => typeof v.id === 'string' && v.id.startsWith('temp-') && !backendVideoIds.has(v.id));
+            
+            // Combine: backend videos first, then temp videos
+            return [...uniqueBackendVideos, ...tempVideos];
+          });
         } else {
           console.warn('  No videos in payload or not an array, falling back to HTTP reload');
           // Fallback: reload videos via HTTP if WebSocket data missing
@@ -1868,7 +1919,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     }
 
     const newEnabled = !currentState.enabled;
-    setState({ ...currentState, enabled: newEnabled });
+    // Use functional form to avoid stale closures
+    setState(prev => ({ ...prev, enabled: newEnabled }));
     
     try {
       await axios.post(`${API}/destinations/${platform}/toggle`, {
@@ -1876,8 +1928,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       });
     } catch (err) {
       console.error(`Error toggling ${platform}:`, err);
-      // Revert on error
-      setState({ ...currentState, enabled: !newEnabled });
+      // Revert on error using functional form
+      setState(prev => ({ ...prev, enabled: !newEnabled }));
     }
   };
 
@@ -2025,8 +2077,17 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         
         // Replace temp with real video data - backend now returns full video object
         setVideos(prev => {
-          // Remove temp entry and add the real video at the end (maintains order)
+          // Remove temp entry
           const withoutTemp = prev.filter(v => v.id !== tempId);
+          
+          // Check if video already exists (from WebSocket event)
+          const exists = withoutTemp.some(v => v.id === res.data.id);
+          if (exists) {
+            // Update existing video instead of adding duplicate
+            return withoutTemp.map(v => v.id === res.data.id ? res.data : v);
+          }
+          
+          // Add new video
           return [...withoutTemp, res.data];
         });
         
@@ -3772,6 +3833,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               />
             </div>
 
+            {/* Commented out - removed Audio Name feature
             <div className="setting-group">
               <label>
                 Audio Name (Optional, Reels only)
@@ -3790,6 +3852,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 disabled={instagramSettings.media_type !== 'REELS'}
               />
             </div>
+            */}
 
             <div className="setting-group">
               <label className="checkbox-label">
@@ -5092,13 +5155,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               const mediaTypeEl = document.getElementById(`dest-override-media-type-${video.id}-${platform}`);
               const shareToFeedEl = document.getElementById(`dest-override-share-to-feed-${video.id}-${platform}`);
               const coverUrlEl = document.getElementById(`dest-override-cover-url-${video.id}-${platform}`);
-              const audioNameEl = document.getElementById(`dest-override-audio-name-${video.id}-${platform}`);
+              // const audioNameEl = document.getElementById(`dest-override-audio-name-${video.id}-${platform}`); // Commented out - removed Audio Name feature
               
               if (overrideValues.caption) overrides.caption = overrideValues.caption;
               if (mediaTypeEl?.value) overrides.media_type = mediaTypeEl.value;
               if (shareToFeedEl) overrides.share_to_feed = shareToFeedEl.checked;
               if (coverUrlEl?.value) overrides.cover_url = coverUrlEl.value;
-              if (audioNameEl?.value) overrides.audio_name = audioNameEl.value;
+              // if (audioNameEl?.value) overrides.audio_name = audioNameEl.value; // Commented out - removed Audio Name feature
             }
             
             const success = await saveDestinationOverrides(video.id, platform, overrides);
@@ -5399,12 +5462,14 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                             <span style={metadataValueStyle}>Custom thumbnail set</span>
                           </div>
                         )}
+                        {/* Commented out - removed Audio Name feature
                         {platformData.audio_name && (
                           <div>
                             <span style={metadataLabelStyle}>Audio Name:</span>{' '}
                             <span style={metadataValueStyle}>{platformData.audio_name}</span>
                           </div>
                         )}
+                        */}
                       </div>
                     )}
                     {(!platformData || Object.keys(platformData).length === 0) && (
@@ -5639,6 +5704,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         />
                       </div>
 
+                      {/* Commented out - removed Audio Name feature
                       <div className="setting-group">
                         <label htmlFor={`dest-override-audio-name-${video.id}-${platform}`}>Audio Name (Optional, Reels only)</label>
                         <input
@@ -5649,6 +5715,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                           className="input-text"
                         />
                       </div>
+                      */}
                     </>
                   )}
                 </div>

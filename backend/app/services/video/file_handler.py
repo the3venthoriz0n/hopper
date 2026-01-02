@@ -331,6 +331,10 @@ def delete_video_files(
             # Delete from database
             db.delete(video)
             deleted_count += 1
+            
+            # Publish video_deleted event for real-time UI updates
+            from app.services.event_service import publish_video_deleted
+            publish_video_deleted(user_id, video.id)
         
         db.commit()
         upload_logger.info(f"Deleted {deleted_count} video(s) for user {user_id}")
