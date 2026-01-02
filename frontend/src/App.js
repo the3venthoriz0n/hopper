@@ -1566,7 +1566,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     
     switch (event) {
       case 'connected':
-        // WebSocket connected successfully
+        console.log('✅ WebSocket connected, user_id:', payload.user_id);
         break;
         
       case 'video_added':

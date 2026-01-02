@@ -20,9 +20,6 @@ class WebSocketManager:
         # Redis pubsub (async) - created once and reused
         self.pubsub = None
         
-        # Track which channels we're subscribed to (to avoid duplicate subscriptions)
-        self.subscribed_channels: Set[str] = set()
-        
         # Flag to track if listen loop is running
         self.listening = False
         self.listen_task = None
@@ -31,87 +28,26 @@ class WebSocketManager:
         """Register a WebSocket connection for a user"""
         self.active_connections[user_id].add(websocket)
         logger.info(f"WebSocket connected for user {user_id} (total connections: {len(self.active_connections[user_id])})")
-        
-        # Subscribe to user's channels if first connection
-        if len(self.active_connections[user_id]) == 1:
-            await self._subscribe_user_channels(user_id)
-            
-            # Start listening if not already started
-            if not self.listening:
-                self.listen_task = asyncio.create_task(self._listen_loop())
-                self.listening = True
-                logger.info("Started Redis pub/sub listen loop")
     
     async def disconnect(self, user_id: int, websocket) -> None:
         """Unregister a WebSocket connection for a user"""
         if user_id in self.active_connections:
             self.active_connections[user_id].discard(websocket)
             
-            # If no more connections for this user, unsubscribe from channels
+            # Clean up empty user entries
             if len(self.active_connections[user_id]) == 0:
-                await self._unsubscribe_user_channels(user_id)
                 del self.active_connections[user_id]
         
         logger.info(f"WebSocket disconnected for user {user_id}")
     
-    async def _subscribe_user_channels(self, user_id: int) -> None:
-        """Subscribe to Redis channels for a user"""
-        # Create pubsub if it doesn't exist
-        if not self.pubsub:
-            self.pubsub = async_redis_client.pubsub()
-            logger.info("Created pubsub instance")
-        
-        channels = [
-            f"user:{user_id}:videos",
-            f"user:{user_id}:destinations",
-            f"user:{user_id}:upload_progress",
-            f"user:{user_id}:settings",
-            f"user:{user_id}:tokens"
-        ]
-        
-        # Only subscribe to channels we're not already subscribed to
-        channels_to_subscribe = [ch for ch in channels if ch not in self.subscribed_channels]
-        
-        if channels_to_subscribe:
-            # Subscribe to channels
-            await self.pubsub.subscribe(*channels_to_subscribe)
-            self.subscribed_channels.update(channels_to_subscribe)
-            logger.info(f"✓ Subscribed to Redis channels for user {user_id}: {channels_to_subscribe}")
-            logger.info(f"✓ Total subscribed channels: {len(self.subscribed_channels)}")
-        else:
-            logger.debug(f"Already subscribed to all channels for user {user_id}")
-    
-    async def _unsubscribe_user_channels(self, user_id: int) -> None:
-        """Unsubscribe from Redis channels for a user"""
-        if not self.pubsub:
-            return
-        
-        channels = [
-            f"user:{user_id}:videos",
-            f"user:{user_id}:destinations",
-            f"user:{user_id}:upload_progress",
-            f"user:{user_id}:settings",
-            f"user:{user_id}:tokens"
-        ]
-        
-        # Only unsubscribe from channels we're actually subscribed to
-        channels_to_unsubscribe = [ch for ch in channels if ch in self.subscribed_channels]
-        
-        if channels_to_unsubscribe:
-            await self.pubsub.unsubscribe(*channels_to_unsubscribe)
-            self.subscribed_channels.difference_update(channels_to_unsubscribe)
-            logger.info(f"✓ Unsubscribed from Redis channels for user {user_id}: {channels_to_unsubscribe}")
-        else:
-            logger.debug(f"Not subscribed to channels for user {user_id}")
-    
     async def _listen_loop(self) -> None:
-        """Internal listen loop - started when first user connects"""
-        logger.info("🎧 Starting Redis pub/sub listen loop")
+        """Global listener for all user events via pattern subscription"""
+        logger.info("🎧 Starting Redis pub/sub pattern listener for user:*:*")
         
         try:
             async for message in self.pubsub.listen():
                 try:
-                    # Handle message types - with decode_responses=True, keys are strings
+                    # Handle message types
                     if not isinstance(message, dict):
                         logger.warning(f"Unexpected message format: {type(message)}")
                         continue
@@ -123,12 +59,12 @@ class WebSocketManager:
                     
                     # Skip control messages (subscribe/unsubscribe confirmations)
                     if message_type in ('subscribe', 'unsubscribe', 'psubscribe', 'punsubscribe'):
-                        channel = message.get('channel', '')
-                        logger.debug(f"Pubsub control message: {message_type} for channel {channel}")
+                        pattern = message.get('pattern', message.get('channel', ''))
+                        logger.debug(f"Pubsub control message: {message_type} for {pattern}")
                         continue
                     
-                    # Process actual messages
-                    if message_type != 'message':
+                    # Process pattern messages
+                    if message_type != 'pmessage':
                         continue
                     
                     channel = message.get('channel')
@@ -143,7 +79,8 @@ class WebSocketManager:
                     
                     # Extract user_id from channel (format: user:{user_id}:{type})
                     try:
-                        user_id = int(channel.split(':')[1])
+                        parts = channel.split(':')
+                        user_id = int(parts[1])
                     except (IndexError, ValueError):
                         logger.warning(f"Invalid channel format: {channel}")
                         continue
@@ -172,8 +109,11 @@ class WebSocketManager:
                         logger.info(f"📨 Received destination_toggled from Redis for user {user_id}: "
                                    f"platform={event_payload.get('platform')}, enabled={event_payload.get('enabled')}, video_count={video_count}")
                     
-                    # Forward to all connections for this user
-                    await self._broadcast_to_user(user_id, event_data)
+                    # Forward ONLY if user is connected to THIS instance
+                    if user_id in self.active_connections:
+                        await self._broadcast_to_user(user_id, event_data)
+                    else:
+                        logger.debug(f"Skipping event {event_type} for user {user_id} (not connected to this instance)")
                         
                 except Exception as e:
                     logger.error(f"Error processing pub/sub message: {e}", exc_info=True)
@@ -229,17 +169,23 @@ class WebSocketManager:
                 self.active_connections[user_id].discard(dead_ws)
             
             if len(self.active_connections[user_id]) == 0:
-                await self._unsubscribe_user_channels(user_id)
                 del self.active_connections[user_id]
-                logger.info(f"All WebSocket connections closed for user {user_id}, unsubscribed from channels")
+                logger.info(f"All WebSocket connections closed for user {user_id}")
     
     async def start_listening(self) -> None:
-        """Initialize pubsub instance (actual listening starts when first user connects)"""
+        """Initialize a single, permanent global listener using pattern subscription"""
         if not self.pubsub:
             self.pubsub = async_redis_client.pubsub()
-            logger.info("✓ Initialized pubsub instance (listen loop will start when first user connects)")
+            # Subscribe to ALL user channels globally with pattern
+            await self.pubsub.psubscribe("user:*:*")
+            logger.info("✓ Subscribed to Redis pattern: user:*:*")
+        
+        if not self.listening:
+            self.listening = True
+            self.listen_task = asyncio.create_task(self._listen_loop())
+            logger.info("✓ Permanent Redis pattern listener started")
         else:
-            logger.warning("⚠ Pubsub already initialized")
+            logger.warning("⚠ Listen loop already running")
 
 
 # Global WebSocket manager instance

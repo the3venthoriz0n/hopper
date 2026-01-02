@@ -64,6 +64,7 @@ export function useWebSocket(url, onMessage, options = {}) {
       ws.onopen = () => {
         reconnectAttemptsRef.current = 0;
         setConnected(true);
+        console.log('✅ WebSocket connected to:', wsUrl);
         
         // Start ping interval to keep connection alive
         pingIntervalRef.current = setInterval(() => {
@@ -89,6 +90,7 @@ export function useWebSocket(url, onMessage, options = {}) {
           
           // Parse JSON messages
           const data = JSON.parse(event.data);
+          console.log('📨 WebSocket message received:', data);
           if (onMessageRef.current) {
             onMessageRef.current(data);
           }

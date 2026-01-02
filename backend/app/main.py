@@ -88,7 +88,7 @@ async def lifespan(app: FastAPI):
     # Start WebSocket manager Redis subscription
     logger.info("Starting WebSocket manager...")
     from app.services.websocket_service import websocket_manager
-    asyncio.create_task(websocket_manager.start_listening())
+    await websocket_manager.start_listening()
     logger.info("WebSocket manager started")
     
     yield
