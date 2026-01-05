@@ -98,16 +98,26 @@ def mock_redis():
             fake_redis.setex(f"csrf:{sid}", 2592000, token)
         return token
     
-    # Patch both the getter function AND the module-level variable
+    # ROOT CAUSE FIX: Patch redis.from_url to prevent any real connections
+    # This ensures that even if get_redis_client() tries to create a real client,
+    # it will get the fake one instead
+    import redis
+    
+    def mock_from_url(*args, **kwargs):
+        """Mock redis.from_url to return fake client instead of creating real connection"""
+        return fake_redis
+    
+    # Patch both the getter function AND the underlying connection creation
     with patch.object(redis_module, 'get_redis_client', return_value=fake_redis):
         with patch.object(redis_module, 'redis_client', fake_redis):
-            with patch.object(redis_module, 'set_session', set_session):
-                with patch.object(redis_module, 'get_session', get_session):
-                    with patch.object(redis_module, 'delete_session', delete_session):
-                        with patch.object(redis_module, 'set_csrf_token', set_csrf_token):
-                            with patch.object(redis_module, 'get_csrf_token', get_csrf_token):
-                                with patch.object(redis_module, 'get_or_create_csrf_token', get_or_create_csrf_token):
-                                    yield fake_redis
+            with patch.object(redis, 'from_url', side_effect=mock_from_url):
+                with patch.object(redis_module, 'set_session', set_session):
+                    with patch.object(redis_module, 'get_session', get_session):
+                        with patch.object(redis_module, 'delete_session', delete_session):
+                            with patch.object(redis_module, 'set_csrf_token', set_csrf_token):
+                                with patch.object(redis_module, 'get_csrf_token', get_csrf_token):
+                                    with patch.object(redis_module, 'get_or_create_csrf_token', get_or_create_csrf_token):
+                                        yield fake_redis
 
 
 @pytest.fixture(scope="function", autouse=True)
@@ -138,31 +148,41 @@ def mock_async_redis():
         fake_pubsub.listen = mock_listen
         fake_async_redis.pubsub = MagicMock(return_value=fake_pubsub)
     
-    # Patch both the getter function AND the module-level variable at the source
+    # ROOT CAUSE FIX: Patch aioredis.from_url to prevent any real connections
+    # This ensures that even if get_async_redis_client() tries to create a real client,
+    # it will get the fake one instead
+    import redis.asyncio as aioredis
+    
+    def mock_from_url(*args, **kwargs):
+        """Mock aioredis.from_url to return fake client instead of creating real connection"""
+        return fake_async_redis
+    
+    # Patch both the getter function AND the underlying connection creation
     # This covers ALL services that import from app.db.redis
     with patch.object(redis_module, 'get_async_redis_client', return_value=fake_async_redis):
         with patch.object(redis_module, 'async_redis_client', fake_async_redis):
-            try:
-                yield fake_async_redis
-            finally:
-                # CRITICAL: Close async connections before event loop closes
+            with patch.object(aioredis, 'from_url', side_effect=mock_from_url):
                 try:
-                    if hasattr(fake_async_redis, 'aclose'):
-                        import asyncio
-                        try:
-                            loop = asyncio.get_event_loop()
-                            if not loop.is_closed():
-                                if loop.is_running():
-                                    # Can't await in running loop - fakeredis doesn't need cleanup
-                                    pass
-                                else:
-                                    loop.run_until_complete(fake_async_redis.aclose())
-                        except (RuntimeError, AttributeError, ValueError):
-                            # Event loop issues - fakeredis is in-memory, doesn't need cleanup
-                            pass
-                except Exception:
-                    # Ignore any cleanup errors - fakeredis is in-memory
-                    pass
+                    yield fake_async_redis
+                finally:
+                    # CRITICAL: Close async connections before event loop closes
+                    try:
+                        if hasattr(fake_async_redis, 'aclose'):
+                            import asyncio
+                            try:
+                                loop = asyncio.get_event_loop()
+                                if not loop.is_closed():
+                                    if loop.is_running():
+                                        # Can't await in running loop - fakeredis doesn't need cleanup
+                                        pass
+                                    else:
+                                        loop.run_until_complete(fake_async_redis.aclose())
+                            except (RuntimeError, AttributeError, ValueError):
+                                # Event loop issues - fakeredis is in-memory, doesn't need cleanup
+                                pass
+                    except Exception:
+                        # Ignore any cleanup errors - fakeredis is in-memory
+                        pass
 
 
 @pytest.fixture(scope="function")
