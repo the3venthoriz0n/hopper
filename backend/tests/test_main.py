@@ -541,7 +541,7 @@ class TestCheckoutAndBilling:
         mock_stripe.checkout.Session.create.assert_called_once()
     
     @patch('app.services.subscription_service.stripe.checkout.Session.retrieve')
-    @patch('app.services.stripe_service.settings')
+    @patch('app.services.subscription_service.settings')
     def test_checkout_status_check(self, mock_settings, mock_retrieve, test_user, db_session):
         """Test check_checkout_status"""
         mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'

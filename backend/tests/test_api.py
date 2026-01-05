@@ -156,9 +156,17 @@ class TestOwnershipValidation:
 class TestSubscriptionFlow:
     """Test subscription and token initialization"""
     
+    @patch('app.services.stripe_service.stripe')
+    @patch('app.services.stripe_service.settings')
     @patch('app.services.stripe_service.StripeRegistry.get')
-    def test_get_current_subscription_auto_creates_free(self, mock_registry_get, authenticated_client, test_user, db_session):
+    def test_get_current_subscription_auto_creates_free(self, mock_registry_get, mock_settings, mock_stripe, authenticated_client, test_user, db_session):
         """Test /api/subscription/current auto-creates free_daily subscription for new user"""
+        # Set up Stripe mocks
+        mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
+        mock_customer = Mock()
+        mock_customer.id = 'cus_test123'
+        mock_stripe.Customer.create.return_value = mock_customer
+        
         # Mock StripeRegistry to return free_daily plan config
         mock_registry_get.return_value = {
             "price_id": "price_free_daily",
@@ -423,9 +431,17 @@ class TestWordbankNormalization:
 class TestHappyPathIntegration:
     """Test complete user journey"""
     
+    @patch('app.services.stripe_service.stripe')
+    @patch('app.services.stripe_service.settings')
     @patch('app.services.stripe_service.StripeRegistry.get')
-    def test_new_user_journey(self, mock_registry_get, client, db_session, mock_redis, mock_stripe):
+    def test_new_user_journey(self, mock_registry_get, mock_settings, mock_stripe, client, db_session, mock_redis):
         """Test complete new user journey from registration to settings"""
+        # Set up Stripe mocks
+        mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
+        mock_customer = Mock()
+        mock_customer.id = 'cus_test123'
+        mock_stripe.Customer.create.return_value = mock_customer
+        
         # Mock StripeRegistry to return free_daily plan config
         mock_registry_get.return_value = {
             "price_id": "price_free_daily",
@@ -437,68 +453,73 @@ class TestHappyPathIntegration:
             "formatted": "Free"
         }
         
-        # 1. Register user
-        register_response = client.post(
-            "/api/auth/register",
-            json={"email": RESEND_TEST_DELIVERED, "password": "TestPassword123!"}
-        )
-        assert register_response.status_code == status.HTTP_200_OK
-        data = register_response.json()
-        assert data["requires_email_verification"] is True
-        
-        # 2. Verify email - get verification code from Redis mock
-        from app.db.redis import get_email_verification_code
-        verification_code = get_email_verification_code(RESEND_TEST_DELIVERED)
-        
-        if verification_code:
-            # Verify email using the code
-            from app.services.auth_service import complete_email_verification
-            user = complete_email_verification(RESEND_TEST_DELIVERED, db_session)
-            assert user is not None
-            assert user.is_email_verified is True
-        
-        # 3. Login
-        login_response = client.post(
-            "/api/auth/login",
-            json={"email": RESEND_TEST_DELIVERED, "password": "TestPassword123!"}
-        )
-        assert login_response.status_code == status.HTTP_200_OK
-        assert "session_id" in login_response.cookies
-        
-        # Set cookies on the client instance so they persist automatically
-        client.cookies.update(login_response.cookies)
-        
-        # 4. Get subscription (auto-creates free_daily plan)
-        sub_response = client.get("/api/subscription/current")
-        assert sub_response.status_code == status.HTTP_200_OK
-        sub_data = sub_response.json()
-        assert sub_data["subscription"] is not None
-        assert sub_data["subscription"]["plan_type"] == "free_daily"
-        
-        # Update cookies from subscription response (in case session was updated)
-        client.cookies.update(sub_response.cookies)
-        
-        # 5. Get CSRF token from CSRF endpoint (needed for POST requests)
-        csrf_response = client.get("/api/auth/csrf")
-        assert csrf_response.status_code == status.HTTP_200_OK
-        
-        # Update cookies from CSRF response (in case session was updated/initialized)
-        client.cookies.update(csrf_response.cookies)
-        
-        csrf_token = csrf_response.headers.get("X-CSRF-Token") or csrf_response.json().get("csrf_token")
-        assert csrf_token is not None, "CSRF token should be available"
-        
-        # 6. Toggle YouTube destination (cookies are now on client, no need to pass manually)
-        toggle_response = client.post(
-            "/api/destinations/youtube/toggle",
-            json={"enabled": True},
-            headers={"X-CSRF-Token": csrf_token}  # Only pass the header
-        )
-        assert toggle_response.status_code == status.HTTP_200_OK
-        
-        # 7. Verify settings reflect changes
-        settings_response = client.get("/api/destinations")
-        assert settings_response.status_code == status.HTTP_200_OK
-        dest_data = settings_response.json()
-        assert dest_data["youtube"]["enabled"] is True
+        # Patch SessionLocal to use test database session
+        # SessionLocal is a sessionmaker (callable), so we make it return the test session
+        def mock_session_factory():
+            return db_session
+        with patch('app.db.session.SessionLocal', side_effect=mock_session_factory):
+            # 1. Register user
+            register_response = client.post(
+                "/api/auth/register",
+                json={"email": RESEND_TEST_DELIVERED, "password": "TestPassword123!"}
+            )
+            assert register_response.status_code == status.HTTP_200_OK
+            data = register_response.json()
+            assert data["requires_email_verification"] is True
+            
+            # 2. Verify email - get verification code from Redis mock
+            from app.db.redis import get_email_verification_code
+            verification_code = get_email_verification_code(RESEND_TEST_DELIVERED)
+            
+            if verification_code:
+                # Verify email using the code
+                from app.services.auth_service import complete_email_verification
+                user = complete_email_verification(RESEND_TEST_DELIVERED, db_session)
+                assert user is not None
+                assert user.is_email_verified is True
+            
+            # 3. Login
+            login_response = client.post(
+                "/api/auth/login",
+                json={"email": RESEND_TEST_DELIVERED, "password": "TestPassword123!"}
+            )
+            assert login_response.status_code == status.HTTP_200_OK
+            assert "session_id" in login_response.cookies
+            
+            # Set cookies on the client instance so they persist automatically
+            client.cookies.update(login_response.cookies)
+            
+            # 4. Get subscription (auto-creates free_daily plan)
+            sub_response = client.get("/api/subscription/current")
+            assert sub_response.status_code == status.HTTP_200_OK
+            sub_data = sub_response.json()
+            assert sub_data["subscription"] is not None
+            assert sub_data["subscription"]["plan_type"] == "free_daily"
+            
+            # Update cookies from subscription response (in case session was updated)
+            client.cookies.update(sub_response.cookies)
+            
+            # 5. Get CSRF token from CSRF endpoint (needed for POST requests)
+            csrf_response = client.get("/api/auth/csrf")
+            assert csrf_response.status_code == status.HTTP_200_OK
+            
+            # Update cookies from CSRF response (in case session was updated/initialized)
+            client.cookies.update(csrf_response.cookies)
+            
+            csrf_token = csrf_response.headers.get("X-CSRF-Token") or csrf_response.json().get("csrf_token")
+            assert csrf_token is not None, "CSRF token should be available"
+            
+            # 6. Toggle YouTube destination (cookies are now on client, no need to pass manually)
+            toggle_response = client.post(
+                "/api/destinations/youtube/toggle",
+                json={"enabled": True},
+                headers={"X-CSRF-Token": csrf_token}  # Only pass the header
+            )
+            assert toggle_response.status_code == status.HTTP_200_OK
+            
+            # 7. Verify settings reflect changes
+            settings_response = client.get("/api/destinations")
+            assert settings_response.status_code == status.HTTP_200_OK
+            dest_data = settings_response.json()
+            assert dest_data["youtube"]["enabled"] is True
 
