@@ -167,6 +167,18 @@ class TestSubscriptionFlow:
         mock_customer.id = 'cus_test123'
         mock_stripe.Customer.create.return_value = mock_customer
         
+        # Mock Subscription with proper id as string (not MagicMock)
+        # This is critical - subscription.id must be a string for SQL queries
+        mock_subscription = Mock(
+            id="sub_test123",
+            status="active",
+            current_period_start=1234567890,
+            current_period_end=1237159890,
+            customer="cus_test123",
+            cancel_at_period_end=False
+        )
+        mock_stripe.Subscription.create.return_value = mock_subscription
+        
         # Mock StripeRegistry to return free_daily plan config
         mock_registry_get.return_value = {
             "price_id": "price_free_daily",
@@ -441,6 +453,18 @@ class TestHappyPathIntegration:
         mock_customer = Mock()
         mock_customer.id = 'cus_test123'
         mock_stripe.Customer.create.return_value = mock_customer
+        
+        # Mock Subscription with proper id as string (not MagicMock)
+        # This is critical - subscription.id must be a string for SQL queries
+        mock_subscription = Mock(
+            id="sub_test123",
+            status="active",
+            current_period_start=1234567890,
+            current_period_end=1237159890,
+            customer="cus_test123",
+            cancel_at_period_end=False
+        )
+        mock_stripe.Subscription.create.return_value = mock_subscription
         
         # Mock StripeRegistry to return free_daily plan config
         mock_registry_get.return_value = {
