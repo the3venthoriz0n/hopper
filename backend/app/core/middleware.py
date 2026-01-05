@@ -19,7 +19,7 @@ security_logger = logging.getLogger("security")
 def get_allowed_origins():
     """Get list of allowed CORS origins"""
     allowed_origins = [settings.FRONTEND_URL]
-    if settings.ENVIRONMENT == "development":
+    if settings.ENVIRONMENT in ("development", "test"):
         allowed_origins.extend([
             "http://localhost:3000",
             "http://localhost:8000",

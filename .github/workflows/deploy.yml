@@ -58,7 +58,6 @@ jobs:
           docker run --rm \
             -e ENCRYPTION_KEY="$TEST_ENCRYPTION_KEY" \
             -e ENVIRONMENT=test \
-            -e REDIS_URL=redis://fake:6379/0 \
             -e DATABASE_URL=sqlite:///:memory: \
             -e LOG_LEVEL=INFO \
             hopper-backend-test:latest \

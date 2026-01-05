@@ -113,15 +113,15 @@ def validate_origin_referer(request: Request) -> bool:
     # Get allowed origins from config
     allowed_origins = [settings.FRONTEND_URL]
     
-    # In development, be more lenient
-    if settings.ENVIRONMENT == "development":
+    # In development and test, be more lenient
+    if settings.ENVIRONMENT in ("development", "test"):
         allowed_origins.extend([
             "http://localhost:3000",
             "http://localhost:8000",
             "http://127.0.0.1:3000",
             "http://127.0.0.1:8000"
         ])
-        # Allow requests without Origin/Referer in development
+        # Allow requests without Origin/Referer in development/test
         if not origin and not referer:
             return True
     
