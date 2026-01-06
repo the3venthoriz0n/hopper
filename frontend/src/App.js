@@ -1544,7 +1544,16 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const loadInstagramSettings = useCallback(async () => {
     try {
       const res = await axios.get(`${API}/instagram/settings`);
-      setInstagramSettings(res.data);
+      // Merge with defaults to ensure media_type and share_to_feed are always set
+      setInstagramSettings({
+        caption_template: '',
+        disable_comments: false,
+        disable_likes: false,
+        media_type: 'REELS',
+        share_to_feed: true,
+        cover_url: '',
+        ...res.data
+      });
     } catch (err) {
       console.error('Error loading Instagram settings:', err);
     }
@@ -3835,7 +3844,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   checked={instagramSettings.share_to_feed ?? true}
                   onChange={(e) => updateInstagramSettings('share_to_feed', e.target.checked)}
                   className="checkbox"
-                  disabled={instagramSettings.media_type !== 'REELS'}
+                  disabled={(instagramSettings.media_type || 'REELS') !== 'REELS'}
                 />
                 <span>Share Reel to Feed</span>
                 <span className="tooltip-wrapper" style={{ marginLeft: '8px' }}>
@@ -5266,7 +5275,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               zIndex: 10000,
               padding: '1rem'
             }}
-            onClick={() => setDestinationModal(null)}
           >
             <div
               className="modal"
