@@ -554,7 +554,7 @@ function AdminDashboard() {
 
         {/* Delete Confirmation Dialog */}
         {showDeleteConfirm && userToDelete && (
-          <div style={{
+          <div className="admin-modal-overlay" style={{
             position: 'fixed',
             top: 0,
             left: 0,
@@ -566,7 +566,7 @@ function AdminDashboard() {
             alignItems: 'center',
             zIndex: 1000
           }}>
-            <div style={{
+            <div className="admin-modal-content" style={{
               background: 'rgba(30, 30, 46, 0.95)',
               borderRadius: '8px',
               padding: '2rem',
@@ -580,21 +580,16 @@ function AdminDashboard() {
                 <br />
                 <span style={{ color: '#ef4444', fontSize: '0.85rem' }}>This action cannot be undone.</span>
               </p>
-              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <div className="admin-modal-buttons" style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
                 <button
                   onClick={() => {
                     setShowDeleteConfirm(false);
                     setUserToDelete(null);
                   }}
                   disabled={loading}
+                  className="admin-button"
                   style={{
-                    padding: '0.5rem 1rem',
-                    background: 'rgba(255, 255, 255, 0.1)',
-                    border: '1px solid rgba(255, 255, 255, 0.2)',
-                    borderRadius: '4px',
-                    color: '#fff',
-                    cursor: loading ? 'not-allowed' : 'pointer',
-                    fontSize: '0.9rem'
+                    flex: 1
                   }}
                 >
                   Cancel
@@ -602,15 +597,9 @@ function AdminDashboard() {
                 <button
                   onClick={handleDeleteUser}
                   disabled={loading}
+                  className="admin-button admin-button-danger"
                   style={{
-                    padding: '0.5rem 1rem',
-                    background: 'rgba(239, 68, 68, 0.5)',
-                    border: '1px solid rgba(239, 68, 68, 0.7)',
-                    borderRadius: '4px',
-                    color: '#fff',
-                    cursor: loading ? 'not-allowed' : 'pointer',
-                    fontSize: '0.9rem',
-                    fontWeight: '500'
+                    flex: 1
                   }}
                 >
                   {loading ? 'Deleting...' : 'Delete User'}
@@ -620,7 +609,7 @@ function AdminDashboard() {
           </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+        <div className="admin-grid">
           {/* Users List */}
           <div style={{
             background: 'rgba(255, 255, 255, 0.05)',
@@ -636,22 +625,15 @@ function AdminDashboard() {
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 placeholder="Search by email..."
-                style={{
-                  width: '100%',
-                  padding: '0.5rem',
-                  background: 'rgba(0, 0, 0, 0.3)',
-                  border: '1px solid rgba(255, 255, 255, 0.2)',
-                  borderRadius: '4px',
-                  color: '#fff',
-                  fontSize: '0.9rem'
-                }}
+                className="admin-input"
+                style={{ width: '100%' }}
               />
             </form>
 
             {loading && <div style={{ color: '#999', textAlign: 'center', padding: '1rem' }}>Loading...</div>}
             
-            <div style={{ maxHeight: '600px', overflowY: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <div className="admin-table-wrapper" style={{ maxHeight: '600px', overflowY: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '500px' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.1)' }}>
                     <th style={{ textAlign: 'left', padding: '0.5rem', color: '#999', fontSize: '0.85rem' }}>ID</th>
@@ -802,28 +784,14 @@ function AdminDashboard() {
                           value={tokenAmount}
                           onChange={(e) => setTokenAmount(e.target.value)}
                           placeholder="Token amount"
-                          style={{
-                            padding: '0.5rem',
-                            background: 'rgba(0, 0, 0, 0.3)',
-                            border: '1px solid rgba(255, 255, 255, 0.2)',
-                            borderRadius: '4px',
-                            color: '#fff',
-                            fontSize: '0.9rem'
-                          }}
+                          className="admin-input"
                         />
                         <input
                           type="text"
                           value={grantReason}
                           onChange={(e) => setGrantReason(e.target.value)}
                           placeholder="Reason (optional)"
-                          style={{
-                            padding: '0.5rem',
-                            background: 'rgba(0, 0, 0, 0.3)',
-                            border: '1px solid rgba(255, 255, 255, 0.2)',
-                            borderRadius: '4px',
-                            color: '#fff',
-                            fontSize: '0.9rem'
-                          }}
+                          className="admin-input"
                         />
                         <button
                           onClick={() => handleGrantTokens(selectedUser.id)}
@@ -852,28 +820,14 @@ function AdminDashboard() {
                           value={deductAmount}
                           onChange={(e) => setDeductAmount(e.target.value)}
                           placeholder="Token amount to deduct"
-                          style={{
-                            padding: '0.5rem',
-                            background: 'rgba(0, 0, 0, 0.3)',
-                            border: '1px solid rgba(255, 255, 255, 0.2)',
-                            borderRadius: '4px',
-                            color: '#fff',
-                            fontSize: '0.9rem'
-                          }}
+                          className="admin-input"
                         />
                         <input
                           type="text"
                           value={deductReason}
                           onChange={(e) => setDeductReason(e.target.value)}
                           placeholder="Reason (optional)"
-                          style={{
-                            padding: '0.5rem',
-                            background: 'rgba(0, 0, 0, 0.3)',
-                            border: '1px solid rgba(255, 255, 255, 0.2)',
-                            borderRadius: '4px',
-                            color: '#fff',
-                            fontSize: '0.9rem'
-                          }}
+                          className="admin-input"
                         />
                         <button
                           onClick={() => handleDeductTokens(selectedUser.id)}
@@ -929,14 +883,7 @@ function AdminDashboard() {
                           onChange={(e) => setResetPassword(e.target.value)}
                           placeholder="New password (min 8 characters)"
                           minLength={8}
-                          style={{
-                            padding: '0.5rem',
-                            background: 'rgba(0, 0, 0, 0.3)',
-                            border: '1px solid rgba(255, 255, 255, 0.2)',
-                            borderRadius: '4px',
-                            color: '#fff',
-                            fontSize: '0.9rem'
-                          }}
+                          className="admin-input"
                         />
                         <button
                           onClick={() => handleResetPassword(selectedUser.id)}
@@ -1073,8 +1020,8 @@ function AdminDashboard() {
                       </div>
 
                       {showTransactions && transactions.length > 0 && (
-                        <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                        <div className="admin-table-wrapper" style={{ maxHeight: '300px', overflowY: 'auto' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', minWidth: '400px' }}>
                             <thead>
                               <tr style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.1)' }}>
                                 <th style={{ textAlign: 'left', padding: '0.5rem', color: '#999' }}>Type</th>

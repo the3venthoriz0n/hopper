@@ -2626,6 +2626,131 @@ button:disabled {
   color: var(--text-primary);
 }
 
+/* Admin Dashboard Mobile Responsive Styles */
+@media (max-width: 768px) {
+  .admin-container {
+    padding: 1rem;
+  }
+
+  .admin-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+
+  .admin-title {
+    font-size: 1.5rem;
+  }
+
+  .admin-card {
+    padding: 1rem;
+  }
+
+  .admin-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .admin-form {
+    gap: 0.5rem;
+  }
+
+  .admin-input {
+    padding: 0.875rem;
+    font-size: 1rem; /* Prevents zoom on iOS */
+    min-height: 44px; /* Minimum touch target size */
+  }
+
+  .admin-button {
+    padding: 0.75rem 1rem;
+    font-size: 0.95rem;
+    min-height: 44px;
+    width: 100%;
+  }
+
+  .admin-button-primary,
+  .admin-button-danger {
+    width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .admin-container {
+    padding: 0.75rem;
+  }
+
+  .admin-title {
+    font-size: 1.25rem;
+  }
+
+  .admin-card {
+    padding: 0.75rem;
+  }
+
+  .admin-card-title {
+    font-size: 1.1rem;
+  }
+}
+
+/* Admin grid layout - responsive */
+.admin-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+}
+
+@media (max-width: 768px) {
+  .admin-grid {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+}
+
+/* Table scroll wrapper for mobile */
+.admin-table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 768px) {
+  .admin-table-wrapper {
+    margin: 0 -1rem;
+    padding: 0 1rem;
+  }
+}
+
+/* Modal responsive styles */
+.admin-modal-overlay {
+  padding: 1rem;
+}
+
+.admin-modal-buttons {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+}
+
+@media (max-width: 480px) {
+  .admin-modal-overlay {
+    padding: 0.5rem;
+  }
+
+  .admin-modal-content {
+    padding: 1.5rem !important;
+    max-width: 100% !important;
+    width: calc(100% - 1rem) !important;
+    margin: 0.5rem;
+  }
+
+  .admin-modal-buttons {
+    flex-direction: column;
+  }
+
+  .admin-modal-buttons .admin-button {
+    width: 100%;
+  }
+}
 
 /* ============================================
    PRICING PAGE
