@@ -1,23 +1,23 @@
-# 🐸 Hopper
+# Hopper
 
-Upload videos to YouTube, TikTok, and Instagram. Drag, drop, and schedule.
+A professional video management platform that streamlines content distribution across YouTube, TikTok, and Instagram. Upload, schedule, and manage your video content from a single unified interface.
 
-## Setup
+## Overview
 
-```bash
-docker compose up
-```
+Hopper simplifies multi-platform video publishing by providing an intuitive drag-and-drop interface for managing your social media content. Whether you're scheduling posts in advance or uploading immediately, Hopper ensures your content reaches your audience across all major video platforms.
 
-Open http://localhost:3000
+## Features
 
-## Usage
+- **Multi-Platform Publishing**: Seamlessly upload to YouTube, TikTok, and Instagram
+- **Drag-and-Drop Interface**: Intuitive video management with simple file handling
+- **Scheduling**: Plan and schedule your content in advance
+- **Unified Dashboard**: Manage all your video content from a single interface
+- **Account Integration**: Connect and manage multiple social media accounts
 
-1. Connect your accounts (YouTube, TikTok, Instagram)
-2. Drag videos into the drop zone
-3. Configure titles, descriptions, and scheduling
-4. Upload immediately or schedule for later
+## Technology
+
+Built with modern web technologies to deliver a reliable and scalable video management experience.
 
 ## License
 
 MIT
-

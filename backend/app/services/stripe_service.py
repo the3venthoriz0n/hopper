@@ -35,6 +35,10 @@ class StripeRegistry:
                 if p.lookup_key:
                     prod = p.product
                     
+                    # Filter out inactive products (query API for current status)
+                    if not prod.active:
+                        continue
+                    
                     # Filter out archived products
                     if prod.metadata.get('internal_status') == 'archived_legacy':
                         continue
@@ -143,11 +147,25 @@ def _build_subscription_items(plan_type: str) -> List[Dict]:
         List of item dictionaries for Stripe subscription creation
     
     Raises:
-        ValueError: If plan not found in registry
+        ValueError: If plan not found in registry or product is inactive
     """
     plan_config = StripeRegistry.get(f"{plan_type}_price")
     if not plan_config:
         raise ValueError(f"Plan '{plan_type}' not found in Stripe registry")
+    
+    # Query Stripe API to verify product is active (don't assume from registry)
+    product_id = plan_config.get("product_id")
+    if product_id:
+        try:
+            product = stripe.Product.retrieve(product_id)
+            if not product.active:
+                raise ValueError(
+                    f"Product for plan '{plan_type}' is inactive (product_id: {product_id}). "
+                    f"Cannot create subscription with inactive product."
+                )
+        except stripe.error.StripeError as e:
+            logger.error(f"Failed to retrieve product {product_id} from Stripe API: {e}")
+            raise ValueError(f"Failed to verify product status for plan '{plan_type}': {e}")
     
     items = [{"price": plan_config["price_id"], "quantity": 1}]
     

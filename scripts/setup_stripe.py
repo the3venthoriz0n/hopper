@@ -20,7 +20,7 @@ STRIPE_API_VERSION = "2024-11-20.acacia"
 # Note: 'free_daily' is processed before 'free' to ensure conversion happens before archiving
 PRODUCTS = {
     'free_daily': {
-        'name': 'Free',
+        'name': 'Free Daily',
         'description': '3 tokens per day, max 10 tokens',
         'tokens': 3,
         'price_total_dollars': 0,
@@ -166,10 +166,30 @@ def update_product_metadata(product: Any, config: Dict[str, Any], metadata: Dict
         return True
     return False
 
+def deactivate_product_prices(product_id: str, all_prices: List[Any]) -> int:
+    """Deactivate all active prices for a product. Returns count of deactivated prices."""
+    deactivated = 0
+    for price in all_prices:
+        price_product_id = getattr(price, 'product', None)
+        if isinstance(price_product_id, str):
+            product_match = price_product_id == product_id
+        else:
+            product_match = getattr(price_product_id, 'id', None) == product_id
+        
+        if product_match and price.active:
+            stripe.Price.modify(price.id, active=False, lookup_key=None)
+            price.active = False
+            deactivated += 1
+    return deactivated
+
 def find_or_create_price(product_id: str, config: Dict[str, Any], 
-                         existing_prices: List[Any], is_metered: bool = False, 
+                         existing_prices: List[Any], all_prices: List[Any],
+                         is_metered: bool = False, 
                          meter_id: Optional[str] = None, plan_key: str = "") -> Any:
-    """Finds or creates price using stable lookup_keys and ensures metadata sync."""
+    """Finds or creates price using stable lookup_keys and ensures metadata sync.
+    
+    Checks both lookup_key and product association to ensure prices are correctly matched.
+    """
     
     metadata = {"tokens": str(config['tokens'])}
     if is_metered:
@@ -181,9 +201,17 @@ def find_or_create_price(product_id: str, config: Dict[str, Any],
 
     recurring_interval = config.get('recurring_interval', 'month')
 
-    # Search for existing active price with this lookup_key
+    # Search for existing active price with this lookup_key AND product_id
     for price in existing_prices:
-        if getattr(price, 'lookup_key', None) == lookup_key and price.active:
+        price_product_id = getattr(price, 'product', None)
+        if isinstance(price_product_id, str):
+            product_match = price_product_id == product_id
+        else:
+            product_match = getattr(price_product_id, 'id', None) == product_id
+        
+        if (getattr(price, 'lookup_key', None) == lookup_key and 
+            price.active and 
+            product_match):
             # If price value is the same, just update metadata if needed
             if price.unit_amount_decimal == target_value:
                 if price.metadata.get("tokens") != metadata["tokens"]:
@@ -196,6 +224,8 @@ def find_or_create_price(product_id: str, config: Dict[str, Any],
                 # Deactivate old price if the value changed
                 print(f"    ⚠️  Price value for {lookup_key} changed. Deactivating {price.id}...")
                 stripe.Price.modify(price.id, active=False, lookup_key=None)
+                price.active = False
+                existing_prices.remove(price)
 
     print(f"    ➕ Creating new price for {lookup_key}...")
     params = {
@@ -211,7 +241,11 @@ def find_or_create_price(product_id: str, config: Dict[str, Any],
         params["recurring"]["usage_type"] = "metered"
         params["recurring"]["meter"] = meter_id
     
-    return stripe.Price.create(**params)
+    new_price = stripe.Price.create(**params)
+    print(f"    ✓ Created price: {new_price.id} ({lookup_key})")
+    existing_prices.append(new_price)
+    all_prices.append(new_price)
+    return new_price
 
 def sync_stripe_resources():
     print(f"\n{'='*60}\nSyncing Stripe Products & Metadata\n{'='*60}\n")
@@ -221,8 +255,9 @@ def sync_stripe_resources():
     # Get all products (including archived) for proper lookup
     all_products = stripe.Product.list(limit=100).data
     
-    # List prices and expand product to check metadata
-    existing_prices = stripe.Price.list(limit=100, active=True).data
+    # Get ALL prices (active and inactive) to properly handle duplicates and cleanup
+    all_prices = stripe.Price.list(limit=100).data
+    existing_prices = [p for p in all_prices if p.active]
     
     # Track if free_daily conversion happened to prevent archiving 'free'
     free_daily_converted = False
@@ -254,6 +289,14 @@ def sync_stripe_resources():
             free_product = find_product_for_conversion(all_products)
             if free_product and should_convert_free_to_free_daily(free_product):
                 print(f"  🔄 Converting 'free' product to 'free_daily'...")
+                
+                # Deactivate old prices for the product being converted
+                deactivated_count = deactivate_product_prices(free_product.id, all_prices)
+                if deactivated_count > 0:
+                    print(f"    ⚠️  Deactivated {deactivated_count} old price(s) for converted product")
+                    # Refresh existing_prices list
+                    existing_prices = [p for p in all_prices if p.active]
+                
                 stripe.Product.modify(
                     free_product.id,
                     description=config['description'],
@@ -261,13 +304,19 @@ def sync_stripe_resources():
                     active=True  # Reactivate it
                 )
                 print(f"  ✓ Converted product to free_daily: {free_product.id}")
-                product = stripe.Product.retrieve(free_product.id)  # Refresh to get updated metadata
+                # Query API to verify the conversion and get fresh status
+                product = stripe.Product.retrieve(free_product.id)
+                if not product.active:
+                    # Ensure it's active
+                    stripe.Product.modify(free_product.id, active=True)
+                    product = stripe.Product.retrieve(free_product.id)
+                    print(f"  ✓ Verified product is active: {product.id}")
                 free_daily_converted = True
                 # Update all_products list to reflect the change
                 for p in all_products:
                     if p.id == free_product.id:
                         p.metadata = metadata
-                        p.active = True
+                        p.active = product.active
                         break
         
         # If product found by plan_key, update if needed
@@ -293,14 +342,33 @@ def sync_stripe_resources():
                     print(f"  ✓ Product up to date: {product.id}")
         else:
             # Create new product if not found
+            # Set active=True unless it's an archived product
+            should_be_active = config.get('internal_status') != 'archived_legacy'
             product = stripe.Product.create(
                 name=config['name'], 
                 description=config['description'],
-                metadata=metadata
+                metadata=metadata,
+                active=should_be_active
             )
             print(f"  ✓ Created product: {product.id}")
             # Add to all_products for subsequent lookups
             all_products.append(product)
+        
+        # Query API to get current product status and ensure it's active (unless archived)
+        should_be_active = config.get('internal_status') != 'archived_legacy'
+        if should_be_active:
+            # Query fresh from API to get actual status
+            current_product = stripe.Product.retrieve(product.id)
+            if not current_product.active:
+                # Product should be active but API shows inactive - reactivate it
+                stripe.Product.modify(product.id, active=True)
+                print(f"  ✓ Reactivated product: {product.id}")
+                # Update local reference
+                product.active = True
+                for p in all_products:
+                    if p.id == product.id:
+                        p.active = True
+                        break
         
         # Deactivate product if it has archived_legacy status
         # But skip if we just converted it to free_daily, or if free_daily already exists
@@ -310,6 +378,12 @@ def sync_stripe_resources():
                 # Double-check that free_daily product exists
                 free_daily_product = find_product_by_plan_key(all_products, 'free_daily')
                 if not free_daily_product:
+                    # Deactivate all prices before archiving product
+                    deactivated_count = deactivate_product_prices(product.id, all_prices)
+                    if deactivated_count > 0:
+                        print(f"    ⚠️  Deactivated {deactivated_count} price(s) before archiving product")
+                        existing_prices = [p for p in all_prices if p.active]
+                    
                     stripe.Product.modify(product.id, active=False)
                     print(f"  ✓ Deactivated archived product: {product.id}")
                 else:
@@ -318,11 +392,11 @@ def sync_stripe_resources():
                 print(f"  ⚠️  Skipping archive of 'free' - was converted to free_daily")
         
         # 2. Base Price Sync (updates Price metadata too)
-        find_or_create_price(product.id, config, existing_prices, is_metered=False, plan_key=key)
+        find_or_create_price(product.id, config, existing_prices, all_prices, is_metered=False, plan_key=key)
 
         # 3. Overage Price Sync
         if config.get('overage_unit_cents') is not None:
-            find_or_create_price(product.id, config, existing_prices, is_metered=True, meter_id=meter_id, plan_key=key)
+            find_or_create_price(product.id, config, existing_prices, all_prices, is_metered=True, meter_id=meter_id, plan_key=key)
 
 def main():
     parser = argparse.ArgumentParser(description='Setup Stripe Resources with stable Lookup Keys.')
