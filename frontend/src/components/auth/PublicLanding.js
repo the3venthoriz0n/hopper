@@ -2,6 +2,9 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import Footer from '../common/Footer';
 
+/**
+ * Public landing page for unauthenticated visitors
+ */
 export default function PublicLanding() {
   const isProduction = process.env.REACT_APP_ENVIRONMENT === 'production';
   const appTitle = isProduction ? '🐸 hopper' : '🐸 DEV hopper';
@@ -50,4 +53,3 @@ export default function PublicLanding() {
     </div>
   );
 }
-

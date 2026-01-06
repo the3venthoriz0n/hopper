@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import './App.css';
-import { HOPPER_COLORS } from './App';
+import { HOPPER_COLORS } from './utils/colors';
 
 function Terms() {
   useEffect(() => {

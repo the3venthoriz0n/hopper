@@ -1,15 +1,18 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { HOPPER_COLORS, rgba } from '../../utils/colors';
+import { HOPPER_COLORS, rgba, getGradient } from '../../utils/colors';
 import CircularTokenProgress from '../common/CircularTokenProgress';
 
-export default function HomeHeader({ 
-  appTitle, 
-  isAdmin, 
-  tokenBalance, 
-  user, 
-  onSettingsClick 
-}) {
+/**
+ * Home header component with title, admin link, token balance, user email, and settings button
+ * @param {object} props
+ * @param {string} props.appTitle - App title
+ * @param {boolean} props.isAdmin - Whether user is admin
+ * @param {object} props.user - Current user
+ * @param {object} props.tokenBalance - Token balance
+ * @param {function} props.setShowAccountSettings - Function to show account settings
+ */
+export default function HomeHeader({ appTitle, isAdmin, user, tokenBalance, setShowAccountSettings }) {
   return (
     <div className="app-header">
       <h1 className="app-title">{appTitle}</h1>
@@ -49,7 +52,7 @@ export default function HomeHeader({
           className="token-balance-indicator"
           style={{
             padding: '0.4rem 0.8rem',
-            background: `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.indigo, 0.15)} 0%, ${rgba(HOPPER_COLORS.rgb.purple, 0.15)} 100%)`,
+            background: getGradient(HOPPER_COLORS.indigo, 0.15, 0.15),
             border: `1px solid ${rgba(HOPPER_COLORS.rgb.indigo, 0.3)}`,
             borderRadius: '20px',
             display: 'flex',
@@ -58,13 +61,13 @@ export default function HomeHeader({
             cursor: 'pointer',
             transition: 'all 0.2s'
           }}
-          onClick={onSettingsClick}
+          onClick={() => setShowAccountSettings(true)}
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.indigo, 0.25)} 0%, ${rgba(HOPPER_COLORS.rgb.purple, 0.25)} 100%)`;
+            e.currentTarget.style.background = getGradient(HOPPER_COLORS.indigo, 0.25, 0.25);
             e.currentTarget.style.transform = 'translateY(-2px)';
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.background = `linear-gradient(135deg, ${rgba(HOPPER_COLORS.rgb.indigo, 0.15)} 0%, ${rgba(HOPPER_COLORS.rgb.purple, 0.15)} 100%)`;
+            e.currentTarget.style.background = getGradient(HOPPER_COLORS.indigo, 0.15, 0.15);
             e.currentTarget.style.transform = 'translateY(0)';
           }}
           title="Click to manage subscription"
@@ -80,11 +83,11 @@ export default function HomeHeader({
         </div>
         
         <span className="user-email" style={{ color: HOPPER_COLORS.grey, fontSize: '0.9rem' }}>
-          {user?.email}
+          {user.email}
         </span>
         <button 
           className="settings-button"
-          onClick={onSettingsClick}
+          onClick={() => setShowAccountSettings(true)}
           style={{
             padding: '0.5rem',
             background: 'transparent',
@@ -116,4 +119,3 @@ export default function HomeHeader({
     </div>
   );
 }
-

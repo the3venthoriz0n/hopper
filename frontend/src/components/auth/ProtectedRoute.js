@@ -1,12 +1,13 @@
 import React from 'react';
-import { useLocation, Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import LoadingScreen from '../common/LoadingScreen';
 
 /**
- * Protected Route Component - handles authentication checks
- * @param {React.ReactElement} children - Child component to render if authenticated
- * @param {boolean} requireAdmin - Whether admin access is required
+ * Protected route component - handles authentication checks
+ * @param {object} props
+ * @param {React.ReactNode} props.children - Child component to render
+ * @param {boolean} props.requireAdmin - Whether admin access is required
  */
 export default function ProtectedRoute({ children, requireAdmin = false }) {
   const location = useLocation();
@@ -26,4 +27,3 @@ export default function ProtectedRoute({ children, requireAdmin = false }) {
 
   return React.cloneElement(children, { user, isAdmin, setUser, authLoading });
 }
-

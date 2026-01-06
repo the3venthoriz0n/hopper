@@ -1,6 +1,9 @@
 import React from 'react';
 import { HOPPER_COLORS } from '../../utils/colors';
 
+/**
+ * Loading screen component
+ */
 export default function LoadingScreen() {
   return (
     <div style={{
@@ -15,4 +18,3 @@ export default function LoadingScreen() {
     </div>
   );
 }
-

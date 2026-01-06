@@ -1,12 +1,12 @@
 import { useState, useCallback } from 'react';
-import axios from '../services/api';
-import { getApiUrl } from '../services/api';
+import * as platformService from '../services/platformService';
+import { PLATFORM_CONFIG } from '../utils/platformConfig';
 
 /**
  * Hook for managing platform state (YouTube, TikTok, Instagram)
- * Handles connection, enabling/disabling, account loading, and settings
+ * @returns {object} Platform state and functions
  */
-export function usePlatforms() {
+export function usePlatforms(setMessage) {
   const [youtube, setYoutube] = useState({ 
     connected: false, 
     enabled: false, 
@@ -33,37 +33,50 @@ export function usePlatforms() {
     token_expires_soon: false
   });
 
-  const API = getApiUrl();
-
   // Unified account loading logic for all platforms
   const loadPlatformAccount = useCallback(async (platform, setState, identifierKeys) => {
     try {
-      const res = await axios.get(`${API}/auth/${platform}/account`);
+      const data = await platformService.loadPlatformAccount(platform);
       
-      if (res.data.error) {
-        console.error(`Error loading ${platform} account:`, res.data.error);
+      if (data.error) {
+        console.error(`Error loading ${platform} account:`, data.error);
         return;
       }
       
-      setState(prev => {
-        const newAccount = res.data.account;
-        const hasExistingData = identifierKeys.some(key => prev.account?.[key]);
-        const hasNewData = newAccount && identifierKeys.some(key => newAccount[key]);
-        
-        if (hasNewData) {
-          return { ...prev, account: newAccount };
+      if (platform === 'tiktok') {
+        setState(prev => ({
+          ...prev,
+          account: data.account,
+          token_status: data.token_status || 'valid',
+          token_expired: data.token_expired || false,
+          token_expires_soon: data.token_expires_soon || false
+        }));
+        if (data.creator_info) {
+          setTiktokCreatorInfo(data.creator_info);
+        } else {
+          setTiktokCreatorInfo(null);
         }
-        
-        if (!hasExistingData && newAccount === null) {
-          return { ...prev, account: null };
-        }
-        
-        return prev;
-      });
+      } else {
+        setState(prev => {
+          const newAccount = data.account;
+          const hasExistingData = identifierKeys.some(key => prev.account?.[key]);
+          const hasNewData = newAccount && identifierKeys.some(key => newAccount[key]);
+          
+          if (hasNewData) {
+            return { ...prev, account: newAccount };
+          }
+          
+          if (!hasExistingData && newAccount === null) {
+            return { ...prev, account: null };
+          }
+          
+          return prev;
+        });
+      }
     } catch (error) {
       console.error(`Error loading ${platform} account:`, error.response?.data || error.message);
     }
-  }, [API]);
+  }, []);
 
   const loadYoutubeAccount = useCallback(() => {
     return loadPlatformAccount('youtube', setYoutube, ['channel_name', 'email']);
@@ -71,17 +84,17 @@ export function usePlatforms() {
 
   const loadTiktokAccount = useCallback(async () => {
     try {
-      const res = await axios.get(`${API}/auth/tiktok/account`);
-      if (res.data.account) {
+      const data = await platformService.loadPlatformAccount('tiktok');
+      if (data.account) {
         setTiktok(prev => ({
           ...prev,
-          account: res.data.account,
-          token_status: res.data.token_status || 'valid',
-          token_expired: res.data.token_expired || false,
-          token_expires_soon: res.data.token_expires_soon || false
+          account: data.account,
+          token_status: data.token_status || 'valid',
+          token_expired: data.token_expired || false,
+          token_expires_soon: data.token_expires_soon || false
         }));
-        if (res.data.creator_info) {
-          setTiktokCreatorInfo(res.data.creator_info);
+        if (data.creator_info) {
+          setTiktokCreatorInfo(data.creator_info);
         } else {
           setTiktokCreatorInfo(null);
         }
@@ -89,9 +102,9 @@ export function usePlatforms() {
         setTiktok(prev => ({
           ...prev,
           account: null,
-          token_status: res.data.token_status || prev.token_status || 'valid',
-          token_expired: res.data.token_expired || false,
-          token_expires_soon: res.data.token_expires_soon || false
+          token_status: data.token_status || prev.token_status || 'valid',
+          token_expired: data.token_expired || false,
+          token_expires_soon: data.token_expires_soon || false
         }));
         setTiktokCreatorInfo(null);
       }
@@ -104,7 +117,7 @@ export function usePlatforms() {
         token_expires_soon: err.response?.data?.token_expires_soon || prev.token_expires_soon || false
       }));
     }
-  }, [API]);
+  }, []);
 
   const loadInstagramAccount = useCallback(() => {
     return loadPlatformAccount('instagram', setInstagram, ['username']);
@@ -112,7 +125,7 @@ export function usePlatforms() {
 
   const loadDestinations = useCallback(async () => {
     try {
-      const res = await axios.get(`${API}/destinations`);
+      const data = await platformService.loadDestinations();
       
       const updatePlatformState = (setState, platformData) => {
         setState(prev => {
@@ -130,58 +143,53 @@ export function usePlatforms() {
         });
       };
       
-      updatePlatformState(setYoutube, res.data.youtube);
-      updatePlatformState(setTiktok, res.data.tiktok);
-      updatePlatformState(setInstagram, res.data.instagram);
+      updatePlatformState(setYoutube, data.youtube);
+      updatePlatformState(setTiktok, data.tiktok);
+      updatePlatformState(setInstagram, data.instagram);
       
-      if (res.data.youtube.connected) loadYoutubeAccount();
-      if (res.data.tiktok.connected) loadTiktokAccount();
-      if (res.data.instagram.connected) loadInstagramAccount();
+      if (data.youtube.connected) loadYoutubeAccount();
+      if (data.tiktok.connected) loadTiktokAccount();
+      if (data.instagram.connected) loadInstagramAccount();
     } catch (error) {
       console.error('Error loading destinations:', error);
     }
-  }, [API, loadYoutubeAccount, loadTiktokAccount, loadInstagramAccount]);
+  }, [loadYoutubeAccount, loadTiktokAccount, loadInstagramAccount]);
 
-  const connectPlatform = useCallback(async (platform, platformName, setMessage) => {
+  const connectPlatform = useCallback(async (platform, platformName) => {
     try {
-      const res = await axios.get(`${API}/auth/${platform}`);
-      window.location.href = res.data.url;
+      const url = await platformService.connectPlatform(platform);
+      window.location.href = url;
     } catch (err) {
       if (setMessage) {
         setMessage(`❌ Error connecting to ${platformName}: ${err.response?.data?.detail || err.message}`);
       }
       console.error(`Error connecting ${platform}:`, err);
     }
-  }, [API]);
+  }, [setMessage]);
 
-  const connectYoutube = useCallback((setMessage) => connectPlatform('youtube', 'YouTube', setMessage), [connectPlatform]);
-  const connectTiktok = useCallback((setMessage) => connectPlatform('tiktok', 'TikTok', setMessage), [connectPlatform]);
-  const connectInstagram = useCallback((setMessage) => connectPlatform('instagram', 'Instagram', setMessage), [connectPlatform]);
+  const connectYoutube = useCallback(() => connectPlatform('youtube', 'YouTube'), [connectPlatform]);
+  const connectTiktok = useCallback(() => connectPlatform('tiktok', 'TikTok'), [connectPlatform]);
+  const connectInstagram = useCallback(() => connectPlatform('instagram', 'Instagram'), [connectPlatform]);
 
-  const disconnectPlatform = useCallback(async (platform, setState, platformName, setMessage) => {
+  const disconnectPlatform = useCallback(async (platform, setState, platformName) => {
     try {
-      await axios.post(`${API}/auth/${platform}/disconnect`);
-      setState({ connected: false, enabled: false, account: null });
-      if (setMessage) {
-        setMessage(`✅ Disconnected from ${platformName}`);
-      }
+      await platformService.disconnectPlatform(platform);
+      setState({ connected: false, enabled: false, account: null, token_status: 'valid', token_expired: false, token_expires_soon: false });
+      if (setMessage) setMessage(`✅ Disconnected from ${platformName}`);
     } catch (err) {
-      if (setMessage) {
-        setMessage(`❌ Error disconnecting from ${platformName}`);
-      }
+      if (setMessage) setMessage(`❌ Error disconnecting from ${platformName}`);
       console.error(`Error disconnecting ${platform}:`, err);
     }
-  }, [API]);
+  }, [setMessage]);
 
-  const disconnectYoutube = useCallback((setMessage) => disconnectPlatform('youtube', setYoutube, 'YouTube', setMessage), [disconnectPlatform]);
-  const disconnectTiktok = useCallback((setMessage) => disconnectPlatform('tiktok', setTiktok, 'TikTok', setMessage), [disconnectPlatform]);
-  const disconnectInstagram = useCallback((setMessage) => disconnectPlatform('instagram', setInstagram, 'Instagram', setMessage), [disconnectPlatform]);
+  const disconnectYoutube = useCallback(() => disconnectPlatform('youtube', setYoutube, 'YouTube'), [disconnectPlatform]);
+  const disconnectTiktok = useCallback(() => disconnectPlatform('tiktok', setTiktok, 'TikTok'), [disconnectPlatform]);
+  const disconnectInstagram = useCallback(() => disconnectPlatform('instagram', setInstagram, 'Instagram'), [disconnectPlatform]);
 
-  const togglePlatform = useCallback(async (platform, currentState, setState, setMessage) => {
+  const togglePlatform = useCallback(async (platform, currentState, setState) => {
     if (currentState.token_expired) {
-      if (setMessage) {
-        setMessage(`⚠️ Token expired - reconnect your ${platform.charAt(0).toUpperCase() + platform.slice(1)} account before enabling uploads`);
-      }
+      const platformName = platform.charAt(0).toUpperCase() + platform.slice(1);
+      if (setMessage) setMessage(`⚠️ Token expired - reconnect your ${platformName} account before enabling uploads`);
       return;
     }
 
@@ -189,21 +197,18 @@ export function usePlatforms() {
     setState(prev => ({ ...prev, enabled: newEnabled }));
     
     try {
-      await axios.post(`${API}/destinations/${platform}/toggle`, {
-        enabled: newEnabled
-      });
+      await platformService.togglePlatform(platform, newEnabled);
     } catch (err) {
       console.error(`Error toggling ${platform}:`, err);
       setState(prev => ({ ...prev, enabled: !newEnabled }));
     }
-  }, [API]);
+  }, [setMessage]);
 
-  const toggleYoutube = useCallback((setMessage) => togglePlatform('youtube', youtube, setYoutube, setMessage), [togglePlatform, youtube]);
-  const toggleTiktok = useCallback((setMessage) => togglePlatform('tiktok', tiktok, setTiktok, setMessage), [togglePlatform, tiktok]);
-  const toggleInstagram = useCallback((setMessage) => togglePlatform('instagram', instagram, setInstagram, setMessage), [togglePlatform, instagram]);
+  const toggleYoutube = useCallback(() => togglePlatform('youtube', youtube, setYoutube), [togglePlatform, youtube]);
+  const toggleTiktok = useCallback(() => togglePlatform('tiktok', tiktok, setTiktok), [togglePlatform, tiktok]);
+  const toggleInstagram = useCallback(() => togglePlatform('instagram', instagram, setInstagram), [togglePlatform, instagram]);
 
   return {
-    // State
     youtube,
     tiktok,
     instagram,
@@ -211,24 +216,18 @@ export function usePlatforms() {
     setYoutube,
     setTiktok,
     setInstagram,
-    setTiktokCreatorInfo,
-    // Load functions
     loadDestinations,
     loadYoutubeAccount,
     loadTiktokAccount,
     loadInstagramAccount,
-    // Connect functions
     connectYoutube,
     connectTiktok,
     connectInstagram,
-    // Disconnect functions
     disconnectYoutube,
     disconnectTiktok,
     disconnectInstagram,
-    // Toggle functions
     toggleYoutube,
     toggleTiktok,
     toggleInstagram,
   };
 }
-

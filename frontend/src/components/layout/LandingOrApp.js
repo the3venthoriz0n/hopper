@@ -16,4 +16,3 @@ export default function LandingOrApp() {
   
   return user ? <Navigate to="/app" replace /> : <PublicLanding />;
 }
-

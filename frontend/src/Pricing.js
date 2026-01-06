@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import './App.css';
-import { HOPPER_COLORS } from './App';
+import { HOPPER_COLORS } from './utils/colors';
 
 function Pricing() {
   const [publishableKey, setPublishableKey] = useState(null);

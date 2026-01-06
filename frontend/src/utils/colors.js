@@ -29,6 +29,7 @@ export const HOPPER_COLORS = {
   lightGreyBg: '#f5f5f5',
   errorDark: '#dc2626',
   indigo: '#6366f1',
+  indigoLight: '#818cf8',
   purple: '#a855f7',
 
   // Platform-specific colors
@@ -59,6 +60,7 @@ export const HOPPER_COLORS = {
     lightGreyBg: '245, 245, 245',
     errorDark: '220, 38, 38',
     indigo: '99, 102, 241',
+    indigoLight: '129, 140, 248',
     purple: '168, 85, 247',
     youtubeRed: '255, 0, 0',
     tiktokBlack: '0, 0, 0',

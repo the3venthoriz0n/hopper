@@ -1,19 +1,35 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { HOPPER_COLORS } from '../../utils/colors';
 
+/**
+ * Global settings component
+ * @param {object} props
+ * @param {boolean} props.showGlobalSettings - Whether settings panel is expanded
+ * @param {function} props.setShowGlobalSettings - Function to toggle settings panel
+ * @param {object} props.globalSettings - Global settings state
+ * @param {function} props.setGlobalSettings - Function to update global settings
+ * @param {function} props.updateGlobalSettings - Function to save global settings
+ * @param {string} props.newWord - New word input value
+ * @param {function} props.setNewWord - Function to update new word input
+ * @param {function} props.addWordToWordbank - Function to add word to wordbank
+ * @param {function} props.removeWordFromWordbank - Function to remove word from wordbank
+ * @param {function} props.clearWordbank - Function to clear wordbank
+ * @param {boolean} props.wordbankExpanded - Whether wordbank list is expanded
+ * @param {function} props.setWordbankExpanded - Function to toggle wordbank list
+ */
 export default function GlobalSettings({
+  showGlobalSettings,
+  setShowGlobalSettings,
   globalSettings,
   setGlobalSettings,
   updateGlobalSettings,
   newWord,
   setNewWord,
-  wordbankExpanded,
-  setWordbankExpanded,
   addWordToWordbank,
   removeWordFromWordbank,
   clearWordbank,
-  showGlobalSettings,
-  setShowGlobalSettings
+  wordbankExpanded,
+  setWordbankExpanded,
 }) {
   return (
     <div className="card">
@@ -272,4 +288,3 @@ export default function GlobalSettings({
     </div>
   );
 }
-

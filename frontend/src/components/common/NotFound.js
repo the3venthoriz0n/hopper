@@ -2,6 +2,9 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { HOPPER_COLORS } from '../../utils/colors';
 
+/**
+ * 404 Not Found component
+ */
 export default function NotFound() {
   return (
     <div style={{ 
@@ -30,4 +33,3 @@ export default function NotFound() {
     </div>
   );
 }
-

@@ -2,13 +2,14 @@ import React from 'react';
 import { HOPPER_COLORS, rgba } from '../../utils/colors';
 
 /**
- * Circular Progress Component for Token Usage
- * @param {number} tokensRemaining - Tokens remaining
- * @param {number} tokensUsed - Tokens used this period
- * @param {number} monthlyTokens - Starting balance for period (plan + granted tokens)
- * @param {number} overageTokens - Overage tokens used
- * @param {boolean} unlimited - Whether user has unlimited tokens
- * @param {boolean} isLoading - Whether data is loading
+ * Circular progress component for token usage display
+ * @param {object} props
+ * @param {number} props.tokensRemaining - Tokens remaining
+ * @param {number} props.tokensUsed - Tokens used
+ * @param {number} props.monthlyTokens - Monthly token allocation
+ * @param {number} props.overageTokens - Overage tokens
+ * @param {boolean} props.unlimited - Whether plan is unlimited
+ * @param {boolean} props.isLoading - Loading state
  */
 export default function CircularTokenProgress({ 
   tokensRemaining, 
@@ -125,4 +126,3 @@ export default function CircularTokenProgress({
     </div>
   );
 }
-

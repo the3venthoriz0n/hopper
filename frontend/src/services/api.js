@@ -8,8 +8,6 @@ axios.defaults.xsrfCookieName = 'csrf_token_client';
 axios.defaults.xsrfHeaderName = 'X-CSRF-Token';
 
 // CSRF Token Management
-// Note: Token is automatically read from cookie via interceptor
-// This variable is kept for legacy compatibility but is not actively used
 let csrfToken = null;
 
 /**
@@ -22,25 +20,33 @@ export const getApiUrl = () => {
 };
 
 /**
- * Get WebSocket URL using API base URL (not window.location.host)
- * This ensures WebSocket connects through nginx proxy, not directly to backend port
+ * Get WebSocket URL - constructs URL through nginx proxy
+ * This ensures WebSocket connects through nginx, not directly to backend port
+ * @param {string} url - Optional WebSocket URL path (default: '/ws')
  * @returns {string} WebSocket URL
  */
-export const getWebSocketUrl = () => {
-  const backendUrl = process.env.REACT_APP_BACKEND_URL || `https://${window.location.hostname}`;
-  // Remove protocol and /api if present, construct ws:// or wss://
-  const wsProtocol = backendUrl.startsWith('https') ? 'wss:' : 'ws:';
-  const baseUrl = backendUrl.replace(/^https?:\/\//, '').replace(/\/api$/, '');
-  return `${wsProtocol}//${baseUrl}/ws`;
+export const getWebSocketUrl = (url = '/ws') => {
+  // If URL is already a full WebSocket URL, return it
+  if (url.startsWith('ws://') || url.startsWith('wss://')) {
+    return url;
+  }
+  
+  // Construct WebSocket URL using current window location (through nginx)
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const hostname = window.location.hostname;
+  const port = window.location.port ? `:${window.location.port}` : '';
+  
+  // Use current window location to ensure it goes through nginx proxy
+  return `${protocol}//${hostname}${port}${url}`;
 };
 
-// Response interceptor
+// Response interceptor for error handling
 axios.interceptors.response.use(
   (response) => response,
   (error) => Promise.reject(error)
 );
 
-// Request interceptor - injects CSRF token from cookie
+// Request interceptor for CSRF token
 axios.interceptors.request.use(
   (config) => {
     // Read the non-HttpOnly cookie we set in the backend
@@ -48,7 +54,6 @@ axios.interceptors.request.use(
     
     if (token) {
       config.headers['X-CSRF-Token'] = token;
-      csrfToken = token; // Keep for legacy compatibility
     }
     
     return config;
@@ -56,6 +61,5 @@ axios.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Export axios instance for use in services
+// Export configured axios instance
 export default axios;
-

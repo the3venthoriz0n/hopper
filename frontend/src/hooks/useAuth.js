@@ -38,4 +38,3 @@ export function useAuth() {
   
   return { user, isAdmin, setUser, authLoading, checkAuth };
 }
-

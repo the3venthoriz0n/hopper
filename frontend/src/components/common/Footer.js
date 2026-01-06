@@ -2,6 +2,9 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { HOPPER_COLORS, rgba } from '../../utils/colors';
 
+/**
+ * Shared footer component
+ */
 export default function Footer() {
   return (
     <footer style={{
@@ -91,4 +94,3 @@ export default function Footer() {
     </footer>
   );
 }
-

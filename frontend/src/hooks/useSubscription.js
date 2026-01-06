@@ -1,43 +1,30 @@
-import { useState, useCallback } from 'react';
-import axios from '../services/api';
-import { getApiUrl } from '../services/api';
+import { useState, useCallback, useEffect } from 'react';
+import * as subscriptionService from '../services/subscriptionService';
 
 /**
  * Hook for managing subscription and token balance state
+ * @param {object} user - Current user object
+ * @param {function} setMessage - Message setter function
+ * @param {function} setNotification - Notification setter function
+ * @param {function} setConfirmDialog - Confirm dialog setter function
+ * @param {Array} availablePlans - Available plans array (for display)
+ * @returns {object} Subscription state and functions
  */
-export function useSubscription(user) {
+export function useSubscription(user, setMessage, setNotification, setConfirmDialog, availablePlans) {
   const [subscription, setSubscription] = useState(null);
   const [tokenBalance, setTokenBalance] = useState(null);
-  const [availablePlans, setAvailablePlans] = useState([]);
+  const [availablePlansState, setAvailablePlans] = useState([]);
   const [loadingSubscription, setLoadingSubscription] = useState(false);
   const [loadingPlanKey, setLoadingPlanKey] = useState(null);
-
-  const API = getApiUrl();
 
   const loadSubscription = useCallback(async () => {
     if (!user) return;
     
     try {
-      const [subscriptionRes, plansRes] = await Promise.all([
-        axios.get(`${API}/subscription/current`),
-        axios.get(`${API}/subscription/plans`)
-      ]);
-      
-      setSubscription(subscriptionRes.data.subscription);
-      if (subscriptionRes.data.token_balance) {
-        setTokenBalance(subscriptionRes.data.token_balance);
-      } else {
-        setTokenBalance({
-          tokens_remaining: 0,
-          tokens_used_this_period: 0,
-          monthly_tokens: 0,
-          overage_tokens: 0,
-          unlimited: false,
-          period_start: null,
-          period_end: null
-        });
-      }
-      setAvailablePlans(plansRes.data.plans || []);
+      const data = await subscriptionService.loadSubscription();
+      setSubscription(data.subscription);
+      setTokenBalance(data.tokenBalance);
+      setAvailablePlans(data.plans);
     } catch (err) {
       console.error('Error loading subscription:', err);
       setSubscription(null);
@@ -51,22 +38,28 @@ export function useSubscription(user) {
         period_end: null
       });
       try {
-        const plansRes = await axios.get(`${API}/subscription/plans`);
-        setAvailablePlans(plansRes.data.plans || []);
+        const plans = await subscriptionService.loadPlans();
+        setAvailablePlans(plans);
       } catch (plansErr) {
         console.error('Error loading plans:', plansErr);
         setAvailablePlans([]);
       }
     }
-  }, [API, user]);
+  }, [user]);
 
-  const handleUpgrade = useCallback(async (planKey, subscription, availablePlans, setConfirmDialog, setNotification, setLoadingPlanKey, setLoadingSubscription) => {
+  useEffect(() => {
+    if (user) {
+      loadSubscription();
+    }
+  }, [user, loadSubscription]);
+
+  const handleUpgrade = useCallback(async (planKey) => {
     if (subscription && subscription.status === 'active' && subscription.plan_type && subscription.plan_type !== 'free' && subscription.plan_type !== 'unlimited') {
-      const planName = availablePlans.find(p => p.key === planKey)?.name || planKey;
-      const currentPlanName = availablePlans.find(p => p.key === subscription.plan_type)?.name || subscription.plan_type;
+      const planName = availablePlansState.find(p => p.key === planKey)?.name || planKey;
+      const currentPlanName = availablePlansState.find(p => p.key === subscription.plan_type)?.name || subscription.plan_type;
       
-      const newPlan = availablePlans.find(p => p.key === planKey);
-      const currentPlan = availablePlans.find(p => p.key === subscription.plan_type);
+      const newPlan = availablePlansState.find(p => p.key === planKey);
+      const currentPlan = availablePlansState.find(p => p.key === subscription.plan_type);
       
       const formatPlanPrice = (plan) => {
         if (!plan?.price) return null;
@@ -87,171 +80,133 @@ export function useSubscription(user) {
       const newPlanPrice = formatPlanPrice(newPlan);
       const currentPlanPrice = formatPlanPrice(currentPlan);
       
-      if (setConfirmDialog) {
-        setConfirmDialog({
-          title: 'Upgrade Subscription?',
-          message: `You currently have an active ${currentPlanName} subscription${currentPlanPrice ? ` (${currentPlanPrice})` : ''}. Upgrading to ${planName}${newPlanPrice ? ` (${newPlanPrice})` : ''} will cancel your current subscription and replace it with the new plan. Your current token balance will be preserved.`,
-          onConfirm: async () => {
-            if (setConfirmDialog) setConfirmDialog(null);
-            await proceedWithUpgrade(planKey, setLoadingPlanKey, setLoadingSubscription, setNotification);
-          },
-          onCancel: () => {
-            if (setConfirmDialog) setConfirmDialog(null);
-          }
-        });
-      }
+      setConfirmDialog({
+        title: 'Upgrade Subscription?',
+        message: `You currently have an active ${currentPlanName} subscription${currentPlanPrice ? ` (${currentPlanPrice})` : ''}. Upgrading to ${planName}${newPlanPrice ? ` (${newPlanPrice})` : ''} will cancel your current subscription and replace it with the new plan. Your current token balance will be preserved.`,
+        onConfirm: async () => {
+          setConfirmDialog(null);
+          await proceedWithUpgrade(planKey);
+        },
+        onCancel: () => {
+          setConfirmDialog(null);
+        }
+      });
     } else {
-      await proceedWithUpgrade(planKey, setLoadingPlanKey, setLoadingSubscription, setNotification);
+      await proceedWithUpgrade(planKey);
     }
-  }, [API]);
+  }, [subscription, availablePlansState, setConfirmDialog]);
 
-  const proceedWithUpgrade = useCallback(async (planKey, setLoadingPlanKey, setLoadingSubscription, setNotification) => {
-    if (setLoadingPlanKey) setLoadingPlanKey(planKey);
-    if (setLoadingSubscription) setLoadingSubscription(true);
+  const proceedWithUpgrade = useCallback(async (planKey) => {
+    setLoadingPlanKey(planKey);
+    setLoadingSubscription(true);
     sessionStorage.removeItem('upgrade_canceled_subscription');
     try {
-      const res = await axios.post(`${API}/subscription/create-checkout`, { plan_key: planKey });
-      if (res.data.url) {
-        if (res.data.canceled_subscription) {
+      const data = await subscriptionService.createCheckout(planKey);
+      if (data.url) {
+        if (data.canceled_subscription) {
           sessionStorage.setItem('upgrade_canceled_subscription', JSON.stringify({
-            canceled_plan_type: res.data.canceled_subscription.plan_type,
+            canceled_plan_type: data.canceled_subscription.plan_type,
             new_plan_key: planKey
           }));
         }
-        window.location.href = res.data.url;
+        window.location.href = data.url;
       }
     } catch (err) {
       sessionStorage.removeItem('upgrade_canceled_subscription');
       console.error('Error creating checkout session:', err);
       
       if (err.response?.status === 400 && err.response?.data?.portal_url) {
-        if (setNotification) {
-          setNotification({
-            type: 'error',
-            title: 'Active Subscription Found',
-            message: 'You already have an active subscription. Opening subscription management...'
-          });
-          setTimeout(() => {
-            if (setNotification) setNotification(null);
-            window.location.href = err.response.data.portal_url;
-          }, 2000);
-        }
+        setNotification({
+          type: 'error',
+          title: 'Active Subscription Found',
+          message: 'You already have an active subscription. Opening subscription management...'
+        });
+        setTimeout(() => {
+          setNotification(null);
+          window.location.href = err.response.data.portal_url;
+        }, 2000);
       } else if (err.response?.status === 400 && err.response?.data?.message) {
-        if (setNotification) {
-          setNotification({
-            type: 'error',
-            title: 'Checkout Error',
-            message: err.response.data.message || 'Failed to start checkout. Please try again.'
-          });
-          setTimeout(() => setNotification(null), 8000);
-        }
+        setNotification({
+          type: 'error',
+          title: 'Checkout Error',
+          message: err.response.data.message || 'Failed to start checkout. Please try again.'
+        });
+        setTimeout(() => setNotification(null), 8000);
       } else {
-        if (setNotification) {
-          setNotification({
-            type: 'error',
-            title: 'Checkout Failed',
-            message: err.response?.data?.detail || err.response?.data?.message || 'Failed to start checkout. Please try again.'
-          });
-          setTimeout(() => setNotification(null), 8000);
-        }
+        setNotification({
+          type: 'error',
+          title: 'Checkout Failed',
+          message: err.response?.data?.detail || err.response?.data?.message || 'Failed to start checkout. Please try again.'
+        });
+        setTimeout(() => setNotification(null), 8000);
       }
     } finally {
-      if (setLoadingPlanKey) setLoadingPlanKey(null);
-      if (setLoadingSubscription) setLoadingSubscription(false);
+      setLoadingPlanKey(null);
+      setLoadingSubscription(false);
     }
-  }, [API]);
+  }, [setNotification]);
 
-  const handleManageSubscription = useCallback(async (setMessage, setLoadingSubscription) => {
-    if (setLoadingSubscription) setLoadingSubscription(true);
+  const handleOpenStripePortal = useCallback(async () => {
+    setLoadingSubscription(true);
     try {
-      const res = await axios.get(`${API}/subscription/portal`);
-      if (res.data.url) {
-        if (res.data.action === 'purchase') {
-          const plansSection = document.getElementById('subscription-plans');
-          if (plansSection) {
-            plansSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          } else {
-            window.location.href = res.data.url;
-          }
-        } else {
-          window.location.href = res.data.url;
-        }
-      }
-    } catch (err) {
-      console.error('Error opening subscription portal:', err);
-      if (setMessage) {
-        setMessage('❌ Failed to open subscription management. Please try again.');
-      }
-    } finally {
-      if (setLoadingSubscription) setLoadingSubscription(false);
-    }
-  }, [API]);
-
-  const handleOpenStripePortal = useCallback(async (setMessage, setLoadingSubscription) => {
-    if (setLoadingSubscription) setLoadingSubscription(true);
-    try {
-      const res = await axios.get(`${API}/subscription/portal`);
-      if (res.data.url) {
-        window.location.href = res.data.url;
+      const data = await subscriptionService.getPortalUrl();
+      if (data.url) {
+        window.location.href = data.url;
       }
     } catch (err) {
       console.error('Error opening Stripe portal:', err);
-      if (setMessage) {
-        setMessage('❌ Failed to open subscription management. Please try again.');
-      }
-      if (setLoadingSubscription) setLoadingSubscription(false);
+      if (setMessage) setMessage('❌ Failed to open subscription management. Please try again.');
+      setLoadingSubscription(false);
     }
-  }, [API]);
+  }, [setMessage]);
 
-  const handleCancelSubscription = useCallback(async (setMessage, setNotification, setLoadingSubscription, loadSubscription) => {
-    if (setLoadingSubscription) setLoadingSubscription(true);
+  const handleCancelSubscription = useCallback(async () => {
+    setLoadingSubscription(true);
     try {
-      const res = await axios.post(`${API}/subscription/cancel`);
-      if (res.data.status === 'success') {
-        if (setMessage) {
-          setMessage(`✅ ${res.data.message || 'Subscription canceled successfully'}`);
-        }
-        if (loadSubscription) {
-          await loadSubscription();
-        }
-        if (setNotification) {
-          setNotification({
-            type: 'info',
-            title: 'Subscription Canceled',
-            message: res.data.message || 'Your subscription has been canceled. You will retain access until the end of your billing period.',
-          });
-          setTimeout(() => setNotification(null), 10000);
-        }
+      const data = await subscriptionService.cancelSubscription();
+      if (data.status === 'success') {
+        if (setMessage) setMessage(`✅ ${data.message || 'Subscription canceled successfully'}`);
+        await loadSubscription();
+        setNotification({
+          type: 'success',
+          title: 'Subscription Canceled',
+          message: `Your subscription has been canceled and you've been switched to the free plan. Your ${data.tokens_preserved || 0} tokens have been preserved.`
+        });
+        setTimeout(() => setNotification(null), 5000);
+      } else if (data.status === 'error') {
+        if (setMessage) setMessage(`❌ ${data.message || 'Failed to cancel subscription'}`);
+        setNotification({
+          type: 'error',
+          title: 'Cancel Failed',
+          message: data.message || 'Cannot cancel this subscription.'
+        });
+        setTimeout(() => setNotification(null), 5000);
       }
     } catch (err) {
       console.error('Error canceling subscription:', err);
-      if (setMessage) {
-        setMessage(`❌ ${err.response?.data?.detail || err.response?.data?.message || 'Failed to cancel subscription'}`);
-      }
+      if (setMessage) setMessage('❌ Failed to cancel subscription. Please try again.');
+      setNotification({
+        type: 'error',
+        title: 'Cancel Failed',
+        message: err.response?.data?.detail || err.response?.data?.message || 'Failed to cancel subscription. Please try again.'
+      });
+      setTimeout(() => setNotification(null), 5000);
     } finally {
-      if (setLoadingSubscription) setLoadingSubscription(false);
+      setLoadingSubscription(false);
     }
-  }, [API]);
+  }, [setMessage, setNotification, loadSubscription]);
 
   return {
-    // State
     subscription,
     tokenBalance,
-    availablePlans,
+    availablePlans: availablePlansState,
     loadingSubscription,
     loadingPlanKey,
-    // Setters
     setSubscription,
     setTokenBalance,
-    setAvailablePlans,
-    setLoadingSubscription,
-    setLoadingPlanKey,
-    // Functions
     loadSubscription,
     handleUpgrade,
-    handleManageSubscription,
     handleOpenStripePortal,
     handleCancelSubscription,
   };
 }
-

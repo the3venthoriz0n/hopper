@@ -1,11 +1,12 @@
 import { useState, useCallback } from 'react';
-import axios from '../services/api';
-import { getApiUrl } from '../services/api';
+import * as settingsService from '../services/settingsService';
 
 /**
- * Hook for managing all settings (global, YouTube, TikTok, Instagram)
+ * Hook for managing settings state (global, YouTube, TikTok, Instagram)
+ * @param {function} setMessage - Message setter function
+ * @returns {object} Settings state and functions
  */
-export function useSettings() {
+export function useSettings(setMessage) {
   const [globalSettings, setGlobalSettings] = useState({
     title_template: '{filename}',
     description_template: 'Uploaded via Hopper',
@@ -45,11 +46,9 @@ export function useSettings() {
     cover_url: ''
   });
 
-  const API = getApiUrl();
-
   const loadGlobalSettings = useCallback(async () => {
     try {
-      const res = await axios.get(`${API}/global/settings`);
+      const data = await settingsService.loadGlobalSettings();
       setGlobalSettings({
         title_template: '{filename}',
         description_template: 'Uploaded via Hopper',
@@ -61,34 +60,34 @@ export function useSettings() {
         schedule_start_time: '',
         upload_first_immediately: true,
         allow_duplicates: false,
-        ...res.data
+        ...data
       });
     } catch (err) {
       console.error('Error loading global settings:', err);
     }
-  }, [API]);
+  }, []);
 
   const loadYoutubeSettings = useCallback(async () => {
     try {
-      const res = await axios.get(`${API}/youtube/settings`);
-      setYoutubeSettings(res.data);
+      const data = await settingsService.loadYoutubeSettings();
+      setYoutubeSettings(data);
     } catch (err) {
       console.error('Error loading YouTube settings:', err);
     }
-  }, [API]);
+  }, []);
 
   const loadTiktokSettings = useCallback(async () => {
     try {
-      const res = await axios.get(`${API}/tiktok/settings`);
-      setTiktokSettings(res.data);
+      const data = await settingsService.loadTiktokSettings();
+      setTiktokSettings(data);
     } catch (err) {
       console.error('Error loading TikTok settings:', err);
     }
-  }, [API]);
+  }, []);
 
   const loadInstagramSettings = useCallback(async () => {
     try {
-      const res = await axios.get(`${API}/instagram/settings`);
+      const data = await settingsService.loadInstagramSettings();
       setInstagramSettings({
         caption_template: '',
         disable_comments: false,
@@ -96,166 +95,112 @@ export function useSettings() {
         media_type: 'REELS',
         share_to_feed: true,
         cover_url: '',
-        ...res.data
+        ...data
       });
     } catch (err) {
       console.error('Error loading Instagram settings:', err);
     }
-  }, [API]);
+  }, []);
 
-  const updateGlobalSettings = useCallback(async (key, value, setMessage) => {
+  const updateGlobalSettings = useCallback(async (key, value) => {
     try {
-      const res = await axios.post(`${API}/global/settings`, { [key]: value });
-      setGlobalSettings(prev => ({
-        ...prev,
-        ...res.data
-      }));
-      if (setMessage) {
-        setMessage(`✅ Settings updated`);
-      }
+      const data = await settingsService.updateGlobalSettings(key, value);
+      setGlobalSettings(prev => ({ ...prev, ...data }));
     } catch (err) {
-      if (setMessage) {
-        setMessage('❌ Error updating settings');
-      }
-      console.error('Error updating settings:', err);
+      if (setMessage) setMessage('❌ Error updating global settings');
+      console.error('Error updating global settings:', err);
     }
-  }, [API]);
+  }, [setMessage]);
 
-  const updateYoutubeSettings = useCallback(async (key, value, setMessage) => {
+  const updateYoutubeSettings = useCallback(async (key, value) => {
     try {
-      const res = await axios.post(`${API}/youtube/settings`, { [key]: value });
-      setYoutubeSettings(res.data);
-      
-      if (setMessage) {
-        if (key === 'visibility') {
-          setMessage(`✅ Default visibility set to ${value}`);
-        } else if (key === 'made_for_kids') {
-          setMessage(`✅ Made for kids: ${value ? 'Yes' : 'No'}`);
-        } else {
-          setMessage(`✅ Settings updated`);
-        }
-      }
+      const data = await settingsService.updateYoutubeSettings(key, value);
+      setYoutubeSettings(prev => ({ ...prev, ...data }));
     } catch (err) {
-      if (setMessage) {
-        setMessage('❌ Error updating settings');
-      }
+      if (setMessage) setMessage('❌ Error updating YouTube settings');
       console.error('Error updating YouTube settings:', err);
     }
-  }, [API]);
+  }, [setMessage]);
 
-  const updateTiktokSettings = useCallback(async (key, value, setMessage) => {
+  const updateTiktokSettings = useCallback(async (key, value) => {
     try {
-      if (key === 'privacy_level' && (!value || value === 'null' || value === '')) {
-        return;
-      }
-      const res = await axios.post(`${API}/tiktok/settings`, { [key]: value });
-      setTiktokSettings(res.data);
-      
-      if (setMessage) {
-        if (key === 'privacy_level') {
-          setMessage(`✅ Privacy level set to ${value}`);
-        } else if (key.startsWith('commercial_content')) {
-          setMessage(`✅ Commercial content settings updated`);
-        } else {
-          setMessage(`✅ TikTok settings updated`);
-        }
-      }
+      const data = await settingsService.updateTiktokSettings(key, value);
+      setTiktokSettings(prev => ({ ...prev, ...data }));
     } catch (err) {
-      if (setMessage) {
-        setMessage('❌ Error updating TikTok settings');
-      }
+      if (setMessage) setMessage('❌ Error updating TikTok settings');
       console.error('Error updating TikTok settings:', err);
     }
-  }, [API]);
+  }, [setMessage]);
 
-  const updateInstagramSettings = useCallback(async (key, value, setMessage) => {
+  const updateInstagramSettings = useCallback(async (key, value) => {
     try {
-      const res = await axios.post(`${API}/instagram/settings`, { [key]: value });
-      setInstagramSettings(res.data);
-      if (setMessage) {
-        setMessage(`✅ Instagram settings updated`);
-      }
+      const data = await settingsService.updateInstagramSettings(key, value);
+      setInstagramSettings(prev => ({ ...prev, ...data }));
     } catch (err) {
-      if (setMessage) {
-        setMessage('❌ Error updating Instagram settings');
-      }
+      if (setMessage) setMessage('❌ Error updating Instagram settings');
       console.error('Error updating Instagram settings:', err);
     }
-  }, [API]);
+  }, [setMessage]);
 
-  const addWordToWordbank = useCallback(async (input, setMessage) => {
+  const addWordToWordbank = useCallback(async (input) => {
     try {
       const words = input.split(',').map(w => w.trim()).filter(w => w);
       
       if (words.length === 0) {
-        if (setMessage) {
-          setMessage('❌ No valid words to add');
-        }
+        if (setMessage) setMessage('❌ No valid words to add');
         return;
       }
       
       let addedCount = 0;
       for (const word of words) {
         try {
-          const res = await axios.post(`${API}/global/wordbank`, {
-            word: word
-          });
-          setGlobalSettings(prev => ({...prev, wordbank: res.data.wordbank}));
+          const data = await settingsService.addWordToWordbank(word);
+          setGlobalSettings(prev => ({...prev, wordbank: data.wordbank}));
           addedCount++;
         } catch (err) {
           console.error(`Error adding word "${word}":`, err);
         }
       }
       
-      if (setMessage) {
-        if (addedCount === words.length) {
-          setMessage(`✅ Added ${addedCount} word${addedCount !== 1 ? 's' : ''} to wordbank`);
-        } else {
-          setMessage(`✅ Added ${addedCount} of ${words.length} words (some were duplicates)`);
-        }
+      if (addedCount === words.length) {
+        if (setMessage) setMessage(`✅ Added ${addedCount} word${addedCount !== 1 ? 's' : ''} to wordbank`);
+      } else {
+        if (setMessage) setMessage(`✅ Added ${addedCount} of ${words.length} words (some were duplicates)`);
       }
+      
+      await loadGlobalSettings();
     } catch (err) {
-      if (setMessage) {
-        setMessage('❌ Error adding word to wordbank');
-      }
-      console.error('Error adding word to wordbank:', err);
+      if (setMessage) setMessage('❌ Error adding words');
+      console.error('Error adding words:', err);
     }
-  }, [API]);
+  }, [setMessage, loadGlobalSettings]);
 
-  const removeWordFromWordbank = useCallback(async (word, setMessage) => {
+  const removeWordFromWordbank = useCallback(async (word) => {
     try {
-      const res = await axios.delete(`${API}/global/wordbank`, {
-        data: { word }
-      });
-      setGlobalSettings(prev => ({...prev, wordbank: res.data.wordbank}));
-      if (setMessage) {
-        setMessage(`✅ Removed word from wordbank`);
-      }
+      await settingsService.removeWordFromWordbank(word);
+      setGlobalSettings(prev => ({
+        ...prev,
+        wordbank: prev.wordbank.filter(w => w !== word)
+      }));
+      if (setMessage) setMessage(`✅ Removed "${word}" from wordbank`);
     } catch (err) {
-      if (setMessage) {
-        setMessage('❌ Error removing word from wordbank');
-      }
-      console.error('Error removing word from wordbank:', err);
+      if (setMessage) setMessage('❌ Error removing word');
+      console.error('Error removing word:', err);
     }
-  }, [API]);
+  }, [setMessage]);
 
-  const clearWordbank = useCallback(async (setMessage) => {
+  const clearWordbank = useCallback(async () => {
     try {
-      const res = await axios.delete(`${API}/global/wordbank/clear`);
-      setGlobalSettings(prev => ({...prev, wordbank: res.data.wordbank}));
-      if (setMessage) {
-        setMessage(`✅ Cleared wordbank`);
-      }
+      await settingsService.clearWordbank();
+      setGlobalSettings(prev => ({ ...prev, wordbank: [] }));
+      if (setMessage) setMessage('✅ Cleared wordbank');
     } catch (err) {
-      if (setMessage) {
-        setMessage('❌ Error clearing wordbank');
-      }
+      if (setMessage) setMessage('❌ Error clearing wordbank');
       console.error('Error clearing wordbank:', err);
     }
-  }, [API]);
+  }, [setMessage]);
 
   return {
-    // State
     globalSettings,
     youtubeSettings,
     tiktokSettings,
@@ -264,20 +209,16 @@ export function useSettings() {
     setYoutubeSettings,
     setTiktokSettings,
     setInstagramSettings,
-    // Load functions
     loadGlobalSettings,
     loadYoutubeSettings,
     loadTiktokSettings,
     loadInstagramSettings,
-    // Update functions
     updateGlobalSettings,
     updateYoutubeSettings,
     updateTiktokSettings,
     updateInstagramSettings,
-    // Wordbank functions
     addWordToWordbank,
     removeWordFromWordbank,
     clearWordbank,
   };
 }
-
