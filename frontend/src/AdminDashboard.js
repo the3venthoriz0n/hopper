@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import './App.css';
+import { HOPPER_COLORS, rgba } from './utils/colors';
 
 // Circular Progress Component for Token Usage
 const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, overageTokens, unlimited, isLoading }) => {
@@ -12,7 +13,7 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
           width: '48px',
           height: '48px',
           borderRadius: '50%',
-          background: 'conic-gradient(from 0deg, #10b981 0deg 360deg)',
+          background: `conic-gradient(from 0deg, ${HOPPER_COLORS.emeraldGreen} 0deg 360deg)`,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -22,18 +23,18 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
             width: '36px',
             height: '36px',
             borderRadius: '50%',
-            background: '#0a0a0a',
+            background: HOPPER_COLORS.veryDark,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             fontSize: '1rem',
             fontWeight: '700',
-            color: '#10b981'
+            color: HOPPER_COLORS.emeraldGreen
           }}>
             ∞
           </div>
         </div>
-        <div style={{ fontSize: '0.6rem', color: '#999', textAlign: 'center' }}>Unlimited</div>
+        <div style={{ fontSize: '0.6rem', color: HOPPER_COLORS.greyMedium, textAlign: 'center' }}>Unlimited</div>
       </div>
     );
   }
@@ -46,11 +47,11 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
   const hasOverage = overageTokens > 0;
   
   // Color based on usage - red when in overage, amber when high usage, green otherwise
-  let progressColor = '#10b981'; // green
+  let progressColor = HOPPER_COLORS.emeraldGreen; // green
   if (hasOverage) {
-    progressColor = '#ef4444'; // red when in overage
+    progressColor = HOPPER_COLORS.adminRed; // red when in overage
   } else if (percentage >= 90) {
-    progressColor = '#f59e0b'; // amber when 90% or more used
+    progressColor = HOPPER_COLORS.warningAmber; // amber when 90% or more used
   }
   
   // Calculate stroke-dasharray for the circle
@@ -68,7 +69,7 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
             cy="24"
             r={radius}
             fill="none"
-            stroke="rgba(255, 255, 255, 0.1)"
+            stroke={rgba(HOPPER_COLORS.rgb.white, 0.1)}
             strokeWidth="3"
           />
           {/* Progress circle */}
@@ -97,10 +98,10 @@ const CircularTokenProgress = ({ tokensRemaining, tokensUsed, monthlyTokens, ove
           alignItems: 'center',
           gap: '0.05rem'
         }}>
-          <div style={{ fontSize: '0.65rem', fontWeight: '700', color: isLoading ? '#666' : '#fff', lineHeight: '1' }}>
+          <div style={{ fontSize: '0.65rem', fontWeight: '700', color: isLoading ? HOPPER_COLORS.grey : HOPPER_COLORS.white, lineHeight: '1' }}>
             {tokensUsed}
           </div>
-          <div style={{ fontSize: '0.5rem', color: isLoading ? '#444' : '#999', lineHeight: '1' }}>
+          <div style={{ fontSize: '0.5rem', color: isLoading ? HOPPER_COLORS.greyDark : HOPPER_COLORS.greyMedium, lineHeight: '1' }}>
             / {effectiveMonthlyTokens}
           </div>
         </div>
@@ -567,18 +568,18 @@ function AdminDashboard() {
             zIndex: 1000
           }}>
             <div className="admin-modal-content" style={{
-              background: 'rgba(30, 30, 46, 0.95)',
+              background: rgba('30, 30, 46', 0.95),
               borderRadius: '8px',
               padding: '2rem',
-              border: '1px solid rgba(255, 255, 255, 0.2)',
+              border: `1px solid ${rgba(HOPPER_COLORS.rgb.white, 0.2)}`,
               maxWidth: '400px',
               width: '90%'
             }}>
-              <h3 style={{ color: '#fff', marginTop: 0, marginBottom: '1rem' }}>Confirm Delete</h3>
-              <p style={{ color: '#e0e0e0', marginBottom: '1.5rem' }}>
-                Are you sure you want to delete user <strong style={{ color: '#fff' }}>{userToDelete.email}</strong>?
+              <h3 style={{ color: HOPPER_COLORS.white, marginTop: 0, marginBottom: '1rem' }}>Confirm Delete</h3>
+              <p style={{ color: HOPPER_COLORS.greyLightText, marginBottom: '1.5rem' }}>
+                Are you sure you want to delete user <strong style={{ color: HOPPER_COLORS.white }}>{userToDelete.email}</strong>?
                 <br />
-                <span style={{ color: '#ef4444', fontSize: '0.85rem' }}>This action cannot be undone.</span>
+                <span style={{ color: HOPPER_COLORS.adminRed, fontSize: '0.85rem' }}>This action cannot be undone.</span>
               </p>
               <div className="admin-modal-buttons" style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
                 <button
@@ -612,7 +613,7 @@ function AdminDashboard() {
         <div className="admin-grid">
           {/* Users List */}
           <div className="admin-card-panel">
-            <h2 style={{ color: '#fff', marginTop: 0, marginBottom: '1rem' }}>Users</h2>
+            <h2 style={{ color: HOPPER_COLORS.white, marginTop: 0, marginBottom: '1rem' }}>Users</h2>
             
             <form onSubmit={handleSearch} style={{ marginBottom: '1rem' }}>
               <input
@@ -625,7 +626,7 @@ function AdminDashboard() {
               />
             </form>
 
-            {loading && <div style={{ color: '#999', textAlign: 'center', padding: '1rem' }}>Loading...</div>}
+            {loading && <div style={{ color: HOPPER_COLORS.greyMedium, textAlign: 'center', padding: '1rem' }}>Loading...</div>}
             
             <div className="admin-table-wrapper">
               <table className="admin-table">
@@ -667,7 +668,7 @@ function AdminDashboard() {
                 >
                   Previous
                 </button>
-                <span style={{ color: '#999', fontSize: '0.9rem' }}>
+                <span style={{ color: HOPPER_COLORS.greyMedium, fontSize: '0.9rem' }}>
                   Page {page} of {Math.ceil(total / limit)}
                 </span>
                 <button
@@ -685,14 +686,14 @@ function AdminDashboard() {
           <div className="admin-card-panel">
             {selectedUser ? (
               <>
-                <h2 style={{ color: '#fff', marginTop: 0, marginBottom: '1rem' }}>
+                <h2 style={{ color: HOPPER_COLORS.white, marginTop: 0, marginBottom: '1rem' }}>
                   User: {selectedUser.email}
                 </h2>
 
                 {userDetails && (
                   <>
                     <div style={{ marginBottom: '1.5rem' }}>
-                      <div style={{ fontSize: '0.85rem', color: '#999', marginBottom: '0.75rem' }}>Token Balance</div>
+                      <div style={{ fontSize: '0.85rem', color: HOPPER_COLORS.greyMedium, marginBottom: '0.75rem' }}>Token Balance</div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.75rem' }}>
                         <CircularTokenProgress
                           tokensRemaining={userDetails.token_balance?.tokens_remaining ?? 0}
@@ -703,41 +704,41 @@ function AdminDashboard() {
                           isLoading={loading}
                         />
                         <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: '0.9rem', color: '#fff', marginBottom: '0.25rem' }}>
-                            Remaining: <span style={{ color: '#818cf8', fontWeight: '600' }}>
+                          <div style={{ fontSize: '0.9rem', color: HOPPER_COLORS.white, marginBottom: '0.25rem' }}>
+                            Remaining: <span style={{ color: HOPPER_COLORS.indigoLight, fontWeight: '600' }}>
                               {userDetails.token_balance?.unlimited 
                                 ? '∞ Unlimited' 
                                 : userDetails.token_balance?.tokens_remaining ?? 'N/A'}
                             </span>
                           </div>
                           {userDetails.token_balance?.overage_tokens > 0 && (
-                            <div style={{ fontSize: '0.85rem', color: '#fbbf24', marginTop: '0.25rem' }}>
+                            <div style={{ fontSize: '0.85rem', color: HOPPER_COLORS.amberYellow, marginTop: '0.25rem' }}>
                               Overage: {userDetails.token_balance.overage_tokens} tokens
                             </div>
                           )}
                         </div>
                       </div>
                       {userDetails.subscription && (
-                        <div style={{ fontSize: '0.85rem', color: '#999', marginTop: '0.5rem' }}>
+                        <div style={{ fontSize: '0.85rem', color: HOPPER_COLORS.greyMedium, marginTop: '0.5rem' }}>
                           Plan: {userDetails.subscription.plan_type} ({userDetails.subscription.status})
                         </div>
                       )}
                     </div>
 
                     {userDetails.token_usage && (
-                      <div style={{ marginBottom: '1.5rem', padding: '1rem', background: 'rgba(0, 0, 0, 0.2)', borderRadius: '6px' }}>
-                        <div style={{ fontSize: '0.85rem', color: '#999', marginBottom: '0.5rem' }}>Token Usage</div>
-                        <div style={{ fontSize: '0.9rem', color: '#fff', marginBottom: '0.25rem' }}>
-                          This Period: <span style={{ color: '#818cf8', fontWeight: '600' }}>{userDetails.token_usage.tokens_used_this_period}</span>
+                      <div style={{ marginBottom: '1.5rem', padding: '1rem', background: rgba(HOPPER_COLORS.rgb.black, 0.2), borderRadius: '6px' }}>
+                        <div style={{ fontSize: '0.85rem', color: HOPPER_COLORS.greyMedium, marginBottom: '0.5rem' }}>Token Usage</div>
+                        <div style={{ fontSize: '0.9rem', color: HOPPER_COLORS.white, marginBottom: '0.25rem' }}>
+                          This Period: <span style={{ color: HOPPER_COLORS.indigoLight, fontWeight: '600' }}>{userDetails.token_usage.tokens_used_this_period}</span>
                         </div>
-                        <div style={{ fontSize: '0.9rem', color: '#fff' }}>
-                          Total All Time: <span style={{ color: '#818cf8', fontWeight: '600' }}>{userDetails.token_usage.total_tokens_used}</span>
+                        <div style={{ fontSize: '0.9rem', color: HOPPER_COLORS.white }}>
+                          Total All Time: <span style={{ color: HOPPER_COLORS.indigoLight, fontWeight: '600' }}>{userDetails.token_usage.total_tokens_used}</span>
                         </div>
                       </div>
                     )}
 
                     <div style={{ marginBottom: '1.5rem' }}>
-                      <h3 style={{ color: '#fff', fontSize: '1rem', marginBottom: '0.75rem' }}>Grant Tokens</h3>
+                      <h3 style={{ color: HOPPER_COLORS.white, fontSize: '1rem', marginBottom: '0.75rem' }}>Grant Tokens</h3>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                         <input
                           type="number"
@@ -758,10 +759,10 @@ function AdminDashboard() {
                           disabled={loading || !tokenAmount}
                           style={{
                             padding: '0.75rem',
-                            background: loading || !tokenAmount ? 'rgba(255, 255, 255, 0.05)' : 'rgba(99, 102, 241, 0.5)',
-                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            background: loading || !tokenAmount ? rgba(HOPPER_COLORS.rgb.white, 0.05) : rgba(HOPPER_COLORS.rgb.indigo, 0.5),
+                            border: `1px solid ${rgba(HOPPER_COLORS.rgb.white, 0.2)}`,
                             borderRadius: '4px',
-                            color: '#fff',
+                            color: HOPPER_COLORS.white,
                             cursor: loading || !tokenAmount ? 'not-allowed' : 'pointer',
                             fontSize: '0.9rem',
                             fontWeight: '500'
@@ -773,7 +774,7 @@ function AdminDashboard() {
                     </div>
 
                     <div style={{ marginBottom: '1.5rem' }}>
-                      <h3 style={{ color: '#fff', fontSize: '1rem', marginBottom: '0.75rem' }}>Deduct Tokens (Test Overage)</h3>
+                      <h3 style={{ color: HOPPER_COLORS.white, fontSize: '1rem', marginBottom: '0.75rem' }}>Deduct Tokens (Test Overage)</h3>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                         <input
                           type="number"
@@ -794,10 +795,10 @@ function AdminDashboard() {
                           disabled={loading || !deductAmount}
                           style={{
                             padding: '0.75rem',
-                            background: loading || !deductAmount ? 'rgba(255, 255, 255, 0.05)' : 'rgba(239, 68, 68, 0.5)',
-                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            background: loading || !deductAmount ? rgba(HOPPER_COLORS.rgb.white, 0.05) : rgba(HOPPER_COLORS.rgb.adminRed, 0.5),
+                            border: `1px solid ${rgba(HOPPER_COLORS.rgb.white, 0.2)}`,
                             borderRadius: '4px',
-                            color: '#fff',
+                            color: HOPPER_COLORS.white,
                             cursor: loading || !deductAmount ? 'not-allowed' : 'pointer',
                             fontSize: '0.9rem',
                             fontWeight: '500'
@@ -809,22 +810,22 @@ function AdminDashboard() {
                           <div style={{
                             marginTop: '0.75rem',
                             padding: '0.75rem',
-                            background: 'rgba(0, 0, 0, 0.4)',
-                            border: '1px solid rgba(255, 255, 255, 0.1)',
+                            background: rgba(HOPPER_COLORS.rgb.black, 0.4),
+                            border: `1px solid ${rgba(HOPPER_COLORS.rgb.white, 0.1)}`,
                             borderRadius: '4px',
                             fontSize: '0.85rem'
                           }}>
-                            <div style={{ color: '#fff', marginBottom: '0.5rem', fontWeight: '600' }}>Transaction Details:</div>
-                            <div style={{ color: '#ccc', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                            <div style={{ color: HOPPER_COLORS.white, marginBottom: '0.5rem', fontWeight: '600' }}>Transaction Details:</div>
+                            <div style={{ color: HOPPER_COLORS.greyLighter, display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                               <div>Balance: {deductResult.balance_before} → {deductResult.balance_after}</div>
                               <div>Used: {deductResult.tokens_used_before} → {deductResult.tokens_used_after}</div>
                               <div>Included: {deductResult.included_tokens}</div>
-                              <div style={{ color: deductResult.overage_after > 0 ? '#fbbf24' : '#ccc' }}>
+                              <div style={{ color: deductResult.overage_after > 0 ? HOPPER_COLORS.amberYellow : HOPPER_COLORS.greyLighter }}>
                                 Overage: {deductResult.overage_before} → {deductResult.overage_after}
                                 {deductResult.new_overage > 0 && ` (+${deductResult.new_overage} new)`}
                               </div>
                               {deductResult.triggered_meter_event && (
-                                <div style={{ color: '#10b981', fontWeight: '600', marginTop: '0.25rem' }}>
+                                <div style={{ color: HOPPER_COLORS.emeraldGreen, fontWeight: '600', marginTop: '0.25rem' }}>
                                   ✅ Meter event triggered for {deductResult.new_overage} overage tokens
                                 </div>
                               )}
@@ -835,7 +836,7 @@ function AdminDashboard() {
                     </div>
 
                     <div style={{ marginBottom: '1.5rem' }}>
-                      <h3 style={{ color: '#fff', fontSize: '1rem', marginBottom: '0.75rem' }}>Reset User Password</h3>
+                      <h3 style={{ color: HOPPER_COLORS.white, fontSize: '1rem', marginBottom: '0.75rem' }}>Reset User Password</h3>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                         <input
                           type="password"
@@ -851,11 +852,11 @@ function AdminDashboard() {
                           style={{
                             padding: '0.75rem',
                             background: loading || !resetPassword || resetPassword.length < 8
-                              ? 'rgba(255, 255, 255, 0.05)'
-                              : 'rgba(239, 68, 68, 0.4)',
-                            border: '1px solid rgba(239, 68, 68, 0.7)',
+                              ? rgba(HOPPER_COLORS.rgb.white, 0.05)
+                              : rgba(HOPPER_COLORS.rgb.adminRed, 0.4),
+                            border: `1px solid ${rgba(HOPPER_COLORS.rgb.adminRed, 0.7)}`,
                             borderRadius: '4px',
-                            color: '#fff',
+                            color: HOPPER_COLORS.white,
                             cursor: loading || !resetPassword || resetPassword.length < 8 ? 'not-allowed' : 'pointer',
                             fontSize: '0.9rem',
                             fontWeight: '500'
@@ -868,9 +869,9 @@ function AdminDashboard() {
 
                     {/* Plan switching temporarily disabled - requires payment method for paid plans
                     <div style={{ marginBottom: '1.5rem' }}>
-                      <h3 style={{ color: '#fff', fontSize: '1rem', marginBottom: '0.75rem' }}>Switch Plan</h3>
-                      <div style={{ marginBottom: '0.75rem', color: '#999', fontSize: '0.85rem' }}>
-                        Current Plan: <span style={{ color: '#fff', fontWeight: '600', textTransform: 'capitalize' }}>
+                      <h3 style={{ color: HOPPER_COLORS.white, fontSize: '1rem', marginBottom: '0.75rem' }}>Switch Plan</h3>
+                      <div style={{ marginBottom: '0.75rem', color: HOPPER_COLORS.greyMedium, fontSize: '0.85rem' }}>
+                        Current Plan: <span style={{ color: HOPPER_COLORS.white, fontWeight: '600', textTransform: 'capitalize' }}>
                           {userDetails.user?.plan_type || 'N/A'}
                         </span>
                       </div>
@@ -885,13 +886,13 @@ function AdminDashboard() {
                               style={{
                                 padding: '0.5rem 1rem',
                                 background: loading || isCurrentPlan
-                                  ? 'rgba(255, 255, 255, 0.05)'
-                                  : 'rgba(99, 102, 241, 0.5)',
+                                  ? rgba(HOPPER_COLORS.rgb.white, 0.05)
+                                  : rgba(HOPPER_COLORS.rgb.indigo, 0.5),
                                 border: isCurrentPlan 
-                                  ? '1px solid rgba(34, 197, 94, 0.5)' 
-                                  : '1px solid rgba(255, 255, 255, 0.2)',
+                                  ? `1px solid ${rgba(HOPPER_COLORS.rgb.tokenGreen, 0.5)}` 
+                                  : `1px solid ${rgba(HOPPER_COLORS.rgb.white, 0.2)}`,
                                 borderRadius: '4px',
-                                color: isCurrentPlan ? '#22c55e' : '#fff',
+                                color: isCurrentPlan ? HOPPER_COLORS.tokenGreen : HOPPER_COLORS.white,
                                 cursor: loading || isCurrentPlan ? 'not-allowed' : 'pointer',
                                 fontSize: '0.9rem',
                                 fontWeight: '500',
@@ -903,24 +904,24 @@ function AdminDashboard() {
                           );
                         })}
                       </div>
-                      <div style={{ fontSize: '0.75rem', color: '#666', fontStyle: 'italic' }}>
+                      <div style={{ fontSize: '0.75rem', color: HOPPER_COLORS.grey, fontStyle: 'italic' }}>
                         Note: Overage will be invoiced before switching. Tokens will be preserved.
                       </div>
                     </div>
                     */}
 
                     <div style={{ marginBottom: '1.5rem' }}>
-                      <h3 style={{ color: '#fff', fontSize: '1rem', marginBottom: '0.75rem' }}>Unlimited Plan</h3>
+                      <h3 style={{ color: HOPPER_COLORS.white, fontSize: '1rem', marginBottom: '0.75rem' }}>Unlimited Plan</h3>
                       <div style={{ display: 'flex', gap: '0.5rem' }}>
                         <button
                           onClick={() => handleUnlimitedPlan(selectedUser.id, true)}
                           disabled={loading || userDetails.user?.plan_type === 'unlimited'}
                           style={{
                             padding: '0.5rem 1rem',
-                            background: loading || userDetails.user?.plan_type === 'unlimited' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(34, 197, 94, 0.3)',
-                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            background: loading || userDetails.user?.plan_type === 'unlimited' ? rgba(HOPPER_COLORS.rgb.white, 0.05) : rgba(HOPPER_COLORS.rgb.tokenGreen, 0.3),
+                            border: `1px solid ${rgba(HOPPER_COLORS.rgb.white, 0.2)}`,
                             borderRadius: '4px',
-                            color: '#fff',
+                            color: HOPPER_COLORS.white,
                             cursor: loading || userDetails.user?.plan_type === 'unlimited' ? 'not-allowed' : 'pointer',
                             fontSize: '0.9rem'
                           }}
@@ -932,10 +933,10 @@ function AdminDashboard() {
                           disabled={loading || userDetails.user?.plan_type !== 'unlimited'}
                           style={{
                             padding: '0.5rem 1rem',
-                            background: loading || userDetails.user?.plan_type !== 'unlimited' ? 'rgba(255, 255, 255, 0.05)' : 'rgba(239, 68, 68, 0.3)',
-                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            background: loading || userDetails.user?.plan_type !== 'unlimited' ? rgba(HOPPER_COLORS.rgb.white, 0.05) : rgba(HOPPER_COLORS.rgb.adminRed, 0.3),
+                            border: `1px solid ${rgba(HOPPER_COLORS.rgb.white, 0.2)}`,
                             borderRadius: '4px',
-                            color: '#fff',
+                            color: HOPPER_COLORS.white,
                             cursor: loading || userDetails.user?.plan_type !== 'unlimited' ? 'not-allowed' : 'pointer',
                             fontSize: '0.9rem'
                           }}
@@ -952,10 +953,10 @@ function AdminDashboard() {
                           disabled={loading}
                           style={{
                             padding: '0.5rem 1rem',
-                            background: 'rgba(99, 102, 241, 0.3)',
-                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            background: rgba(HOPPER_COLORS.rgb.indigo, 0.3),
+                            border: `1px solid ${rgba(HOPPER_COLORS.rgb.white, 0.2)}`,
                             borderRadius: '4px',
-                            color: '#fff',
+                            color: HOPPER_COLORS.white,
                             cursor: loading ? 'not-allowed' : 'pointer',
                             fontSize: '0.9rem'
                           }}
@@ -967,10 +968,10 @@ function AdminDashboard() {
                           disabled={loading}
                           style={{
                             padding: '0.5rem 1rem',
-                            background: 'rgba(239, 68, 68, 0.3)',
-                            border: '1px solid rgba(239, 68, 68, 0.5)',
+                            background: rgba(HOPPER_COLORS.rgb.adminRed, 0.3),
+                            border: `1px solid ${rgba(HOPPER_COLORS.rgb.adminRed, 0.5)}`,
                             borderRadius: '4px',
-                            color: '#fff',
+                            color: HOPPER_COLORS.white,
                             cursor: loading ? 'not-allowed' : 'pointer',
                             fontSize: '0.9rem'
                           }}
@@ -993,10 +994,10 @@ function AdminDashboard() {
                               {transactions.map(t => (
                                 <tr key={t.id}>
                                   <td>{t.transaction_type}</td>
-                                  <td style={{ color: t.tokens > 0 ? '#4ade80' : '#ef4444' }}>
+                                  <td style={{ color: t.tokens > 0 ? HOPPER_COLORS.emeraldLight : HOPPER_COLORS.adminRed }}>
                                     {t.tokens > 0 ? '+' : ''}{t.tokens}
                                   </td>
-                                  <td style={{ color: '#999' }}>
+                                  <td style={{ color: HOPPER_COLORS.greyMedium }}>
                                     {new Date(t.created_at).toLocaleString()}
                                   </td>
                                 </tr>
@@ -1010,7 +1011,7 @@ function AdminDashboard() {
                 )}
               </>
             ) : (
-              <div style={{ color: '#999', textAlign: 'center', padding: '2rem' }}>
+              <div style={{ color: HOPPER_COLORS.greyMedium, textAlign: 'center', padding: '2rem' }}>
                 Select a user to view details
               </div>
             )}

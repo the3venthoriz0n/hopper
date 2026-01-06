@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import './App.css';
-import { HOPPER_COLORS } from './utils/colors';
+import { HOPPER_COLORS, rgba } from './utils/colors';
 
 function Help() {
   useEffect(() => {
@@ -12,12 +12,12 @@ function Help() {
     <div className="page-container">
       <div className="page-content">
         <h1 style={{ marginBottom: '0.5rem' }}>Help & Support</h1>
-        <p style={{ color: '#999', marginBottom: '2rem', fontSize: '1rem' }}>
+        <p style={{ color: HOPPER_COLORS.greyMedium, marginBottom: '2rem', fontSize: '1rem' }}>
           Everything you need to know about using hopper
         </p>
         
         <section style={{ marginBottom: '3rem' }}>
-          <h2 style={{ marginBottom: '1rem', color: '#8b5cf6' }}>Getting Started</h2>
+          <h2 style={{ marginBottom: '1rem', color: HOPPER_COLORS.purpleViolet }}>Getting Started</h2>
           <ol style={{ lineHeight: '1.8', paddingLeft: '1.5rem' }}>
             <li style={{ marginBottom: '0.75rem' }}><strong>Create an account</strong> or log in to your existing account</li>
             <li style={{ marginBottom: '0.75rem' }}><strong>Connect your platforms</strong> - Click "Connect" for YouTube, TikTok, and/or Instagram to authorize hopper</li>
@@ -29,7 +29,7 @@ function Help() {
         </section>
 
         <section style={{ marginBottom: '3rem' }}>
-          <h2 style={{ marginBottom: '1rem', color: '#8b5cf6' }}>Supported File Types</h2>
+          <h2 style={{ marginBottom: '1rem', color: HOPPER_COLORS.purpleViolet }}>Supported File Types</h2>
           <p style={{ marginBottom: '1rem' }}>Hopper accepts any video file with a standard video MIME type. For best compatibility across all platforms:</p>
           <ul style={{ lineHeight: '1.8', marginBottom: '1rem' }}>
             <li><strong>MP4</strong> - Recommended format, supported by all platforms (YouTube, TikTok, Instagram)</li>
@@ -37,8 +37,8 @@ function Help() {
             <li><strong>WebM</strong> - Supported by TikTok</li>
           </ul>
           <div style={{ 
-            background: 'rgba(255, 193, 7, 0.1)', 
-            border: '1px solid rgba(255, 193, 7, 0.3)', 
+            background: rgba(HOPPER_COLORS.rgb.warning, 0.1), 
+            border: `1px solid ${rgba(HOPPER_COLORS.rgb.warning, 0.3)}`, 
             borderRadius: '6px', 
             padding: '1rem',
             fontSize: '0.9rem'
@@ -48,7 +48,7 @@ function Help() {
         </section>
 
         <section style={{ marginBottom: '3rem' }}>
-          <h2 style={{ marginBottom: '1rem', color: '#8b5cf6' }}>File Size Limitations</h2>
+          <h2 style={{ marginBottom: '1rem', color: HOPPER_COLORS.purpleViolet }}>File Size Limitations</h2>
           <ul style={{ lineHeight: '1.8' }}>
             <li><strong>Maximum file size:</strong> 10 GB per video</li>
             <li>Files are validated during upload to ensure they don't exceed this limit</li>
@@ -59,13 +59,13 @@ function Help() {
         <h2>Features</h2>
         
         <div style={{ 
-          background: 'rgba(139, 92, 246, 0.1)', 
-          border: '1px solid rgba(139, 92, 246, 0.3)', 
+          background: rgba(HOPPER_COLORS.rgb.purpleViolet, 0.1), 
+          border: `1px solid ${rgba(HOPPER_COLORS.rgb.purpleViolet, 0.3)}`, 
           borderRadius: '8px', 
           padding: '1.5rem', 
           marginBottom: '2rem' 
         }}>
-          <h3 style={{ marginTop: 0, color: '#8b5cf6' }}>Template System</h3>
+          <h3 style={{ marginTop: 0, color: HOPPER_COLORS.purpleViolet }}>Template System</h3>
           <p>Create dynamic titles and descriptions using placeholders that are automatically replaced when videos are uploaded.</p>
           
           <h4 style={{ marginTop: '1.5rem', marginBottom: '0.75rem' }}>Available Placeholders</h4>
@@ -85,7 +85,7 @@ function Help() {
 
           <h4 style={{ marginTop: '1.5rem', marginBottom: '0.75rem' }}>Examples</h4>
           <div style={{ 
-            background: 'rgba(0, 0, 0, 0.2)', 
+            background: rgba(HOPPER_COLORS.rgb.black, 0.2), 
             padding: '1rem', 
             borderRadius: '6px', 
             marginBottom: '1rem',
@@ -95,7 +95,7 @@ function Help() {
           }}>
             <div style={{ marginBottom: '0.75rem' }}>
               <strong>Template:</strong><br />
-              <code style={{ color: '#8b5cf6' }}>{'{random}'} {'{filename}'} - {'{random}'} Video</code>
+              <code style={{ color: HOPPER_COLORS.purpleViolet }}>{'{random}'} {'{filename}'} - {'{random}'} Video</code>
             </div>
             <div style={{ marginBottom: '0.75rem' }}>
               <strong>Wordbank:</strong> ["amazing", "epic", "incredible", "awesome"]<br />
@@ -103,12 +103,12 @@ function Help() {
             </div>
             <div>
               <strong>Result:</strong><br />
-              <code style={{ color: '#22c55e' }}>"epic my_video - incredible Video"</code>
+              <code style={{ color: HOPPER_COLORS.tokenGreen }}>"epic my_video - incredible Video"</code>
             </div>
           </div>
 
           <div style={{ 
-            background: 'rgba(0, 0, 0, 0.2)', 
+            background: rgba(HOPPER_COLORS.rgb.black, 0.2), 
             padding: '1rem', 
             borderRadius: '6px',
             fontFamily: 'monospace',
@@ -117,15 +117,15 @@ function Help() {
           }}>
             <div style={{ marginBottom: '0.75rem' }}>
               <strong>Description Template:</strong><br />
-              <code style={{ color: '#8b5cf6' }}>Check out this {'{random}'} {'{filename}'}! This is a {'{random}'} video you'll love.</code>
+              <code style={{ color: HOPPER_COLORS.purpleViolet }}>Check out this {'{random}'} {'{filename}'}! This is a {'{random}'} video you'll love.</code>
             </div>
             <div>
               <strong>Result:</strong><br />
-              <code style={{ color: '#22c55e' }}>"Check out this amazing my_video! This is a epic video you'll love."</code>
+              <code style={{ color: HOPPER_COLORS.tokenGreen }}>"Check out this amazing my_video! This is a epic video you'll love."</code>
             </div>
           </div>
 
-          <p style={{ marginTop: '1.5rem', marginBottom: 0, fontSize: '0.9rem', color: '#999' }}>
+          <p style={{ marginTop: '1.5rem', marginBottom: 0, fontSize: '0.9rem', color: HOPPER_COLORS.greyMedium }}>
             <strong>Tip:</strong> Set different templates for each platform (YouTube, TikTok, Instagram) to customize how your content appears on each platform.
           </p>
         </div>
@@ -151,7 +151,7 @@ function Help() {
         </ul>
 
         <section style={{ marginBottom: '3rem' }}>
-          <h2 style={{ marginBottom: '1rem', color: '#8b5cf6' }}>Token System</h2>
+          <h2 style={{ marginBottom: '1rem', color: HOPPER_COLORS.purpleViolet }}>Token System</h2>
           <p style={{ marginBottom: '1rem' }}>Hopper uses a token-based system to track usage:</p>
           <ul style={{ lineHeight: '1.8' }}>
             <li>Tokens are calculated based on video file size</li>
@@ -163,16 +163,16 @@ function Help() {
         </section>
 
         <section style={{ marginBottom: '3rem' }}>
-          <h2 style={{ marginBottom: '1rem', color: '#8b5cf6' }}>Platform-Specific Notes</h2>
+          <h2 style={{ marginBottom: '1rem', color: HOPPER_COLORS.purpleViolet }}>Platform-Specific Notes</h2>
           
           <div style={{ 
-            background: 'rgba(255, 87, 34, 0.1)', 
-            border: '1px solid rgba(255, 87, 34, 0.3)', 
+            background: rgba(HOPPER_COLORS.rgb.orange, 0.1), 
+            border: `1px solid ${rgba(HOPPER_COLORS.rgb.orange, 0.3)}`, 
             borderRadius: '8px', 
             padding: '1.5rem', 
             marginBottom: '1.5rem' 
           }}>
-            <h3 style={{ marginTop: 0, color: '#ff5722' }}>YouTube</h3>
+            <h3 style={{ marginTop: 0, color: HOPPER_COLORS.orange }}>YouTube</h3>
             <ul style={{ lineHeight: '1.8', marginBottom: 0 }}>
               <li>Title limit: 100 characters</li>
               <li>Supports public, private, and unlisted visibility</li>
@@ -181,21 +181,21 @@ function Help() {
           </div>
 
           <div style={{ 
-            background: 'rgba(0, 242, 234, 0.1)', 
-            border: '1px solid rgba(0, 242, 234, 0.3)', 
+            background: rgba(HOPPER_COLORS.rgb.cyan, 0.1), 
+            border: `1px solid ${rgba(HOPPER_COLORS.rgb.cyan, 0.3)}`, 
             borderRadius: '8px', 
             padding: '1.5rem', 
             marginBottom: '1.5rem' 
           }}>
-            <h3 style={{ marginTop: 0, color: '#00f2ea' }}>TikTok</h3>
+            <h3 style={{ marginTop: 0, color: HOPPER_COLORS.cyan }}>TikTok</h3>
             <ul style={{ lineHeight: '1.8', marginBottom: '0.75rem' }}>
               <li>Title limit: 2,200 characters</li>
               <li>Supports public, private, and friends-only privacy levels</li>
               <li>Can control comments, duet, and stitch settings</li>
             </ul>
             <div style={{ 
-              background: 'rgba(255, 193, 7, 0.1)', 
-              border: '1px solid rgba(255, 193, 7, 0.3)', 
+              background: rgba(HOPPER_COLORS.rgb.warning, 0.1), 
+              border: `1px solid ${rgba(HOPPER_COLORS.rgb.warning, 0.3)}`, 
               borderRadius: '6px', 
               padding: '0.75rem',
               fontSize: '0.9rem'
@@ -205,12 +205,12 @@ function Help() {
           </div>
 
           <div style={{ 
-            background: 'rgba(225, 48, 108, 0.1)', 
-            border: '1px solid rgba(225, 48, 108, 0.3)', 
+            background: rgba(HOPPER_COLORS.rgb.instagramPinkAlt, 0.1), 
+            border: `1px solid ${rgba(HOPPER_COLORS.rgb.instagramPinkAlt, 0.3)}`, 
             borderRadius: '8px', 
             padding: '1.5rem' 
           }}>
-            <h3 style={{ marginTop: 0, color: '#e1306c' }}>Instagram</h3>
+            <h3 style={{ marginTop: 0, color: HOPPER_COLORS.instagramPinkAlt }}>Instagram</h3>
             <ul style={{ lineHeight: '1.8', marginBottom: 0 }}>
               <li>Caption limit: 2,200 characters</li>
               <li>Supports location tagging</li>
@@ -220,7 +220,7 @@ function Help() {
         </section>
 
         <section style={{ marginBottom: '3rem' }}>
-          <h2 style={{ marginBottom: '1rem', color: '#8b5cf6' }}>Troubleshooting</h2>
+          <h2 style={{ marginBottom: '1rem', color: HOPPER_COLORS.purpleViolet }}>Troubleshooting</h2>
           
           <div style={{ marginBottom: '1.5rem' }}>
             <h3 style={{ marginBottom: '0.75rem' }}>Upload Failures</h3>
@@ -251,10 +251,10 @@ function Help() {
         </section>
 
         <section style={{ marginBottom: '3rem' }}>
-          <h2 style={{ marginBottom: '1rem', color: '#8b5cf6' }}>Contact & Support</h2>
+          <h2 style={{ marginBottom: '1rem', color: HOPPER_COLORS.purpleViolet }}>Contact & Support</h2>
           <p style={{ marginBottom: '1rem' }}>For support, questions, or feedback:</p>
           <ul style={{ lineHeight: '1.8' }}>
-            <li><strong>GitHub:</strong> <a href="https://github.com/the3venthoriz0n/hopper" target="_blank" rel="noopener noreferrer" style={{ color: '#0066cc' }}>https://github.com/the3venthoriz0n/hopper</a></li>
+            <li><strong>GitHub:</strong> <a href="https://github.com/the3venthoriz0n/hopper" target="_blank" rel="noopener noreferrer" style={{ color: HOPPER_COLORS.link }}>https://github.com/the3venthoriz0n/hopper</a></li>
             <li><strong>Issues:</strong> Report bugs or request features via GitHub Issues</li>
           </ul>
         </section>

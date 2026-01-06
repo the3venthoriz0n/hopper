@@ -31,6 +31,18 @@ export const HOPPER_COLORS = {
   indigo: '#6366f1',
   indigoLight: '#818cf8',
   purple: '#a855f7',
+  purpleViolet: '#8b5cf6', // Purple/violet used in Help page
+  emeraldGreen: '#10b981', // Emerald green for success indicators
+  emeraldLight: '#4ade80', // Light emerald green
+  orange: '#ff5722', // Deep orange
+  cyan: '#00f2ea', // Cyan for TikTok
+  instagramPinkAlt: '#e1306c', // Alternative Instagram pink
+  veryDark: '#0a0a0a', // Very dark/black
+  amberYellow: '#fbbf24', // Amber/yellow
+  greyMedium: '#999999', // Medium grey
+  greyLightText: '#e0e0e0', // Light grey text
+  greyLighter: '#cccccc', // Lighter grey
+  greyDark: '#444444', // Dark grey
 
   // Platform-specific colors
   youtubeRed: '#FF0000',
@@ -59,14 +71,26 @@ export const HOPPER_COLORS = {
     tokenGreen: '34, 197, 94',
     lightGreyBg: '245, 245, 245',
     errorDark: '220, 38, 38',
-    indigo: '99, 102, 241',
-    indigoLight: '129, 140, 248',
-    purple: '168, 85, 247',
-    youtubeRed: '255, 0, 0',
-    tiktokBlack: '0, 0, 0',
-    instagramPink: '228, 64, 95',
-  }
-};
+        indigo: '99, 102, 241',
+        indigoLight: '129, 140, 248',
+        purple: '168, 85, 247',
+        purpleViolet: '139, 92, 246',
+        emeraldGreen: '16, 185, 129',
+        emeraldLight: '74, 222, 128',
+        orange: '255, 87, 34',
+        cyan: '0, 242, 234',
+        instagramPinkAlt: '225, 48, 108',
+        veryDark: '10, 10, 10',
+        amberYellow: '251, 191, 36',
+        greyMedium: '153, 153, 153',
+        greyLightText: '224, 224, 224',
+        greyLighter: '204, 204, 204',
+        greyDark: '68, 68, 68',
+        youtubeRed: '255, 0, 0',
+        tiktokBlack: '0, 0, 0',
+        instagramPink: '228, 64, 95',
+      }
+    };
 
 /**
  * Helper function for rgba colors with opacity
