@@ -611,12 +611,7 @@ function AdminDashboard() {
 
         <div className="admin-grid">
           {/* Users List */}
-          <div style={{
-            background: 'rgba(255, 255, 255, 0.05)',
-            borderRadius: '8px',
-            padding: '1.5rem',
-            border: '1px solid rgba(255, 255, 255, 0.1)'
-          }}>
+          <div className="admin-card-panel">
             <h2 style={{ color: '#fff', marginTop: 0, marginBottom: '1rem' }}>Users</h2>
             
             <form onSubmit={handleSearch} style={{ marginBottom: '1rem' }}>
@@ -632,14 +627,14 @@ function AdminDashboard() {
 
             {loading && <div style={{ color: '#999', textAlign: 'center', padding: '1rem' }}>Loading...</div>}
             
-            <div className="admin-table-wrapper" style={{ maxHeight: '600px', overflowY: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '500px' }}>
+            <div className="admin-table-wrapper">
+              <table className="admin-table">
                 <thead>
-                  <tr style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.1)' }}>
-                    <th style={{ textAlign: 'left', padding: '0.5rem', color: '#999', fontSize: '0.85rem' }}>ID</th>
-                    <th style={{ textAlign: 'left', padding: '0.5rem', color: '#999', fontSize: '0.85rem' }}>Email</th>
-                    <th style={{ textAlign: 'left', padding: '0.5rem', color: '#999', fontSize: '0.85rem' }}>Plan</th>
-                    <th style={{ textAlign: 'left', padding: '0.5rem', color: '#999', fontSize: '0.85rem' }}>Admin</th>
+                  <tr>
+                    <th>ID</th>
+                    <th>Email</th>
+                    <th>Plan</th>
+                    <th>Admin</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -647,28 +642,14 @@ function AdminDashboard() {
                     <tr 
                       key={user.id}
                       onClick={() => loadUserDetails(user.id)}
-                      style={{
-                        cursor: 'pointer',
-                        borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
-                        background: selectedUser?.id === user.id ? 'rgba(99, 102, 241, 0.2)' : 'transparent'
-                      }}
-                      onMouseEnter={(e) => {
-                        if (selectedUser?.id !== user.id) {
-                          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
-                        }
-                      }}
-                      onMouseLeave={(e) => {
-                        if (selectedUser?.id !== user.id) {
-                          e.currentTarget.style.background = 'transparent';
-                        }
-                      }}
+                      className={selectedUser?.id === user.id ? 'selected' : ''}
                     >
-                      <td style={{ padding: '0.75rem', fontSize: '0.9rem' }}>{user.id}</td>
-                      <td style={{ padding: '0.75rem', fontSize: '0.9rem' }}>{user.email}</td>
-                      <td style={{ padding: '0.75rem', fontSize: '0.9rem', textTransform: 'capitalize' }}>
+                      <td>{user.id}</td>
+                      <td>{user.email}</td>
+                      <td style={{ textTransform: 'capitalize' }}>
                         {user.plan_type || 'N/A'}
                       </td>
-                      <td style={{ padding: '0.75rem', fontSize: '0.9rem' }}>
+                      <td>
                         {user.is_admin ? '✅' : '❌'}
                       </td>
                     </tr>
@@ -678,19 +659,11 @@ function AdminDashboard() {
             </div>
 
             {total > limit && (
-              <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className="admin-pagination">
                 <button
                   onClick={() => setPage(p => Math.max(1, p - 1))}
                   disabled={page === 1}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    background: page === 1 ? 'rgba(255, 255, 255, 0.05)' : 'rgba(99, 102, 241, 0.3)',
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
-                    borderRadius: '4px',
-                    color: '#fff',
-                    cursor: page === 1 ? 'not-allowed' : 'pointer',
-                    fontSize: '0.9rem'
-                  }}
+                  className="admin-pagination-button"
                 >
                   Previous
                 </button>
@@ -700,15 +673,7 @@ function AdminDashboard() {
                 <button
                   onClick={() => setPage(p => Math.min(Math.ceil(total / limit), p + 1))}
                   disabled={page >= Math.ceil(total / limit)}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    background: page >= Math.ceil(total / limit) ? 'rgba(255, 255, 255, 0.05)' : 'rgba(99, 102, 241, 0.3)',
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
-                    borderRadius: '4px',
-                    color: '#fff',
-                    cursor: page >= Math.ceil(total / limit) ? 'not-allowed' : 'pointer',
-                    fontSize: '0.9rem'
-                  }}
+                  className="admin-pagination-button"
                 >
                   Next
                 </button>
@@ -717,12 +682,7 @@ function AdminDashboard() {
           </div>
 
           {/* User Details */}
-          <div style={{
-            background: 'rgba(255, 255, 255, 0.05)',
-            borderRadius: '8px',
-            padding: '1.5rem',
-            border: '1px solid rgba(255, 255, 255, 0.1)'
-          }}>
+          <div className="admin-card-panel">
             {selectedUser ? (
               <>
                 <h2 style={{ color: '#fff', marginTop: 0, marginBottom: '1rem' }}>
@@ -1020,23 +980,23 @@ function AdminDashboard() {
                       </div>
 
                       {showTransactions && transactions.length > 0 && (
-                        <div className="admin-table-wrapper" style={{ maxHeight: '300px', overflowY: 'auto' }}>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', minWidth: '400px' }}>
+                        <div className="admin-table-wrapper" style={{ maxHeight: '300px' }}>
+                          <table className="admin-table" style={{ fontSize: '0.85rem', minWidth: '400px' }}>
                             <thead>
-                              <tr style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.1)' }}>
-                                <th style={{ textAlign: 'left', padding: '0.5rem', color: '#999' }}>Type</th>
-                                <th style={{ textAlign: 'left', padding: '0.5rem', color: '#999' }}>Tokens</th>
-                                <th style={{ textAlign: 'left', padding: '0.5rem', color: '#999' }}>Date</th>
+                              <tr>
+                                <th>Type</th>
+                                <th>Tokens</th>
+                                <th>Date</th>
                               </tr>
                             </thead>
                             <tbody>
                               {transactions.map(t => (
-                                <tr key={t.id} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
-                                  <td style={{ padding: '0.5rem' }}>{t.transaction_type}</td>
-                                  <td style={{ padding: '0.5rem', color: t.tokens > 0 ? '#4ade80' : '#ef4444' }}>
+                                <tr key={t.id}>
+                                  <td>{t.transaction_type}</td>
+                                  <td style={{ color: t.tokens > 0 ? '#4ade80' : '#ef4444' }}>
                                     {t.tokens > 0 ? '+' : ''}{t.tokens}
                                   </td>
-                                  <td style={{ padding: '0.5rem', color: '#999' }}>
+                                  <td style={{ color: '#999' }}>
                                     {new Date(t.created_at).toLocaleString()}
                                   </td>
                                 </tr>

@@ -2482,11 +2482,18 @@ button:disabled {
   background: var(--bg-primary);
   color: var(--text-primary);
   padding: var(--spacing-xl);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  --admin-container-padding: var(--spacing-xl);
 }
 
 .admin-wrapper {
   max-width: 1400px;
   margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .admin-header {
@@ -2626,10 +2633,158 @@ button:disabled {
   color: var(--text-primary);
 }
 
+/* Admin card variants */
+.admin-card-panel {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 1.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  --admin-card-padding: 1.5rem;
+}
+
+/* Admin grid layout - responsive */
+.admin-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* Table scroll wrapper for mobile */
+.admin-table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-height: 600px;
+  overflow-y: auto;
+  width: 100%;
+  box-sizing: border-box;
+  /* Prevent horizontal scroll from causing page overflow */
+  margin-left: 0;
+  margin-right: 0;
+  /* Smooth scrolling */
+  scroll-behavior: smooth;
+}
+
+/* Custom scrollbar styling for desktop */
+@media (min-width: 769px) {
+  .admin-table-wrapper {
+    /* Webkit browsers (Chrome, Safari, Edge) */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.05);
+  }
+  
+  .admin-table-wrapper::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+  }
+  
+  .admin-table-wrapper::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+  }
+  
+  .admin-table-wrapper::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    transition: background 0.2s ease;
+  }
+  
+  .admin-table-wrapper::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+  }
+  
+  .admin-table-wrapper::-webkit-scrollbar-corner {
+    background: rgba(255, 255, 255, 0.05);
+  }
+}
+
+/* Admin table styles */
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 500px;
+  box-sizing: border-box;
+  table-layout: auto;
+}
+
+.admin-table thead tr {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.admin-table th {
+  text-align: left;
+  padding: 0.5rem;
+  color: #999;
+  font-size: 0.85rem;
+}
+
+.admin-table td {
+  padding: 0.75rem;
+  font-size: 0.9rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.admin-table tbody tr {
+  cursor: pointer;
+}
+
+.admin-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.admin-table tbody tr.selected {
+  background: rgba(99, 102, 241, 0.2);
+}
+
+/* Admin pagination */
+.admin-pagination {
+  margin-top: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.admin-pagination-button {
+  padding: 0.5rem 1rem;
+  background: rgba(99, 102, 241, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.admin-pagination-button:disabled {
+  background: rgba(255, 255, 255, 0.05);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.admin-pagination-button:not(:disabled):hover {
+  background: rgba(99, 102, 241, 0.4);
+}
+
 /* Admin Dashboard Mobile Responsive Styles */
 @media (max-width: 768px) {
   .admin-container {
     padding: 1rem;
+    width: 100%;
+    max-width: 100vw;
+    --admin-container-padding: 1rem;
+  }
+  
+  .admin-wrapper {
+    width: 100%;
+    max-width: 100%;
   }
 
   .admin-header {
@@ -2643,6 +2798,10 @@ button:disabled {
   }
 
   .admin-card {
+    padding: 1rem;
+  }
+
+  .admin-card-panel {
     padding: 1rem;
   }
 
@@ -2673,11 +2832,48 @@ button:disabled {
   .admin-button-danger {
     width: 100%;
   }
+
+  .admin-grid {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+
+  .admin-card-panel {
+    --admin-card-padding: 1rem;
+    overflow: visible;
+  }
+  
+  .admin-table-wrapper {
+    margin-left: calc(-1 * var(--admin-card-padding, 1rem));
+    margin-right: calc(-1 * var(--admin-card-padding, 1rem));
+    padding-left: var(--admin-card-padding, 1rem);
+    padding-right: var(--admin-card-padding, 1rem);
+    width: calc(100% + 2 * var(--admin-card-padding, 1rem));
+    max-width: calc(100vw - 2 * var(--admin-container-padding, 1rem));
+    box-sizing: border-box;
+  }
+
+  .admin-pagination {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-pagination-button {
+    width: 100%;
+  }
 }
 
 @media (max-width: 480px) {
   .admin-container {
     padding: 0.75rem;
+    width: 100%;
+    max-width: 100vw;
+    --admin-container-padding: 0.75rem;
+  }
+  
+  .admin-wrapper {
+    width: 100%;
+    max-width: 100%;
   }
 
   .admin-title {
@@ -2688,35 +2884,30 @@ button:disabled {
     padding: 0.75rem;
   }
 
+  .admin-card-panel {
+    padding: 0.75rem;
+    --admin-card-padding: 0.75rem;
+  }
+
   .admin-card-title {
     font-size: 1.1rem;
   }
-}
 
-/* Admin grid layout - responsive */
-.admin-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2rem;
-}
-
-@media (max-width: 768px) {
-  .admin-grid {
-    grid-template-columns: 1fr;
-    gap: 1.5rem;
+  .admin-table {
+    min-width: 400px;
   }
-}
-
-/* Table scroll wrapper for mobile */
-.admin-table-wrapper {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
-@media (max-width: 768px) {
+  
+  .admin-card-panel {
+    --admin-card-padding: 0.75rem;
+  }
+  
   .admin-table-wrapper {
-    margin: 0 -1rem;
-    padding: 0 1rem;
+    margin-left: calc(-1 * var(--admin-card-padding, 0.75rem));
+    margin-right: calc(-1 * var(--admin-card-padding, 0.75rem));
+    padding-left: var(--admin-card-padding, 0.75rem);
+    padding-right: var(--admin-card-padding, 0.75rem);
+    width: calc(100% + 2 * var(--admin-card-padding, 0.75rem));
+    max-width: calc(100vw - 2 * var(--admin-container-padding, 0.75rem));
   }
 }
 
