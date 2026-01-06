@@ -198,7 +198,17 @@ async def status_checker_task():
                                     status_logger.debug(f"Instagram container {instagram_container_id} finished for video {video.id}")
                                 
                                 elif status_code == "ERROR":
-                                    # Container processing failed
+                                    # ROOT CAUSE FIX: Respect active upload process - only mark as failed if truly stuck
+                                    # Check 1: If video already has instagram_id, upload succeeded - don't mark as failed
+                                    instagram_id = custom_settings.get("instagram_id")
+                                    if instagram_id:
+                                        status_logger.debug(
+                                            f"Ignoring ERROR status for video {video.id} - already published successfully "
+                                            f"(instagram_id: {instagram_id})"
+                                        )
+                                        continue
+                                    
+                                    # Container processing failed and video wasn't published - mark as failed
                                     old_status = video.status
                                     update_video(video.id, video.user_id, db=db, status="failed", error="Instagram container processing failed")
                                     
@@ -215,7 +225,16 @@ async def status_checker_task():
                                     status_logger.warning(f"Instagram container {instagram_container_id} failed for video {video.id}")
                                 
                                 elif status_code == "EXPIRED":
-                                    # Container expired
+                                    # ROOT CAUSE FIX: Respect active upload process - only mark as failed if truly stuck
+                                    instagram_id = custom_settings.get("instagram_id")
+                                    if instagram_id:
+                                        status_logger.debug(
+                                            f"Ignoring EXPIRED status for video {video.id} - already published successfully "
+                                            f"(instagram_id: {instagram_id})"
+                                        )
+                                        continue
+                                    
+                                    # Container expired and video wasn't published - mark as failed
                                     old_status = video.status
                                     update_video(video.id, video.user_id, db=db, status="failed", error="Instagram container expired (not published within 24 hours)")
                                     

@@ -1809,9 +1809,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         break;
         
       case 'upload_progress':
-        // Update upload progress (if we track it in state)
-        // For now, just reload videos to get updated status
-        loadVideos();
+        // ROOT CAUSE FIX: Update progress directly in videos array (real-time updates via WebSocket)
+        // Backend is source of truth - update state immediately when WebSocket event arrives
+        setVideos(prev => prev.map(v => 
+          v.id === payload.video_id
+            ? { ...v, upload_progress: payload.progress_percent }
+            : v
+        ));
         break;
         
       case 'settings_changed':
