@@ -106,7 +106,7 @@ def test_public_endpoint_accessible(client):
 )
 def test_user_registration(client):
     """Test user registration with valid data"""
-    test_email = f"hopper-unit-test_{int(time.time())}@hopper-unit-test.com"
+    test_email = f"delivered+registration_{int(time.time())}@resend.dev"
     response = register_user(client, test_email, "SecurePassword123!")
     
     assert response.status_code in [200, 400]
@@ -126,7 +126,7 @@ def test_login_with_invalid_credentials(client):
     """Test that login fails with invalid credentials"""
     response = client.post(
         f"{BASE_URL}/api/auth/login",
-        json={"email": "nonexistent@hopper-unit-test.com", "password": "wrong_password"},
+        json={"email": "delivered+invalid@resend.dev", "password": "wrong_password"},
         timeout=5.0
     )
     assert response.status_code == 401
@@ -138,7 +138,7 @@ def test_login_with_invalid_credentials(client):
 )
 def test_session_cookie_set_on_login(client):
     """Test that login sets session cookie (requires email verification)"""
-    test_email = f"hopper-unit-test-login_{int(time.time())}@hopper-unit-test.com"
+    test_email = f"delivered+login_{int(time.time())}@resend.dev"
     
     # Register user
     response = register_user(client, test_email, "TestPassword123!")
