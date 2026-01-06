@@ -3140,13 +3140,22 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     <input 
                       type="number"
                       min="1"
-                      value={globalSettings.schedule_interval_value}
+                      value={globalSettings.schedule_interval_value || ''}
                       onChange={(e) => {
-                        const val = parseInt(e.target.value) || 1;
-                        setGlobalSettings({...globalSettings, schedule_interval_value: val});
+                        const val = e.target.value;
+                        // Allow empty string during typing, only validate on blur
+                        if (val === '' || val === '-') {
+                          setGlobalSettings({...globalSettings, schedule_interval_value: null});
+                        } else {
+                          const numVal = parseInt(val);
+                          if (!isNaN(numVal) && numVal >= 1) {
+                            setGlobalSettings({...globalSettings, schedule_interval_value: numVal});
+                          }
+                        }
                       }}
                       onBlur={(e) => {
                         const val = parseInt(e.target.value) || 1;
+                        setGlobalSettings({...globalSettings, schedule_interval_value: val});
                         updateGlobalSettings('schedule_interval_value', val);
                       }}
                       className="input-number"
@@ -4650,7 +4659,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       
       {/* Edit Video Modal */}
       {editingVideo && (
-        <div className="modal-overlay" onClick={closeEditModal}>
+        <div className="modal-overlay">
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h2>Edit Video Settings</h2>

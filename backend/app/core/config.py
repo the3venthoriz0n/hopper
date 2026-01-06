@@ -119,6 +119,5 @@ TIKTOK_STATUS_URL = f"{settings.TIKTOK_API_BASE}/post/publish/video/status/fetch
 
 INSTAGRAM_SCOPES = [
     "instagram_business_basic",
-    "instagram_business_content_publish",
-    "instagram_business_manage_comments"
+    "instagram_business_content_publish"
 ]
