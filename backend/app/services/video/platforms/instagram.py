@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional
 
 from app.core.config import INSTAGRAM_GRAPH_API_BASE, settings
 from app.db.helpers import get_user_videos, get_user_settings, get_oauth_token, update_video
-from app.db.redis import set_upload_progress, delete_upload_progress
+from app.db.redis import set_upload_progress, delete_upload_progress, get_upload_progress
 from app.services.token_service import check_tokens_available, get_token_balance, deduct_tokens, calculate_tokens_from_bytes
 from app.utils.encryption import decrypt
 from app.utils.templates import get_video_title
@@ -106,6 +106,9 @@ async def _poll_container_status(
             if status_code == "FINISHED":
                 instagram_logger.info(f"Video processed successfully, ready to publish")
                 set_upload_progress(user_id, video_id, 80)
+                # Publish final progress update
+                from app.services.event_service import publish_upload_progress
+                await publish_upload_progress(user_id, video_id, "instagram", 80)
                 return status_code
             elif status_code == "ERROR":
                 raise Exception(f"Instagram video processing failed with ERROR status")
@@ -120,6 +123,12 @@ async def _poll_container_status(
             # Update progress during polling (40% to 80% range)
             progress = 40 + int((attempt / max_retries) * 40)
             set_upload_progress(user_id, video_id, progress)
+            
+            # Publish WebSocket progress event every 10% change
+            previous_progress = get_upload_progress(user_id, video_id) or 0
+            if progress - previous_progress >= 10 or attempt == 0:
+                from app.services.event_service import publish_upload_progress
+                await publish_upload_progress(user_id, video_id, "instagram", progress)
     
     raise Exception(f"Video processing timeout after {max_retries * retry_delay} seconds")
 

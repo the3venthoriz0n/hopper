@@ -85,16 +85,35 @@ async def publish_video_added(user_id: int, video_dict: dict) -> None:
     )
 
 
-async def publish_video_status_changed(user_id: int, video_id: int, old_status: str, new_status: str) -> None:
-    """Publish video_status_changed event"""
+async def publish_video_status_changed(
+    user_id: int, 
+    video_id: int, 
+    old_status: str, 
+    new_status: str,
+    video_dict: Optional[Dict[str, Any]] = None
+) -> None:
+    """Publish video_status_changed event
+    
+    Args:
+        user_id: User ID
+        video_id: Video ID
+        old_status: Previous status
+        new_status: New status
+        video_dict: Optional full video data (backend is source of truth - should always be provided)
+    """
+    payload = {
+        "video_id": video_id,
+        "old_status": old_status,
+        "new_status": new_status
+    }
+    # Include full video data if provided (backend is source of truth)
+    if video_dict:
+        payload["video"] = video_dict
+    
     await publish_event(
         user_id,
         "video_status_changed",
-        {
-            "video_id": video_id,
-            "old_status": old_status,
-            "new_status": new_status
-        }
+        payload
     )
 
 

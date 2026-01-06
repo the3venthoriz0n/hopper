@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Routes, Route, Link, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import Cookies from 'js-cookie';
 import axios from 'axios';
@@ -564,7 +564,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
   const [showInstagramSettings, setShowInstagramSettings] = useState(false);
   const [showAccountSettings, setShowAccountSettings] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
   const [editingVideo, setEditingVideo] = useState(null);
   const [draggedVideo, setDraggedVideo] = useState(null);
   const [editTitleLength, setEditTitleLength] = useState(0);
@@ -1352,6 +1351,60 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     }
   }, [API, user, loadSubscription]);
 
+  // Derive isUploading from video state (single source of truth)
+  const isUploading = useMemo(() => {
+    return videos.some(v => 
+      v.status === 'uploading' && 
+      !(typeof v.id === 'string' && v.id.startsWith('temp-'))
+    );
+  }, [videos]);
+
+  // ROOT CAUSE FIX: Derive message from videos array (single source of truth)
+  // Message state syncs with actual video status changes via WebSocket
+  // Manual messages (login, logout, etc.) are preserved via message state
+  const derivedMessage = useMemo(() => {
+    const uploadingCount = videos.filter(v => 
+      v.status === 'uploading' && 
+      !(typeof v.id === 'string' && v.id.startsWith('temp-'))
+    ).length;
+    
+    const uploadedCount = videos.filter(v => 
+      v.status === 'uploaded' || v.status === 'completed'
+    ).length;
+    
+    const failedCount = videos.filter(v => v.status === 'failed').length;
+    
+    // Priority 1: If videos are uploading, show upload status (overrides everything)
+    if (uploadingCount > 0) {
+      return `⏳ Uploading ${uploadingCount} video(s)...`;
+    }
+    
+    // Priority 2: If we have manual message (login, logout, scheduling, etc.), keep it
+    // Manual messages are for non-upload actions that don't derive from video status
+    if (message && 
+        !message.includes('Uploading') && 
+        !message.includes('Uploaded') && 
+        !message.includes('failed') &&
+        !message.includes('⏳ Uploading')) {
+      return message;
+    }
+    
+    // Priority 3: Show aggregate status when uploads complete (only if no manual message)
+    // Only show if we have videos and they're in final states
+    if (videos.length > 0) {
+      if (uploadedCount > 0 && failedCount === 0) {
+        return `✅ ${uploadedCount} video(s) uploaded successfully!`;
+      } else if (failedCount > 0 && uploadedCount === 0) {
+        return `❌ ${failedCount} video(s) failed to upload`;
+      } else if (uploadedCount > 0 && failedCount > 0) {
+        return `⚠️ ${uploadedCount} video(s) uploaded, ${failedCount} failed`;
+      }
+    }
+    
+    // Priority 4: Keep manual messages for non-upload actions (scheduling, errors, etc.)
+    return message;
+  }, [videos, message]);
+
   // Calculate tokens required for a file (1 token = 10MB)
   // Calculate total token cost for all queued videos (uses backend-calculated tokens_required)
   const calculateQueueTokenCost = () => {
@@ -1620,12 +1673,62 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         break;
         
       case 'video_status_changed':
-        // Update video status in state
-        setVideos(prev => prev.map(v => 
-          v.id === payload.video_id 
-            ? { ...v, status: payload.new_status }
-            : v
-        ));
+        // Backend is source of truth - use full video data if provided
+        if (payload.video) {
+          // Full video data provided - replace entire object (backend is source of truth)
+          setVideos(prev => {
+            const updated = prev.map(v => 
+              v.id === payload.video_id 
+                ? payload.video  // Replace with full data from backend
+                : v
+            );
+            
+            // ROOT CAUSE FIX: Sync message state when status changes
+            // Clear "Uploading..." message when all uploads complete
+            const hasUploading = updated.some(v => 
+              v.status === 'uploading' && 
+              !(typeof v.id === 'string' && v.id.startsWith('temp-'))
+            );
+            
+            if (!hasUploading) {
+              // All uploads done - clear upload-related messages
+              setMessage(prevMsg => {
+                if (prevMsg && (prevMsg.includes('Uploading') || prevMsg.includes('⏳'))) {
+                  return ''; // Clear upload messages
+                }
+                return prevMsg; // Keep other messages
+              });
+            }
+            
+            return updated;
+          });
+        } else {
+          // Backward compatibility - only update status if full data not provided
+          setVideos(prev => {
+            const updated = prev.map(v => 
+              v.id === payload.video_id 
+                ? { ...v, status: payload.new_status }
+                : v
+            );
+            
+            // ROOT CAUSE FIX: Sync message state when status changes
+            const hasUploading = updated.some(v => 
+              v.status === 'uploading' && 
+              !(typeof v.id === 'string' && v.id.startsWith('temp-'))
+            );
+            
+            if (!hasUploading) {
+              setMessage(prevMsg => {
+                if (prevMsg && (prevMsg.includes('Uploading') || prevMsg.includes('⏳'))) {
+                  return '';
+                }
+                return prevMsg;
+              });
+            }
+            
+            return updated;
+          });
+        }
         break;
         
       case 'video_updated':
@@ -2034,12 +2137,31 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     }
   };
 
+  // Sequential upload function - processes files one at a time to avoid Cloudflare timeout
+  // ROOT CAUSE FIX: Prevents multiple simultaneous uploads that compete for bandwidth
+  // and exceed Cloudflare's 100s timeout (free plan) or 600s timeout (paid plan)
+  // DRY: Single function used by both drag-drop and file input handlers
+  // Extensible: Works with any number of files, handles errors gracefully
+  const uploadFilesSequentially = async (files) => {
+    for (const file of files) {
+      try {
+        await addVideo(file);
+      } catch (err) {
+        // Error is already handled and displayed in addVideo function
+        // Continue with next file even if one fails (extensible error handling)
+        console.error(`Failed to upload ${file.name}:`, err);
+      }
+    }
+  };
+
   const handleFileDrop = (e) => {
     e.preventDefault();
     const files = Array.from(e.dataTransfer.files).filter(f => 
       f.type.startsWith('video/')
     );
-    files.forEach(addVideo);
+    if (files.length > 0) {
+      uploadFilesSequentially(files);
+    }
   };
 
   const addVideo = async (file) => {
@@ -2546,7 +2668,6 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       return;
     }
     
-    setIsUploading(false);
     setMessage('⏳ Cancelling uploads...');
     
     // Optimistically update UI immediately for better UX
@@ -2630,9 +2751,13 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       }
     }
     
-    setIsUploading(true);
     const isScheduling = !globalSettings.upload_immediately;
-    setMessage(isScheduling ? '⏳ Scheduling videos...' : '⏳ Uploading...');
+    // ROOT CAUSE FIX: Don't set message manually - let derived state handle it
+    // Message will update automatically when videos array changes via WebSocket
+    // Only set scheduling message since it's not derived from video status
+    if (isScheduling) {
+      setMessage('⏳ Scheduling videos...');
+    }
     
     // WebSocket handles all upload status updates in real-time - no polling needed
     try {
@@ -2653,13 +2778,16 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         return hasTiktokUpload && isUploaded;
       });
       
+      // ROOT CAUSE FIX: Don't set upload status messages manually
+      // Derived message state will update automatically when videos array changes via WebSocket
+      // Only set scheduling message since it's not derived from video status
+      if (res.data.scheduled !== undefined) {
+        setMessage(`✅ ${res.data.scheduled} videos scheduled! ${res.data.message}`);
+        // Don't show processing notification for scheduled uploads - they haven't been published yet
+      }
+      
+      // Show notifications for TikTok processing
       if (res.data.videos_uploaded !== undefined && res.data.videos_uploaded > 0) {
-        if (res.data.videos_failed > 0) {
-          setMessage(`⚠️ ${res.data.message || `Uploaded ${res.data.videos_uploaded} video(s), ${res.data.videos_failed} failed`}`);
-        } else {
-          setMessage(`✅ ${res.data.message || `Uploaded ${res.data.videos_uploaded} videos!`}`);
-        }
-        // Show notification for TikTok only if TikTok uploads actually succeeded
         if (tiktok.enabled && hasSuccessfulTiktokUploads) {
           setNotification({
             type: 'info',
@@ -2668,14 +2796,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           });
           setTimeout(() => setNotification(null), 15000);
         }
-      } else if (res.data.videos_failed > 0) {
-        setMessage(`❌ ${res.data.message || `Upload failed for ${res.data.videos_failed} video(s)`}`);
-      } else if (res.data.scheduled !== undefined) {
-        setMessage(`✅ ${res.data.scheduled} videos scheduled! ${res.data.message}`);
-        // Don't show processing notification for scheduled uploads - they haven't been published yet
-      } else {
-        setMessage(`✅ ${res.data.message || 'Success'}`);
-        // Only show notification if TikTok uploads actually succeeded
+      } else if (res.data.videos_failed === 0 && res.data.scheduled === undefined) {
+        // Only show notification if TikTok uploads actually succeeded (for immediate uploads)
         if (tiktok.enabled && hasSuccessfulTiktokUploads) {
           setNotification({
             type: 'info',
@@ -2698,14 +2820,14 @@ function Home({ user, isAdmin, setUser, authLoading }) {
         });
         setTimeout(() => setNotification(null), 10000);
       } else {
+        // ROOT CAUSE FIX: Set error message manually for upload errors
+        // This is a one-time error, not a status that changes, so it's OK to set manually
         setMessage(`❌ Upload failed: ${errorMsg}`);
       }
       
       // Refresh to get real status
       const videosRes = await axios.get(`${API}/videos`);
       setVideos(videosRes.data);
-    } finally {
-      setIsUploading(false);
     }
   };
 
@@ -4192,13 +4314,18 @@ function Home({ user, isAdmin, setUser, authLoading }) {
           type="file"
           multiple
           accept="video/*"
-          onChange={(e) => Array.from(e.target.files).forEach(addVideo)}
+          onChange={(e) => {
+            const files = Array.from(e.target.files);
+            if (files.length > 0) {
+              uploadFilesSequentially(files);
+            }
+          }}
           style={{display: 'none'}}
         />
       </div>
       
       {/* Queue */}
-      {message && <div className="message">{message}</div>}
+      {derivedMessage && <div className="message">{derivedMessage}</div>}
       <div className="card">
         <div className="queue-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
           <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -4757,26 +4884,31 @@ function Home({ user, isAdmin, setUser, authLoading }) {
       </div>
       
       {/* Edit Video Modal */}
-      {editingVideo && (
-        <div className="modal-overlay">
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Edit Video Settings</h2>
-              <button onClick={closeEditModal} className="btn-close">×</button>
-            </div>
-            <div className="modal-body">
-              <div className="form-group">
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <label>
-                    Video Title <span className="char-counter">{editTitleLength}/100</span>
-                    <span className="tooltip-wrapper">
-                      <span className="tooltip-icon">i</span>
-                      <span className="tooltip-text">Leave empty to use template. Click "Recompute" to regenerate from current template.</span>
-                    </span>
-                  </label>
-                  <button 
-                    type="button"
-                    onClick={() => recomputeVideoTitle(editingVideo.id)}
+      {editingVideo && (() => {
+        // Backend is source of truth - always get latest video from videos array
+        const currentEditingVideo = videos.find(v => v.id === editingVideo.id) || editingVideo;
+        if (!currentEditingVideo) return null;
+        
+        return (
+          <div className="modal-overlay">
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-header">
+                <h2>Edit Video Settings</h2>
+                <button onClick={closeEditModal} className="btn-close">×</button>
+              </div>
+              <div className="modal-body">
+                <div className="form-group">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <label>
+                      Video Title <span className="char-counter">{editTitleLength}/100</span>
+                      <span className="tooltip-wrapper">
+                        <span className="tooltip-icon">i</span>
+                        <span className="tooltip-text">Leave empty to use template. Click "Recompute" to regenerate from current template.</span>
+                      </span>
+                    </label>
+                    <button 
+                      type="button"
+                      onClick={() => recomputeVideoTitle(currentEditingVideo.id)}
                     className="btn-recompute-title"
                     style={{
                       padding: '0.4rem 0.8rem',
@@ -4795,7 +4927,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 </div>
                 <input 
                   type="text"
-                  defaultValue={editingVideo.custom_settings?.title || editingVideo.youtube_title}
+                  defaultValue={currentEditingVideo.custom_settings?.title || currentEditingVideo.youtube_title}
                   id="edit-title"
                   className="input-text"
                   placeholder="Video title"
@@ -4813,7 +4945,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                   </span>
                 </label>
                 <textarea 
-                  defaultValue={editingVideo.custom_settings?.description || ''}
+                  defaultValue={currentEditingVideo.custom_settings?.description || ''}
                   id="edit-description"
                   className="textarea-text"
                   rows="4"
@@ -4831,7 +4963,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 </label>
                 <input 
                   type="text"
-                  defaultValue={editingVideo.custom_settings?.tags || ''}
+                  defaultValue={currentEditingVideo.custom_settings?.tags || ''}
                   id="edit-tags"
                   className="input-text"
                   placeholder="tag1, tag2, tag3"
@@ -4841,7 +4973,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               <div className="form-group">
                 <label>Visibility</label>
                 <select 
-                  defaultValue={editingVideo.custom_settings?.visibility || youtubeSettings.visibility}
+                  defaultValue={currentEditingVideo.custom_settings?.visibility || youtubeSettings.visibility}
                   id="edit-visibility"
                   className="select"
                 >
@@ -4855,7 +4987,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 <label className="checkbox-label">
                   <input 
                     type="checkbox"
-                    defaultChecked={editingVideo.custom_settings?.made_for_kids ?? youtubeSettings.made_for_kids}
+                    defaultChecked={currentEditingVideo.custom_settings?.made_for_kids ?? youtubeSettings.made_for_kids}
                     id="edit-made-for-kids"
                     className="checkbox"
                   />
@@ -4873,8 +5005,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                 </label>
                 <input 
                   type="datetime-local"
-                  defaultValue={editingVideo.scheduled_time ? (() => {
-                    const date = new Date(editingVideo.scheduled_time);
+                  defaultValue={currentEditingVideo.scheduled_time ? (() => {
+                    const date = new Date(currentEditingVideo.scheduled_time);
                     const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
                     return localDate.toISOString().slice(0, 16);
                   })() : ''}
@@ -4937,7 +5069,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     <label className="checkbox-label">
                       <input 
                         type="checkbox"
-                        defaultChecked={editingVideo.custom_settings?.allow_comments ?? false}
+                        defaultChecked={currentEditingVideo.custom_settings?.allow_comments ?? false}
                         id="edit-tiktok-allow-comments"
                         className="checkbox"
                         disabled={tiktokCreatorInfo?.disable_comment || tiktokCreatorInfo?.comment_disabled}
@@ -4954,7 +5086,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     <label className="checkbox-label">
                       <input 
                         type="checkbox"
-                        defaultChecked={editingVideo.custom_settings?.allow_duet ?? false}
+                        defaultChecked={currentEditingVideo.custom_settings?.allow_duet ?? false}
                         id="edit-tiktok-allow-duet"
                         className="checkbox"
                         disabled={tiktokCreatorInfo?.disable_duet || tiktokCreatorInfo?.duet_disabled}
@@ -4971,7 +5103,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     <label className="checkbox-label">
                       <input 
                         type="checkbox"
-                        defaultChecked={editingVideo.custom_settings?.allow_stitch ?? false}
+                        defaultChecked={currentEditingVideo.custom_settings?.allow_stitch ?? false}
                         id="edit-tiktok-allow-stitch"
                         className="checkbox"
                         disabled={tiktokCreatorInfo?.disable_stitch || tiktokCreatorInfo?.stitch_disabled}
@@ -5076,6 +5208,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               </button>
               <button 
                 onClick={() => {
+                  const currentEditingVideo = videos.find(v => v.id === editingVideo.id) || editingVideo;
                   const title = document.getElementById('edit-title').value;
                   const description = document.getElementById('edit-description').value;
                   const tags = document.getElementById('edit-tags').value;
@@ -5113,7 +5246,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     settings.commercial_content_branded = tiktokCommercialContentBranded;
                   }
                   
-                  updateVideoSettings(editingVideo.id, settings);
+                  updateVideoSettings(currentEditingVideo.id, settings);
                 }}
                 className="btn-save"
               >
@@ -5121,11 +5254,14 @@ function Home({ user, isAdmin, setUser, authLoading }) {
               </button>
             </div>
           </div>
-        </div>
-      )}
+          </div>
+        );
+      })()}
       
       {/* Destination Details Modal */}
       {destinationModal && (() => {
+        // ROOT CAUSE FIX: Always get fresh video data from videos array (single source of truth)
+        // videos array is updated by WebSocket events, so this will always show current status
         const video = videos.find(v => v.id === destinationModal.videoId);
         if (!video) return null;
         

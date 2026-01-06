@@ -78,10 +78,16 @@ async def lifespan(app: FastAPI):
         logger.info("Starting scheduler tasks...")
         from app.tasks.scheduler import scheduler_task, token_reset_scheduler_task
         from app.tasks.cleanup import cleanup_task
+        from app.tasks.status_checker import status_checker_task
         
         asyncio.create_task(scheduler_task())
         asyncio.create_task(token_reset_scheduler_task())
         logger.info("Scheduler tasks started")
+        
+        # Start status checker task
+        logger.info("Starting status checker task...")
+        asyncio.create_task(status_checker_task())
+        logger.info("Status checker task started")
         
         # Start the cleanup task
         logger.info("Starting cleanup task...")

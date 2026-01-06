@@ -188,6 +188,7 @@ async def scheduler_task():
                                     db = SessionLocal()
                                 
                                 if success_count == len(enabled_destinations):
+                                    old_status = video.status
                                     try:
                                         update_video(video_id, user_id, db=db, status="uploaded")
                                     except Exception as update_err:
@@ -200,6 +201,21 @@ async def scheduler_task():
                                                 pass
                                         db = SessionLocal()
                                         update_video(video_id, user_id, db=db, status="uploaded")
+                                    
+                                    # Refresh video and build full response (backend is source of truth)
+                                    if db is None:
+                                        db = SessionLocal()
+                                    updated_video = db.query(Video).filter(Video.id == video_id).first()
+                                    if updated_video:
+                                        from app.services.event_service import publish_video_status_changed
+                                        from app.services.video.helpers import build_video_response
+                                        from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+                                        all_settings = get_all_user_settings(user_id, db=db)
+                                        all_tokens = get_all_oauth_tokens(user_id, db=db)
+                                        video_dict = build_video_response(updated_video, all_settings, all_tokens, user_id)
+                                        
+                                        # Publish status change event with full video data
+                                        await publish_video_status_changed(user_id, video_id, old_status, "uploaded", video_dict=video_dict)
                                     
                                     # Increment successful uploads counter
                                     successful_uploads_counter.inc()
@@ -223,6 +239,7 @@ async def scheduler_task():
                                         if updated_video:
                                             cleanup_video_file(updated_video)
                                 else:
+                                    old_status = video.status
                                     try:
                                         update_video(video_id, user_id, db=db, status="failed", error=f"Upload failed for some destinations")
                                     except Exception as update_err:
@@ -235,6 +252,10 @@ async def scheduler_task():
                                                 pass
                                         db = SessionLocal()
                                         update_video(video_id, user_id, db=db, status="failed", error=f"Upload failed for some destinations")
+                                    
+                                    # Publish status change event
+                                    from app.services.event_service import publish_video_status_changed
+                                    await publish_video_status_changed(user_id, video_id, old_status, "failed")
                                     
                         except Exception as e:
                             error_type = type(e).__name__
@@ -263,20 +284,60 @@ async def scheduler_task():
                             logger.debug(f"Error processing scheduled video {video.filename}: {e}")
                             if 'video_id' in locals():
                                 detailed_error = f"Scheduler error: {error_type}: {error_msg}"
+                                old_status = video.status
                                 if db is not None:
                                     try:
                                         update_video(video_id, user_id, db=db, status="failed", error=detailed_error)
+                                        
+                                        # Refresh video and build full response (backend is source of truth)
+                                        updated_video = db.query(Video).filter(Video.id == video_id).first()
+                                        if updated_video:
+                                            from app.services.event_service import publish_video_status_changed
+                                            from app.services.video.helpers import build_video_response
+                                            from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+                                            all_settings = get_all_user_settings(user_id, db=db)
+                                            all_tokens = get_all_oauth_tokens(user_id, db=db)
+                                            video_dict = build_video_response(updated_video, all_settings, all_tokens, user_id)
+                                            
+                                            # Publish status change event with full video data
+                                            await publish_video_status_changed(user_id, video_id, old_status, "failed", video_dict=video_dict)
                                     except Exception:
                                         # Session invalid - create new one
                                         temp_db = SessionLocal()
                                         try:
                                             update_video(video_id, user_id, db=temp_db, status="failed", error=detailed_error)
+                                            
+                                            # Refresh video and build full response (backend is source of truth)
+                                            updated_video = temp_db.query(Video).filter(Video.id == video_id).first()
+                                            if updated_video:
+                                                from app.services.event_service import publish_video_status_changed
+                                                from app.services.video.helpers import build_video_response
+                                                from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+                                                all_settings = get_all_user_settings(user_id, db=temp_db)
+                                                all_tokens = get_all_oauth_tokens(user_id, db=temp_db)
+                                                video_dict = build_video_response(updated_video, all_settings, all_tokens, user_id)
+                                                
+                                                # Publish status change event with full video data
+                                                await publish_video_status_changed(user_id, video_id, old_status, "failed", video_dict=video_dict)
                                         finally:
                                             temp_db.close()
                                 else:
                                     temp_db = SessionLocal()
                                     try:
                                         update_video(video_id, user_id, db=temp_db, status="failed", error=detailed_error)
+                                        
+                                        # Refresh video and build full response (backend is source of truth)
+                                        updated_video = temp_db.query(Video).filter(Video.id == video_id).first()
+                                        if updated_video:
+                                            from app.services.event_service import publish_video_status_changed
+                                            from app.services.video.helpers import build_video_response
+                                            from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+                                            all_settings = get_all_user_settings(user_id, db=temp_db)
+                                            all_tokens = get_all_oauth_tokens(user_id, db=temp_db)
+                                            video_dict = build_video_response(updated_video, all_settings, all_tokens, user_id)
+                                            
+                                            # Publish status change event with full video data
+                                            await publish_video_status_changed(user_id, video_id, old_status, "failed", video_dict=video_dict)
                                     finally:
                                         temp_db.close()
                 

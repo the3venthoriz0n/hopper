@@ -149,9 +149,17 @@ async def upload_all_pending_videos(
                     old_status = video.status
                     update_video(video_id, user_id, db=db, status="failed", error=error_msg)
                     
-                    # Publish status change event
+                    # Refresh video and build full response (backend is source of truth)
+                    db.refresh(video)
                     from app.services.event_service import publish_video_status_changed
-                    await publish_video_status_changed(user_id, video_id, old_status, "failed")
+                    from app.services.video.helpers import build_video_response
+                    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+                    all_settings = get_all_user_settings(user_id, db=db)
+                    all_tokens = get_all_oauth_tokens(user_id, db=db)
+                    video_dict = build_video_response(video, all_settings, all_tokens, user_id)
+                    
+                    # Publish status change event with full video data
+                    await publish_video_status_changed(user_id, video_id, old_status, "failed", video_dict=video_dict)
                     
                     videos_failed += 1
                     continue
@@ -162,8 +170,17 @@ async def upload_all_pending_videos(
                 _cancellation_flags.pop(video_id, None)
                 old_status = video.status
                 update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
+                
+                # Refresh video and build full response (backend is source of truth)
+                db.refresh(video)
                 from app.services.event_service import publish_video_status_changed
-                await publish_video_status_changed(user_id, video_id, old_status, "cancelled")
+                from app.services.video.helpers import build_video_response
+                from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+                all_settings = get_all_user_settings(user_id, db=db)
+                all_tokens = get_all_oauth_tokens(user_id, db=db)
+                video_dict = build_video_response(video, all_settings, all_tokens, user_id)
+                
+                await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
                 videos_cancelled += 1
                 continue
             
@@ -178,14 +195,24 @@ async def upload_all_pending_videos(
             # Clear any previous cancellation flag
             _cancellation_flags.pop(video_id, None)
             
-            # Publish status change event
-            from app.services.event_service import publish_video_status_changed
-            await publish_video_status_changed(user_id, video_id, old_status, "uploading")
-            
-            # Initialize platform_errors in custom_settings
+            # Get video object from database for building response
             from app.models.video import Video as VideoModel
             video_obj = db.query(VideoModel).filter(VideoModel.id == video_id).first()
+            
             if video_obj:
+                # Refresh video and build full response (backend is source of truth)
+                db.refresh(video_obj)
+                from app.services.event_service import publish_video_status_changed
+                from app.services.video.helpers import build_video_response
+                from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+                all_settings = get_all_user_settings(user_id, db=db)
+                all_tokens = get_all_oauth_tokens(user_id, db=db)
+                video_dict = build_video_response(video_obj, all_settings, all_tokens, user_id)
+                
+                # Publish status change event with full video data
+                await publish_video_status_changed(user_id, video_id, old_status, "uploading", video_dict=video_dict)
+                
+                # Initialize platform_errors in custom_settings
                 if video_obj.custom_settings is None:
                     video_obj.custom_settings = {}
                 if "platform_errors" not in video_obj.custom_settings:
@@ -203,9 +230,24 @@ async def upload_all_pending_videos(
                 if _cancellation_flags.get(video_id, False):
                     upload_logger.info(f"Upload cancelled for video {video_id} during {dest_name} upload")
                     _cancellation_flags.pop(video_id, None)
-                    old_status = video_obj.status if video_obj else "uploading"
+                    
+                    # Get current video status
+                    from app.models.video import Video as VideoModel
+                    current_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
+                    old_status = current_video.status if current_video else "uploading"
+                    
                     update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
-                    await publish_video_status_changed(user_id, video_id, old_status, "cancelled")
+                    
+                    # Refresh video and build full response (backend is source of truth)
+                    db.refresh(current_video)
+                    from app.services.event_service import publish_video_status_changed
+                    from app.services.video.helpers import build_video_response
+                    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+                    all_settings = get_all_user_settings(user_id, db=db)
+                    all_tokens = get_all_oauth_tokens(user_id, db=db)
+                    video_dict = build_video_response(current_video, all_settings, all_tokens, user_id)
+                    
+                    await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
                     videos_cancelled += 1
                     upload_cancelled = True
                     break  # Exit destination loop
@@ -219,9 +261,24 @@ async def upload_all_pending_videos(
                         if _cancellation_flags.get(video_id, False):
                             upload_logger.info(f"Upload cancelled for video {video_id} after {dest_name} upload")
                             _cancellation_flags.pop(video_id, None)
-                            old_status = video_obj.status if video_obj else "uploading"
+                            
+                            # Get current video status
+                            from app.models.video import Video as VideoModel
+                            current_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
+                            old_status = current_video.status if current_video else "uploading"
+                            
                             update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
-                            await publish_video_status_changed(user_id, video_id, old_status, "cancelled")
+                            
+                            # Refresh video and build full response (backend is source of truth)
+                            db.refresh(current_video)
+                            from app.services.event_service import publish_video_status_changed
+                            from app.services.video.helpers import build_video_response
+                            from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+                            all_settings = get_all_user_settings(user_id, db=db)
+                            all_tokens = get_all_oauth_tokens(user_id, db=db)
+                            video_dict = build_video_response(current_video, all_settings, all_tokens, user_id)
+                            
+                            await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
                             videos_cancelled += 1
                             upload_cancelled = True
                             break  # Exit destination loop
@@ -263,15 +320,27 @@ async def upload_all_pending_videos(
                     old_status = updated_video.status
                     update_video(video_id, user_id, db=db, status="uploaded")
                     
-                    # Publish status change event
+                    # Refresh video to get updated status
+                    db.refresh(updated_video)
+                    
+                    # Build full video response (backend is source of truth)
+                    from app.services.video.helpers import build_video_response
+                    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+                    all_settings = get_all_user_settings(user_id, db=db)
+                    all_tokens = get_all_oauth_tokens(user_id, db=db)
+                    video_dict = build_video_response(updated_video, all_settings, all_tokens, user_id)
+                    
+                    # Publish status change event with full video data
                     from app.services.event_service import publish_video_status_changed
-                    await publish_video_status_changed(user_id, video_id, old_status, "uploaded")
+                    await publish_video_status_changed(user_id, video_id, old_status, "uploaded", video_dict=video_dict)
                     
                     videos_succeeded += 1
                 elif len(succeeded) > 0:
                     # Partial success - preserve actual error if it's platform-specific, otherwise list failed destinations
                     old_status = updated_video.status
                     from app.services.event_service import publish_video_status_changed
+                    from app.services.video.helpers import build_video_response
+                    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
                     
                     if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
                         update_video(video_id, user_id, db=db, status="failed", error=actual_error)
@@ -280,12 +349,20 @@ async def upload_all_pending_videos(
                         update_video(video_id, user_id, db=db, status="failed", 
                                    error=f"Partial upload: succeeded ({', '.join(succeeded)}), failed ({', '.join(failed)})")
                     
-                    await publish_video_status_changed(user_id, video_id, old_status, "failed")
+                    # Refresh video and build full response
+                    db.refresh(updated_video)
+                    all_settings = get_all_user_settings(user_id, db=db)
+                    all_tokens = get_all_oauth_tokens(user_id, db=db)
+                    video_dict = build_video_response(updated_video, all_settings, all_tokens, user_id)
+                    
+                    await publish_video_status_changed(user_id, video_id, old_status, "failed", video_dict=video_dict)
                     videos_failed += 1
                 else:
                     # All failed - preserve actual error if it's platform-specific, otherwise list failed destinations
                     old_status = updated_video.status
                     from app.services.event_service import publish_video_status_changed
+                    from app.services.video.helpers import build_video_response
+                    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
                     
                     if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
                         update_video(video_id, user_id, db=db, status="failed", error=actual_error)
@@ -293,7 +370,13 @@ async def upload_all_pending_videos(
                         update_video(video_id, user_id, db=db, status="failed", 
                                    error=f"Upload failed for all destinations: {', '.join(failed)}")
                     
-                    await publish_video_status_changed(user_id, video_id, old_status, "failed")
+                    # Refresh video and build full response
+                    db.refresh(updated_video)
+                    all_settings = get_all_user_settings(user_id, db=db)
+                    all_tokens = get_all_oauth_tokens(user_id, db=db)
+                    video_dict = build_video_response(updated_video, all_settings, all_tokens, user_id)
+                    
+                    await publish_video_status_changed(user_id, video_id, old_status, "failed", video_dict=video_dict)
                     videos_failed += 1
         
         # Build appropriate message based on results
@@ -484,8 +567,16 @@ async def cancel_upload(video_id: int, user_id: int, db: Session) -> Dict[str, A
     _cancellation_flags[video_id] = True
     
     # Publish status change event for immediate UI update
+    # Refresh video and build full response (backend is source of truth)
+    db.refresh(video)
     from app.services.event_service import publish_video_status_changed
-    await publish_video_status_changed(user_id, video_id, old_status, "cancelled")
+    from app.services.video.helpers import build_video_response
+    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+    all_settings = get_all_user_settings(user_id, db=db)
+    all_tokens = get_all_oauth_tokens(user_id, db=db)
+    video_dict = build_video_response(video, all_settings, all_tokens, user_id)
+    
+    await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
     
     upload_logger.info(f"Upload cancelled immediately for video {video_id} by user {user_id}")
     
