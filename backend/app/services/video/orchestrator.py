@@ -15,6 +15,9 @@ from app.services.video.helpers import (
 
 upload_logger = logging.getLogger("upload")
 
+# Track cancellation requests by video_id (thread-safe for async operations)
+_cancellation_flags: Dict[int, bool] = {}
+
 
 def calculate_scheduled_time(
     video: Video,
@@ -99,9 +102,9 @@ async def upload_all_pending_videos(
         upload_logger.error(error_msg)
         raise ValueError(error_msg)
     
-    # Get videos that can be uploaded: pending, failed (retry), or uploading (retry if stuck)
+    # Get videos that can be uploaded: pending, failed (retry), uploading (retry if stuck), or cancelled (retry)
     user_videos = get_user_videos(user_id, db=db)
-    pending_videos = [v for v in user_videos if v.status in ['pending', 'failed', 'uploading']]
+    pending_videos = [v for v in user_videos if v.status in ['pending', 'failed', 'uploading', 'cancelled']]
     
     upload_logger.info(f"Videos ready to upload for user {user_id}: {len(pending_videos)}")
     
@@ -126,6 +129,7 @@ async def upload_all_pending_videos(
     if upload_immediately:
         videos_succeeded = 0
         videos_failed = 0
+        videos_cancelled = 0
         
         for video in pending_videos:
             video_id = video.id
@@ -152,9 +156,27 @@ async def upload_all_pending_videos(
                     videos_failed += 1
                     continue
             
+            # Check if upload was cancelled before starting
+            if _cancellation_flags.get(video_id, False):
+                upload_logger.info(f"Upload cancelled for video {video_id} before starting")
+                _cancellation_flags.pop(video_id, None)
+                old_status = video.status
+                update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
+                from app.services.event_service import publish_video_status_changed
+                await publish_video_status_changed(user_id, video_id, old_status, "cancelled")
+                videos_cancelled += 1
+                continue
+            
             # Set status to uploading before starting
+            # If video was cancelled, reset error and clear cancellation flag
             old_status = video.status
-            update_video(video_id, user_id, db=db, status="uploading")
+            if old_status == "cancelled":
+                update_video(video_id, user_id, db=db, status="uploading", error=None)
+            else:
+                update_video(video_id, user_id, db=db, status="uploading")
+            
+            # Clear any previous cancellation flag
+            _cancellation_flags.pop(video_id, None)
             
             # Publish status change event
             from app.services.event_service import publish_video_status_changed
@@ -172,17 +194,55 @@ async def upload_all_pending_videos(
                 flag_modified(video_obj, "custom_settings")
                 db.commit()
             
+            # Track if upload was cancelled during processing
+            upload_cancelled = False
+            
             # Upload to all enabled destinations
             for dest_name in enabled_destinations:
+                # Check for cancellation before each destination
+                if _cancellation_flags.get(video_id, False):
+                    upload_logger.info(f"Upload cancelled for video {video_id} during {dest_name} upload")
+                    _cancellation_flags.pop(video_id, None)
+                    old_status = video_obj.status if video_obj else "uploading"
+                    update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
+                    await publish_video_status_changed(user_id, video_id, old_status, "cancelled")
+                    videos_cancelled += 1
+                    upload_cancelled = True
+                    break  # Exit destination loop
+                
                 uploader_func = DESTINATION_UPLOADERS.get(dest_name)
                 if uploader_func:
                     try:
                         await uploader_func(user_id, video_id, db=db)
+                        
+                        # Check for cancellation after each upload
+                        if _cancellation_flags.get(video_id, False):
+                            upload_logger.info(f"Upload cancelled for video {video_id} after {dest_name} upload")
+                            _cancellation_flags.pop(video_id, None)
+                            old_status = video_obj.status if video_obj else "uploading"
+                            update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
+                            await publish_video_status_changed(user_id, video_id, old_status, "cancelled")
+                            videos_cancelled += 1
+                            upload_cancelled = True
+                            break  # Exit destination loop
                     except Exception as upload_err:
-                        upload_logger.error(f"Upload failed for {dest_name}: {upload_err}")
-                        # Record platform-specific error
-                        record_platform_error(video_id, user_id, dest_name, str(upload_err), db=db)
-                        # Continue to next destination
+                        # Check if error is due to cancellation
+                        if "cancelled by user" in str(upload_err).lower():
+                            upload_logger.info(f"Upload cancelled for {dest_name}: {upload_err}")
+                            # Don't record as platform error - cancellation is intentional
+                            # The cancellation flag and status update are already handled
+                        else:
+                            upload_logger.error(f"Upload failed for {dest_name}: {upload_err}")
+                            # Record platform-specific error
+                            record_platform_error(video_id, user_id, dest_name, str(upload_err), db=db)
+                        # Continue to next destination (or break if cancelled)
+                        if "cancelled by user" in str(upload_err).lower():
+                            upload_cancelled = True
+                            break
+            
+            # Skip final status check if upload was cancelled
+            if upload_cancelled:
+                continue
             
             # Check final status and collect actual error messages
             updated_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
@@ -237,10 +297,12 @@ async def upload_all_pending_videos(
                     videos_failed += 1
         
         # Build appropriate message based on results
-        if videos_succeeded > 0 and videos_failed == 0:
+        if videos_succeeded > 0 and videos_failed == 0 and videos_cancelled == 0:
             message = f"Successfully uploaded {videos_succeeded} video(s) to all enabled destinations"
-        elif videos_succeeded > 0 and videos_failed > 0:
-            message = f"Uploaded {videos_succeeded} video(s) successfully, {videos_failed} failed"
+        elif videos_succeeded > 0 and (videos_failed > 0 or videos_cancelled > 0):
+            message = f"Uploaded {videos_succeeded} video(s) successfully, {videos_failed} failed, {videos_cancelled} cancelled"
+        elif videos_cancelled > 0:
+            message = f"{videos_cancelled} video(s) cancelled"
         else:
             message = f"Upload failed for {videos_failed} video(s)"
         
@@ -248,7 +310,8 @@ async def upload_all_pending_videos(
             "ok": True,
             "message": message,
             "videos_uploaded": videos_succeeded,
-            "videos_failed": videos_failed
+            "videos_failed": videos_failed,
+            "videos_cancelled": videos_cancelled
         }
     else:
         # Schedule uploads (scheduler will handle them)
@@ -385,4 +448,46 @@ def cancel_scheduled_videos(
             cancelled_count += 1
     
     return {"ok": True, "cancelled": cancelled_count}
+
+
+async def cancel_upload(video_id: int, user_id: int, db: Session) -> Dict[str, Any]:
+    """Cancel an in-progress upload for a specific video
+    
+    Immediately updates status to cancelled and stops any in-progress upload operations.
+    
+    Args:
+        video_id: Video ID to cancel
+        user_id: User ID (for verification)
+        db: Database session
+        
+    Returns:
+        Dict with 'ok' and 'message' keys
+    """
+    # Verify video belongs to user
+    video = db.query(Video).filter(
+        Video.id == video_id,
+        Video.user_id == user_id
+    ).first()
+    
+    if not video:
+        return {"ok": False, "message": "Video not found"}
+    
+    # Only allow cancellation if video is pending or uploading
+    if video.status not in ["pending", "uploading"]:
+        return {"ok": False, "message": f"Cannot cancel video with status: {video.status}"}
+    
+    # Immediately update status to cancelled and set cancellation flag
+    old_status = video.status
+    update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
+    
+    # Set cancellation flag to stop any in-progress upload operations
+    _cancellation_flags[video_id] = True
+    
+    # Publish status change event for immediate UI update
+    from app.services.event_service import publish_video_status_changed
+    await publish_video_status_changed(user_id, video_id, old_status, "cancelled")
+    
+    upload_logger.info(f"Upload cancelled immediately for video {video_id} by user {user_id}")
+    
+    return {"ok": True, "message": "Upload cancelled"}
 

@@ -37,6 +37,13 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
     """Upload a single video to TikTok - queries database directly"""
     # Import metrics from centralized location
     from app.core.metrics import successful_uploads_counter, failed_uploads_gauge
+    # Import cancellation flag to check for cancellation during upload
+    from app.services.video.orchestrator import _cancellation_flags
+    
+    # Check for cancellation before starting
+    if _cancellation_flags.get(video_id, False):
+        tiktok_logger.info(f"TikTok upload cancelled for video {video_id} before starting")
+        raise Exception("Upload cancelled by user")
     
     # Get video from database
     videos = get_user_videos(user_id, db=db)
@@ -681,6 +688,11 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
             file_ext = video.filename.rsplit('.', 1)[-1].lower() if '.' in video.filename else 'mp4'
             content_type = {'mp4': 'video/mp4', 'mov': 'video/quicktime', 'webm': 'video/webm'}.get(file_ext, 'video/mp4')
             
+            # Check for cancellation before file upload
+            if _cancellation_flags.get(video_id, False):
+                tiktok_logger.info(f"TikTok upload cancelled for video {video_id} before file upload")
+                raise Exception("Upload cancelled by user")
+            
             with open(video_path, 'rb') as f:
                 upload_response = httpx.put(
                     upload_url,
@@ -691,6 +703,11 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                     content=f.read(),
                     timeout=300.0
                 )
+            
+            # Check for cancellation after file upload
+            if _cancellation_flags.get(video_id, False):
+                tiktok_logger.info(f"TikTok upload cancelled for video {video_id} after file upload")
+                raise Exception("Upload cancelled by user")
             
             if upload_response.status_code not in [200, 201]:
                 import json as json_module
@@ -734,11 +751,21 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
             tiktok_logger.info("File upload completed")
         else:
             # PULL_FROM_URL method: TikTok will download the file automatically
+            # Check for cancellation before marking as success
+            if _cancellation_flags.get(video_id, False):
+                tiktok_logger.info(f"TikTok upload cancelled for video {video_id} before PULL_FROM_URL completion")
+                raise Exception("Upload cancelled by user")
+            
             tiktok_logger.info(
                 f"TikTok using PULL_FROM_URL (URL) method - TikTok will download the file automatically - "
                 f"User {user_id}, Video {video_id} ({video.filename})"
             )
             set_upload_progress(user_id, video_id, 50)
+        
+        # Check for cancellation before marking as success
+        if _cancellation_flags.get(video_id, False):
+            tiktok_logger.info(f"TikTok upload cancelled for video {video_id} before finalizing")
+            raise Exception("Upload cancelled by user")
         
         # Success - update video in database
         custom_settings = custom_settings.copy() if custom_settings else {}

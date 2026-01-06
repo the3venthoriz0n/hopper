@@ -292,29 +292,34 @@ def get_platform_statuses(video: Video, dest_settings: Dict[str, Any], all_token
             platform_statuses[platform_name] = {"status": "not_enabled", "error": None}
             continue
         
-        # Check if upload succeeded (has platform ID)
+        # Check if upload succeeded (has platform ID) - DRY: same logic for all platforms
         has_id = any(bool(custom_settings.get(key)) for key in id_keys)
         
         if has_id:
-            # Platform succeeded - clear any previous error
+            # Platform succeeded - clear any previous error (DRY: same for all platforms)
             platform_statuses[platform_name] = {"status": "success", "error": None}
         elif platform_name in platform_errors:
-            # Platform has a specific error recorded
+            # Platform has a specific error recorded (DRY: same for all platforms)
             platform_statuses[platform_name] = {
                 "status": "failed",
                 "error": platform_errors[platform_name]
             }
         elif video.status == "pending" or video.status == "uploading":
+            # Still in progress (DRY: same for all platforms)
             platform_statuses[platform_name] = {"status": "pending", "error": None}
         elif video.status == "uploaded" or video.status == "completed":
             # Video marked as uploaded/completed but no ID for this platform
             # This means it failed for this platform (partial success scenario)
+            # DRY: handles both "uploaded" (YouTube/TikTok) and "completed" (Instagram)
             platform_statuses[platform_name] = {
                 "status": "failed",
                 "error": "Upload completed but no platform ID found"
             }
+        elif video.status == "cancelled":
+            # Upload was cancelled (DRY: same for all platforms)
+            platform_statuses[platform_name] = {"status": "failed", "error": "Upload cancelled"}
         else:
-            # Fallback for other statuses (failed, etc.)
+            # Fallback for other statuses (failed, etc.) - DRY: same for all platforms
             platform_statuses[platform_name] = {"status": "pending", "error": None}
     
     return platform_statuses

@@ -76,11 +76,19 @@ async def _poll_container_status(
         status_code when FINISHED
     
     Raises:
-        Exception if ERROR, EXPIRED, or timeout
+        Exception if ERROR, EXPIRED, timeout, or cancelled
     """
+    # Import cancellation flag to check for cancellation during polling
+    from app.services.video.orchestrator import _cancellation_flags
+    
     instagram_logger.info(f"Polling container status for {container_id} (max {max_retries} attempts)")
     
     for attempt in range(max_retries):
+        # Check for cancellation during polling
+        if _cancellation_flags.get(video_id, False):
+            instagram_logger.info(f"Instagram upload cancelled for video {video_id} during polling")
+            raise Exception("Upload cancelled by user")
+        
         status_url = f"{INSTAGRAM_GRAPH_API_BASE}/{container_id}"
         status_params = {
             "fields": "status_code",
@@ -147,6 +155,13 @@ def _build_error_context(
 async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = None):
     """Upload a single video to Instagram using file_url method (like TikTok)"""
     from app.core.metrics import successful_uploads_counter, failed_uploads_gauge
+    # Import cancellation flag to check for cancellation during upload
+    from app.services.video.orchestrator import _cancellation_flags
+    
+    # Check for cancellation before starting
+    if _cancellation_flags.get(video_id, False):
+        instagram_logger.info(f"Instagram upload cancelled for video {video_id} before starting")
+        raise Exception("Upload cancelled by user")
     
     videos = get_user_videos(user_id, db=db)
     video = next((v for v in videos if v.id == video_id), None)
@@ -326,7 +341,17 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
                 max_retries=60, retry_delay=60
             )
             
+            # Check for cancellation after polling completes
+            if _cancellation_flags.get(video_id, False):
+                instagram_logger.info(f"Instagram upload cancelled for video {video_id} after polling")
+                raise Exception("Upload cancelled by user")
+            
             set_upload_progress(user_id, video_id, 85)
+            
+            # Check for cancellation before publishing
+            if _cancellation_flags.get(video_id, False):
+                instagram_logger.info(f"Instagram upload cancelled for video {video_id} before publishing")
+                raise Exception("Upload cancelled by user")
             
             publish_url = f"{INSTAGRAM_GRAPH_API_BASE}/{business_account_id}/media_publish"
             publish_data = {

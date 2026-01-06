@@ -27,6 +27,13 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
     """Upload a single video to YouTube - queries database directly"""
     # Import metrics from centralized location
     from app.core.metrics import successful_uploads_counter, failed_uploads_gauge
+    # Import cancellation flag to check for cancellation during upload
+    from app.services.video.orchestrator import _cancellation_flags
+    
+    # Check for cancellation before starting
+    if _cancellation_flags.get(video_id, False):
+        youtube_logger.info(f"YouTube upload cancelled for video {video_id} before starting")
+        raise Exception("Upload cancelled by user")
     
     # Get video from database
     videos = get_user_videos(user_id, db=db)
@@ -256,6 +263,11 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
         response = None
         chunk_count = 0
         while response is None:
+            # Check for cancellation during upload
+            if _cancellation_flags.get(video_id, False):
+                youtube_logger.info(f"YouTube upload cancelled for video {video_id} during upload")
+                raise Exception("Upload cancelled by user")
+            
             status, response = request.next_chunk()
             if status:
                 progress = int(status.progress() * 100)

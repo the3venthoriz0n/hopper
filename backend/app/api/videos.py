@@ -27,6 +27,7 @@ from app.services.video import (
     recompute_video_title, update_video_settings,
     recompute_all_videos_for_platform
 )
+from app.services.video.orchestrator import cancel_upload
 from app.utils.templates import replace_template_placeholders
 from app.utils.video_tokens import verify_video_access_token
 from app.schemas.video import VideoUpdateRequest, VideoReorderRequest
@@ -105,6 +106,15 @@ async def delete_video_by_id(video_id: int, user_id: int = Depends(require_csrf_
         raise HTTPException(404, "Video not found")
     
     return {"ok": True}
+
+
+@router.post("/{video_id}/cancel")
+async def cancel_video_upload(video_id: int, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+    """Cancel an in-progress upload for a video"""
+    result = await cancel_upload(video_id, user_id, db)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("message", "Failed to cancel upload"))
+    return result
 
 
 @router.get("/{video_id}/file")

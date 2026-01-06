@@ -2536,6 +2536,51 @@ function Home({ user, isAdmin, setUser, authLoading }) {
     }
   };
 
+  const cancelAllUploads = async () => {
+    // Only cancel videos uploading to destinations, not temp videos uploading to server
+    const uploadingVideos = videos.filter(v => 
+      v.status === 'uploading' && 
+      !(typeof v.id === 'string' && v.id.startsWith('temp-'))
+    );
+    if (uploadingVideos.length === 0) {
+      return;
+    }
+    
+    setIsUploading(false);
+    setMessage('⏳ Cancelling uploads...');
+    
+    // Optimistically update UI immediately for better UX
+    setVideos(prev => prev.map(video => 
+      uploadingVideos.some(uv => uv.id === video.id) 
+        ? { ...video, status: 'cancelled' } 
+        : video
+    ));
+    
+    try {
+      // Cancel all uploading videos
+      const cancelPromises = uploadingVideos.map(v => 
+        axios.post(`${API}/videos/${v.id}/cancel`, {}, {
+          headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
+        })
+      );
+      
+      await Promise.all(cancelPromises);
+      
+      // Reload videos to get final updated statuses from backend
+      const videosRes = await axios.get(`${API}/videos`);
+      setVideos(videosRes.data);
+      
+      setMessage(`✅ Cancelled ${uploadingVideos.length} upload(s)`);
+    } catch (err) {
+      // Reload videos to get actual status if cancellation failed
+      const videosRes = await axios.get(`${API}/videos`);
+      setVideos(videosRes.data);
+      
+      const errorMsg = err.response?.data?.detail || err.response?.data?.message || err.message || 'Failed to cancel uploads';
+      setMessage(`❌ ${errorMsg}`);
+    }
+  };
+
   const upload = async () => {
     
     // Check commercial content disclosure validation
@@ -4049,33 +4094,76 @@ function Home({ user, isAdmin, setUser, authLoading }) {
             );
           })()}
           
-          <button 
-            className="upload-btn" 
-            onClick={upload} 
-            disabled={
+          {(() => {
+            // Cancel functionality temporarily disabled - will be re-enabled later
+            // Only show cancel when videos are actually uploading to destinations (not uploading to server)
+            // Temp videos (IDs starting with 'temp-') are uploading to server, not destinations
+            const hasUploadingVideos = false; // Temporarily disabled
+            // const hasUploadingVideos = videos.some(v => 
+            //   v.status === 'uploading' && 
+            //   !(typeof v.id === 'string' && v.id.startsWith('temp-'))
+            // );
+            const isCancelMode = hasUploadingVideos;
+            const isDisabled = !isCancelMode && (
               isUploading || 
               (tiktok.enabled && 
                tiktokSettings.commercial_content_disclosure && 
                !(tiktokSettings.commercial_content_your_brand || tiktokSettings.commercial_content_branded))
-            }
-            title={
-              tiktok.enabled && 
-              tiktokSettings.commercial_content_disclosure && 
-              !(tiktokSettings.commercial_content_your_brand || tiktokSettings.commercial_content_branded)
-                ? "You need to indicate if your content promotes yourself, a third party, or both."
-                : undefined
-            }
-            style={{
-              cursor: (
-                tiktok.enabled && 
-                tiktokSettings.commercial_content_disclosure && 
-                !(tiktokSettings.commercial_content_your_brand || tiktokSettings.commercial_content_branded)
-              ) ? 'not-allowed' : undefined
-            }}
-          >
-            {isUploading ? 'Uploading...' : 
-             globalSettings.upload_immediately ? 'Upload' : 'Schedule Videos'}
-          </button>
+            );
+            
+            // Styling variables for cancel mode - matching normal upload button structure but with error colors
+            // Normal upload uses: linear-gradient(135deg, var(--color-accent) 0%, rgba(var(--rgb-accent), 0.8) 100%)
+            // Normal shadow: 0px 4px 20px rgba(var(--rgb-accent), 0.2)
+            // Hover shadow: var(--shadow-md) = 0 4px 12px rgba(var(--rgb-base), 0.5)
+            const cancelBgGradient = `linear-gradient(135deg, ${HOPPER_COLORS.error} 0%, ${rgba(HOPPER_COLORS.rgb.error, 0.8)} 100%)`;
+            const cancelShadow = `0px 4px 20px ${rgba(HOPPER_COLORS.rgb.error, 0.2)}`;
+            const cancelShadowHover = `0 4px 12px ${rgba(HOPPER_COLORS.rgb.error, 0.5)}`;
+            
+            return (
+              <button 
+                className="upload-btn" 
+                onClick={isCancelMode ? cancelAllUploads : upload} 
+                disabled={isDisabled}
+                title={
+                  isCancelMode
+                    ? "Cancel all in-progress uploads"
+                    : (tiktok.enabled && 
+                       tiktokSettings.commercial_content_disclosure && 
+                       !(tiktokSettings.commercial_content_your_brand || tiktokSettings.commercial_content_branded))
+                      ? "You need to indicate if your content promotes yourself, a third party, or both."
+                      : undefined
+                }
+                style={{
+                  cursor: isDisabled ? 'not-allowed' : undefined,
+                  // Apply cancel styling when in cancel mode - matching normal upload button structure
+                  ...(isCancelMode ? {
+                    background: cancelBgGradient,
+                    boxShadow: cancelShadow
+                  } : {})
+                }}
+                onMouseEnter={(e) => {
+                  if (isCancelMode && !isDisabled) {
+                    e.target.style.transform = 'translateY(-2px)';
+                    e.target.style.boxShadow = cancelShadowHover;
+                    e.target.style.filter = 'brightness(1.1)';
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (isCancelMode && !isDisabled) {
+                    e.target.style.transform = 'translateY(0)';
+                    e.target.style.boxShadow = cancelShadow;
+                    e.target.style.filter = 'none';
+                  }
+                }}
+              >
+                {isCancelMode 
+                  ? 'Cancel Upload' 
+                  : (isUploading 
+                     ? 'Uploading...' 
+                     : (globalSettings.upload_immediately ? 'Upload' : 'Schedule Videos'))}
+              </button>
+            );
+          })()}
           
           {/* Cancel Scheduled Button */}
           {videos.some(v => v.status === 'scheduled') && (
@@ -4423,7 +4511,7 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                     </div>
                   )}
                   {/* Status at bottom left */}
-                  <div className="status">
+                  <div className="status" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
                     <span style={flexTextStyle}>
                       {v.status === 'uploading' ? (
                         v.upload_progress !== undefined ? (
@@ -4435,6 +4523,8 @@ function Home({ user, isAdmin, setUser, authLoading }) {
                         )
                       ) : v.status === 'failed' ? (
                         <span style={{ color: HOPPER_COLORS.error }}>Upload Failed</span>
+                      ) : v.status === 'cancelled' ? (
+                        <span style={{ color: HOPPER_COLORS.grey }}>Cancelled</span>
                       ) : v.scheduled_time ? (
                         <span>Scheduled for {new Date(v.scheduled_time).toLocaleString(undefined, {
                           year: 'numeric',
