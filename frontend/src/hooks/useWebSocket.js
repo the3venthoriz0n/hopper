@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
+import { getWebSocketUrl } from '../services/api';
 
 /**
  * WebSocket hook for real-time updates
@@ -6,7 +7,7 @@ import { useEffect, useRef, useCallback, useState } from 'react';
  * Manages WebSocket connection lifecycle, handles reconnection,
  * and provides event subscription API.
  * 
- * @param {string} url - WebSocket URL
+ * @param {string} url - WebSocket URL path (e.g., '/ws')
  * @param {function} onMessage - Callback for received messages
  * @param {object} options - Configuration options
  * @returns {object} - { connected, send, reconnect }
@@ -53,10 +54,11 @@ export function useWebSocket(url, onMessage, options = {}) {
     if (!url) return;
 
     try {
-      // Determine WebSocket URL
+      // Use getWebSocketUrl() to construct URL through nginx proxy
+      // This ensures WebSocket connects through nginx, not directly to backend port
       const wsUrl = url.startsWith('ws://') || url.startsWith('wss://')
         ? url
-        : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}${url}`;
+        : getWebSocketUrl();
 
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
