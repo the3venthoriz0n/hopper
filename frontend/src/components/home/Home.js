@@ -213,13 +213,11 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
         loadVideos();
         if (payload.video) {
           const video = payload.video;
-          if (video.status === 'uploaded' || video.status === 'failed') {
+          if (video.status === 'failed') {
             setNotification({
-              type: video.status === 'uploaded' ? 'success' : 'error',
-              title: video.status === 'uploaded' ? 'Upload Complete' : 'Upload Failed',
-              message: video.status === 'uploaded' 
-                ? `${video.filename} has been uploaded successfully`
-                : video.error || 'Upload failed',
+              type: 'error',
+              title: 'Upload Failed',
+              message: video.error || 'Upload failed',
               videoFilename: video.filename
             });
             setTimeout(() => setNotification(null), 10000);
@@ -272,13 +270,11 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
       case 'video_update':
         loadVideos();
         if (payload.video) {
-          if (payload.video.status === 'uploaded' || payload.video.status === 'failed') {
+          if (payload.video.status === 'failed') {
             setNotification({
-              type: payload.video.status === 'uploaded' ? 'success' : 'error',
-              title: payload.video.status === 'uploaded' ? 'Upload Complete' : 'Upload Failed',
-              message: payload.video.status === 'uploaded' 
-                ? `${payload.video.filename} has been uploaded successfully`
-                : payload.video.error || 'Upload failed',
+              type: 'error',
+              title: 'Upload Failed',
+              message: payload.video.error || 'Upload failed',
               videoFilename: payload.video.filename
             });
             setTimeout(() => setNotification(null), 10000);
