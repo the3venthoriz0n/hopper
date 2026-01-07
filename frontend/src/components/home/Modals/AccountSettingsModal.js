@@ -99,7 +99,7 @@ export default function AccountSettingsModal({
                 alignItems: 'center',
                 marginBottom: '0.75rem'
               }}>
-                <div style={{ fontSize: '1rem', fontWeight: '500', color: 'white' }}>{user.email}</div>
+                <div style={{ fontSize: '1rem', fontWeight: '500', color: HOPPER_COLORS.white }}>{user.email}</div>
                 <button
                   type="button"
                   onClick={() => setShowChangePassword(!showChangePassword)}
@@ -368,7 +368,7 @@ export default function AccountSettingsModal({
                             <div style={{ 
                               fontSize: '0.95rem', 
                               fontWeight: '600', 
-                              color: 'white',
+                              color: HOPPER_COLORS.white,
                               display: 'flex',
                               alignItems: 'center',
                               gap: '0.5rem'

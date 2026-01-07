@@ -14,7 +14,6 @@ const flexTextStyle = {
 
 export default function VideoItem({
   video: v,
-  isExpanded,
   draggedVideo,
   youtube,
   tiktok,
@@ -30,9 +29,7 @@ export default function VideoItem({
   setMessage,
   loadVideos,
   API,
-  axios,
-  expandedVideos,
-  setExpandedVideos
+  axios
 }) {
   const uploadProps = v.upload_properties || {};
   const youtubeProps = uploadProps.youtube || {};
@@ -55,18 +52,6 @@ export default function VideoItem({
     }
     
     return v.filename;
-  };
-
-  const toggleExpanded = () => {
-    setExpandedVideos(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(v.id)) {
-        newSet.delete(v.id);
-      } else {
-        newSet.add(v.id);
-      }
-      return newSet;
-    });
   };
 
   return (
@@ -268,126 +253,6 @@ export default function VideoItem({
             )}
           </span>
         </div>
-        {isExpanded && (
-          <div className="video-expanded-details">
-            <div className="video-detail-section">
-              <div className="video-detail-label">File Information</div>
-              <div className="video-detail-content">
-                <div className="video-detail-row">
-                  <span className="video-detail-key">Filename:</span>
-                  <span className="video-detail-value">{v.filename}</span>
-                </div>
-                {v.file_size_bytes && (
-                  <>
-                    <div className="video-detail-row">
-                      <span className="video-detail-key">File Size:</span>
-                      <span className="video-detail-value">{formatFileSize(v.file_size_bytes)}</span>
-                    </div>
-                    <div className="video-detail-row">
-                      <span className="video-detail-key">Tokens:</span>
-                      <span className="video-detail-value video-detail-tokens">{v.tokens_consumed || v.tokens_required || 0}</span>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-            {(youtubeProps.title || uploadProps.tiktok || uploadProps.instagram) && (
-              <div className="video-detail-section">
-                <div className="video-detail-label">Upload Properties</div>
-                <div className="video-detail-content">
-                  {youtubeProps.title && (
-                    <div className="video-detail-platform">
-                      <div className="video-detail-platform-name">YouTube</div>
-                      <div className="video-detail-platform-props">
-                        <div className="video-detail-row">
-                          <span className="video-detail-key">Title:</span>
-                          <span className="video-detail-value">{youtubeProps.title}</span>
-                        </div>
-                        <div className="video-detail-row">
-                          <span className="video-detail-key">Visibility:</span>
-                          <span className="video-detail-value">{youtubeProps.visibility}</span>
-                        </div>
-                        <div className="video-detail-row">
-                          <span className="video-detail-key">Made for Kids:</span>
-                          <span className="video-detail-value">{youtubeProps.made_for_kids ? 'Yes' : 'No'}</span>
-                        </div>
-                        {youtubeProps.description && (
-                          <div className="video-detail-row">
-                            <span className="video-detail-key">Description:</span>
-                            <span className="video-detail-value">{youtubeProps.description.substring(0, 100)}{youtubeProps.description.length > 100 ? '...' : ''}</span>
-                          </div>
-                        )}
-                        {youtubeProps.tags && (
-                          <div className="video-detail-row">
-                            <span className="video-detail-key">Tags:</span>
-                            <span className="video-detail-value">{youtubeProps.tags}</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  {uploadProps.tiktok && (
-                    <div className="video-detail-platform">
-                      <div className="video-detail-platform-name">TikTok</div>
-                      <div className="video-detail-platform-props">
-                        <div className="video-detail-row">
-                          <span className="video-detail-key">Title:</span>
-                          <span className="video-detail-value">{uploadProps.tiktok.title}</span>
-                        </div>
-                        <div className="video-detail-row">
-                          <span className="video-detail-key">Privacy:</span>
-                          <span className="video-detail-value">
-                            {uploadProps.tiktok.privacy_level === 'private' ? 'Only Me' :
-                             uploadProps.tiktok.privacy_level === 'friends' ? 'Friends' :
-                             uploadProps.tiktok.privacy_level === 'public' ? 'Followers' :
-                             uploadProps.tiktok.privacy_level}
-                          </span>
-                        </div>
-                        <div className="video-detail-row">
-                          <span className="video-detail-key">Allow Comments:</span>
-                          <span className="video-detail-value">{uploadProps.tiktok.allow_comments ? 'Yes' : 'No'}</span>
-                        </div>
-                        <div className="video-detail-row">
-                          <span className="video-detail-key">Allow Duet:</span>
-                          <span className="video-detail-value">{uploadProps.tiktok.allow_duet ? 'Yes' : 'No'}</span>
-                        </div>
-                        <div className="video-detail-row">
-                          <span className="video-detail-key">Allow Stitch:</span>
-                          <span className="video-detail-value">{uploadProps.tiktok.allow_stitch ? 'Yes' : 'No'}</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  {uploadProps.instagram && (
-                    <div className="video-detail-platform">
-                      <div className="video-detail-platform-name">Instagram</div>
-                      <div className="video-detail-platform-props">
-                        <div className="video-detail-row">
-                          <span className="video-detail-key">Caption:</span>
-                          <span className="video-detail-value">{uploadProps.instagram.caption}</span>
-                        </div>
-                        {uploadProps.instagram.location_id && (
-                          <div className="video-detail-row">
-                            <span className="video-detail-key">Location ID:</span>
-                            <span className="video-detail-value">{uploadProps.instagram.location_id}</span>
-                          </div>
-                        )}
-                        <div className="video-detail-row">
-                          <span className="video-detail-key">Disable Comments:</span>
-                          <span className="video-detail-value">{uploadProps.instagram.disable_comments ? 'Yes' : 'No'}</span>
-                        </div>
-                        <div className="video-detail-row">
-                          <span className="video-detail-key">Disable Likes:</span>
-                          <span className="video-detail-value">{uploadProps.instagram.disable_likes ? 'Yes' : 'No'}</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
       </div>
       <div className="video-actions">
         {v.status === 'failed' && (
@@ -436,31 +301,6 @@ export default function VideoItem({
             🪙 {v.tokens_consumed || v.tokens_required || 0}
           </div>
         )}
-        <button 
-          onClick={() => toggleExpanded()}
-          className="btn-expand"
-          title={isExpanded ? "Collapse" : "Expand"}
-          style={{
-            height: '32px',
-            minWidth: '32px',
-            width: '32px',
-            padding: '0',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '1.25rem',
-            lineHeight: '1',
-            background: 'transparent',
-            border: `1px solid ${HOPPER_COLORS.greyBorder}`,
-            borderRadius: '6px',
-            color: HOPPER_COLORS.grey,
-            cursor: 'pointer',
-            transition: 'all 0.2s',
-            boxSizing: 'border-box'
-          }}
-        >
-          {isExpanded ? '▼' : '▶'}
-        </button>
         <button 
           onClick={() => setEditingVideo(v)} 
           className="btn-edit"

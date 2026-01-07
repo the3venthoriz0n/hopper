@@ -4,9 +4,6 @@ import { HOPPER_COLORS, rgba, getGradient } from '../../../utils/colors';
 
 export default function VideoQueue({
   videos,
-  derivedMessage,
-  expandedVideos,
-  setExpandedVideos,
   draggedVideo,
   youtube,
   tiktok,
@@ -28,9 +25,7 @@ export default function VideoQueue({
   axios
 }) {
   return (
-    <>
-      {derivedMessage && <div className="message">{derivedMessage}</div>}
-      <div className="card">
+    <div className="card">
         <div className="queue-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
           <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             Queue ({videos.length})
@@ -62,7 +57,7 @@ export default function VideoQueue({
                   background: getGradient(HOPPER_COLORS.error, 0.9, 0.9),
                   border: `1px solid ${HOPPER_COLORS.error}`,
                   borderRadius: '8px',
-                  color: 'white',
+                  color: HOPPER_COLORS.white,
                   cursor: 'pointer',
                   fontSize: '0.9rem',
                   fontWeight: '600',
@@ -91,7 +86,7 @@ export default function VideoQueue({
                   background: getGradient(HOPPER_COLORS.error, 0.9, 0.9),
                   border: `1px solid ${HOPPER_COLORS.error}`,
                   borderRadius: '8px',
-                  color: 'white',
+                  color: HOPPER_COLORS.white,
                   cursor: 'pointer',
                   fontSize: '0.9rem',
                   fontWeight: '600',
@@ -121,7 +116,6 @@ export default function VideoQueue({
             <VideoItem
               key={v.id}
               video={v}
-              isExpanded={expandedVideos.has(v.id)}
               draggedVideo={draggedVideo}
               youtube={youtube}
               tiktok={tiktok}
@@ -138,13 +132,10 @@ export default function VideoQueue({
               loadVideos={loadVideos}
               API={API}
               axios={axios}
-              expandedVideos={expandedVideos}
-              setExpandedVideos={setExpandedVideos}
             />
           ))
         )}
       </div>
-    </>
   );
 }
 

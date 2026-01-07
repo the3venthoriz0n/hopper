@@ -42,9 +42,10 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
   const [showAccountSettings, setShowAccountSettings] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showGlobalSettings, setShowGlobalSettings] = useState(false);
+  const [newWord, setNewWord] = useState('');
+  const [wordbankExpanded, setWordbankExpanded] = useState(false);
   const [destinationModal, setDestinationModal] = useState(null);
   const [maxFileSize, setMaxFileSize] = useState(null);
-  const [expandedDestinationErrors, setExpandedDestinationErrors] = useState(new Set());
 
   const {
     youtube,
@@ -95,17 +96,18 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
     loadYoutubeSettings,
     loadTiktokSettings,
     loadInstagramSettings,
+    addWordToWordbank,
+    removeWordFromWordbank,
+    clearWordbank,
   } = useSettings(setMessage);
 
   const {
     videos,
-    expandedVideos,
     editingVideo,
     draggedVideo,
     overrideInputValues,
     isUploading,
     derivedMessage: derivedMessageFromHook,
-    setExpandedVideos,
     setEditingVideo,
     setDraggedVideo,
     setOverrideInputValues,
@@ -128,6 +130,8 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
     handleDrop,
     formatFileSize,
     calculateQueueTokenCost,
+    expandedDestinationErrors,
+    setExpandedDestinationErrors,
   } = useVideos(
     user,
     setMessage,
@@ -274,6 +278,7 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
       />
 
       <HomeHeader
+        appTitle={isProduction ? 'hopper' : 'DEV HOPPER'}
         user={user}
         isAdmin={isAdmin}
         tokenBalance={tokenBalance}
@@ -282,13 +287,20 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
         showGlobalSettings={showGlobalSettings}
       />
 
-      {showGlobalSettings && (
-        <GlobalSettings
-          globalSettings={globalSettings}
-          setGlobalSettings={setGlobalSettings}
-          updateGlobalSettings={updateGlobalSettings}
-        />
-      )}
+      <GlobalSettings
+        showGlobalSettings={showGlobalSettings}
+        setShowGlobalSettings={setShowGlobalSettings}
+        globalSettings={globalSettings}
+        setGlobalSettings={setGlobalSettings}
+        updateGlobalSettings={updateGlobalSettings}
+        newWord={newWord}
+        setNewWord={setNewWord}
+        addWordToWordbank={addWordToWordbank}
+        removeWordFromWordbank={removeWordFromWordbank}
+        clearWordbank={clearWordbank}
+        wordbankExpanded={wordbankExpanded}
+        setWordbankExpanded={setWordbankExpanded}
+      />
 
       <DestinationsList
         youtube={youtube}
@@ -349,9 +361,6 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
       
       <VideoQueue
         videos={videos}
-        derivedMessage={derivedMessage}
-        expandedVideos={expandedVideos}
-        setExpandedVideos={setExpandedVideos}
         draggedVideo={draggedVideo}
         youtube={youtube}
         tiktok={tiktok}

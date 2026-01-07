@@ -34,7 +34,6 @@ export function useVideos(
   subscription
 ) {
   const [videos, setVideos] = useState([]);
-  const [expandedVideos, setExpandedVideos] = useState(new Set());
   const [editingVideo, setEditingVideo] = useState(null);
   const [draggedVideo, setDraggedVideo] = useState(null);
   const [overrideInputValues, setOverrideInputValues] = useState({});
@@ -636,7 +635,6 @@ export function useVideos(
 
   return {
     videos,
-    expandedVideos,
     editingVideo,
     draggedVideo,
     overrideInputValues,
@@ -644,7 +642,6 @@ export function useVideos(
     isUploading,
     derivedMessage,
     setVideos,
-    setExpandedVideos,
     setEditingVideo,
     setDraggedVideo,
     setOverrideInputValues,

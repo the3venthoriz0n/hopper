@@ -20,7 +20,7 @@ export default function DeleteConfirmModal({ showDeleteConfirm, setShowDeleteCon
         </div>
         
         <div className="modal-body">
-          <p style={{ marginBottom: '1rem', fontSize: '1rem', lineHeight: '1.6', color: 'white' }}>
+          <p style={{ marginBottom: '1rem', fontSize: '1rem', lineHeight: '1.6', color: HOPPER_COLORS.white }}>
             Are you absolutely sure you want to delete your account?
           </p>
           <p style={{ marginBottom: '1.5rem', fontSize: '0.9rem', color: HOPPER_COLORS.grey, lineHeight: '1.6' }}>
@@ -41,7 +41,7 @@ export default function DeleteConfirmModal({ showDeleteConfirm, setShowDeleteCon
                 flex: 1,
                 padding: '0.75rem',
                 background: HOPPER_COLORS.adminRed,
-                color: 'white',
+                color: HOPPER_COLORS.white,
                 border: 'none',
                 borderRadius: '6px',
                 cursor: 'pointer',
