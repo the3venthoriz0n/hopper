@@ -6,6 +6,7 @@ import { HOPPER_COLORS, rgba } from './utils/colors';
 function Help() {
   useEffect(() => {
     document.title = 'Help - hopper';
+    window.scrollTo(0, 0);
   }, []);
 
   return (

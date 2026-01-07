@@ -194,27 +194,110 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
   }, [isProduction]);
 
   const handleWebSocketMessage = useCallback((data) => {
-    if (data.type === 'video_update') {
-      loadVideos();
-      if (data.video) {
-        if (data.video.status === 'uploaded' || data.video.status === 'failed') {
-          setNotification({
-            type: data.video.status === 'uploaded' ? 'success' : 'error',
-            title: data.video.status === 'uploaded' ? 'Upload Complete' : 'Upload Failed',
-            message: data.video.status === 'uploaded' 
-              ? `${data.video.filename} has been uploaded successfully`
-              : data.video.error || 'Upload failed',
-            videoFilename: data.video.filename
-          });
-          setTimeout(() => setNotification(null), 10000);
-        }
-      }
-    } else if (data.type === 'token_balance_update') {
-      loadSubscription();
-    } else if (data.type === 'platform_status_update') {
-      loadDestinations();
+    // Handle backend message format: {event: "type", payload: {...}}
+    // Also support legacy format: {type: "type", ...} for backward compatibility
+    const eventType = data.event || data.type;
+    const payload = data.payload || data;
+    
+    if (!eventType) {
+      console.warn('WebSocket message missing event type:', data);
+      return;
     }
-  }, [loadVideos, loadSubscription, loadDestinations]);
+    
+    switch (eventType) {
+      case 'video_added':
+        loadVideos();
+        break;
+        
+      case 'video_status_changed':
+        loadVideos();
+        if (payload.video) {
+          const video = payload.video;
+          if (video.status === 'uploaded' || video.status === 'failed') {
+            setNotification({
+              type: video.status === 'uploaded' ? 'success' : 'error',
+              title: video.status === 'uploaded' ? 'Upload Complete' : 'Upload Failed',
+              message: video.status === 'uploaded' 
+                ? `${video.filename} has been uploaded successfully`
+                : video.error || 'Upload failed',
+              videoFilename: video.filename
+            });
+            setTimeout(() => setNotification(null), 10000);
+          }
+        }
+        break;
+        
+      case 'video_updated':
+        loadVideos();
+        break;
+        
+      case 'video_deleted':
+        loadVideos();
+        break;
+        
+      case 'video_title_recomputed':
+        loadVideos();
+        break;
+        
+      case 'videos_bulk_recomputed':
+        loadVideos();
+        break;
+        
+      case 'destination_toggled':
+        loadDestinations();
+        loadVideos();
+        break;
+        
+      case 'upload_progress':
+        loadVideos();
+        break;
+        
+      case 'settings_changed':
+        if (payload.category === 'global') {
+          loadGlobalSettings();
+        } else if (payload.category === 'youtube') {
+          loadYoutubeSettings();
+        } else if (payload.category === 'tiktok') {
+          loadTiktokSettings();
+        } else if (payload.category === 'instagram') {
+          loadInstagramSettings();
+        }
+        break;
+        
+      case 'token_balance_changed':
+        loadSubscription();
+        break;
+        
+      // Legacy event type support for backward compatibility
+      case 'video_update':
+        loadVideos();
+        if (payload.video) {
+          if (payload.video.status === 'uploaded' || payload.video.status === 'failed') {
+            setNotification({
+              type: payload.video.status === 'uploaded' ? 'success' : 'error',
+              title: payload.video.status === 'uploaded' ? 'Upload Complete' : 'Upload Failed',
+              message: payload.video.status === 'uploaded' 
+                ? `${payload.video.filename} has been uploaded successfully`
+                : payload.video.error || 'Upload failed',
+              videoFilename: payload.video.filename
+            });
+            setTimeout(() => setNotification(null), 10000);
+          }
+        }
+        break;
+        
+      case 'token_balance_update':
+        loadSubscription();
+        break;
+        
+      case 'platform_status_update':
+        loadDestinations();
+        break;
+        
+      default:
+        console.log('Unhandled WebSocket event type:', eventType, payload);
+    }
+  }, [loadVideos, loadSubscription, loadDestinations, loadGlobalSettings, loadYoutubeSettings, loadTiktokSettings, loadInstagramSettings, setNotification]);
 
   const { connected: wsConnected } = useWebSocket('/ws', handleWebSocketMessage, {
     reconnect: true,

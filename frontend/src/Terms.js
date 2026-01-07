@@ -6,6 +6,7 @@ import { HOPPER_COLORS } from './utils/colors';
 function Terms() {
   useEffect(() => {
     document.title = 'Terms of Service - hopper';
+    window.scrollTo(0, 0);
   }, []);
 
   return (

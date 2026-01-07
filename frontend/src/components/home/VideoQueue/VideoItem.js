@@ -302,31 +302,6 @@ export default function VideoItem({
           </div>
         )}
         <button 
-          onClick={() => setEditingVideo(v)} 
-          className="btn-edit"
-          title="Edit video"
-          style={{
-            height: '32px',
-            minWidth: '32px',
-            width: '32px',
-            padding: '0',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '1.25rem',
-            lineHeight: '1',
-            background: 'transparent',
-            border: `1px solid ${HOPPER_COLORS.greyBorder}`,
-            borderRadius: '6px',
-            color: HOPPER_COLORS.grey,
-            cursor: 'pointer',
-            transition: 'all 0.2s',
-            boxSizing: 'border-box'
-          }}
-        >
-          ✏️
-        </button>
-        <button 
           onClick={() => removeVideo(v.id, setMessage)} 
           disabled={v.status === 'uploading'}
           style={{

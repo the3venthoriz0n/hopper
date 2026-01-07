@@ -15,7 +15,7 @@ import CircularTokenProgress from '../common/CircularTokenProgress';
 export default function HomeHeader({ appTitle, isAdmin, user, tokenBalance, setShowAccountSettings }) {
   return (
     <div className="app-header">
-      <h1 className="app-title">{appTitle}</h1>
+      <h1 className="app-title">🐸 {appTitle}</h1>
       <div className="app-header-right">
         {isAdmin && (
           <Link

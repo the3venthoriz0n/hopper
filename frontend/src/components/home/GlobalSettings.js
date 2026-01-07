@@ -119,12 +119,22 @@ export default function GlobalSettings({
                 type="text"
                 value={newWord}
                 onChange={(e) => setNewWord(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && newWord.trim() && addWordToWordbank(newWord.trim())}
+                onKeyPress={async (e) => {
+                  if (e.key === 'Enter' && newWord.trim()) {
+                    await addWordToWordbank(newWord.trim());
+                    setNewWord('');
+                  }
+                }}
                 placeholder="Add word(s) - comma-separated for multiple"
                 className="input-text"
               />
               <button 
-                onClick={() => newWord.trim() && addWordToWordbank(newWord.trim())}
+                onClick={async () => {
+                  if (newWord.trim()) {
+                    await addWordToWordbank(newWord.trim());
+                    setNewWord('');
+                  }
+                }}
                 className="btn-add-word"
                 disabled={!newWord.trim()}
               >
