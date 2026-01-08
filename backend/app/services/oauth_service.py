@@ -503,6 +503,41 @@ async def complete_instagram_oauth_flow(code: str, state: str, db: Session) -> D
         
         instagram_logger.info(f"Successfully obtained long-lived token (expires in {expires_in}s / {expires_in // 86400} days)")
         
+        # Step 2.5: Validate permissions - ensure required scopes are granted
+        required_permissions = set(INSTAGRAM_SCOPES)
+        
+        # Parse permissions from initial token response (already converted to string if it was a list)
+        granted_permissions_set = set(p.strip() for p in permissions.split(",") if p.strip()) if permissions else set()
+        
+        instagram_logger.info(f"Required permissions: {required_permissions}")
+        instagram_logger.info(f"Granted permissions: {granted_permissions_set}")
+        
+        # Check if all required permissions are granted
+        missing_permissions = required_permissions - granted_permissions_set
+        if missing_permissions:
+            error_msg = f"Missing required Instagram permissions: {missing_permissions}. Granted: {granted_permissions_set}"
+            instagram_logger.error(f"Permission validation failed for user {app_user_id}: {error_msg}")
+            raise ValueError(error_msg)
+        
+        # Additional validation: Verify token works and has correct permissions via API call
+        # This will be done in Step 3 when we fetch account info, but we can also verify permissions endpoint
+        try:
+            permissions_url = f"{INSTAGRAM_GRAPH_API_BASE}/me/permissions"
+            permissions_params = {"access_token": access_token}
+            permissions_response = await client.get(permissions_url, params=permissions_params)
+            
+            if permissions_response.status_code == 200:
+                permissions_data = permissions_response.json()
+                instagram_logger.debug(f"Instagram permissions API response: {permissions_data}")
+            else:
+                # Permissions endpoint may not be available, but token should still work
+                instagram_logger.debug(f"Could not verify permissions via API (status {permissions_response.status_code}), but token exchange succeeded")
+        except Exception as perm_error:
+            # Permissions check is best-effort, don't fail OAuth if it errors
+            instagram_logger.debug(f"Could not verify permissions via API: {perm_error}, but token exchange succeeded")
+        
+        instagram_logger.info(f"Permission validation passed for user {app_user_id}")
+        
         # Step 3: Get Instagram account info using long-lived token
         me_url = f"{INSTAGRAM_GRAPH_API_BASE}/me"
         me_params = {
@@ -643,10 +678,38 @@ async def revoke_instagram_token(access_token: str, user_id: str) -> bool:
                 instagram_logger.info(f"Successfully revoked Instagram token with provider for user {user_id}")
                 return True
             else:
-                instagram_logger.warning(f"Instagram token revocation returned status {response.status_code}: {response.text[:200]}")
-                return False
+                # Check if error indicates token is already invalid/expired
+                error_text = response.text[:500] if response.text else ""
+                error_json = None
+                try:
+                    if response.headers.get('content-type', '').startswith('application/json'):
+                        error_json = response.json()
+                except:
+                    pass
+                
+                # Handle expected expired/invalid token errors gracefully
+                if response.status_code == 400:
+                    error_message = ""
+                    if error_json and isinstance(error_json, dict):
+                        error_obj = error_json.get('error', {})
+                        error_message = error_obj.get('message', '')
+                        error_code = error_obj.get('code')
+                        
+                        # Token already invalid/expired - this is expected, don't log as error
+                        if error_code == 190 or "not authorized" in error_message.lower() or "invalid" in error_message.lower():
+                            instagram_logger.debug(f"Instagram token already invalid/expired for user {user_id}, skipping revocation (expected)")
+                            return True  # Consider this success since token is already invalid
+                    
+                    # Other 400 errors - log as warning but don't fail
+                    instagram_logger.debug(f"Instagram token revocation returned 400: {error_text}")
+                    return True  # Still consider success - token may already be invalid
+                else:
+                    # Unexpected errors (network, API changes, etc.) - log as warning
+                    instagram_logger.warning(f"Instagram token revocation returned status {response.status_code}: {error_text}")
+                    return False
     except Exception as e:
-        instagram_logger.warning(f"Failed to revoke Instagram token with provider: {e}")
+        # Network errors or other exceptions - log but don't fail
+        instagram_logger.debug(f"Failed to revoke Instagram token with provider (token may already be invalid): {e}")
         return False
 
 
@@ -665,29 +728,38 @@ async def disconnect_platform(user_id: int, platform: str, db: Session) -> Dict[
     
     if token:
         try:
-            # Decrypt access token for revocation
-            access_token = decrypt(token.access_token)
+            # Check if token is expired before attempting revocation
+            from app.db.helpers import check_token_expiration
+            token_expiry = check_token_expiration(token)
+            is_expired = token_expiry.get("expired", False)
             
-            if access_token:
-                # Revoke token with OAuth provider (best-effort, don't fail if it errors)
-                if platform == "youtube":
-                    await revoke_youtube_token(access_token)
-                elif platform == "tiktok":
-                    await revoke_tiktok_token(access_token)
-                elif platform == "instagram":
-                    # Get Instagram user ID from extra_data
-                    extra_data = token.extra_data or {}
-                    instagram_user_id = extra_data.get("business_account_id") or extra_data.get("instagram_user_id")
-                    if instagram_user_id:
-                        await revoke_instagram_token(access_token, str(instagram_user_id))
-                    else:
-                        instagram_logger.warning(f"Could not find Instagram user ID in extra_data for user {user_id}, skipping revocation")
+            if is_expired:
+                # Token is already expired - skip revocation (it's already invalid)
+                logger.debug(f"Token for user {user_id}, platform {platform} is expired, skipping revocation")
+            else:
+                # Decrypt access token for revocation
+                access_token = decrypt(token.access_token)
+                
+                if access_token:
+                    # Revoke token with OAuth provider (best-effort, don't fail if it errors)
+                    if platform == "youtube":
+                        await revoke_youtube_token(access_token)
+                    elif platform == "tiktok":
+                        await revoke_tiktok_token(access_token)
+                    elif platform == "instagram":
+                        # Get Instagram user ID from extra_data
+                        extra_data = token.extra_data or {}
+                        instagram_user_id = extra_data.get("business_account_id") or extra_data.get("instagram_user_id")
+                        if instagram_user_id:
+                            await revoke_instagram_token(access_token, str(instagram_user_id))
+                        else:
+                            instagram_logger.debug(f"Could not find Instagram user ID in extra_data for user {user_id}, skipping revocation")
         except ValueError as e:
             # Decryption failed - log but continue with deletion
-            logger.warning(f"Failed to decrypt token for revocation (user {user_id}, platform {platform}): {e}")
+            logger.debug(f"Failed to decrypt token for revocation (user {user_id}, platform {platform}): {e}")
         except Exception as e:
             # Any other error during revocation - log but continue
-            logger.warning(f"Error during token revocation (user {user_id}, platform {platform}): {e}")
+            logger.debug(f"Error during token revocation (user {user_id}, platform {platform}): {e}")
     
     # Delete token from our database and disable destination
     delete_oauth_token(user_id, platform, db=db)

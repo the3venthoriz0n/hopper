@@ -250,7 +250,14 @@ async def auth_instagram_callback(
         if error_description:
             error_msg += f" - {error_description}"
         instagram_logger.error(error_msg)
-        return RedirectResponse(f"{settings.FRONTEND_URL}?error=instagram_auth_failed&reason={error}")
+        
+        # Provide user-friendly error message based on error type
+        if error == "access_denied":
+            user_friendly_reason = "You denied the required permissions. Please grant all requested permissions to connect Instagram."
+        else:
+            user_friendly_reason = error_description or error
+        
+        return RedirectResponse(f"{settings.FRONTEND_URL}?error=instagram_auth_failed&reason={quote(user_friendly_reason)}")
     
     try:
         result = await complete_instagram_oauth_flow(code, state, db)
@@ -258,8 +265,16 @@ async def auth_instagram_callback(
         redirect_url = f"{settings.FRONTEND_URL}/app?connected=instagram&status={status_param}"
         return RedirectResponse(redirect_url)
     except ValueError as e:
-        instagram_logger.error(f"Instagram OAuth error: {e}")
-        return RedirectResponse(f"{settings.FRONTEND_URL}?error=instagram_auth_failed&reason={str(e)}")
+        error_str = str(e)
+        instagram_logger.error(f"Instagram OAuth error: {error_str}")
+        
+        # Check if error is related to missing permissions
+        if "Missing required Instagram permissions" in error_str or "permissions" in error_str.lower():
+            user_friendly_reason = "Required permissions were not granted. Please reconnect and grant all requested permissions."
+        else:
+            user_friendly_reason = error_str
+        
+        return RedirectResponse(f"{settings.FRONTEND_URL}?error=instagram_auth_failed&reason={quote(user_friendly_reason)}")
     except Exception as e:
         instagram_logger.error(f"Callback exception: {str(e)}", exc_info=True)
         return RedirectResponse(f"{settings.FRONTEND_URL}/app?error=instagram_auth_failed")
