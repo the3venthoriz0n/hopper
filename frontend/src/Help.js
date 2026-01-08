@@ -51,7 +51,7 @@ function Help() {
         <section style={{ marginBottom: '3rem' }}>
           <h2 style={{ marginBottom: '1rem', color: HOPPER_COLORS.purpleViolet }}>File Size Limitations</h2>
           <ul style={{ lineHeight: '1.8' }}>
-            <li><strong>Maximum file size:</strong> 10 GB per video</li>
+            <li><strong>Maximum file size:</strong> 100 MB per video</li>
             <li>Files are validated during upload to ensure they don't exceed this limit</li>
             <li>Large files may take longer to upload depending on your internet connection</li>
           </ul>

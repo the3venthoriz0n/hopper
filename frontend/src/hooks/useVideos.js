@@ -137,12 +137,13 @@ export function useVideos(
   }, []);
 
   const addVideo = useCallback(async (file) => {
-    const maxSizeBytes = maxFileSize?.max_file_size_bytes || 10 * 1024 * 1024 * 1024;
+    // Temporary: 100MB limit due to Cloudflare restrictions
+    const maxSizeBytes = 100 * 1024 * 1024; // 100MB
+    const maxSizeDisplay = '100 MB';
+    
     if (file.size > maxSizeBytes) {
       const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-      const fileSizeGB = (file.size / (1024 * 1024 * 1024)).toFixed(2);
-      const maxSizeDisplay = maxFileSize?.max_file_size_display || '10 GB';
-      const errorMsg = `File too large: ${file.name} is ${fileSizeMB} MB (${fileSizeGB} GB). Maximum file size is ${maxSizeDisplay}.`;
+      const errorMsg = `File too large: ${file.name} is ${fileSizeMB} MB. Maximum file size is ${maxSizeDisplay}.`;
       
       setNotification({
         type: 'error',
@@ -235,9 +236,8 @@ export function useVideos(
         setTimeout(() => setNotification(null), 15000);
       } else if (isFileSizeError) {
         const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-        const fileSizeGB = (file.size / (1024 * 1024 * 1024)).toFixed(2);
-        const maxSizeDisplay = maxFileSize?.max_file_size_display || '10 GB';
-        errorMsg = err.response?.data?.detail || `File too large: ${file.name} is ${fileSizeMB} MB (${fileSizeGB} GB). Maximum file size is ${maxSizeDisplay}.`;
+        const maxSizeDisplay = '100 MB';
+        errorMsg = err.response?.data?.detail || `File too large: ${file.name} is ${fileSizeMB} MB. Maximum file size is ${maxSizeDisplay}.`;
         
         setNotification({
           type: 'error',
