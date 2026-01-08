@@ -816,7 +816,14 @@ async def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: s
         # Handle daily plans differently (they grant tokens daily, not monthly)
         if subscription.plan_type == 'free_daily':
             # Check if tokens were already granted today for this subscription
-            period_duration = (subscription.current_period_end - subscription.current_period_start).total_seconds()
+            # Ensure datetimes are timezone-aware before comparison
+            period_start = subscription.current_period_start
+            period_end = subscription.current_period_end
+            if period_start.tzinfo is None:
+                period_start = period_start.replace(tzinfo=timezone.utc)
+            if period_end.tzinfo is None:
+                period_end = period_end.replace(tzinfo=timezone.utc)
+            period_duration = (period_end - period_start).total_seconds()
             is_daily = period_duration < 2 * 24 * 3600  # Less than 2 days
             
             if is_daily:
@@ -857,7 +864,21 @@ async def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: s
             )
             
             # Just ensure period is updated to match subscription
-            if token_balance.period_start != subscription.current_period_start or token_balance.period_end != subscription.current_period_end:
+            # Ensure datetimes are timezone-aware before comparison
+            balance_start = token_balance.period_start
+            balance_end = token_balance.period_end
+            sub_start = subscription.current_period_start
+            sub_end = subscription.current_period_end
+            if balance_start and balance_start.tzinfo is None:
+                balance_start = balance_start.replace(tzinfo=timezone.utc)
+            if balance_end and balance_end.tzinfo is None:
+                balance_end = balance_end.replace(tzinfo=timezone.utc)
+            if sub_start and sub_start.tzinfo is None:
+                sub_start = sub_start.replace(tzinfo=timezone.utc)
+            if sub_end and sub_end.tzinfo is None:
+                sub_end = sub_end.replace(tzinfo=timezone.utc)
+            
+            if balance_start != sub_start or balance_end != sub_end:
                 token_balance.period_start = subscription.current_period_start
                 token_balance.period_end = subscription.current_period_end
                 token_balance.updated_at = datetime.now(timezone.utc)
@@ -868,7 +889,21 @@ async def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: s
         
         # For unlimited plans, only check period mismatch (amount is always -1)
         if subscription.plan_type == 'unlimited':
-            if token_balance.period_start != subscription.current_period_start or token_balance.period_end != subscription.current_period_end:
+            # Ensure datetimes are timezone-aware before comparison
+            balance_start = token_balance.period_start
+            balance_end = token_balance.period_end
+            sub_start = subscription.current_period_start
+            sub_end = subscription.current_period_end
+            if balance_start and balance_start.tzinfo is None:
+                balance_start = balance_start.replace(tzinfo=timezone.utc)
+            if balance_end and balance_end.tzinfo is None:
+                balance_end = balance_end.replace(tzinfo=timezone.utc)
+            if sub_start and sub_start.tzinfo is None:
+                sub_start = sub_start.replace(tzinfo=timezone.utc)
+            if sub_end and sub_end.tzinfo is None:
+                sub_end = sub_end.replace(tzinfo=timezone.utc)
+            
+            if balance_start != sub_start or balance_end != sub_end:
                 logger.info(f"Token period mismatch for user {user_id}, subscription {subscription_id} (unlimited plan). Updating period.")
                 token_balance.period_start = subscription.current_period_start
                 token_balance.period_end = subscription.current_period_end
@@ -888,8 +923,21 @@ async def ensure_tokens_synced_for_subscription(user_id: int, subscription_id: s
             return True
         
         # Not a renewal - check if tokens need to be added for new subscription
-        period_mismatch = (token_balance.period_start != subscription.current_period_start or 
-                          token_balance.period_end != subscription.current_period_end)
+        # Ensure datetimes are timezone-aware before comparison
+        balance_start = token_balance.period_start
+        balance_end = token_balance.period_end
+        sub_start = subscription.current_period_start
+        sub_end = subscription.current_period_end
+        if balance_start and balance_start.tzinfo is None:
+            balance_start = balance_start.replace(tzinfo=timezone.utc)
+        if balance_end and balance_end.tzinfo is None:
+            balance_end = balance_end.replace(tzinfo=timezone.utc)
+        if sub_start and sub_start.tzinfo is None:
+            sub_start = sub_start.replace(tzinfo=timezone.utc)
+        if sub_end and sub_end.tzinfo is None:
+            sub_end = sub_end.replace(tzinfo=timezone.utc)
+        
+        period_mismatch = (balance_start != sub_start or balance_end != sub_end)
         monthly_tokens = get_plan_tokens(subscription.plan_type)
         amount_mismatch = token_balance.tokens_remaining != monthly_tokens
         period_uninitialized = (token_balance.period_start == token_balance.period_end)

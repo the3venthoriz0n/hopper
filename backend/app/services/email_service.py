@@ -153,16 +153,38 @@ def verify_resend_signature(payload: bytes, headers: dict) -> bool:
         return False
     
     try:
+        # Normalize headers to lowercase for case-insensitive lookup
+        normalized_headers = {}
+        for key, value in headers.items():
+            normalized_headers[key.lower()] = value
+        
+        # Ensure required headers are present with correct case
+        svix_headers = {
+            "svix-id": normalized_headers.get("svix-id"),
+            "svix-timestamp": normalized_headers.get("svix-timestamp"),
+            "svix-signature": normalized_headers.get("svix-signature")
+        }
+        
+        # Check if all required headers are present
+        if not all(svix_headers.values()):
+            missing = [k for k, v in svix_headers.items() if not v]
+            logger.error(f"Unable to extract timestamp and signatures from header: missing {missing}")
+            return False
+        
         wh = Webhook(settings.RESEND_WEBHOOK_SECRET)
-        # Svix verify() expects payload as bytes and headers as dict
-        wh.verify(payload, headers)
+        # Svix verify() expects payload as bytes and headers as dict with correct case
+        wh.verify(payload, svix_headers)
         logger.debug("Resend webhook signature verified successfully")
         return True
     except WebhookVerificationError as e:
         logger.error(f"Resend webhook signature verification failed: {e}")
         return False
     except Exception as e:
-        logger.error(f"Unexpected error during webhook verification: {e}", exc_info=True)
+        error_msg = str(e)
+        if "Unable to extract timestamp and signatures from header" in error_msg:
+            logger.error(f"Webhook error: Unable to extract timestamp and signatures from header. Headers received: {list(headers.keys())}")
+        else:
+            logger.error(f"Unexpected error during webhook verification: {e}", exc_info=True)
         return False
 
 
@@ -209,10 +231,13 @@ def process_resend_webhook(payload: bytes, headers: dict, db: Session) -> Dict[s
         headers: Request headers dict
         db: Database session
     """
-    # Extract Svix headers for validation
-    svix_id = headers.get("svix-id")
-    svix_timestamp = headers.get("svix-timestamp")
-    svix_signature = headers.get("svix-signature")
+    # Normalize headers to lowercase for case-insensitive lookup
+    normalized_headers = {k.lower(): v for k, v in headers.items()}
+    
+    # Extract Svix headers for validation (case-insensitive)
+    svix_id = normalized_headers.get("svix-id") or headers.get("svix-id")
+    svix_timestamp = normalized_headers.get("svix-timestamp") or headers.get("svix-timestamp")
+    svix_signature = normalized_headers.get("svix-signature") or headers.get("svix-signature")
     
     # In production, require all Svix headers if secret is configured
     if settings.RESEND_WEBHOOK_SECRET and settings.ENVIRONMENT == "production":

@@ -9,7 +9,7 @@ import * as settingsService from '../services/settingsService';
 export function useSettings(setMessage) {
   const [globalSettings, setGlobalSettings] = useState({
     title_template: '{filename}',
-    description_template: 'Uploaded via Hopper',
+    description_template: 'Uploaded via hopper',
     wordbank: [],
     upload_immediately: true,
     schedule_mode: 'spaced',
@@ -51,7 +51,7 @@ export function useSettings(setMessage) {
       const data = await settingsService.loadGlobalSettings();
       setGlobalSettings({
         title_template: '{filename}',
-        description_template: 'Uploaded via Hopper',
+        description_template: 'Uploaded via hopper',
         wordbank: [],
         upload_immediately: true,
         schedule_mode: 'spaced',

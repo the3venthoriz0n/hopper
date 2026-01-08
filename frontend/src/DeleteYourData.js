@@ -15,7 +15,7 @@ function DeleteYourData() {
         <p className="page-meta"><strong>Last updated:</strong> {new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
         
         <h2>1. How to Delete Your Account</h2>
-        <p>To permanently delete your account and all associated data, log in to your Hopper account, click the settings icon in the top-right corner next to your email address, navigate to Account Settings, scroll to the Danger Zone section, and click "Delete My Account". You will be asked to confirm your decision before deletion.</p>
+        <p>To permanently delete your account and all associated data, log in to your hopper account, click the settings icon in the top-right corner next to your email address, navigate to Account Settings, scroll to the Danger Zone section, and click "Delete My Account". You will be asked to confirm your decision before deletion.</p>
         
         <h2>2. What Gets Deleted</h2>
         <p>When you delete your account, we permanently remove your account and login credentials, all uploaded videos and files, all settings and preferences, all connected social media accounts, and all OAuth tokens and session data.</p>

@@ -409,7 +409,10 @@ def cleanup_video_file(video: Video) -> bool:
             upload_logger.debug(f"Video file already removed: {video.filename}")
             return True
     except Exception as e:
-        upload_logger.error(f"Failed to cleanup video file {video.filename}: {str(e)}")
+        upload_logger.error(
+            f"Failed to cleanup video file {video.filename}: {str(e)}",
+            exc_info=True
+        )
         return False
 
 

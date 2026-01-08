@@ -16,6 +16,7 @@ from app.db.helpers import (
     save_oauth_token, update_video
 )
 from app.db.redis import set_upload_progress, delete_upload_progress
+from app.services.event_service import publish_upload_progress
 from app.services.token_service import check_tokens_available, get_token_balance, deduct_tokens, calculate_tokens_from_bytes
 from app.utils.templates import get_video_title, get_video_description, replace_template_placeholders
 from app.services.video.helpers import record_platform_error
@@ -192,7 +193,7 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
             global_settings=global_settings,
             filename_no_ext=filename_no_ext,
             template_key='description_template',
-            default='Uploaded via Hopper'
+            default='Uploaded via hopper'
         )
         
         # Get visibility and made_for_kids: per-video custom > destination settings
@@ -262,6 +263,7 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
         youtube_logger.info("Starting resumable upload...")
         response = None
         chunk_count = 0
+        last_published_progress = -1
         while response is None:
             # Check for cancellation during upload
             if _cancellation_flags.get(video_id, False):
@@ -272,6 +274,10 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
             if status:
                 progress = int(status.progress() * 100)
                 set_upload_progress(user_id, video_id, progress)
+                # Publish websocket event for real-time progress updates (throttle to every 5% or at completion)
+                if progress - last_published_progress >= 5 or progress == 100:
+                    await publish_upload_progress(user_id, video_id, "youtube", progress)
+                    last_published_progress = progress
                 chunk_count += 1
                 if chunk_count % 10 == 0 or progress == 100:  # Log every 10 chunks or at completion
                     youtube_logger.info(f"Upload progress: {progress}%")
@@ -281,6 +287,8 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
         custom_settings['youtube_id'] = response['id']
         update_video(video_id, user_id, db=db, status="uploaded", custom_settings=custom_settings)
         set_upload_progress(user_id, video_id, 100)
+        # Publish final progress update
+        await publish_upload_progress(user_id, video_id, "youtube", 100)
         youtube_logger.info(f"Successfully uploaded {video.filename}, YouTube ID: {response['id']}")
         
         # Increment successful uploads counter

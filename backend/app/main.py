@@ -120,7 +120,7 @@ async def lifespan(app: FastAPI):
 
 # Create FastAPI app
 app = FastAPI(
-    title="Hopper Backend",
+    title="hopper Backend",
     description="Video upload and distribution platform",
     version="1.0.0",
     lifespan=lifespan

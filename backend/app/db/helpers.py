@@ -185,7 +185,7 @@ def get_all_user_settings(user_id: int, db: Session = None) -> Dict[str, Dict[st
         # Global settings
         global_defaults = {
             "title_template": "{filename}",
-            "description_template": "Uploaded via Hopper",
+            "description_template": "Uploaded via hopper",
             "wordbank": [],
             "upload_immediately": True,
             "schedule_mode": "spaced",

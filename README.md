@@ -1,10 +1,10 @@
-# Hopper
+# hopper
 
 A professional video management platform that streamlines content distribution across YouTube, TikTok, and Instagram. Upload, schedule, and manage your video content from a single unified interface.
 
 ## Overview
 
-Hopper simplifies multi-platform video publishing by providing an intuitive drag-and-drop interface for managing your social media content. Whether you're scheduling posts in advance or uploading immediately, Hopper ensures your content reaches your audience across all major video platforms.
+hopper simplifies multi-platform video publishing by providing an intuitive drag-and-drop interface for managing your social media content. Whether you're scheduling posts in advance or uploading immediately, hopper ensures your content reaches your audience across all major video platforms.
 
 ## Features
 

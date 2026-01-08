@@ -31,7 +31,7 @@ function Help() {
 
         <section style={{ marginBottom: '3rem' }}>
           <h2 style={{ marginBottom: '1rem', color: HOPPER_COLORS.purpleViolet }}>Supported File Types</h2>
-          <p style={{ marginBottom: '1rem' }}>Hopper accepts any video file with a standard video MIME type. For best compatibility across all platforms:</p>
+          <p style={{ marginBottom: '1rem' }}>hopper accepts any video file with a standard video MIME type. For best compatibility across all platforms:</p>
           <ul style={{ lineHeight: '1.8', marginBottom: '1rem' }}>
             <li><strong>MP4</strong> - Recommended format, supported by all platforms (YouTube, TikTok, Instagram)</li>
             <li><strong>MOV</strong> - Supported by TikTok</li>
@@ -153,7 +153,7 @@ function Help() {
 
         <section style={{ marginBottom: '3rem' }}>
           <h2 style={{ marginBottom: '1rem', color: HOPPER_COLORS.purpleViolet }}>Token System</h2>
-          <p style={{ marginBottom: '1rem' }}>Hopper uses a token-based system to track usage:</p>
+          <p style={{ marginBottom: '1rem' }}>hopper uses a token-based system to track usage:</p>
           <ul style={{ lineHeight: '1.8' }}>
             <li>Tokens are calculated based on video file size</li>
             <li>Free plans have a hard limit - you cannot exceed your token allocation</li>

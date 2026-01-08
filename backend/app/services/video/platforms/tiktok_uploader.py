@@ -12,6 +12,7 @@ from app.db.helpers import (
     check_token_expiration, update_video
 )
 from app.db.redis import set_upload_progress, delete_upload_progress
+from app.services.event_service import publish_upload_progress
 from app.services.token_service import check_tokens_available, get_token_balance, deduct_tokens, calculate_tokens_from_bytes
 from app.utils.encryption import decrypt
 from app.utils.templates import get_video_title
@@ -168,6 +169,7 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
     try:
         update_video(video_id, user_id, db=db, status="uploading")
         set_upload_progress(user_id, video_id, 0)
+        await publish_upload_progress(user_id, video_id, "tiktok", 0)
         
         # Check rate limit (use user_id if session_id not provided)
         check_tiktok_rate_limit(session_id=session_id, user_id=user_id)
@@ -419,6 +421,7 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         
         tiktok_logger.info(f"Uploading {video.filename} ({video_size / (1024*1024):.2f} MB)")
         set_upload_progress(user_id, video_id, 5)
+        await publish_upload_progress(user_id, video_id, "tiktok", 5)
         
         # Determine upload method: prefer PULL_FROM_URL, fallback to FILE_UPLOAD
         use_pull_from_url = True
@@ -673,6 +676,7 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         
         tiktok_logger.info(f"Initialized, publish_id: {publish_id}")
         set_upload_progress(user_id, video_id, 10)
+        await publish_upload_progress(user_id, video_id, "tiktok", 10)
         
         # Step 2: Upload video file (only for FILE_UPLOAD method)
         if not use_pull_from_url:
@@ -761,6 +765,7 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                 f"User {user_id}, Video {video_id} ({video.filename})"
             )
             set_upload_progress(user_id, video_id, 50)
+            await publish_upload_progress(user_id, video_id, "tiktok", 50)
         
         # Check for cancellation before marking as success
         if _cancellation_flags.get(video_id, False):
@@ -772,6 +777,7 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         custom_settings['tiktok_publish_id'] = publish_id
         update_video(video_id, user_id, db=db, status="uploaded", custom_settings=custom_settings)
         set_upload_progress(user_id, video_id, 100)
+        await publish_upload_progress(user_id, video_id, "tiktok", 100)
         final_method = upload_method if 'upload_method' in locals() else ("PULL_FROM_URL" if use_pull_from_url else "FILE_UPLOAD")
         tiktok_logger.info(
             f"TikTok upload successful using {final_method} method - "

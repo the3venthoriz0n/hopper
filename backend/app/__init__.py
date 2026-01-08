@@ -1,2 +1,2 @@
-"""Hopper backend application package"""
+"""hopper backend application package"""
 

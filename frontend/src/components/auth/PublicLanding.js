@@ -35,10 +35,10 @@ export default function PublicLanding() {
             Creator upload automation
           </p>
           <h1 className="landing-title">
-            Upload once.<br />Hopper handles YouTube, TikTok, and Instagram for you.
+            Upload once.<br />hopper handles YouTube, TikTok, and Instagram for you.
           </h1>
           <p className="landing-description">
-            Hopper is a creator tool that automates multi-platform uploads and scheduling.
+            hopper is a creator tool that automates multi-platform uploads and scheduling.
             Connect your accounts, drag in videos, and let hopper handle the rest.
           </p>
           <div className="landing-cta">
