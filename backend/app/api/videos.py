@@ -86,6 +86,15 @@ def get_videos(user_id: int = Depends(require_auth), db: Session = Depends(get_d
     return videos_with_info
 
 
+@router.get("/queue-token-count")
+def get_queue_token_count(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
+    """Get total token count for queued videos (backend is source of truth)"""
+    from app.services.token_service import get_queue_token_count
+    
+    count = get_queue_token_count(user_id, db)
+    return {"queue_token_count": count}
+
+
 @router.delete("/uploaded")
 async def delete_uploaded_videos(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Delete only uploaded/completed videos from user's queue"""

@@ -170,6 +170,8 @@ def create_user_with_admin_flag(
 ) -> Dict[str, Any]:
     """Create a new user and optionally set admin flag
     
+    Uses shared helper to ensure user has subscription and verification (DRY).
+    
     Args:
         email: User email
         password: User password
@@ -182,9 +184,18 @@ def create_user_with_admin_flag(
     Raises:
         ValueError: If user creation fails
     """
-    from app.services.auth_service import create_user
+    from app.services.auth_service import create_user_with_stripe_setup, hash_password
     
-    user = create_user(email, password, db=db)
+    # Create user with Stripe setup using shared helper (DRY)
+    password_hash = hash_password(password)
+    user = create_user_with_stripe_setup(
+        email=email,
+        password_hash=password_hash,
+        is_email_verified=True,  # Admin-created users are verified
+        db=db
+    )
+    
+    # Set admin flag if requested
     if is_admin:
         user.is_admin = True
         db.commit()

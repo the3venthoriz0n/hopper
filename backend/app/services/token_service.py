@@ -104,6 +104,35 @@ def get_token_balance(user_id: int, db: Session) -> Dict[str, Any]:
     }
 
 
+def get_queue_token_count(user_id: int, db: Session) -> int:
+    """Get total token count for queued videos (pending/scheduled, tokens not yet consumed)
+    
+    Backend is source of truth for queue token count.
+    
+    Args:
+        user_id: User ID
+        db: Database session
+    
+    Returns:
+        Total tokens required for queued videos (integer)
+    """
+    from app.db.helpers import get_user_videos
+    
+    queued_videos = get_user_videos(user_id, db=db)
+    total_tokens = 0
+    
+    for video in queued_videos:
+        # Only count videos that are pending/scheduled and haven't consumed tokens yet
+        if video.status in ('pending', 'scheduled') and video.tokens_consumed == 0:
+            # Use stored tokens_required with fallback to calculated from file_size_bytes
+            video_tokens = video.tokens_required if video.tokens_required is not None else (
+                calculate_tokens_from_bytes(video.file_size_bytes) if video.file_size_bytes else 0
+            )
+            total_tokens += video_tokens
+    
+    return total_tokens
+
+
 def check_tokens_available(user_id: int, tokens_required: int, db: Session, include_queued_videos: bool = False) -> bool:
     """
     Check if user has enough tokens available.

@@ -159,3 +159,12 @@ export const uploadVideos = async () => {
 export const retryVideoUpload = async (id) => {
   await axios.post(`${API}/videos/${id}/retry`);
 };
+
+/**
+ * Get queue token count (backend is source of truth)
+ * @returns {Promise<number>} Queue token count
+ */
+export const getQueueTokenCount = async () => {
+  const res = await axios.get(`${API}/videos/queue-token-count`);
+  return res.data.queue_token_count;
+};

@@ -38,6 +38,7 @@ export function useVideos(
   const [draggedVideo, setDraggedVideo] = useState(null);
   const [overrideInputValues, setOverrideInputValues] = useState({});
   const [expandedDestinationErrors, setExpandedDestinationErrors] = useState(new Set());
+  const [queueTokenCount, setQueueTokenCount] = useState(0);
 
   const loadVideos = useCallback(async () => {
     try {
@@ -84,6 +85,13 @@ export function useVideos(
       
       if (user) {
         loadSubscription();
+        // Fetch queue token count from backend (source of truth)
+        try {
+          const count = await videoService.getQueueTokenCount();
+          setQueueTokenCount(count);
+        } catch (err) {
+          console.error('Error loading queue token count:', err);
+        }
       }
     } catch (err) {
       console.error('Error loading videos:', err);
@@ -116,13 +124,10 @@ export function useVideos(
     return '';
   }, [videos]);
 
+  // Backend is source of truth for queue token count
   const calculateQueueTokenCost = useCallback(() => {
-    return videos
-      .filter(v => (v.status === 'pending' || v.status === 'scheduled') && v.tokens_consumed === 0)
-      .reduce((total, video) => {
-        return total + (video.tokens_required || 0);
-      }, 0);
-  }, [videos]);
+    return queueTokenCount;
+  }, [queueTokenCount]);
 
   const formatFileSize = useCallback((bytes) => {
     if (!bytes) return '0 B';

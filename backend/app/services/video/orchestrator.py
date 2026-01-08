@@ -438,8 +438,25 @@ async def retry_failed_upload(
     if video.status != "failed":
         raise ValueError(f"Cannot retry video with status '{video.status}'. Only failed videos can be retried.")
     
-    # Reset status to pending and clear error
-    update_video(video_id, user_id, db=db, status="pending", error=None)
+    # Store old status for websocket event
+    old_status = video.status
+    
+    # Reset status to pending, clear error, and reset tokens_consumed
+    update_video(video_id, user_id, db=db, status="pending", error=None, tokens_consumed=0)
+    
+    # Publish websocket event so frontend updates immediately
+    from app.services.event_service import publish_video_status_changed
+    from app.services.video.helpers import build_video_response
+    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+    
+    # Refresh video and build full response (backend is source of truth)
+    db.refresh(video)
+    all_settings = get_all_user_settings(user_id, db=db)
+    all_tokens = get_all_oauth_tokens(user_id, db=db)
+    video_dict = build_video_response(video, all_settings, all_tokens, user_id)
+    
+    # Publish status change event with full video data
+    await publish_video_status_changed(user_id, video_id, old_status, "pending", video_dict=video_dict)
     
     # Trigger upload immediately
     # Get enabled destinations

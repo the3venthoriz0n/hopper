@@ -130,6 +130,67 @@ def get_user_by_email(email: str, db: Session = None) -> Optional[User]:
             db.close()
 
 
+def create_user_with_stripe_setup(
+    email: str,
+    password_hash: str = None,
+    is_email_verified: bool = True,
+    db: Session = None
+) -> User:
+    """Create a new user with Stripe customer and subscription setup
+    
+    Shared helper function used by both OAuth and admin user creation to ensure
+    consistent setup (DRY principle).
+    
+    Args:
+        email: User email
+        password_hash: Optional password hash (for non-OAuth users)
+        is_email_verified: Whether email is verified (default True for OAuth/admin)
+        db: Database session (if None, creates its own)
+    
+    Returns:
+        User object
+    
+    Raises:
+        ValueError: If user already exists
+    """
+    from app.db.session import SessionLocal
+    from app.services.stripe_service import create_stripe_customer, create_stripe_subscription
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
+    try:
+        # Check if user already exists
+        existing_user = db.query(User).filter(User.email == email).first()
+        if existing_user:
+            raise ValueError("Email already registered")
+        
+        # Create user
+        user = User(email=email, password_hash=password_hash, is_email_verified=is_email_verified)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        
+        # Create Stripe customer and free subscription for new user
+        try:
+            create_stripe_customer(user.email, user.id, db)
+            create_stripe_subscription(user.id, "free_daily", db)
+            logger.info(f"Created Stripe customer and free_daily subscription for user {user.id}")
+        except Exception as e:
+            # Log error but don't fail user creation
+            logger.warning(f"Failed to create Stripe customer/subscription for user {user.id}: {e}")
+        
+        return user
+    finally:
+        if should_close:
+            db.close()
+
+
 def get_or_create_oauth_user(email: str, db: Session = None) -> Tuple[User, bool]:
     """Get existing user by email or create new OAuth user
     
@@ -153,27 +214,13 @@ def get_or_create_oauth_user(email: str, db: Session = None) -> Tuple[User, bool
         if existing_user:
             return existing_user, False
         
-        # Create new OAuth user (no password)
-        # OAuth providers verify emails, so mark as verified automatically
-        user = User(email=email, password_hash=None, is_email_verified=True)
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        
-        # Create Stripe customer and free subscription for new user
-        try:
-            from app.services.stripe_service import create_stripe_customer, create_stripe_subscription
-            import logging
-            logger = logging.getLogger(__name__)
-            
-            create_stripe_customer(user.email, user.id, db)
-            create_stripe_subscription(user.id, "free_daily", db)
-            logger.info(f"Created Stripe customer and free_daily subscription for OAuth user {user.id}")
-        except Exception as e:
-            # Log error but don't fail user creation
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(f"Failed to create Stripe customer/subscription for OAuth user {user.id}: {e}")
+        # Create new OAuth user using shared helper (DRY)
+        user = create_user_with_stripe_setup(
+            email=email,
+            password_hash=None,
+            is_email_verified=True,
+            db=db
+        )
         
         return user, True
     finally:
