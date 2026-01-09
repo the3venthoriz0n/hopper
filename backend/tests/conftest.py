@@ -376,9 +376,20 @@ def auto_mock_stripe():
     mock_list_result = Mock()
     mock_list_result.auto_paging_iter.return_value = mock_prices
     
-    # Patch stripe module and also patch Price.list directly so it works even when tests patch stripe
-    with patch('app.services.stripe_service.stripe') as mock_stripe_module, \
-         patch('app.services.stripe_service.stripe.Price.list', return_value=mock_list_result, create=True):
+    # Patch stripe module - we'll set up Price.list on the mock
+    # Also patch Price.list directly on the stripe module used by stripe_service
+    # This ensures it works even when tests patch stripe
+    from app.services import stripe_service
+    import stripe as stripe_module
+    
+    # Store original Price.list if it exists
+    original_price_list = getattr(stripe_module.Price, 'list', None)
+    
+    # Patch Price.list on the actual stripe module first
+    stripe_module.Price.list = Mock(return_value=mock_list_result)
+    
+    # Patch stripe module in stripe_service
+    with patch('app.services.stripe_service.stripe') as mock_stripe_module:
         # Mock Customer operations
         mock_customer = Mock(id="cus_test123", email="delivered@resend.dev")
         mock_stripe_module.Customer.create = Mock(return_value=mock_customer)
@@ -451,11 +462,29 @@ def auto_mock_stripe():
             mock_stripe_module.Price = Mock()
         mock_stripe_module.Price.list = Mock(return_value=mock_list_result)
         
+        # Also ensure Price.list is set up on the stripe module in stripe_service's namespace
+        # This is the actual reference used by the code
+        if hasattr(stripe_service, 'stripe'):
+            if not hasattr(stripe_service.stripe, 'Price'):
+                stripe_service.stripe.Price = Mock()
+            stripe_service.stripe.Price.list = Mock(return_value=mock_list_result)
+        
         # Mock error classes
         mock_stripe_module.error.SignatureVerificationError = Exception
         mock_stripe_module.error.InvalidRequestError = Exception
         
-        yield mock_stripe_module
+        try:
+            yield mock_stripe_module
+        finally:
+            # Restore original Price.list if it existed
+            if original_price_list is not None:
+                stripe_module.Price.list = original_price_list
+            elif hasattr(stripe_module.Price, 'list'):
+                # Only delete if we added it (it was None before)
+                try:
+                    delattr(stripe_module.Price, 'list')
+                except AttributeError:
+                    pass
 
 
 @pytest.fixture(scope="function")
