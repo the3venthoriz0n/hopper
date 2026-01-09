@@ -190,7 +190,7 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
   }, []);
 
   useEffect(() => {
-    document.title = isProduction ? 'hopper' : 'DEV HOPPER';
+    document.title = isProduction ? 'hopper' : 'dev hopper';
   }, [isProduction]);
 
   const handleWebSocketMessage = useCallback((data) => {
@@ -357,7 +357,7 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
       />
 
       <HomeHeader
-        appTitle={isProduction ? 'hopper' : 'DEV HOPPER'}
+        appTitle={isProduction ? 'hopper' : 'dev hopper'}
         user={user}
         isAdmin={isAdmin}
         tokenBalance={tokenBalance}

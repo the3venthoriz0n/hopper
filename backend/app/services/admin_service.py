@@ -233,6 +233,46 @@ def reset_user_password_admin(
     return {"message": "Password reset successfully"}
 
 
+def ensure_user_has_subscription(
+    user_id: int,
+    db: Session,
+    default_plan: str = 'free_daily'
+) -> Subscription:
+    """Ensure a user has a subscription, creating a base subscription if missing.
+    
+    This is a helper function to DRY up subscription creation logic across
+    admin operations.
+    
+    Args:
+        user_id: User ID
+        db: Database session
+        default_plan: Default plan to create if user has no subscription
+        
+    Returns:
+        Subscription object (existing or newly created)
+        
+    Raises:
+        ValueError: If user not found or subscription creation fails
+    """
+    from app.services.stripe_service import create_stripe_subscription
+    
+    target_user = db.query(User).filter(User.id == user_id).first()
+    if not target_user:
+        raise ValueError("User not found")
+    
+    subscription = db.query(Subscription).filter(Subscription.user_id == user_id).first()
+    if subscription:
+        return subscription
+    
+    # User has no subscription, create base subscription
+    logger.info(f"User {user_id} has no subscription, creating base {default_plan} subscription")
+    new_subscription = create_stripe_subscription(user_id, default_plan, db)
+    if not new_subscription:
+        raise ValueError(f"Failed to create {default_plan} subscription for user {user_id}")
+    
+    return new_subscription
+
+
 def enroll_user_unlimited_plan(
     target_user_id: int,
     admin_id: int,
@@ -291,6 +331,8 @@ def unenroll_user_unlimited_plan(
 ) -> Dict[str, Any]:
     """Unenroll a user from the unlimited plan by canceling Stripe subscription (admin operation)
     
+    If user has no subscription, creates a base free_daily subscription.
+    
     Args:
         target_user_id: Target user ID
         admin_id: Admin user ID performing the action
@@ -300,7 +342,7 @@ def unenroll_user_unlimited_plan(
         Dict with success message
     
     Raises:
-        ValueError: If user not found, has no subscription, or is not on unlimited plan
+        ValueError: If user not found or is not on unlimited plan
     """
     import stripe
     from app.services.stripe_service import create_stripe_subscription
@@ -311,8 +353,14 @@ def unenroll_user_unlimited_plan(
         raise ValueError("User not found")
     
     subscription = db.query(Subscription).filter(Subscription.user_id == target_user_id).first()
+    
+    # If user has no subscription, create base subscription first
     if not subscription:
-        raise ValueError("User has no subscription")
+        logger.info(f"User {target_user_id} has no subscription, creating base free_daily subscription before unenroll")
+        ensure_user_has_subscription(target_user_id, db, default_plan='free_daily')
+        subscription = db.query(Subscription).filter(Subscription.user_id == target_user_id).first()
+        if not subscription:
+            raise ValueError("Failed to create base subscription for user")
     
     if subscription.plan_type != 'unlimited':
         raise ValueError(f"User is not on unlimited plan (current: {subscription.plan_type})")
@@ -433,7 +481,7 @@ def switch_user_plan(
     """
     from app.services.stripe_service import (
         cancel_all_user_subscriptions, create_stripe_subscription,
-        get_plans, cancel_subscription_with_invoice
+        StripeRegistry, cancel_subscription_with_invoice
     )
     from app.services.token_service import get_or_create_token_balance, get_plan_tokens
     
@@ -442,11 +490,12 @@ def switch_user_plan(
         raise ValueError("User not found")
     
     plan_key = plan_key.lower()
-    plans = get_plans()
+    plans = StripeRegistry.get_all_base_plans()
     
-    # Validate plan key
+    # Validate plan key exists in registry
     if plan_key not in plans:
-        raise ValueError(f"Invalid plan: {plan_key}. Valid plans: {', '.join(plans.keys())}")
+        available_plans = ', '.join(plans.keys()) if plans else 'none'
+        raise ValueError(f"Invalid plan: {plan_key}. Valid plans: {available_plans}")
     
     # Get current subscription
     existing_subscription = db.query(Subscription).filter(Subscription.user_id == target_user_id).first()

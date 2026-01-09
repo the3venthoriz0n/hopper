@@ -33,7 +33,7 @@ def calculate_tokens_from_bytes(file_size_bytes: int) -> int:
 
 def get_plan_tokens(plan_type: str) -> int:
     """Get token allocation for a plan type from StripeRegistry"""
-    plan_config = StripeRegistry.get(f"{plan_type}_price")
+    plan_config = StripeRegistry.get_plan_config(plan_type)
     return plan_config.get("tokens", 0) if plan_config else 0
 
 
@@ -489,7 +489,7 @@ async def handle_daily_token_grant(user_id: int, subscription_id: str, db: Sessi
             logger.debug(f"Subscription {subscription_id} is not free_daily plan, skipping daily grant")
             return False
         
-        plan_config = StripeRegistry.get(f"{subscription.plan_type}_price")
+        plan_config = StripeRegistry.get_plan_config(subscription.plan_type)
         if not plan_config:
             logger.error(f"Plan config not found for {subscription.plan_type}")
             return False
