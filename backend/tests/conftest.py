@@ -331,7 +331,54 @@ def two_users(db_session: Session) -> tuple[User, User]:
 @pytest.fixture(scope="function", autouse=True)
 def auto_mock_stripe():
     """Automatically mock Stripe for all tests to prevent creating real customers"""
-    with patch('app.services.stripe_service.stripe') as mock_stripe_module:
+    # First, set up Price.list mock that will work even when tests patch stripe
+    def create_mock_price(price_id, lookup_key, unit_amount, tokens, name, description="", 
+                         hidden=False, max_accrual=None, interval="month"):
+        """Helper to create a mock price with product"""
+        mock_product = Mock()
+        mock_product.id = f"prod_{lookup_key.replace('_price', '')}"
+        mock_product.name = name
+        mock_product.description = description
+        mock_product.active = True
+        metadata = {'tokens': str(tokens)}
+        if hidden:
+            metadata['hidden'] = 'true'
+        if max_accrual is not None:
+            metadata['max_accrual'] = str(max_accrual)
+        mock_product.metadata = metadata
+        
+        mock_price_obj = Mock()
+        mock_price_obj.id = price_id
+        mock_price_obj.lookup_key = lookup_key
+        mock_price_obj.unit_amount = unit_amount
+        mock_price_obj.currency = 'usd'
+        mock_price_obj.recurring = {'interval': interval}
+        mock_price_obj.created = 1234567890
+        mock_price_obj.product = mock_product
+        return mock_price_obj
+    
+    # Create all required mock prices
+    mock_prices = [
+        create_mock_price("price_free_daily", "free_daily_price", 0, 3, "Free Daily", 
+                        "3 tokens per day", hidden=False, max_accrual=10, interval="day"),
+        create_mock_price("price_starter", "starter_price", 300, 300, "Starter", 
+                        "Starter plan", hidden=False, max_accrual=None, interval="month"),
+        create_mock_price("price_starter_overage", "starter_overage_price", 15, 0, "Starter Overage", 
+                        "Starter overage", hidden=False, max_accrual=None, interval="month"),
+        create_mock_price("price_creator", "creator_price", 1000, 1250, "Creator", 
+                        "Creator plan", hidden=False, max_accrual=None, interval="month"),
+        create_mock_price("price_creator_overage", "creator_overage_price", 8, 0, "Creator Overage", 
+                        "Creator overage", hidden=False, max_accrual=None, interval="month"),
+        create_mock_price("price_unlimited", "unlimited_price", 0, -1, "Unlimited", 
+                        "Unlimited tokens", hidden=True, max_accrual=None, interval="month"),
+    ]
+    
+    mock_list_result = Mock()
+    mock_list_result.auto_paging_iter.return_value = mock_prices
+    
+    # Patch stripe module and also patch Price.list directly so it works even when tests patch stripe
+    with patch('app.services.stripe_service.stripe') as mock_stripe_module, \
+         patch('app.services.stripe_service.stripe.Price.list', return_value=mock_list_result, create=True):
         # Mock Customer operations
         mock_customer = Mock(id="cus_test123", email="delivered@resend.dev")
         mock_stripe_module.Customer.create = Mock(return_value=mock_customer)
@@ -398,6 +445,11 @@ def auto_mock_stripe():
             id="prod_test123",
             name="Test Product"
         ))
+        
+        # Set up Price.list on the mock_stripe_module for StripeRegistry.sync()
+        if not hasattr(mock_stripe_module, 'Price'):
+            mock_stripe_module.Price = Mock()
+        mock_stripe_module.Price.list = Mock(return_value=mock_list_result)
         
         # Mock error classes
         mock_stripe_module.error.SignatureVerificationError = Exception

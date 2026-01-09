@@ -227,6 +227,7 @@ class TestStripeFunctionality:
         # Mock StripeRegistry.get_plan_config to return free_daily plan config
         mock_registry_get_plan_config.return_value = {
             "price_id": "price_free_daily",
+            "product_id": "prod_free_daily",
             "tokens": 10,
             "name": "Free Daily",
             "description": "Free daily plan",
@@ -237,6 +238,11 @@ class TestStripeFunctionality:
         
         # Mock StripeRegistry.get for overage price lookup (returns None for free_daily)
         mock_registry_get.return_value = None
+        
+        # Mock stripe.Product.retrieve (called by _build_subscription_items to verify product is active)
+        mock_product = Mock()
+        mock_product.active = True
+        mock_stripe.Product.retrieve.return_value = mock_product
         
         # Mock Stripe subscription response
         mock_subscription = Mock()
@@ -349,14 +355,18 @@ class TestStripeFunctionality:
         mock_price.unit_amount = 0
         mock_price.currency = 'usd'
         mock_price.recurring = {'interval': 'month'}
+        mock_price.created = 1234567890
         mock_price.product = Mock()
         mock_price.product.id = 'prod_test123'
         mock_price.product.name = 'Free'
         mock_price.product.description = 'Free plan'
+        mock_price.product.active = True
         mock_price.product.metadata = {'tokens': '10', 'hidden': 'false'}
         
-        # Mock the expand parameter properly
-        mock_stripe.Price.list.return_value = Mock(data=[mock_price])
+        # Mock the expand parameter properly - auto_paging_iter() should return an iterable
+        mock_list_result = Mock()
+        mock_list_result.auto_paging_iter.return_value = [mock_price]
+        mock_stripe.Price.list.return_value = mock_list_result
         
         # Clear cache and sync
         StripeRegistry._cache = {}
@@ -432,15 +442,23 @@ class TestStripeFunctionality:
         mock_price1.product.id = 'prod_free'
         mock_price1.product.name = 'Free'
         mock_price1.product.description = 'Free plan'
+        mock_price1.product.active = True
         mock_price1.product.metadata = {'tokens': '10', 'hidden': 'false'}
         
         mock_price2.product = Mock()
         mock_price2.product.id = 'prod_starter'
         mock_price2.product.name = 'Starter'
         mock_price2.product.description = 'Starter plan'
+        mock_price2.product.active = True
         mock_price2.product.metadata = {'tokens': '300', 'hidden': 'false'}
         
-        mock_stripe.Price.list.return_value = Mock(data=[mock_price1, mock_price2])
+        mock_price1.created = 1234567890
+        mock_price2.created = 1234567891
+        
+        # Mock the expand parameter properly - auto_paging_iter() should return an iterable
+        mock_list_result = Mock()
+        mock_list_result.auto_paging_iter.return_value = [mock_price1, mock_price2]
+        mock_stripe.Price.list.return_value = mock_list_result
         
         # Clear cache and sync
         StripeRegistry._cache = {}
@@ -472,6 +490,7 @@ class TestStripeFunctionality:
         mock_price1.product.id = 'prod_visible'
         mock_price1.product.name = 'Visible'
         mock_price1.product.description = 'Visible plan'
+        mock_price1.product.active = True
         mock_price1.product.metadata = {'tokens': '10', 'hidden': 'false'}
         
         mock_price2 = Mock()
@@ -484,9 +503,16 @@ class TestStripeFunctionality:
         mock_price2.product.id = 'prod_hidden'
         mock_price2.product.name = 'Hidden'
         mock_price2.product.description = 'Hidden plan'
+        mock_price2.product.active = True
         mock_price2.product.metadata = {'tokens': '10', 'hidden': 'true'}
         
-        mock_stripe.Price.list.return_value = Mock(data=[mock_price1, mock_price2])
+        mock_price1.created = 1234567890
+        mock_price2.created = 1234567891
+        
+        # Mock the expand parameter properly - auto_paging_iter() should return an iterable
+        mock_list_result = Mock()
+        mock_list_result.auto_paging_iter.return_value = [mock_price1, mock_price2]
+        mock_stripe.Price.list.return_value = mock_list_result
         
         StripeRegistry._cache = {}
         StripeRegistry.sync()
