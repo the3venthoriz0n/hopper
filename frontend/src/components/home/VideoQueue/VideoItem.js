@@ -187,29 +187,35 @@ export default function VideoItem({
                     }}
                   >
                     {platformIcon}
-                    {/* Perimeter progress indicator */}
+                    {/* Perimeter progress indicator - matches button dimensions */}
                     {isUploading && (
                       <PerimeterProgress
                         progress={platformProgress}
                         status="uploading"
-                        size={32}
+                        width={32}
+                        height={28}
                         strokeWidth={2}
+                        borderRadius={6}
                       />
                     )}
                     {status === 'success' && (
                       <PerimeterProgress
                         progress={100}
                         status="success"
-                        size={32}
+                        width={32}
+                        height={28}
                         strokeWidth={2}
+                        borderRadius={6}
                       />
                     )}
                     {status === 'failed' && (
                       <PerimeterProgress
                         progress={100}
                         status="failed"
-                        size={32}
+                        width={32}
+                        height={28}
                         strokeWidth={2}
+                        borderRadius={6}
                       />
                     )}
                   </button>
@@ -246,18 +252,7 @@ export default function VideoItem({
             </span>
           </div>
         )}
-        {/* Progress bar only for hopper server uploads (initial file upload to hopper) */}
-        {/* Platform uploads (YouTube, TikTok, Instagram) show progress via perimeter indicator on destination icons */}
-        {v.status === 'uploading' && !v.platform_progress && (
-          <div className="progress-bar">
-            <div 
-              className="progress-fill" 
-              style={{ 
-                width: `${v.upload_progress !== undefined ? v.upload_progress : (v.progress || 0)}%` 
-              }}
-            ></div>
-          </div>
-        )}
+        {/* Progress bar removed - all progress now shown via perimeter indicators on destination icons */}
         <div className="status" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           <span style={flexTextStyle}>
             {v.status === 'uploading' ? (

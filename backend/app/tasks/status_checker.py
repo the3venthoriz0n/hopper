@@ -130,10 +130,47 @@ async def status_checker_task():
                                         await publish_video_updated(video.user_id, video.id, {"tiktok_id": tiktok_id})
                                         status_logger.info(f"TikTok video {video.id} updated with tiktok_id: {tiktok_id}")
                                 
-                            elif status == "PROCESSING":
-                                # Still processing - update progress
-                                set_upload_progress(video.user_id, video.id, 75)
-                                status_logger.debug(f"TikTok video {video.id} still processing")
+                            elif status in ["PROCESSING_DOWNLOAD", "PROCESSING_UPLOAD", "PROCESSING"]:
+                                # Map status to progress percentages
+                                # PROCESSING_DOWNLOAD: 10-50% (TikTok downloading from our server)
+                                # PROCESSING_UPLOAD: 50-90% (TikTok processing the video)
+                                # PROCESSING: legacy status, treat as PROCESSING_UPLOAD (50-90%)
+                                
+                                from app.services.video.helpers import should_publish_progress
+                                from app.services.event_service import publish_upload_progress
+                                
+                                # Get current progress to determine which range we're in
+                                current_progress = get_upload_progress(video.user_id, video.id) or 0
+                                
+                                if status == "PROCESSING_DOWNLOAD":
+                                    # Estimate 10-50% based on time (we don't know exact progress)
+                                    # Use a simple increment approach: start at 10%, gradually move to 50%
+                                    if current_progress < 10:
+                                        progress = 10
+                                    elif current_progress < 50:
+                                        # Increment by 5% each check (every 30 seconds)
+                                        progress = min(current_progress + 5, 50)
+                                    else:
+                                        progress = 50
+                                elif status in ["PROCESSING_UPLOAD", "PROCESSING"]:
+                                    # Estimate 50-90% based on time
+                                    if current_progress < 50:
+                                        progress = 50
+                                    elif current_progress < 90:
+                                        # Increment by 5% each check
+                                        progress = min(current_progress + 5, 90)
+                                    else:
+                                        progress = 90
+                                else:
+                                    progress = current_progress
+                                
+                                set_upload_progress(video.user_id, video.id, progress)
+                                
+                                # Publish progress updates (1% increments)
+                                if should_publish_progress(progress, current_progress):
+                                    await publish_upload_progress(video.user_id, video.id, "tiktok", progress)
+                                
+                                status_logger.debug(f"TikTok video {video.id} still processing: {status}, progress: {progress}%")
                             
                             elif status == "FAILED":
                                 # Upload failed

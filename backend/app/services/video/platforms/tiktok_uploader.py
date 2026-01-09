@@ -715,7 +715,7 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
             
             async def generate_chunks():
                 """Async generator to stream file in chunks and track progress"""
-                nonlocal uploaded_bytes
+                nonlocal uploaded_bytes, last_published_progress
                 with open(video_path, 'rb') as f:
                     while True:
                         # Check for cancellation during upload
@@ -738,7 +738,6 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                             # Schedule progress publish (non-blocking)
                             task = asyncio.create_task(publish_upload_progress(user_id, video_id, "tiktok", progress))
                             progress_tasks.append(task)
-                            nonlocal last_published_progress
                             last_published_progress = progress
                         
                         yield chunk
@@ -870,6 +869,10 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                 # If we've been polling for a while and still processing, continue
                 if status in ["PROCESSING_DOWNLOAD", "PROCESSING_UPLOAD"]:
                     continue
+            
+            # If we exit the loop without PUBLISH_COMPLETE, it means we timed out
+            if poll_count >= max_polls:
+                raise Exception(f"TikTok upload timeout after {max_polls * 5} seconds of polling")
         
         # Check for cancellation before marking as success
         if _cancellation_flags.get(video_id, False):
