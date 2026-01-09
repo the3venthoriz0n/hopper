@@ -2,81 +2,82 @@ import React from 'react';
 import { HOPPER_COLORS } from '../../../utils/colors';
 
 /**
- * PerimeterProgress - Square/rectangular progress indicator that animates around destination icons
+ * PerimeterProgress - Square progress indicator that animates around destination icons
  * Acts as the border for the button, showing upload status with colored progress
  * 
  * @param {number} progress - Progress percentage (0-100)
  * @param {string} status - Status: 'uploading', 'success', 'failed', 'pending'
- * @param {number} buttonWidth - Minimum width of the button (minWidth, excluding padding)
- * @param {number} buttonHeight - Height of the button (excluding padding)
- * @param {number} paddingVertical - Vertical padding of the button
- * @param {number} paddingHorizontal - Horizontal padding of the button
+ * @param {number} buttonSize - Total outer size of the square button (with box-sizing: border-box, includes padding)
+ * @param {number} padding - Padding on all sides (default: 4) - used for reference only
  * @param {number} borderRadius - Border radius to match button (default: 6)
  * @param {number} strokeWidth - Width of the stroke/border (default: 2)
  */
 export default function PerimeterProgress({ 
   progress = 0, 
   status = 'pending', 
-  buttonWidth = 32, 
-  buttonHeight = 28, 
-  paddingVertical = 4,
-  paddingHorizontal = 6,
+  buttonSize = 32, 
+  padding = 4,
   borderRadius = 6,
   strokeWidth = 2
 }) {
-  // Calculate total button outer dimensions (button size + padding on both sides)
-  // Note: buttonWidth is minWidth, actual width may be wider, but SVG will scale
-  const totalWidth = buttonWidth + (paddingHorizontal * 2);
-  const totalHeight = buttonHeight + (paddingVertical * 2);
+  // Calculate total button outer dimensions
+  // With box-sizing: border-box, width/height includes padding
+  // Button has: width = buttonSize (total outer size), padding = padding on all sides
+  // So totalSize = buttonSize (the width/height already includes padding)
+  const totalSize = buttonSize;
   
-  // Calculate path dimensions - stroke is centered on the edge, so we need to account for half stroke width
+  // Path dimensions: stroke is centered on the edge, so we account for half stroke width
+  // The path should be inset by strokeWidth/2 from the outer edge
   const pathX = strokeWidth / 2;
   const pathY = strokeWidth / 2;
-  const pathWidth = totalWidth - strokeWidth;
-  const pathHeight = totalHeight - strokeWidth;
+  const pathSize = totalSize - strokeWidth; // Total size minus full stroke width
   const pathRadius = Math.max(0, borderRadius - strokeWidth / 2);
   
-  // Calculate perimeter: top + right + bottom + left + 4 corner arcs
-  const topBottom = 2 * (pathWidth - 2 * pathRadius);
-  const leftRight = 2 * (pathHeight - 2 * pathRadius);
+  // Calculate perimeter: 4 sides + 4 corner arcs (square)
+  const sides = 4 * (pathSize - 2 * pathRadius);
   const cornerArcs = 4 * (Math.PI * pathRadius);
-  const perimeter = topBottom + leftRight + cornerArcs;
+  const perimeter = sides + cornerArcs;
   
-  // Determine color based on status - this is the border color
-  let strokeColor;
+  // Determine color based on status - this is the progress color
+  let progressColor;
   if (status === 'success') {
-    strokeColor = HOPPER_COLORS.success;
+    progressColor = HOPPER_COLORS.success;
   } else if (status === 'failed') {
-    strokeColor = HOPPER_COLORS.error;
+    progressColor = HOPPER_COLORS.error;
   } else if (status === 'uploading') {
-    strokeColor = HOPPER_COLORS.info || '#00bcd4'; // Cyan/blue for uploading
+    progressColor = HOPPER_COLORS.info || '#00bcd4'; // Cyan/blue for uploading
   } else {
-    strokeColor = 'rgba(255, 255, 255, 0.2)'; // Neutral border for pending
+    progressColor = 'rgba(255, 255, 255, 0.2)'; // Neutral color for pending
   }
   
-  // For success/failure/pending, show full perimeter. For uploading, show progress.
-  const isComplete = status === 'success' || status === 'failed' || status === 'pending';
-  const finalProgress = isComplete ? 100 : progress;
-  const finalOffset = perimeter - (finalProgress / 100) * perimeter;
+  // Background stroke is always grey and always visible (full perimeter)
+  const backgroundStrokeColor = 'rgba(255, 255, 255, 0.2)';
+  const backgroundOffset = 0; // Full background stroke (always visible)
   
-  // Create rounded rectangle path following the perimeter
+  // Progress stroke: for uploading, show animated progress; for others, show full colored border
+  const isUploading = status === 'uploading';
+  const finalProgress = isUploading ? Math.max(0, Math.min(100, progress)) : 100;
+  // strokeDashoffset: 0 = full stroke visible, perimeter = no stroke visible
+  // We want: progress 0% = offset perimeter (invisible), progress 100% = offset 0 (fully visible)
+  const progressOffset = perimeter - (finalProgress / 100) * perimeter;
+  
+  // Create rounded square path following the perimeter
   // Start from top-left corner, go clockwise: top -> right -> bottom -> left
   const x = pathX;
   const y = pathY;
-  const w = pathWidth;
-  const h = pathHeight;
+  const size = pathSize;
   const r = pathRadius;
   
   // Path: M (start), L (line), A (arc)
   // Start from top-left, go clockwise around
   const pathData = `
     M ${x + r},${y}
-    L ${x + w - r},${y}
-    A ${r},${r} 0 0 1 ${x + w},${y + r}
-    L ${x + w},${y + h - r}
-    A ${r},${r} 0 0 1 ${x + w - r},${y + h}
-    L ${x + r},${y + h}
-    A ${r},${r} 0 0 1 ${x},${y + h - r}
+    L ${x + size - r},${y}
+    A ${r},${r} 0 0 1 ${x + size},${y + r}
+    L ${x + size},${y + size - r}
+    A ${r},${r} 0 0 1 ${x + size - r},${y + size}
+    L ${x + r},${y + size}
+    A ${r},${r} 0 0 1 ${x},${y + size - r}
     L ${x},${y + r}
     A ${r},${r} 0 0 1 ${x + r},${y}
     Z
@@ -84,30 +85,41 @@ export default function PerimeterProgress({
   
   return (
     <svg
-      width="100%"
-      height="100%"
+      width={totalSize}
+      height={totalSize}
       style={{
         position: 'absolute',
         top: 0,
         left: 0,
-        width: '100%',
-        height: '100%',
+        width: `${totalSize}px`,
+        height: `${totalSize}px`,
         transform: 'rotate(-90deg)', // Start from top (0% = top)
-        transformOrigin: 'center',
+        transformOrigin: `${totalSize / 2}px ${totalSize / 2}px`,
         pointerEvents: 'none',
         overflow: 'visible'
       }}
-      viewBox={`0 0 ${totalWidth} ${totalHeight}`}
-      preserveAspectRatio="none"
+      viewBox={`0 0 ${totalSize} ${totalSize}`}
+      preserveAspectRatio="xMidYMid meet"
     >
-      {/* Progress path (rounded rectangle perimeter) - this IS the border */}
+      {/* Background stroke - always visible grey border */}
       <path
         d={pathData}
         fill="none"
-        stroke={strokeColor}
+        stroke={backgroundStrokeColor}
         strokeWidth={strokeWidth}
         strokeDasharray={perimeter}
-        strokeDashoffset={finalOffset}
+        strokeDashoffset={backgroundOffset}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      {/* Progress stroke - colored overlay showing upload progress */}
+      <path
+        d={pathData}
+        fill="none"
+        stroke={progressColor}
+        strokeWidth={strokeWidth}
+        strokeDasharray={perimeter}
+        strokeDashoffset={progressOffset}
         strokeLinecap="round"
         strokeLinejoin="round"
         style={{

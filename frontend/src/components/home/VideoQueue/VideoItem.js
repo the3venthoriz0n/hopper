@@ -17,9 +17,8 @@ const flexTextStyle = {
 const BUTTON_CONFIG = {
   BORDER_WIDTH: 2,
   PADDING_VERTICAL: 4,
-  PADDING_HORIZONTAL: 6,
-  MIN_WIDTH: 32,
-  HEIGHT: 28,
+  PADDING_HORIZONTAL: 4,
+  SIZE: 32, // Square buttons: same width and height
   BORDER_RADIUS: 6
 };
 
@@ -144,26 +143,28 @@ export default function VideoItem({
                 
                 // Get platform-specific progress if available
                 const platformProgress = v.platform_progress?.[platform];
-                const isUploading = status === 'pending' && platformProgress !== undefined && platformProgress > 0 && platformProgress < 100;
                 
                 // Determine progress value and status for perimeter indicator
-                // Only 'success' and 'failed' are explicit states from backend
-                // 'pending' means not yet uploaded (should show grey)
-                // 'uploading' means actively uploading (should show colored progress)
-                let progressValue = 100; // Default to full border
-                let progressStatus = 'pending'; // Default to grey
+                // Status priority: success > failed > uploading > pending
+                // Only explicit 'success' or 'failed' from backend show colored borders
+                // Everything else (pending, undefined, etc.) shows grey
+                let progressValue = 100;
+                let progressStatus = 'pending'; // Default: grey border
                 
                 if (status === 'success') {
+                  // Explicit success from backend - green border
                   progressValue = 100;
                   progressStatus = 'success';
                 } else if (status === 'failed') {
+                  // Explicit failed from backend - red border
                   progressValue = 100;
                   progressStatus = 'failed';
-                } else if (isUploading && platformProgress !== undefined) {
-                  progressValue = platformProgress;
+                } else if (status === 'pending' && platformProgress !== undefined && platformProgress > 0 && platformProgress < 100) {
+                  // Actively uploading - show progress with cyan border
+                  progressValue = Math.max(0, Math.min(100, platformProgress));
                   progressStatus = 'uploading';
                 } else {
-                  // Pending - show full grey border
+                  // Pending or any other state - show full grey border
                   progressValue = 100;
                   progressStatus = 'pending';
                 }
@@ -188,8 +189,9 @@ export default function VideoItem({
                       cursor: 'pointer',
                       transition: 'all 0.2s ease',
                       opacity: status === 'pending' ? 0.7 : 1,
-                      minWidth: `${BUTTON_CONFIG.MIN_WIDTH}px`,
-                      height: `${BUTTON_CONFIG.HEIGHT}px`,
+                      width: `${BUTTON_CONFIG.SIZE}px`,
+                      height: `${BUTTON_CONFIG.SIZE}px`,
+                      minWidth: `${BUTTON_CONFIG.SIZE}px`,
                       position: 'relative' // For perimeter progress positioning
                     }}
                     onMouseEnter={(e) => {
@@ -212,10 +214,8 @@ export default function VideoItem({
                     <PerimeterProgress
                       progress={progressValue}
                       status={progressStatus}
-                      buttonWidth={BUTTON_CONFIG.MIN_WIDTH}
-                      buttonHeight={BUTTON_CONFIG.HEIGHT}
-                      paddingVertical={BUTTON_CONFIG.PADDING_VERTICAL}
-                      paddingHorizontal={BUTTON_CONFIG.PADDING_HORIZONTAL}
+                      buttonSize={BUTTON_CONFIG.SIZE}
+                      padding={BUTTON_CONFIG.PADDING_VERTICAL}
                       borderRadius={BUTTON_CONFIG.BORDER_RADIUS}
                       strokeWidth={2}
                     />
