@@ -13,6 +13,16 @@ const flexTextStyle = {
   width: '100%'
 };
 
+// Button dimensions constants - single source of truth
+const BUTTON_CONFIG = {
+  BORDER_WIDTH: 2,
+  PADDING_VERTICAL: 4,
+  PADDING_HORIZONTAL: 6,
+  MIN_WIDTH: 32,
+  HEIGHT: 28,
+  BORDER_RADIUS: 6
+};
+
 export default function VideoItem({
   video: v,
   draggedVideo,
@@ -32,9 +42,6 @@ export default function VideoItem({
   API,
   axios
 }) {
-  const uploadProps = v.upload_properties || {};
-  const youtubeProps = uploadProps.youtube || {};
-
   const getTitle = () => {
     const platforms = [
       { name: 'youtube', state: youtube },
@@ -122,27 +129,44 @@ export default function VideoItem({
                   );
                 }
                 
-                let borderColor, backgroundColor, boxShadow, title;
+                // Use neutral border for all states - perimeter progress indicator shows status
+                const borderColor = rgba(HOPPER_COLORS.rgb.white, 0.2);
+                const backgroundColor = rgba(HOPPER_COLORS.rgb.white, 0.05);
+                
+                let title;
                 if (status === 'success') {
-                  borderColor = HOPPER_COLORS.success;
-                  backgroundColor = rgba(HOPPER_COLORS.rgb.success, 0.1);
-                  boxShadow = `0 0 8px ${rgba(HOPPER_COLORS.rgb.success, 0.4)}`;
                   title = `${platformNames[platform]}: Upload successful - Click to view/edit`;
                 } else if (status === 'failed') {
-                  borderColor = HOPPER_COLORS.error;
-                  backgroundColor = rgba(HOPPER_COLORS.rgb.error, 0.1);
-                  boxShadow = `0 0 8px ${rgba(HOPPER_COLORS.rgb.error, 0.4)}`;
                   title = `${platformNames[platform]}: Upload failed - Click to view errors/edit`;
                 } else {
-                  borderColor = rgba(HOPPER_COLORS.rgb.white, 0.2);
-                  backgroundColor = rgba(HOPPER_COLORS.rgb.white, 0.05);
-                  boxShadow = 'none';
                   title = `${platformNames[platform]}: Will upload to this platform - Click to configure`;
                 }
                 
                 // Get platform-specific progress if available
                 const platformProgress = v.platform_progress?.[platform];
-                const isUploading = status === 'pending' && platformProgress !== undefined;
+                const isUploading = status === 'pending' && platformProgress !== undefined && platformProgress > 0 && platformProgress < 100;
+                
+                // Determine progress value and status for perimeter indicator
+                // Only 'success' and 'failed' are explicit states from backend
+                // 'pending' means not yet uploaded (should show grey)
+                // 'uploading' means actively uploading (should show colored progress)
+                let progressValue = 100; // Default to full border
+                let progressStatus = 'pending'; // Default to grey
+                
+                if (status === 'success') {
+                  progressValue = 100;
+                  progressStatus = 'success';
+                } else if (status === 'failed') {
+                  progressValue = 100;
+                  progressStatus = 'failed';
+                } else if (isUploading && platformProgress !== undefined) {
+                  progressValue = platformProgress;
+                  progressStatus = 'uploading';
+                } else {
+                  // Pending - show full grey border
+                  progressValue = 100;
+                  progressStatus = 'pending';
+                }
                 
                 return (
                   <button
@@ -157,22 +181,20 @@ export default function VideoItem({
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      padding: '4px 6px',
-                      border: `2px solid ${borderColor}`,
-                      borderRadius: '6px',
+                      padding: `${BUTTON_CONFIG.PADDING_VERTICAL}px ${BUTTON_CONFIG.PADDING_HORIZONTAL}px`,
+                      border: 'none',
+                      borderRadius: `${BUTTON_CONFIG.BORDER_RADIUS}px`,
                       background: backgroundColor,
                       cursor: 'pointer',
                       transition: 'all 0.2s ease',
                       opacity: status === 'pending' ? 0.7 : 1,
-                      minWidth: '32px',
-                      height: '28px',
-                      boxShadow: boxShadow,
+                      minWidth: `${BUTTON_CONFIG.MIN_WIDTH}px`,
+                      height: `${BUTTON_CONFIG.HEIGHT}px`,
                       position: 'relative' // For perimeter progress positioning
                     }}
                     onMouseEnter={(e) => {
                       if (status === 'pending') {
                         e.currentTarget.style.opacity = '1';
-                        e.currentTarget.style.borderColor = rgba(HOPPER_COLORS.rgb.info, 0.5);
                       } else {
                         e.currentTarget.style.transform = 'scale(1.05)';
                       }
@@ -180,44 +202,23 @@ export default function VideoItem({
                     onMouseLeave={(e) => {
                       if (status === 'pending') {
                         e.currentTarget.style.opacity = '0.7';
-                        e.currentTarget.style.borderColor = rgba(HOPPER_COLORS.rgb.white, 0.2);
                       } else {
                         e.currentTarget.style.transform = 'scale(1)';
                       }
                     }}
                   >
                     {platformIcon}
-                    {/* Perimeter progress indicator - matches button dimensions */}
-                    {isUploading && (
-                      <PerimeterProgress
-                        progress={platformProgress}
-                        status="uploading"
-                        width={32}
-                        height={28}
-                        strokeWidth={2}
-                        borderRadius={6}
-                      />
-                    )}
-                    {status === 'success' && (
-                      <PerimeterProgress
-                        progress={100}
-                        status="success"
-                        width={32}
-                        height={28}
-                        strokeWidth={2}
-                        borderRadius={6}
-                      />
-                    )}
-                    {status === 'failed' && (
-                      <PerimeterProgress
-                        progress={100}
-                        status="failed"
-                        width={32}
-                        height={28}
-                        strokeWidth={2}
-                        borderRadius={6}
-                      />
-                    )}
+                    {/* Perimeter progress indicator - shows status for all states, acts as the border */}
+                    <PerimeterProgress
+                      progress={progressValue}
+                      status={progressStatus}
+                      buttonWidth={BUTTON_CONFIG.MIN_WIDTH}
+                      buttonHeight={BUTTON_CONFIG.HEIGHT}
+                      paddingVertical={BUTTON_CONFIG.PADDING_VERTICAL}
+                      paddingHorizontal={BUTTON_CONFIG.PADDING_HORIZONTAL}
+                      borderRadius={BUTTON_CONFIG.BORDER_RADIUS}
+                      strokeWidth={2}
+                    />
                   </button>
                 );
               })}
@@ -252,20 +253,10 @@ export default function VideoItem({
             </span>
           </div>
         )}
-        {/* Progress bar removed - all progress now shown via perimeter indicators on destination icons */}
+        {/* Status section - only shows non-upload statuses (scheduled, cancelled, etc.) */}
         <div className="status" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           <span style={flexTextStyle}>
-            {v.status === 'uploading' ? (
-              v.upload_progress !== undefined ? (
-                <span>Uploading {v.upload_progress}%</span>
-              ) : v.progress !== undefined && v.progress < 100 ? (
-                <span>Uploading to server {v.progress}%</span>
-              ) : (
-                <span>Processing...</span>
-              )
-            ) : v.status === 'failed' ? (
-              <span style={{ color: HOPPER_COLORS.error }}>Upload Failed</span>
-            ) : v.status === 'cancelled' ? (
+            {v.status === 'cancelled' ? (
               <span style={{ color: HOPPER_COLORS.grey }}>Cancelled</span>
             ) : v.scheduled_time ? (
               <span>Scheduled for {new Date(v.scheduled_time).toLocaleString(undefined, {
@@ -276,9 +267,7 @@ export default function VideoItem({
                 minute: '2-digit',
                 second: '2-digit'
               })}</span>
-            ) : (
-              <span>{v.status}</span>
-            )}
+            ) : null}
           </span>
         </div>
       </div>

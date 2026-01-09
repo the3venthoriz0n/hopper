@@ -394,7 +394,7 @@ h3 {
   align-items: center;
   justify-content: center;
   padding: 4px 6px;
-  border: 2px solid;
+  border: none;
   border-radius: 6px;
   background: rgba(var(--rgb-white), var(--opacity-05));
   cursor: pointer;
