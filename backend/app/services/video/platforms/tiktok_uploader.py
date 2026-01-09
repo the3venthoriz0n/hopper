@@ -1,5 +1,6 @@
 """TikTok upload service logic"""
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
@@ -168,8 +169,12 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
     
     try:
         update_video(video_id, user_id, db=db, status="uploading")
+        last_published_progress = -1
+        from app.services.video.helpers import should_publish_progress
+        
         set_upload_progress(user_id, video_id, 0)
         await publish_upload_progress(user_id, video_id, "tiktok", 0)
+        last_published_progress = 0
         
         # Check rate limit (use user_id if session_id not provided)
         check_tiktok_rate_limit(session_id=session_id, user_id=user_id)
@@ -420,8 +425,11 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         brand_content_toggle = commercial_content_disclosure and commercial_content_branded
         
         tiktok_logger.info(f"Uploading {video.filename} ({video_size / (1024*1024):.2f} MB)")
-        set_upload_progress(user_id, video_id, 5)
-        await publish_upload_progress(user_id, video_id, "tiktok", 5)
+        progress = 5
+        set_upload_progress(user_id, video_id, progress)
+        if should_publish_progress(progress, last_published_progress):
+            await publish_upload_progress(user_id, video_id, "tiktok", progress)
+            last_published_progress = progress
         
         # Determine upload method: prefer PULL_FROM_URL, fallback to FILE_UPLOAD
         use_pull_from_url = True
@@ -675,8 +683,11 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         publish_id = init_data["data"]["publish_id"]
         
         tiktok_logger.info(f"Initialized, publish_id: {publish_id}")
-        set_upload_progress(user_id, video_id, 10)
-        await publish_upload_progress(user_id, video_id, "tiktok", 10)
+        progress = 10
+        set_upload_progress(user_id, video_id, progress)
+        if should_publish_progress(progress, last_published_progress):
+            await publish_upload_progress(user_id, video_id, "tiktok", progress)
+            last_published_progress = progress
         
         # Step 2: Upload video file (only for FILE_UPLOAD method)
         if not use_pull_from_url:
@@ -697,16 +708,54 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                 tiktok_logger.info(f"TikTok upload cancelled for video {video_id} before file upload")
                 raise Exception("Upload cancelled by user")
             
-            with open(video_path, 'rb') as f:
-                upload_response = httpx.put(
+            # Stream file upload with progress tracking
+            chunk_size = 1024 * 1024  # 1MB chunks
+            uploaded_bytes = 0
+            progress_tasks = []  # Store progress publish tasks
+            
+            async def generate_chunks():
+                """Async generator to stream file in chunks and track progress"""
+                nonlocal uploaded_bytes
+                with open(video_path, 'rb') as f:
+                    while True:
+                        # Check for cancellation during upload
+                        if _cancellation_flags.get(video_id, False):
+                            tiktok_logger.info(f"TikTok upload cancelled for video {video_id} during file upload")
+                            raise Exception("Upload cancelled by user")
+                        
+                        chunk = f.read(chunk_size)
+                        if not chunk:
+                            break
+                        
+                        uploaded_bytes += len(chunk)
+                        # Map to 10-90% range (10% = after init, 90% = upload complete)
+                        progress = 10 + int((uploaded_bytes / video_size) * 80)
+                        set_upload_progress(user_id, video_id, progress)
+                        
+                        # Publish progress updates (1% increments)
+                        from app.services.video.helpers import should_publish_progress
+                        if should_publish_progress(progress, last_published_progress):
+                            # Schedule progress publish (non-blocking)
+                            task = asyncio.create_task(publish_upload_progress(user_id, video_id, "tiktok", progress))
+                            progress_tasks.append(task)
+                            nonlocal last_published_progress
+                            last_published_progress = progress
+                        
+                        yield chunk
+            
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                upload_response = await client.put(
                     upload_url,
                     headers={
                         "Content-Range": f"bytes 0-{video_size - 1}/{video_size}",
                         "Content-Type": content_type
                     },
-                    content=f.read(),
-                    timeout=300.0
+                    content=generate_chunks()
                 )
+            
+            # Wait for any pending progress publish tasks
+            if progress_tasks:
+                await asyncio.gather(*progress_tasks, return_exceptions=True)
             
             # Check for cancellation after file upload
             if _cancellation_flags.get(video_id, False):
@@ -764,8 +813,63 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                 f"TikTok using PULL_FROM_URL (URL) method - TikTok will download the file automatically - "
                 f"User {user_id}, Video {video_id} ({video.filename})"
             )
-            set_upload_progress(user_id, video_id, 50)
-            await publish_upload_progress(user_id, video_id, "tiktok", 50)
+            
+            # Start polling TikTok status for PULL_FROM_URL progress tracking
+            # Initial status will be PROCESSING_DOWNLOAD (10-50% range)
+            from app.services.video.platforms.tiktok_api import fetch_tiktok_publish_status
+            poll_count = 0
+            max_polls = 120  # Poll for up to 10 minutes (5 second intervals)
+            estimated_download_polls = 60  # Estimate download takes ~5 minutes
+            estimated_upload_polls = 60  # Estimate processing takes ~5 minutes
+            
+            while poll_count < max_polls:
+                # Check for cancellation
+                if _cancellation_flags.get(video_id, False):
+                    tiktok_logger.info(f"TikTok upload cancelled for video {video_id} during PULL_FROM_URL polling")
+                    raise Exception("Upload cancelled by user")
+                
+                await asyncio.sleep(5)  # Poll every 5 seconds
+                poll_count += 1
+                
+                status_data = fetch_tiktok_publish_status(user_id, publish_id, db=db)
+                if not status_data:
+                    # Status not available yet, continue polling
+                    continue
+                
+                status = status_data.get("status")
+                
+                # Map status to progress percentages
+                if status == "PROCESSING_DOWNLOAD":
+                    # TikTok is downloading from our server: 10-50% range
+                    progress = 10 + int(min(poll_count / estimated_download_polls, 1.0) * 40)
+                    set_upload_progress(user_id, video_id, progress)
+                    if should_publish_progress(progress, last_published_progress):
+                        await publish_upload_progress(user_id, video_id, "tiktok", progress)
+                        last_published_progress = progress
+                elif status == "PROCESSING_UPLOAD":
+                    # TikTok is processing the video: 50-90% range
+                    download_polls = min(poll_count, estimated_download_polls)
+                    upload_polls = poll_count - download_polls
+                    progress = 50 + int(min(upload_polls / estimated_upload_polls, 1.0) * 40)
+                    set_upload_progress(user_id, video_id, progress)
+                    if should_publish_progress(progress, last_published_progress):
+                        await publish_upload_progress(user_id, video_id, "tiktok", progress)
+                        last_published_progress = progress
+                elif status == "PUBLISH_COMPLETE":
+                    # Upload complete: 100%
+                    progress = 100
+                    set_upload_progress(user_id, video_id, progress)
+                    await publish_upload_progress(user_id, video_id, "tiktok", progress)
+                    last_published_progress = progress
+                    break
+                elif status == "FAILED":
+                    # Upload failed
+                    error_msg = status_data.get("fail_reason", "Upload failed")
+                    raise Exception(f"TikTok upload failed: {error_msg}")
+                
+                # If we've been polling for a while and still processing, continue
+                if status in ["PROCESSING_DOWNLOAD", "PROCESSING_UPLOAD"]:
+                    continue
         
         # Check for cancellation before marking as success
         if _cancellation_flags.get(video_id, False):
@@ -776,8 +880,11 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         custom_settings = custom_settings.copy() if custom_settings else {}
         custom_settings['tiktok_publish_id'] = publish_id
         update_video(video_id, user_id, db=db, status="uploaded", custom_settings=custom_settings)
-        set_upload_progress(user_id, video_id, 100)
-        await publish_upload_progress(user_id, video_id, "tiktok", 100)
+        progress = 100
+        set_upload_progress(user_id, video_id, progress)
+        if should_publish_progress(progress, last_published_progress):
+            await publish_upload_progress(user_id, video_id, "tiktok", progress)
+            last_published_progress = progress
         final_method = upload_method if 'upload_method' in locals() else ("PULL_FROM_URL" if use_pull_from_url else "FILE_UPLOAD")
         tiktok_logger.info(
             f"TikTok upload successful using {final_method} method - "

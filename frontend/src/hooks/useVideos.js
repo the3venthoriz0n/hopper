@@ -141,6 +141,22 @@ export function useVideos(
     return `${size.toFixed(2)} ${units[unitIndex]}`;
   }, []);
 
+  const updateVideoProgress = useCallback((videoId, progress, platform = null) => {
+    setVideos(prev => prev.map(v => {
+      if (v.id !== videoId) return v;
+      
+      // If platform is specified, store platform-specific progress
+      if (platform) {
+        const platformProgress = v.platform_progress || {};
+        platformProgress[platform] = progress;
+        return { ...v, platform_progress: platformProgress };
+      }
+      
+      // Otherwise, update general upload_progress (for hopper server uploads)
+      return { ...v, upload_progress: progress };
+    }));
+  }, []);
+
   const addVideo = useCallback(async (file) => {
     // Temporary: 100MB limit due to Cloudflare restrictions
     const maxSizeBytes = 100 * 1024 * 1024; // 100MB
@@ -671,6 +687,7 @@ export function useVideos(
     cancelAllUploads,
     upload,
     calculateQueueTokenCost,
+    updateVideoProgress,
     formatFileSize,
   };
 }

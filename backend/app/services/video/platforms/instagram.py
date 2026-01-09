@@ -105,10 +105,12 @@ async def _poll_container_status(
             
             if status_code == "FINISHED":
                 instagram_logger.info(f"Video processed successfully, ready to publish")
-                set_upload_progress(user_id, video_id, 80)
+                # FINISHED status = 90% (ready to publish)
+                progress = 90
+                set_upload_progress(user_id, video_id, progress)
                 # Publish final progress update
                 from app.services.event_service import publish_upload_progress
-                await publish_upload_progress(user_id, video_id, "instagram", 80)
+                await publish_upload_progress(user_id, video_id, "instagram", progress)
                 return status_code
             elif status_code == "ERROR":
                 raise Exception(f"Instagram video processing failed with ERROR status")
@@ -120,14 +122,24 @@ async def _poll_container_status(
         
         if attempt < max_retries - 1:
             await asyncio.sleep(retry_delay)
-            # Update progress during polling (40% to 80% range)
-            progress = 40 + int((attempt / max_retries) * 40)
+            
+            # Map status_code to progress percentages
+            # IN_PROGRESS: 20-90% (Instagram downloading/processing from our server)
+            # FINISHED: 90% (ready to publish)
+            if status_code == "IN_PROGRESS":
+                # Distribute progress 20-90% based on attempts
+                progress = 20 + int((attempt / max_retries) * 70)
+            else:
+                # For other statuses, use previous progress or default
+                progress = get_upload_progress(user_id, video_id) or 20
+            
             set_upload_progress(user_id, video_id, progress)
             
-            # Publish WebSocket progress event every 10% change
+            # Publish WebSocket progress event (1% increments or at first attempt)
             previous_progress = get_upload_progress(user_id, video_id) or 0
-            if progress - previous_progress >= 10 or attempt == 0:
-                from app.services.event_service import publish_upload_progress
+            from app.services.video.helpers import should_publish_progress
+            from app.services.event_service import publish_upload_progress
+            if should_publish_progress(progress, previous_progress) or attempt == 0:
                 await publish_upload_progress(user_id, video_id, "instagram", progress)
     
     raise Exception(f"Video processing timeout after {max_retries * retry_delay} seconds")
@@ -341,7 +353,8 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             custom_settings = custom_settings.copy() if custom_settings else {}
             custom_settings['instagram_container_id'] = container_id
             update_video(video_id, user_id, db=db, custom_settings=custom_settings)
-            set_upload_progress(user_id, video_id, 40)
+            # Container created, start polling at 20% (IN_PROGRESS range starts)
+            set_upload_progress(user_id, video_id, 20)
             
             instagram_logger.info(f"Waiting for Instagram to process video from URL...")
             
@@ -355,7 +368,11 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
                 instagram_logger.info(f"Instagram upload cancelled for video {video_id} after polling")
                 raise Exception("Upload cancelled by user")
             
-            set_upload_progress(user_id, video_id, 85)
+            # After FINISHED, publish step = 100%
+            progress = 100
+            set_upload_progress(user_id, video_id, progress)
+            from app.services.event_service import publish_upload_progress
+            await publish_upload_progress(user_id, video_id, "instagram", progress)
             
             # Check for cancellation before publishing
             if _cancellation_flags.get(video_id, False):

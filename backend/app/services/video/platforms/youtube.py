@@ -274,8 +274,9 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
             if status:
                 progress = int(status.progress() * 100)
                 set_upload_progress(user_id, video_id, progress)
-                # Publish websocket event for real-time progress updates (throttle to every 5% or at completion)
-                if progress - last_published_progress >= 5 or progress == 100:
+                # Publish websocket event for real-time progress updates (1% increments or at completion)
+                from app.services.video.helpers import should_publish_progress
+                if should_publish_progress(progress, last_published_progress):
                     await publish_upload_progress(user_id, video_id, "youtube", progress)
                     last_published_progress = progress
                 chunk_count += 1

@@ -1,6 +1,7 @@
 import React from 'react';
 import { PLATFORM_CONFIG } from '../../../utils/platformConfig';
 import { HOPPER_COLORS, rgba } from '../../../utils/colors';
+import PerimeterProgress from './PerimeterProgress';
 
 const flexTextStyle = { 
   flex: 1, 
@@ -139,6 +140,10 @@ export default function VideoItem({
                   title = `${platformNames[platform]}: Will upload to this platform - Click to configure`;
                 }
                 
+                // Get platform-specific progress if available
+                const platformProgress = v.platform_progress?.[platform];
+                const isUploading = status === 'pending' && platformProgress !== undefined;
+                
                 return (
                   <button
                     key={platform}
@@ -161,7 +166,8 @@ export default function VideoItem({
                       opacity: status === 'pending' ? 0.7 : 1,
                       minWidth: '32px',
                       height: '28px',
-                      boxShadow: boxShadow
+                      boxShadow: boxShadow,
+                      position: 'relative' // For perimeter progress positioning
                     }}
                     onMouseEnter={(e) => {
                       if (status === 'pending') {
@@ -181,6 +187,31 @@ export default function VideoItem({
                     }}
                   >
                     {platformIcon}
+                    {/* Perimeter progress indicator */}
+                    {isUploading && (
+                      <PerimeterProgress
+                        progress={platformProgress}
+                        status="uploading"
+                        size={32}
+                        strokeWidth={2}
+                      />
+                    )}
+                    {status === 'success' && (
+                      <PerimeterProgress
+                        progress={100}
+                        status="success"
+                        size={32}
+                        strokeWidth={2}
+                      />
+                    )}
+                    {status === 'failed' && (
+                      <PerimeterProgress
+                        progress={100}
+                        status="failed"
+                        size={32}
+                        strokeWidth={2}
+                      />
+                    )}
                   </button>
                 );
               })}
@@ -215,7 +246,9 @@ export default function VideoItem({
             </span>
           </div>
         )}
-        {v.status === 'uploading' && (
+        {/* Progress bar only for hopper server uploads (initial file upload to hopper) */}
+        {/* Platform uploads (YouTube, TikTok, Instagram) show progress via perimeter indicator on destination icons */}
+        {v.status === 'uploading' && !v.platform_progress && (
           <div className="progress-bar">
             <div 
               className="progress-fill" 

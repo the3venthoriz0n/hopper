@@ -125,6 +125,7 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
     clearUploadedVideos,
     clearAllVideos,
     handleDragStart,
+    updateVideoProgress,
     handleDragEnd,
     handleDragOver,
     handleDrop,
@@ -247,7 +248,11 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
         break;
         
       case 'upload_progress':
-        loadVideos();
+        const { video_id, progress_percent, platform } = payload;
+        if (video_id && progress_percent !== undefined) {
+          // Pass platform to updateVideoProgress for platform-specific tracking
+          updateVideoProgress(video_id, progress_percent, platform);
+        }
         break;
         
       case 'settings_changed':

@@ -48,6 +48,19 @@ def format_platform_error(platform: str, error_message: str) -> str:
     return f"{platform_display}: {error_message}"
 
 
+def should_publish_progress(current_progress: int, last_published_progress: int) -> bool:
+    """Determine if progress should be published (1% increments or completion)
+    
+    Args:
+        current_progress: Current progress percentage (0-100)
+        last_published_progress: Last published progress percentage
+        
+    Returns:
+        True if progress should be published (>= 1% change or at 100%)
+    """
+    return (current_progress - last_published_progress >= 1) or (current_progress == 100)
+
+
 def build_upload_context(user_id: int, db: Session) -> Dict[str, Any]:
     """Build upload context for a user (enabled destinations, settings, tokens)
     
