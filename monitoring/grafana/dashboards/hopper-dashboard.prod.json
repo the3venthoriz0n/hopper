@@ -903,6 +903,150 @@
     },
     {
       "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "username"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 250
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Time"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 200
+              },
+              {
+                "id": "unit",
+                "value": "time: YYYY-MM-DD HH:mm:ss"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ip"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 150
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "method"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 120
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 33
+      },
+      "id": 26,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "pluginVersion": "12.3.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "{service_name=\"hopper-backend\"} |= \"Login event\" | regexp \"username=(?P<username>[^\\s]+).*timestamp=(?P<timestamp>[^\\s]+).*ip=(?P<ip>[^\\s]+).*method=(?P<method>[^\\s]+)\"",
+          "refId": "A"
+        }
+      ],
+      "title": "Login Events",
+      "transformations": [
+        {
+          "id": "extractFields",
+          "options": {
+            "format": "auto",
+            "source": "Line"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Line": true,
+              "Time": false
+            },
+            "indexByName": {
+              "Time": 0,
+              "ip": 2,
+              "method": 3,
+              "username": 1
+            },
+            "renameByName": {
+              "Time": "Time",
+              "ip": "IP",
+              "method": "Login Method",
+              "username": "Username"
+            }
+          }
+        }
+      ],
+      "type": "logs"
+    },
+    {
+      "datasource": {
         "type": "prometheus",
         "uid": "Prometheus"
       },
@@ -963,7 +1107,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 33
+        "y": 42
       },
       "id": 21,
       "options": {
@@ -1056,7 +1200,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 33
+        "y": 42
       },
       "id": 20,
       "options": {
@@ -1176,7 +1320,7 @@
         "h": 9,
         "w": 6,
         "x": 0,
-        "y": 42
+        "y": 51
       },
       "id": 24,
       "options": {
@@ -1270,7 +1414,7 @@
         "h": 9,
         "w": 6,
         "x": 6,
-        "y": 42
+        "y": 51
       },
       "id": 19,
       "options": {
@@ -1332,7 +1476,7 @@
         "h": 9,
         "w": 6,
         "x": 12,
-        "y": 42
+        "y": 51
       },
       "id": 22,
       "options": {
@@ -1394,7 +1538,7 @@
         "h": 9,
         "w": 6,
         "x": 18,
-        "y": 42
+        "y": 51
       },
       "id": 23,
       "options": {

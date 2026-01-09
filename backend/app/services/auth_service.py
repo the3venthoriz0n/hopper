@@ -605,13 +605,14 @@ def register_user(email: str, password: str) -> dict:
     }
 
 
-def login_user(email: str, password: str, db: Session) -> dict:
+def login_user(email: str, password: str, db: Session, request: Optional[Request] = None) -> dict:
     """Complete login flow: authenticate, verify email, create session, return user info
     
     Args:
         email: User email
         password: User password
         db: Database session
+        request: FastAPI Request object (optional, for IP extraction)
         
     Returns:
         dict: Login response with user info and session_id
@@ -620,6 +621,8 @@ def login_user(email: str, password: str, db: Session) -> dict:
         ValueError: If invalid credentials or email not verified
     """
     import logging
+    from datetime import datetime, timezone
+    from app.core.security import get_client_ip
     
     logger = logging.getLogger(__name__)
     
@@ -635,7 +638,15 @@ def login_user(email: str, password: str, db: Session) -> dict:
     # Create session
     session_id = create_session(user.id)
     
-    logger.info(f"User logged in: {user.email} (ID: {user.id})")
+    # Extract IP address if request is provided
+    client_ip = get_client_ip(request) if request else "unknown"
+    
+    # Log login event with structured data for OTEL/Loki
+    logger.info(
+        f"Login event: username={user.email} user_id={user.id} "
+        f"timestamp={datetime.now(timezone.utc).isoformat()} "
+        f"ip={client_ip} method=email event_type=login"
+    )
     
     return {
         "user": {
@@ -1025,8 +1036,19 @@ def complete_google_oauth_login(code: str, state: str, request: Request, db: Ses
     # Track successful login attempt
     login_attempts_counter.labels(status="success", method="google").inc()
     
+    # Extract IP address
+    from app.core.security import get_client_ip
+    from datetime import datetime, timezone
+    
+    client_ip = get_client_ip(request)
     action = "registered" if is_new else "logged in"
-    logger.info(f"User {action} via Google OAuth: {user.email} (ID: {user.id})")
+    
+    # Log login event with structured data for OTEL/Loki
+    logger.info(
+        f"Login event: username={user.email} user_id={user.id} "
+        f"timestamp={datetime.now(timezone.utc).isoformat()} "
+        f"ip={client_ip} method=google event_type=login"
+    )
     
     # Create redirect response (send user to the main app shell)
     frontend_redirect = f"{settings.FRONTEND_URL}/app?google_login=success"

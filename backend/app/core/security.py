@@ -148,6 +148,21 @@ def validate_origin_referer(request: Request) -> bool:
     return False
 
 
+def get_client_ip(request: Request) -> str:
+    """Extract client IP address from request
+    
+    Args:
+        request: FastAPI Request object
+        
+    Returns:
+        str: Client IP address
+    """
+    client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    if not client_ip:
+        client_ip = request.client.host if request.client else "unknown"
+    return client_ip
+
+
 def log_api_access(
     request: Request,
     session_id: Optional[str] = None,
@@ -155,9 +170,7 @@ def log_api_access(
     error: Optional[str] = None
 ):
     """Log detailed API access information"""
-    client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-    if not client_ip:
-        client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     
     user_agent = request.headers.get("User-Agent", "unknown")
     origin = request.headers.get("Origin", "none")

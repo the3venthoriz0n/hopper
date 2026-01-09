@@ -37,7 +37,7 @@ def register(request_data: RegisterRequest, request: Request, response: Response
 def login(request_data: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     """Login user"""
     try:
-        result = login_user(request_data.email, request_data.password, db)
+        result = login_user(request_data.email, request_data.password, db, request=request)
         set_auth_cookie(response, result["session_id"], request)
         return {"user": result["user"]}
     except ValueError as e:
