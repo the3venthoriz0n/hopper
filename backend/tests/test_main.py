@@ -215,26 +215,28 @@ class TestStripeFunctionality:
     
     @patch('app.services.token_service.ensure_tokens_synced_for_subscription')
     @patch('app.services.stripe_service.create_stripe_customer')
+    @patch('app.services.stripe_service.StripeRegistry.get_plan_config')
     @patch('app.services.stripe_service.StripeRegistry.get')
     @patch('app.services.stripe_service.stripe')
     @patch('app.services.stripe_service.settings')
-    def test_create_stripe_subscription(self, mock_settings, mock_stripe, mock_registry_get, mock_create_customer, mock_ensure_tokens, test_user, db_session):
+    def test_create_stripe_subscription(self, mock_ensure_tokens, mock_create_customer, mock_registry_get_plan_config, mock_registry_get, mock_stripe, mock_settings, test_user, db_session):
         """Test creating a free_daily subscription"""
         mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
         from app.services.stripe_service import create_stripe_subscription
         
-        # Mock StripeRegistry to return free_daily plan config
-        mock_registry_get.side_effect = lambda key: {
-            "free_daily_price": {
-                "price_id": "price_free_daily",
-                "tokens": 10,
-                "name": "Free Daily",
-                "description": "Free daily plan",
-                "amount_dollars": 0.0,
-                "currency": "USD",
-                "formatted": "Free"
-            }
-        }.get(key) if key == "free_daily_price" else None
+        # Mock StripeRegistry.get_plan_config to return free_daily plan config
+        mock_registry_get_plan_config.return_value = {
+            "price_id": "price_free_daily",
+            "tokens": 10,
+            "name": "Free Daily",
+            "description": "Free daily plan",
+            "amount_dollars": 0.0,
+            "currency": "USD",
+            "formatted": "Free"
+        }
+        
+        # Mock StripeRegistry.get for overage price lookup (returns None for free_daily)
+        mock_registry_get.return_value = None
         
         # Mock Stripe subscription response
         mock_subscription = Mock()
@@ -305,33 +307,33 @@ class TestStripeFunctionality:
         """Test getting tokens for a plan from StripeRegistry"""
         from app.services.token_service import get_plan_tokens
         
-        # Mock StripeRegistry.get() to return plan config with tokens
-        mock_registry.get.return_value = {'tokens': 10}
+        # Mock StripeRegistry.get_plan_config() to return plan config with tokens
+        mock_registry.get_plan_config.return_value = {'tokens': 10}
         
         assert get_plan_tokens('free') == 10
-        mock_registry.get.assert_called_once_with('free_price')
+        mock_registry.get_plan_config.assert_called_once_with('free')
     
     @patch('app.services.token_service.StripeRegistry')
     def test_get_plan_tokens_missing_plan(self, mock_registry):
         """Test getting tokens when plan is not found in registry"""
         from app.services.token_service import get_plan_tokens
         
-        # Mock StripeRegistry.get() to return None (plan not found)
-        mock_registry.get.return_value = None
+        # Mock StripeRegistry.get_plan_config() to return None (plan not found)
+        mock_registry.get_plan_config.return_value = None
         
         assert get_plan_tokens('nonexistent') == 0
-        mock_registry.get.assert_called_once_with('nonexistent_price')
+        mock_registry.get_plan_config.assert_called_once_with('nonexistent')
     
     @patch('app.services.token_service.StripeRegistry')
     def test_get_plan_tokens_missing_tokens_key(self, mock_registry):
         """Test getting tokens when plan config exists but tokens key is missing"""
         from app.services.token_service import get_plan_tokens
         
-        # Mock StripeRegistry.get() to return config without tokens key
-        mock_registry.get.return_value = {'price_id': 'price_123', 'name': 'Free Plan'}
+        # Mock StripeRegistry.get_plan_config() to return config without tokens key
+        mock_registry.get_plan_config.return_value = {'price_id': 'price_123', 'name': 'Free Plan'}
         
         assert get_plan_tokens('free') == 0
-        mock_registry.get.assert_called_once_with('free_price')
+        mock_registry.get_plan_config.assert_called_once_with('free')
     
     @patch('app.services.stripe_service.stripe')
     @patch('app.services.stripe_service.settings')

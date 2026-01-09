@@ -158,8 +158,9 @@ class TestSubscriptionFlow:
     
     @patch('app.services.stripe_service.stripe')
     @patch('app.services.stripe_service.settings')
+    @patch('app.services.stripe_service.StripeRegistry.get_plan_config')
     @patch('app.services.stripe_service.StripeRegistry.get')
-    def test_get_current_subscription_auto_creates_free(self, mock_registry_get, mock_settings, mock_stripe, authenticated_client, test_user, db_session):
+    def test_get_current_subscription_auto_creates_free(self, mock_registry_get, mock_registry_get_plan_config, mock_settings, mock_stripe, authenticated_client, test_user, db_session):
         """Test /api/subscription/current auto-creates free_daily subscription for new user"""
         # Set up Stripe mocks
         mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
@@ -179,8 +180,8 @@ class TestSubscriptionFlow:
         )
         mock_stripe.Subscription.create.return_value = mock_subscription
         
-        # Mock StripeRegistry to return free_daily plan config
-        mock_registry_get.return_value = {
+        # Mock StripeRegistry.get_plan_config to return free_daily plan config
+        mock_registry_get_plan_config.return_value = {
             "price_id": "price_free_daily",
             "tokens": 10,
             "name": "Free Daily",
@@ -189,6 +190,9 @@ class TestSubscriptionFlow:
             "currency": "USD",
             "formatted": "Free"
         }
+        
+        # Mock StripeRegistry.get for overage price lookup (returns None for free_daily)
+        mock_registry_get.return_value = None
         
         # Verify user has no subscription initially
         subscription = db_session.query(Subscription).filter(Subscription.user_id == test_user.id).first()
@@ -445,8 +449,9 @@ class TestHappyPathIntegration:
     
     @patch('app.services.stripe_service.stripe')
     @patch('app.services.stripe_service.settings')
+    @patch('app.services.stripe_service.StripeRegistry.get_plan_config')
     @patch('app.services.stripe_service.StripeRegistry.get')
-    def test_new_user_journey(self, mock_registry_get, mock_settings, mock_stripe, client, db_session, mock_redis):
+    def test_new_user_journey(self, mock_registry_get, mock_registry_get_plan_config, mock_settings, mock_stripe, client, db_session, mock_redis):
         """Test complete new user journey from registration to settings"""
         # Set up Stripe mocks
         mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
@@ -466,8 +471,8 @@ class TestHappyPathIntegration:
         )
         mock_stripe.Subscription.create.return_value = mock_subscription
         
-        # Mock StripeRegistry to return free_daily plan config
-        mock_registry_get.return_value = {
+        # Mock StripeRegistry.get_plan_config to return free_daily plan config
+        mock_registry_get_plan_config.return_value = {
             "price_id": "price_free_daily",
             "tokens": 10,
             "name": "Free Daily",
@@ -476,6 +481,9 @@ class TestHappyPathIntegration:
             "currency": "USD",
             "formatted": "Free"
         }
+        
+        # Mock StripeRegistry.get for overage price lookup (returns None for free_daily)
+        mock_registry_get.return_value = None
         
         # Patch SessionLocal to use test database session
         # SessionLocal is a sessionmaker (callable), so we make it return the test session
