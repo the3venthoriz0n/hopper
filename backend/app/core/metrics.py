@@ -252,3 +252,45 @@ def update_active_users_detail_gauge(active_users_data: dict, db) -> None:
         import logging
         logger = logging.getLogger(__name__)
         logger.error(f"Failed to update active_users_detail_gauge: {e}", exc_info=True)
+
+
+def update_active_subscriptions_gauge(db) -> None:
+    """
+    Update the active_subscriptions_gauge with counts of active subscriptions by plan type.
+    
+    Args:
+        db: Database session to query subscriptions
+    """
+    try:
+        from app.models.subscription import Subscription
+        from sqlalchemy import func
+        
+        # Query active subscriptions grouped by plan_type
+        results = db.query(
+            Subscription.plan_type,
+            func.count(Subscription.id).label('count')
+        ).filter(
+            Subscription.status == 'active'
+        ).group_by(
+            Subscription.plan_type
+        ).all()
+        
+        # Clear existing gauge data by clearing all label combinations
+        active_subscriptions_gauge._metrics.clear()
+        
+        # Populate gauge with current active subscriptions
+        for plan_type, count in results:
+            try:
+                # Set gauge with plan_type label
+                active_subscriptions_gauge.labels(plan_type=plan_type).set(count)
+            except Exception as e:
+                # Skip plan types that cause errors but continue processing others
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to update metrics for plan_type {plan_type}: {e}")
+                continue
+    except Exception as e:
+        # Never let metric updates break the metrics endpoint
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to update active_subscriptions_gauge: {e}", exc_info=True)

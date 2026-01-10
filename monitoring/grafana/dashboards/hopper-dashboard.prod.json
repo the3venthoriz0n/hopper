@@ -103,7 +103,8 @@
               }
             ]
           },
-          "unit": "short"
+          "unit": "short",
+          "decimals": 0
         },
         "overrides": []
       },
@@ -1008,7 +1009,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "{service_name=\"hopper-backend\"} |= \"Login event\" | regexp \"username=(?P<username>[^\\s]+).*timestamp=(?P<timestamp>[^\\s]+).*ip=(?P<ip>[^\\s]+).*method=(?P<method>[^\\s]+)\"",
+          "expr": "{service_name=\"hopper-backend\"} |= \"Login event\" | regexp \"username=(?P<username>[^\\\\s]+).*timestamp=(?P<timestamp>[^\\\\s]+).*ip=(?P<ip>[^\\\\s]+).*method=(?P<method>[^\\\\s]+)\"",
           "refId": "A"
         }
       ],
@@ -1343,8 +1344,8 @@
             "type": "prometheus",
             "uid": "Prometheus"
           },
-          "expr": "hopper_active_subscriptions{plan_type=\"free\"}",
-          "legendFormat": "Free",
+          "expr": "hopper_active_subscriptions{plan_type=\"free_daily\"}",
+          "legendFormat": "Free Daily",
           "refId": "A"
         },
         {
@@ -1352,8 +1353,8 @@
             "type": "prometheus",
             "uid": "Prometheus"
           },
-          "expr": "hopper_active_subscriptions{plan_type=\"medium\"}",
-          "legendFormat": "Medium",
+          "expr": "hopper_active_subscriptions{plan_type=\"starter\"}",
+          "legendFormat": "Starter",
           "refId": "B"
         },
         {
@@ -1361,8 +1362,8 @@
             "type": "prometheus",
             "uid": "Prometheus"
           },
-          "expr": "hopper_active_subscriptions{plan_type=\"pro\"}",
-          "legendFormat": "Pro",
+          "expr": "hopper_active_subscriptions{plan_type=\"creator\"}",
+          "legendFormat": "Creator",
           "refId": "C"
         },
         {
