@@ -359,6 +359,9 @@ def auto_mock_stripe():
     
     # Create all required mock prices
     mock_prices = [
+        # free_price: legacy plan type, same as free_daily (10 tokens, monthly)
+        create_mock_price("price_free", "free_price", 0, 10, "Free", 
+                        "Free plan", hidden=False, max_accrual=None, interval="month"),
         create_mock_price("price_free_daily", "free_daily_price", 0, 3, "Free Daily", 
                         "3 tokens per day", hidden=False, max_accrual=10, interval="day"),
         create_mock_price("price_starter", "starter_price", 300, 300, "Starter", 
@@ -376,20 +379,44 @@ def auto_mock_stripe():
     mock_list_result = Mock()
     mock_list_result.auto_paging_iter.return_value = mock_prices
     
-    # Patch stripe module - we'll set up Price.list on the mock
-    # Also patch Price.list directly on the stripe module used by stripe_service
-    # This ensures it works even when tests patch stripe
-    from app.services import stripe_service
+    # Patch stripe module and Price.list directly to ensure it works even when tests patch stripe
+    # Use patch.object to patch Price.list directly on the stripe module
     import stripe as stripe_module
+    from app.services import stripe_service
     
     # Store original Price.list if it exists
     original_price_list = getattr(stripe_module.Price, 'list', None)
     
-    # Patch Price.list on the actual stripe module first
-    stripe_module.Price.list = Mock(return_value=mock_list_result)
+    # Patch stripe module and ensure Price.list is always available
+    # The key issue: when tests patch stripe, they create a new Mock without Price.list
+    # Solution: patch Price.list on the actual module AND ensure mocks have it
+    def setup_price_list(mock_obj):
+        """Helper to ensure Price.list is set up on a mock object"""
+        if not hasattr(mock_obj, 'Price'):
+            mock_obj.Price = Mock()
+        mock_obj.Price.list = Mock(return_value=mock_list_result)
+        return mock_obj
     
-    # Patch stripe module in stripe_service
-    with patch('app.services.stripe_service.stripe') as mock_stripe_module:
+    # ROOT CAUSE FIX: The code does `stripe.Price.list()` where `stripe` is imported in stripe_service.py
+    # When tests patch `app.services.stripe_service.stripe`, they replace that reference with a new Mock
+    # That new Mock doesn't have Price.list, so sync fails.
+    #
+    # Solution: Use patch.object to patch Price.list on stripe_service.stripe.Price so it persists
+    # even when tests patch stripe. We also need to ensure that when tests patch stripe and create
+    # a new Mock, that Mock automatically gets Price.list set up. We do this by patching it on
+    # the module reference and using a PropertyMock or ensuring it's always available.
+    
+    # Create a helper function that ensures Price.list is always available
+    def ensure_price_list(mock_obj):
+        """Ensure Price.list is available on a mock object"""
+        if not hasattr(mock_obj, 'Price'):
+            mock_obj.Price = Mock()
+        if not hasattr(mock_obj.Price, 'list'):
+            mock_obj.Price.list = Mock(return_value=mock_list_result)
+        return mock_obj
+    
+    with patch.object(stripe_module.Price, 'list', return_value=mock_list_result, create=True), \
+         patch('app.services.stripe_service.stripe') as mock_stripe_module:
         # Mock Customer operations
         mock_customer = Mock(id="cus_test123", email="delivered@resend.dev")
         mock_stripe_module.Customer.create = Mock(return_value=mock_customer)
@@ -458,16 +485,38 @@ def auto_mock_stripe():
         ))
         
         # Set up Price.list on the mock_stripe_module for StripeRegistry.sync()
-        if not hasattr(mock_stripe_module, 'Price'):
-            mock_stripe_module.Price = Mock()
-        mock_stripe_module.Price.list = Mock(return_value=mock_list_result)
+        setup_price_list(mock_stripe_module)
+        ensure_price_list(mock_stripe_module)
         
-        # Also ensure Price.list is set up on the stripe module in stripe_service's namespace
-        # This is the actual reference used by the code
-        if hasattr(stripe_service, 'stripe'):
-            if not hasattr(stripe_service.stripe, 'Price'):
-                stripe_service.stripe.Price = Mock()
+        # CRITICAL FIX: Ensure Price.list is always available on stripe_service.stripe.Price
+        # When tests patch stripe, they replace the reference with a new Mock. That new Mock
+        # doesn't have Price.list, so when sync() calls stripe.Price.list(), it fails.
+        #
+        # Solution: Use patch.object to patch Price.list on stripe_service.stripe.Price.
+        # This patches the attribute on the Price object at that reference. When tests patch
+        # stripe, they replace the reference, but if they don't replace Price, our patch will
+        # still be active. However, if they create a completely new Mock without Price, we
+        # need to ensure it's set up.
+        #
+        # We ensure Price exists on stripe_service.stripe first, then patch Price.list.
+        ensure_price_list(stripe_service.stripe)
+        
+        # Patch Price.list on stripe_service.stripe.Price using patch.object
+        # This ensures it's available even when tests patch stripe (unless they replace Price)
+        # We use create=True to create the attribute if it doesn't exist
+        if hasattr(stripe_service.stripe, 'Price'):
+            price_list_patcher = patch.object(
+                stripe_service.stripe.Price, 
+                'list', 
+                return_value=mock_list_result,
+                create=True
+            )
+            price_list_patcher.start()
+        else:
+            # If Price doesn't exist, create it and set up list
+            stripe_service.stripe.Price = Mock()
             stripe_service.stripe.Price.list = Mock(return_value=mock_list_result)
+            price_list_patcher = None
         
         # Mock error classes
         mock_stripe_module.error.SignatureVerificationError = Exception
@@ -476,15 +525,9 @@ def auto_mock_stripe():
         try:
             yield mock_stripe_module
         finally:
-            # Restore original Price.list if it existed
-            if original_price_list is not None:
-                stripe_module.Price.list = original_price_list
-            elif hasattr(stripe_module.Price, 'list'):
-                # Only delete if we added it (it was None before)
-                try:
-                    delattr(stripe_module.Price, 'list')
-                except AttributeError:
-                    pass
+            # Clean up the price_list_patcher if it was created
+            if 'price_list_patcher' in locals() and price_list_patcher is not None:
+                price_list_patcher.stop()
 
 
 @pytest.fixture(scope="function")

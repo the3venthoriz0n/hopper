@@ -215,14 +215,52 @@ class TestStripeFunctionality:
     
     @patch('app.services.token_service.ensure_tokens_synced_for_subscription')
     @patch('app.services.stripe_service.create_stripe_customer')
+    @patch('app.services.stripe_service.StripeRegistry.get_all_base_plans')
     @patch('app.services.stripe_service.StripeRegistry.get_plan_config')
     @patch('app.services.stripe_service.StripeRegistry.get')
     @patch('app.services.stripe_service.stripe')
     @patch('app.services.stripe_service.settings')
-    def test_create_stripe_subscription(self, mock_ensure_tokens, mock_create_customer, mock_registry_get_plan_config, mock_registry_get, mock_stripe, mock_settings, test_user, db_session):
+    def test_create_stripe_subscription(self, mock_settings, mock_stripe, mock_registry_get, mock_registry_get_plan_config, mock_registry_get_all_base_plans, mock_create_customer, mock_ensure_tokens, test_user, db_session):
         """Test creating a free_daily subscription"""
         mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
         from app.services.stripe_service import create_stripe_subscription
+        
+        # Set up Price.list on the patched stripe Mock so sync() can find prices
+        # This is needed because sync() calls stripe.Price.list() when cache is empty
+        def create_mock_price(price_id, lookup_key, unit_amount, tokens, name, description="", 
+                             hidden=False, max_accrual=None, interval="month"):
+            """Helper to create a mock price with product"""
+            mock_product = Mock()
+            mock_product.id = f"prod_{lookup_key.replace('_price', '')}"
+            mock_product.name = name
+            mock_product.description = description
+            mock_product.active = True
+            metadata = {'tokens': str(tokens)}
+            if hidden:
+                metadata['hidden'] = 'true'
+            if max_accrual is not None:
+                metadata['max_accrual'] = str(max_accrual)
+            mock_product.metadata = metadata
+            
+            mock_price_obj = Mock()
+            mock_price_obj.id = price_id
+            mock_price_obj.lookup_key = lookup_key
+            mock_price_obj.unit_amount = unit_amount
+            mock_price_obj.currency = 'usd'
+            mock_price_obj.recurring = {'interval': interval}
+            mock_price_obj.created = 1234567890
+            mock_price_obj.product = mock_product
+            return mock_price_obj
+        
+        mock_prices = [
+            create_mock_price("price_free_daily", "free_daily_price", 0, 3, "Free Daily", 
+                            "3 tokens per day", hidden=False, max_accrual=10, interval="day"),
+        ]
+        mock_list_result = Mock()
+        mock_list_result.auto_paging_iter.return_value = mock_prices
+        if not hasattr(mock_stripe, 'Price'):
+            mock_stripe.Price = Mock()
+        mock_stripe.Price.list = Mock(return_value=mock_list_result)
         
         # Mock StripeRegistry.get_plan_config to return free_daily plan config
         mock_registry_get_plan_config.return_value = {
@@ -235,6 +273,9 @@ class TestStripeFunctionality:
             "currency": "USD",
             "formatted": "Free"
         }
+        
+        # Mock StripeRegistry.get_all_base_plans to prevent it from being called in error messages
+        mock_registry_get_all_base_plans.return_value = {"free_daily": mock_registry_get_plan_config.return_value}
         
         # Mock StripeRegistry.get for overage price lookup (returns None for free_daily)
         mock_registry_get.return_value = None
@@ -258,6 +299,10 @@ class TestStripeFunctionality:
         # Set user's customer ID
         test_user.stripe_customer_id = 'cus_test123'
         db_session.commit()
+        
+        # Invalidate cache to ensure mocks are used instead of cached data
+        from app.services.stripe_service import StripeRegistry
+        StripeRegistry.invalidate_cache()
 
         result = create_stripe_subscription(test_user.id, "free_daily", db_session)
         
@@ -528,25 +573,90 @@ class TestStripeFunctionality:
 class TestCheckoutAndBilling:
     """Test checkout and billing functionality"""
     
+    @patch('app.services.stripe_service.StripeRegistry.get_plan_config')
     @patch('app.services.stripe_service.StripeRegistry.get')
     @patch('app.services.stripe_service.stripe')
     @patch('app.services.stripe_service.settings')
-    def test_create_subscription_checkout(self, mock_settings, mock_stripe, mock_registry_get, test_user, db_session):
+    def test_create_subscription_checkout(self, mock_settings, mock_stripe, mock_registry_get, mock_registry_get_plan_config, test_user, db_session):
         """Test checkout session creation"""
         mock_settings.STRIPE_SECRET_KEY = 'sk_test_123'
         from app.services.subscription_service import create_subscription_checkout
         
+        # Set up Price.list on the patched stripe Mock so sync() can find prices
+        # This is needed because sync() calls stripe.Price.list() when cache is empty
+        def create_mock_price(price_id, lookup_key, unit_amount, tokens, name, description="", 
+                             hidden=False, max_accrual=None, interval="month"):
+            """Helper to create a mock price with product"""
+            mock_product = Mock()
+            mock_product.id = f"prod_{lookup_key.replace('_price', '')}"
+            mock_product.name = name
+            mock_product.description = description
+            mock_product.active = True
+            metadata = {'tokens': str(tokens)}
+            if hidden:
+                metadata['hidden'] = 'true'
+            if max_accrual is not None:
+                metadata['max_accrual'] = str(max_accrual)
+            mock_product.metadata = metadata
+            
+            mock_price_obj = Mock()
+            mock_price_obj.id = price_id
+            mock_price_obj.lookup_key = lookup_key
+            mock_price_obj.unit_amount = unit_amount
+            mock_price_obj.currency = 'usd'
+            mock_price_obj.recurring = {'interval': interval}
+            mock_price_obj.created = 1234567890
+            mock_price_obj.product = mock_product
+            return mock_price_obj
+        
+        mock_prices = [
+            create_mock_price("price_starter", "starter_price", 300, 300, "Starter", 
+                            "Starter plan", hidden=False, max_accrual=None, interval="month"),
+            create_mock_price("price_starter_overage", "starter_overage_price", 15, 0, "Starter Overage", 
+                            "Starter overage", hidden=False, max_accrual=None, interval="month"),
+        ]
+        mock_list_result = Mock()
+        mock_list_result.auto_paging_iter.return_value = mock_prices
+        if not hasattr(mock_stripe, 'Price'):
+            mock_stripe.Price = Mock()
+        mock_stripe.Price.list = Mock(return_value=mock_list_result)
+        
+        # Mock StripeRegistry.get_plan_config (called by _build_subscription_items)
+        mock_registry_get_plan_config.return_value = {
+            "price_id": "price_starter",
+            "product_id": "prod_starter",
+            "tokens": 300,
+            "name": "Starter",
+            "description": "Starter plan",
+            "amount_dollars": 3.0,
+            "currency": "USD",
+            "formatted": "$3.00"
+        }
+        
+        # Mock StripeRegistry.get (called by create_subscription_checkout to validate plan)
+        # and for overage price lookup (called by _build_subscription_items)
         mock_registry_get.side_effect = lambda key: {
             "starter_price": {
                 "price_id": "price_starter",
+                "product_id": "prod_starter",
                 "tokens": 300,
-                "name": "Starter"
+                "name": "Starter",
+                "description": "Starter plan",
+                "amount_dollars": 3.0,
+                "currency": "USD",
+                "formatted": "$3.00"
             },
             "starter_overage_price": {
                 "price_id": "price_starter_overage",
-                "tokens": 0
+                "tokens": 0,
+                "amount_dollars": 0.15
             }
         }.get(key)
+        
+        # Mock stripe.Product.retrieve (called by _build_subscription_items to verify product is active)
+        mock_product = Mock()
+        mock_product.active = True
+        mock_stripe.Product.retrieve.return_value = mock_product
         
         mock_checkout_session = Mock()
         mock_checkout_session.id = "cs_test123"
@@ -555,6 +665,10 @@ class TestCheckoutAndBilling:
         
         test_user.stripe_customer_id = "cus_test123"
         db_session.commit()
+        
+        # Invalidate cache to ensure mocks are used instead of cached data
+        from app.services.stripe_service import StripeRegistry
+        StripeRegistry.invalidate_cache()
         
         result = create_subscription_checkout(
             test_user.id,

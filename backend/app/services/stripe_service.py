@@ -234,7 +234,14 @@ class StripeRegistry:
                 
                 if not config:
                     # Still not found - log detailed error
-                    available = [k.replace('_price', '') for k in cls._cache.keys() if k.endswith('_price') and not k.endswith('_overage_price')]
+                    # Only show plans that are actually in the cache (not hidden)
+                    available = [
+                        k.replace('_price', '') 
+                        for k, v in cls._cache.items() 
+                        if k.endswith('_price') 
+                        and not k.endswith('_overage_price') 
+                        and not v.get('hidden', False)
+                    ]
                     logger.error(
                         f"Plan '{plan_type}' still not found after fresh sync. "
                         f"Available plans: {', '.join(available) or 'none'}. "
