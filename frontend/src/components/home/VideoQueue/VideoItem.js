@@ -168,7 +168,7 @@ export default function VideoItem({
                   // Explicit failed from backend - red border
                   progressValue = 100;
                   progressStatus = 'failed';
-                } else if (status === 'pending' && platformProgress !== undefined && platformProgress > 0 && platformProgress < 100) {
+                } else if (status === 'pending' && platformProgress !== undefined && typeof platformProgress === 'number' && platformProgress >= 0 && platformProgress <= 100) {
                   // Actively uploading - show progress with cyan border
                   progressValue = Math.max(0, Math.min(100, platformProgress));
                   progressStatus = 'uploading';
