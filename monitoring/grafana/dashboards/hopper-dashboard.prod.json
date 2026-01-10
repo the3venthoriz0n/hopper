@@ -318,22 +318,6 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Current Time"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 200
-              },
-              {
-                "id": "unit",
-                "value": "time: YYYY-MM-DD h:mm:ss a"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
               "options": "Last Login"
             },
             "properties": [
@@ -384,15 +368,15 @@
         {
           "id": "organize",
           "options": {
-            "excludeByName": {},
+            "excludeByName": {
+              "Time": true
+            },
             "indexByName": {
-              "Time": 2,
-              "last_activity": 3,
+              "last_activity": 2,
               "user_email": 0,
               "user_id": 1
             },
             "renameByName": {
-              "Time": "Current Time",
               "last_activity": "Last Login",
               "user_email": "User Email",
               "user_id": "User ID"
@@ -408,21 +392,11 @@
                 "operation": "groupby"
               },
               "User Email": {
-                "aggregations": [
-                  "lastNotNull"
-                ],
-                "operation": "aggregate"
-              },
-              "Current Time": {
-                "aggregations": [
-                  "lastNotNull"
-                ],
+                "aggregations": ["lastNotNull"],
                 "operation": "aggregate"
               },
               "Last Login": {
-                "aggregations": [
-                  "max"
-                ],
+                "aggregations": ["max"],
                 "operation": "aggregate"
               }
             }
@@ -934,7 +908,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "username"
+              "options": "Username"
             },
             "properties": [
               {
@@ -946,7 +920,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Time"
+              "options": "Time Logged In"
             },
             "properties": [
               {
@@ -955,14 +929,14 @@
               },
               {
                 "id": "unit",
-                "value": "time: YYYY-MM-DD HH:mm:ss"
+                "value": "time: YYYY-MM-DD h:mm:ss a"
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "ip"
+              "options": "IP"
             },
             "properties": [
               {
@@ -974,12 +948,24 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "method"
+              "options": "Login Method"
             },
             "properties": [
               {
                 "id": "custom.width",
                 "value": 120
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "User ID"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 100
               }
             ]
           }
@@ -993,14 +979,14 @@
       },
       "id": 26,
       "options": {
-        "dedupStrategy": "none",
-        "enableLogDetails": true,
-        "prettifyLogMessage": false,
-        "showCommonLabels": false,
-        "showLabels": false,
-        "showTime": true,
-        "sortOrder": "Descending",
-        "wrapLogMessage": false
+        "cellHeight": "sm",
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": true,
+            "displayName": "Time Logged In"
+          }
+        ]
       },
       "pluginVersion": "12.3.1",
       "targets": [
@@ -1009,7 +995,7 @@
             "type": "loki",
             "uid": "loki"
           },
-          "expr": "{service_name=\"hopper-backend\"} |= \"Login event\" | regexp \"username=(?P<username>[^\\\\s]+).*timestamp=(?P<timestamp>[^\\\\s]+).*ip=(?P<ip>[^\\\\s]+).*method=(?P<method>[^\\\\s]+)\"",
+          "expr": "{service_name=\"hopper-backend\"} |= \"Login event\" | regexp \"username=(?P<username>[^\\\\s]+).*user_id=(?P<user_id>[^\\\\s]+).*timestamp=(?P<timestamp>[^\\\\s]+).*ip=(?P<ip>[^\\\\s]+).*method=(?P<method>[^\\\\s]+)\"",
           "refId": "A"
         }
       ],
@@ -1027,24 +1013,26 @@
           "options": {
             "excludeByName": {
               "Line": true,
-              "Time": false
+              "timestamp": true
             },
             "indexByName": {
               "Time": 0,
+              "username": 1,
               "ip": 2,
               "method": 3,
-              "username": 1
+              "user_id": 4
             },
             "renameByName": {
-              "Time": "Time",
+              "Time": "Time Logged In",
+              "username": "Username",
               "ip": "IP",
               "method": "Login Method",
-              "username": "Username"
+              "user_id": "User ID"
             }
           }
         }
       ],
-      "type": "logs"
+      "type": "table"
     },
     {
       "datasource": {
