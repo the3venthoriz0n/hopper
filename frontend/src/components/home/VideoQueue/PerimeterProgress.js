@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { HOPPER_COLORS } from '../../../utils/colors';
 
 /**
@@ -20,6 +20,76 @@ export default function PerimeterProgress({
   borderRadius = 6,
   strokeWidth = 2
 }) {
+  // Smooth interpolation for progress updates
+  const [displayProgress, setDisplayProgress] = useState(progress);
+  const animationFrameRef = useRef(null);
+  const displayProgressRef = useRef(progress);
+  
+  // Update ref whenever displayProgress changes
+  useEffect(() => {
+    displayProgressRef.current = displayProgress;
+  }, [displayProgress]);
+  
+  useEffect(() => {
+    // Cleanup any ongoing animation
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    
+    // Only interpolate if status is uploading (for smooth animation)
+    if (status === 'uploading') {
+      const targetProgress = Math.max(0, Math.min(100, progress));
+      const startProgress = displayProgressRef.current;
+      const difference = targetProgress - startProgress;
+      
+      // If the difference is small, just set it directly
+      if (Math.abs(difference) < 0.1) {
+        setDisplayProgress(targetProgress);
+        return;
+      }
+      
+      // Use requestAnimationFrame for smooth interpolation
+      let startTime = null;
+      const duration = 500; // 500ms for smooth animation
+      
+      const animate = (currentTime) => {
+        if (startTime === null) {
+          startTime = currentTime;
+        }
+        
+        const elapsed = currentTime - startTime;
+        const progressRatio = Math.min(elapsed / duration, 1);
+        
+        // Easing function (ease-out)
+        const easeOut = 1 - Math.pow(1 - progressRatio, 3);
+        const currentProgress = startProgress + (difference * easeOut);
+        
+        setDisplayProgress(currentProgress);
+        
+        if (progressRatio < 1) {
+          animationFrameRef.current = requestAnimationFrame(animate);
+        } else {
+          setDisplayProgress(targetProgress);
+          animationFrameRef.current = null;
+        }
+      };
+      
+      animationFrameRef.current = requestAnimationFrame(animate);
+    } else {
+      // For non-uploading states, update immediately
+      setDisplayProgress(progress);
+    }
+    
+    // Cleanup function
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    };
+  }, [progress, status]);
+  
   // Calculate total button outer dimensions
   // With box-sizing: border-box, width/height includes padding
   // Button has: width = buttonSize (total outer size), padding = padding on all sides
@@ -56,7 +126,7 @@ export default function PerimeterProgress({
   
   // Progress stroke: for uploading, show animated progress; for others, show full colored border
   const isUploading = status === 'uploading';
-  const finalProgress = isUploading ? Math.max(0, Math.min(100, progress)) : 100;
+  const finalProgress = isUploading ? Math.max(0, Math.min(100, displayProgress)) : 100;
   // strokeDashoffset: 0 = full stroke visible, perimeter = no stroke visible
   // We want: progress 0% = offset perimeter (invisible), progress 100% = offset 0 (fully visible)
   const progressOffset = perimeter - (finalProgress / 100) * perimeter;
@@ -123,7 +193,7 @@ export default function PerimeterProgress({
         strokeLinecap="round"
         strokeLinejoin="round"
         style={{
-          transition: 'stroke-dashoffset 0.3s ease, stroke 0.3s ease',
+          transition: status === 'uploading' ? 'stroke-dashoffset 0.1s linear, stroke 0.3s ease' : 'stroke-dashoffset 0.3s ease, stroke 0.3s ease',
           filter: status === 'uploading' ? 'drop-shadow(0 0 4px rgba(0, 188, 212, 0.5))' : 'none'
         }}
       />

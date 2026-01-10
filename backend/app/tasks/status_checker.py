@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional
 
 from app.db.helpers import update_video, get_oauth_token, get_all_user_settings, get_all_oauth_tokens
 from app.db.session import SessionLocal
-from app.db.redis import set_upload_progress, get_upload_progress
+from app.db.redis import set_upload_progress, get_upload_progress, is_upload_active
 from app.models.video import Video
 from app.services.video.platforms.tiktok_api import fetch_tiktok_publish_status
 from app.services.event_service import publish_video_status_changed, publish_video_updated
@@ -235,7 +235,7 @@ async def status_checker_task():
                                     status_logger.debug(f"Instagram container {instagram_container_id} finished for video {video.id}")
                                 
                                 elif status_code == "ERROR":
-                                    # ROOT CAUSE FIX: Respect active upload process - only mark as failed if truly stuck
+                                    # ROOT CAUSE FIX: Only mark as failed if upload is NOT actively being processed
                                     # Check 1: If video already has instagram_id, upload succeeded - don't mark as failed
                                     instagram_id = custom_settings.get("instagram_id")
                                     if instagram_id:
@@ -245,6 +245,25 @@ async def status_checker_task():
                                         )
                                         continue
                                     
+                                    # Check 2: If upload is actively being processed, don't interfere
+                                    if is_upload_active(video.id, "instagram"):
+                                        status_logger.debug(
+                                            f"Ignoring ERROR status for video {video.id} - upload is actively being processed"
+                                        )
+                                        continue
+                                    
+                                    # Check 3: Only mark as failed if video has been stuck for a while
+                                    # Check if progress exists (indicates recent activity)
+                                    recent_progress = get_upload_progress(video.user_id, video.id)
+                                    if recent_progress is not None:
+                                        # Progress exists = upload was active recently, might still be processing
+                                        status_logger.debug(
+                                            f"Ignoring ERROR status for video {video.id} - progress exists "
+                                            f"(progress: {recent_progress}%), upload may still be active"
+                                        )
+                                        continue
+                                    
+                                    # All checks passed - container is truly in ERROR state and upload is not active
                                     # Container processing failed and video wasn't published - mark as failed
                                     old_status = video.status
                                     update_video(video.id, video.user_id, db=db, status="failed", error="Instagram container processing failed")
@@ -262,12 +281,19 @@ async def status_checker_task():
                                     status_logger.warning(f"Instagram container {instagram_container_id} failed for video {video.id}")
                                 
                                 elif status_code == "EXPIRED":
-                                    # ROOT CAUSE FIX: Respect active upload process - only mark as failed if truly stuck
+                                    # ROOT CAUSE FIX: Only mark as failed if upload is NOT actively being processed
                                     instagram_id = custom_settings.get("instagram_id")
                                     if instagram_id:
                                         status_logger.debug(
                                             f"Ignoring EXPIRED status for video {video.id} - already published successfully "
                                             f"(instagram_id: {instagram_id})"
+                                        )
+                                        continue
+                                    
+                                    # Check if upload is actively being processed
+                                    if is_upload_active(video.id, "instagram"):
+                                        status_logger.debug(
+                                            f"Ignoring EXPIRED status for video {video.id} - upload is actively being processed"
                                         )
                                         continue
                                     

@@ -169,6 +169,24 @@ def delete_upload_progress(user_id: int, video_id: int) -> None:
     get_redis_client().delete(key)
 
 
+def set_active_upload_session(video_id: int, platform: str) -> None:
+    """Mark that an upload session is actively processing a video"""
+    key = f"upload_active:{video_id}:{platform}"
+    get_redis_client().setex(key, 3600, "1")  # 1 hour TTL
+
+
+def is_upload_active(video_id: int, platform: str) -> bool:
+    """Check if an upload session is actively processing a video"""
+    key = f"upload_active:{video_id}:{platform}"
+    return get_redis_client().exists(key) > 0
+
+
+def clear_active_upload_session(video_id: int, platform: str) -> None:
+    """Clear the active upload session flag"""
+    key = f"upload_active:{video_id}:{platform}"
+    get_redis_client().delete(key)
+
+
 def increment_rate_limit(identifier: str, window: int) -> int:
     """Increment rate limit counter and return current count.
     Uses Lua script to atomically increment and set TTL only for new keys (fixed window rate limiting)."""

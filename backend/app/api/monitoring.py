@@ -11,9 +11,16 @@ router = APIRouter(tags=["monitoring"])
 @router.get("/metrics")
 def metrics_endpoint(db: Session = Depends(get_db)):
     """Prometheus metrics endpoint - updates gauges before export"""
-    from app.core.metrics import update_active_users_detail_gauge, update_active_subscriptions_gauge
+    from app.core.metrics import (
+        update_active_users_gauge_from_sessions,
+        update_active_users_detail_gauge,
+        update_active_subscriptions_gauge
+    )
     from app.db.redis import get_active_users_with_timestamps
     from app.models.user import User
+    
+    # Update simple active users gauge (count only)
+    update_active_users_gauge_from_sessions()
     
     # Update detailed active users gauge with current data
     active_users_data = get_active_users_with_timestamps()

@@ -80,10 +80,15 @@ async def _poll_container_status(
     """
     # Import cancellation flag to check for cancellation during polling
     from app.services.video.orchestrator import _cancellation_flags
+    from app.db.redis import set_active_upload_session, clear_active_upload_session
     
     instagram_logger.info(f"Polling container status for {container_id} (max {max_retries} attempts)")
     
-    for attempt in range(max_retries):
+    # Mark upload as active
+    set_active_upload_session(video_id, "instagram")
+    
+    try:
+        for attempt in range(max_retries):
         # Check for cancellation during polling
         if _cancellation_flags.get(video_id, False):
             instagram_logger.info(f"Instagram upload cancelled for video {video_id} during polling")
@@ -113,7 +118,11 @@ async def _poll_container_status(
                 await publish_upload_progress(user_id, video_id, "instagram", progress)
                 return status_code
             elif status_code == "ERROR":
-                raise Exception(f"Instagram video processing failed with ERROR status")
+                # ERROR can be transient - continue polling unless we've exhausted retries
+                if attempt == max_retries - 1:
+                    raise Exception(f"Instagram video processing failed with ERROR status after {max_retries} attempts")
+                # Otherwise, continue polling (will retry on next iteration)
+                instagram_logger.debug(f"Container returned ERROR status (attempt {attempt + 1}/{max_retries}), continuing to poll...")
             elif status_code == "EXPIRED":
                 raise Exception(f"Container expired (not published within 24 hours)")
             # IN_PROGRESS - continue polling
@@ -141,6 +150,9 @@ async def _poll_container_status(
             from app.services.event_service import publish_upload_progress
             if should_publish_progress(progress, previous_progress) or attempt == 0:
                 await publish_upload_progress(user_id, video_id, "instagram", progress)
+    finally:
+        # Always clear the active session flag when done (success or failure)
+        clear_active_upload_session(video_id, "instagram")
     
     raise Exception(f"Video processing timeout after {max_retries * retry_delay} seconds")
 
@@ -242,6 +254,10 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
     global_settings = get_user_settings(user_id, "global", db=db)
     
     instagram_logger.info(f"Starting upload for {video.filename}")
+    
+    # Mark upload as active at the start
+    from app.db.redis import set_active_upload_session, clear_active_upload_session
+    set_active_upload_session(video_id, "instagram")
     
     try:
         update_video(video_id, user_id, db=db, status="uploading")
@@ -513,4 +529,8 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         record_platform_error(video_id, user_id, "instagram", error_message, db=db)
         delete_upload_progress(user_id, video_id)
         
+        update_video(video_id, user_id, db=db, status="failed", error=error_message)
         failed_uploads_gauge.inc()
+    finally:
+        # Always clear the active session flag when upload completes (success or failure)
+        clear_active_upload_session(video_id, "instagram")
