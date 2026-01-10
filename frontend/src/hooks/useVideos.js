@@ -72,6 +72,20 @@ export function useVideos(
                 setTimeout(() => setNotification(null), 10000);
               }
             }
+            
+            // Preserve platform_progress from previous video if API doesn't provide it
+            if (prevVideo && prevVideo.platform_progress) {
+              if (!newVideo.platform_progress) {
+                newVideo.platform_progress = prevVideo.platform_progress;
+              } else {
+                // Merge: use API values, but preserve WebSocket-set values that aren't in API response
+                const merged = { ...prevVideo.platform_progress };
+                Object.keys(newVideo.platform_progress).forEach(platform => {
+                  merged[platform] = newVideo.platform_progress[platform];
+                });
+                newVideo.platform_progress = merged;
+              }
+            }
           });
         }
         

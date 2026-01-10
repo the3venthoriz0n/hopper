@@ -24,11 +24,22 @@ export default function PerimeterProgress({
   const [displayProgress, setDisplayProgress] = useState(progress);
   const animationFrameRef = useRef(null);
   const displayProgressRef = useRef(progress);
+  const [pathLength, setPathLength] = useState(0);
   
   // Update ref whenever displayProgress changes
   useEffect(() => {
     displayProgressRef.current = displayProgress;
   }, [displayProgress]);
+  
+  // Callback ref to measure path length when path is rendered
+  const pathRefCallback = (pathElement) => {
+    if (pathElement) {
+      const length = pathElement.getTotalLength();
+      if (length > 0 && length !== pathLength) {
+        setPathLength(length);
+      }
+    }
+  };
   
   useEffect(() => {
     // Cleanup any ongoing animation
@@ -103,11 +114,6 @@ export default function PerimeterProgress({
   const pathSize = totalSize - strokeWidth; // Total size minus full stroke width
   const pathRadius = Math.max(0, borderRadius - strokeWidth / 2);
   
-  // Calculate perimeter: 4 sides + 4 corner arcs (square)
-  const sides = 4 * (pathSize - 2 * pathRadius);
-  const cornerArcs = 4 * (Math.PI * pathRadius);
-  const perimeter = sides + cornerArcs;
-  
   // Determine color based on status - this is the progress color
   let progressColor;
   if (status === 'success') {
@@ -127,9 +133,11 @@ export default function PerimeterProgress({
   // Progress stroke: for uploading, show animated progress; for others, show full colored border
   const isUploading = status === 'uploading';
   const finalProgress = isUploading ? Math.max(0, Math.min(100, displayProgress)) : 100;
-  // strokeDashoffset: 0 = full stroke visible, perimeter = no stroke visible
-  // We want: progress 0% = offset perimeter (invisible), progress 100% = offset 0 (fully visible)
-  const progressOffset = perimeter - (finalProgress / 100) * perimeter;
+  
+  // Use measured path length for accurate progress calculation
+  // strokeDashoffset: 0 = full stroke visible, pathLength = no stroke visible
+  // We want: progress 0% = offset pathLength (invisible), progress 100% = offset 0 (fully visible)
+  const progressOffset = pathLength > 0 ? pathLength - (finalProgress / 100) * pathLength : 0;
   
   // Create rounded square path following the perimeter
   // Start from top-left corner, go clockwise: top -> right -> bottom -> left
@@ -177,18 +185,19 @@ export default function PerimeterProgress({
         fill="none"
         stroke={backgroundStrokeColor}
         strokeWidth={strokeWidth}
-        strokeDasharray={perimeter}
+        strokeDasharray={pathLength > 0 ? pathLength : undefined}
         strokeDashoffset={backgroundOffset}
         strokeLinecap="round"
         strokeLinejoin="round"
       />
       {/* Progress stroke - colored overlay showing upload progress */}
       <path
+        ref={pathRefCallback}
         d={pathData}
         fill="none"
         stroke={progressColor}
         strokeWidth={strokeWidth}
-        strokeDasharray={perimeter}
+        strokeDasharray={pathLength > 0 ? pathLength : undefined}
         strokeDashoffset={progressOffset}
         strokeLinecap="round"
         strokeLinejoin="round"

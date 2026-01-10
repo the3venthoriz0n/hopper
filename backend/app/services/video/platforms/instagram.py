@@ -9,7 +9,7 @@ from typing import Dict, Any, Optional
 
 from app.core.config import INSTAGRAM_GRAPH_API_BASE, settings
 from app.db.helpers import get_user_videos, get_user_settings, get_oauth_token, update_video
-from app.db.redis import set_upload_progress, delete_upload_progress, get_upload_progress
+from app.db.redis import set_upload_progress, delete_upload_progress, get_upload_progress, set_platform_upload_progress, get_platform_upload_progress
 from app.services.token_service import check_tokens_available, get_token_balance, deduct_tokens, calculate_tokens_from_bytes
 from app.utils.encryption import decrypt
 from app.utils.templates import get_video_title
@@ -113,6 +113,7 @@ async def _poll_container_status(
                     # FINISHED status = 90% (ready to publish)
                     progress = 90
                     set_upload_progress(user_id, video_id, progress)
+                    set_platform_upload_progress(user_id, video_id, "instagram", progress)
                     # Publish final progress update
                     from app.services.event_service import publish_upload_progress
                     await publish_upload_progress(user_id, video_id, "instagram", progress)
@@ -140,12 +141,13 @@ async def _poll_container_status(
                     progress = 20 + int((attempt / max_retries) * 70)
                 else:
                     # For other statuses, use previous progress or default
-                    progress = get_upload_progress(user_id, video_id) or 20
+                    progress = get_platform_upload_progress(user_id, video_id, "instagram") or get_upload_progress(user_id, video_id) or 20
                 
                 set_upload_progress(user_id, video_id, progress)
+                set_platform_upload_progress(user_id, video_id, "instagram", progress)
                 
                 # Publish WebSocket progress event (1% increments or at first attempt)
-                previous_progress = get_upload_progress(user_id, video_id) or 0
+                previous_progress = get_platform_upload_progress(user_id, video_id, "instagram") or get_upload_progress(user_id, video_id) or 0
                 from app.services.video.helpers import should_publish_progress
                 from app.services.event_service import publish_upload_progress
                 if should_publish_progress(progress, previous_progress) or attempt == 0:
@@ -387,6 +389,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             # After FINISHED, publish step = 100%
             progress = 100
             set_upload_progress(user_id, video_id, progress)
+            set_platform_upload_progress(user_id, video_id, "instagram", progress)
             from app.services.event_service import publish_upload_progress
             await publish_upload_progress(user_id, video_id, "instagram", progress)
             

@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.db.helpers import (
     get_user_settings, get_all_user_settings, get_all_oauth_tokens, get_oauth_token
 )
-from app.db.redis import get_upload_progress
+from app.db.redis import get_upload_progress, get_platform_upload_progress
 from app.models.oauth_token import OAuthToken
 from app.models.video import Video
 from app.utils.templates import (
@@ -133,6 +133,20 @@ def build_video_response(video: Video, all_settings: Dict[str, Dict], all_tokens
     upload_progress = get_upload_progress(user_id, video.id)
     if upload_progress is not None:
         video_dict['upload_progress'] = upload_progress
+    
+    # Add platform-specific progress from Redis for each enabled platform
+    platform_progress = {}
+    for platform_name in ["youtube", "tiktok", "instagram"]:
+        enabled_key = f"{platform_name}_enabled"
+        is_enabled = dest_settings.get(enabled_key, False)
+        has_token = all_tokens.get(platform_name) is not None
+        if is_enabled and has_token:
+            progress = get_platform_upload_progress(user_id, video.id, platform_name)
+            if progress is not None:
+                platform_progress[platform_name] = progress
+    
+    if platform_progress:
+        video_dict['platform_progress'] = platform_progress
     
     filename_no_ext = video.filename.rsplit('.', 1)[0] if '.' in video.filename else video.filename
     

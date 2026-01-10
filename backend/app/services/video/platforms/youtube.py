@@ -15,7 +15,7 @@ from app.db.helpers import (
     oauth_token_to_credentials, credentials_to_oauth_token_data,
     save_oauth_token, update_video
 )
-from app.db.redis import set_upload_progress, delete_upload_progress
+from app.db.redis import set_upload_progress, delete_upload_progress, set_platform_upload_progress
 from app.services.event_service import publish_upload_progress
 from app.services.token_service import check_tokens_available, get_token_balance, deduct_tokens, calculate_tokens_from_bytes
 from app.utils.templates import get_video_title, get_video_description, replace_template_placeholders
@@ -274,6 +274,7 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
             if status:
                 progress = int(status.progress() * 100)
                 set_upload_progress(user_id, video_id, progress)
+                set_platform_upload_progress(user_id, video_id, "youtube", progress)
                 # Publish websocket event for real-time progress updates (1% increments or at completion)
                 from app.services.video.helpers import should_publish_progress
                 if should_publish_progress(progress, last_published_progress):
@@ -288,6 +289,7 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
         custom_settings['youtube_id'] = response['id']
         update_video(video_id, user_id, db=db, status="uploaded", custom_settings=custom_settings)
         set_upload_progress(user_id, video_id, 100)
+        set_platform_upload_progress(user_id, video_id, "youtube", 100)
         # Publish final progress update
         await publish_upload_progress(user_id, video_id, "youtube", 100)
         youtube_logger.info(f"Successfully uploaded {video.filename}, YouTube ID: {response['id']}")

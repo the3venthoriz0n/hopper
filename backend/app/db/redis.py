@@ -169,6 +169,25 @@ def delete_upload_progress(user_id: int, video_id: int) -> None:
     get_redis_client().delete(key)
 
 
+def set_platform_upload_progress(user_id: int, video_id: int, platform: str, progress: int) -> None:
+    """Store platform-specific upload progress in Redis"""
+    key = f"progress:{user_id}:{video_id}:{platform}"
+    get_redis_client().setex(key, 3600, progress)  # 1 hour TTL
+
+
+def get_platform_upload_progress(user_id: int, video_id: int, platform: str) -> Optional[int]:
+    """Get platform-specific upload progress from Redis"""
+    key = f"progress:{user_id}:{video_id}:{platform}"
+    progress = get_redis_client().get(key)
+    return int(progress) if progress else None
+
+
+def delete_platform_upload_progress(user_id: int, video_id: int, platform: str) -> None:
+    """Delete platform-specific upload progress from Redis"""
+    key = f"progress:{user_id}:{video_id}:{platform}"
+    get_redis_client().delete(key)
+
+
 def set_active_upload_session(video_id: int, platform: str) -> None:
     """Mark that an upload session is actively processing a video"""
     key = f"upload_active:{video_id}:{platform}"

@@ -12,7 +12,7 @@ from app.db.helpers import (
     get_user_videos, get_user_settings, get_oauth_token,
     check_token_expiration, update_video
 )
-from app.db.redis import set_upload_progress, delete_upload_progress
+from app.db.redis import set_upload_progress, delete_upload_progress, set_platform_upload_progress
 from app.services.event_service import publish_upload_progress
 from app.services.token_service import check_tokens_available, get_token_balance, deduct_tokens, calculate_tokens_from_bytes
 from app.utils.encryption import decrypt
@@ -173,6 +173,7 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         from app.services.video.helpers import should_publish_progress
         
         set_upload_progress(user_id, video_id, 0)
+        set_platform_upload_progress(user_id, video_id, "tiktok", 0)
         await publish_upload_progress(user_id, video_id, "tiktok", 0)
         last_published_progress = 0
         
@@ -427,6 +428,7 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         tiktok_logger.info(f"Uploading {video.filename} ({video_size / (1024*1024):.2f} MB)")
         progress = 5
         set_upload_progress(user_id, video_id, progress)
+        set_platform_upload_progress(user_id, video_id, "tiktok", progress)
         if should_publish_progress(progress, last_published_progress):
             await publish_upload_progress(user_id, video_id, "tiktok", progress)
             last_published_progress = progress
@@ -685,6 +687,7 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         tiktok_logger.info(f"Initialized, publish_id: {publish_id}")
         progress = 10
         set_upload_progress(user_id, video_id, progress)
+        set_platform_upload_progress(user_id, video_id, "tiktok", progress)
         if should_publish_progress(progress, last_published_progress):
             await publish_upload_progress(user_id, video_id, "tiktok", progress)
             last_published_progress = progress
@@ -731,6 +734,7 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                         # Map to 10-90% range (10% = after init, 90% = upload complete)
                         progress = 10 + int((uploaded_bytes / video_size) * 80)
                         set_upload_progress(user_id, video_id, progress)
+                        set_platform_upload_progress(user_id, video_id, "tiktok", progress)
                         
                         # Publish progress updates (1% increments)
                         from app.services.video.helpers import should_publish_progress
@@ -842,6 +846,7 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                     # TikTok is downloading from our server: 10-50% range
                     progress = 10 + int(min(poll_count / estimated_download_polls, 1.0) * 40)
                     set_upload_progress(user_id, video_id, progress)
+                    set_platform_upload_progress(user_id, video_id, "tiktok", progress)
                     if should_publish_progress(progress, last_published_progress):
                         await publish_upload_progress(user_id, video_id, "tiktok", progress)
                         last_published_progress = progress
@@ -851,6 +856,7 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                     upload_polls = poll_count - download_polls
                     progress = 50 + int(min(upload_polls / estimated_upload_polls, 1.0) * 40)
                     set_upload_progress(user_id, video_id, progress)
+                    set_platform_upload_progress(user_id, video_id, "tiktok", progress)
                     if should_publish_progress(progress, last_published_progress):
                         await publish_upload_progress(user_id, video_id, "tiktok", progress)
                         last_published_progress = progress
@@ -858,6 +864,7 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                     # Upload complete: 100%
                     progress = 100
                     set_upload_progress(user_id, video_id, progress)
+                    set_platform_upload_progress(user_id, video_id, "tiktok", progress)
                     await publish_upload_progress(user_id, video_id, "tiktok", progress)
                     last_published_progress = progress
                     break
@@ -885,6 +892,7 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         update_video(video_id, user_id, db=db, status="uploaded", custom_settings=custom_settings)
         progress = 100
         set_upload_progress(user_id, video_id, progress)
+        set_platform_upload_progress(user_id, video_id, "tiktok", progress)
         if should_publish_progress(progress, last_published_progress):
             await publish_upload_progress(user_id, video_id, "tiktok", progress)
             last_published_progress = progress
