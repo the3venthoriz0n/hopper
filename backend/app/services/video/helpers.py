@@ -322,12 +322,13 @@ def get_platform_statuses(video: Video, dest_settings: Dict[str, Any], all_token
             platform_statuses[platform_name] = {"status": "pending", "error": None}
         elif video.status == "uploaded" or video.status == "completed":
             # Video marked as uploaded/completed but no ID for this platform
-            # This means it failed for this platform (partial success scenario)
+            # ROOT CAUSE FIX: Only mark as "failed" if there's an actual error recorded.
+            # If no error, it means the platform was never attempted (e.g., just toggled on),
+            # so it should be "pending", not "failed".
             # DRY: handles both "uploaded" (YouTube/TikTok) and "completed" (Instagram)
-            platform_statuses[platform_name] = {
-                "status": "failed",
-                "error": "Upload completed but no platform ID found"
-            }
+            # Since we already checked platform_errors above, if we reach here with no error,
+            # the platform was never attempted, so it's pending
+            platform_statuses[platform_name] = {"status": "pending", "error": None}
         elif video.status == "cancelled":
             # Upload was cancelled (DRY: same for all platforms)
             platform_statuses[platform_name] = {"status": "failed", "error": "Upload cancelled"}
