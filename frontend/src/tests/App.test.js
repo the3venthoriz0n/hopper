@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import App from '../App';
 import { useAuth } from '../hooks/useAuth';
@@ -73,43 +73,48 @@ describe('App', () => {
   });
 
   test('renders public routes', () => {
-    render(
-      <MemoryRouter initialEntries={['/login']}>
+    const { unmount: unmount1 } = render(
+      <MemoryRouter initialEntries={['/login']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <App />
       </MemoryRouter>
     );
     expect(screen.getByTestId('login')).toBeInTheDocument();
+    unmount1();
 
-    const { rerender } = render(
-      <MemoryRouter initialEntries={['/pricing']}>
+    const { unmount: unmount2 } = render(
+      <MemoryRouter initialEntries={['/pricing']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <App />
       </MemoryRouter>
     );
     expect(screen.getByTestId('pricing')).toBeInTheDocument();
+    unmount2();
 
-    rerender(
-      <MemoryRouter initialEntries={['/terms']}>
+    const { unmount: unmount3 } = render(
+      <MemoryRouter initialEntries={['/terms']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <App />
       </MemoryRouter>
     );
     expect(screen.getByTestId('terms')).toBeInTheDocument();
+    unmount3();
 
-    rerender(
-      <MemoryRouter initialEntries={['/privacy']}>
+    const { unmount: unmount4 } = render(
+      <MemoryRouter initialEntries={['/privacy']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <App />
       </MemoryRouter>
     );
     expect(screen.getByTestId('privacy')).toBeInTheDocument();
+    unmount4();
 
-    rerender(
-      <MemoryRouter initialEntries={['/delete-your-data']}>
+    const { unmount: unmount5 } = render(
+      <MemoryRouter initialEntries={['/delete-your-data']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <App />
       </MemoryRouter>
     );
     expect(screen.getByTestId('delete-your-data')).toBeInTheDocument();
+    unmount5();
 
-    rerender(
-      <MemoryRouter initialEntries={['/help']}>
+    render(
+      <MemoryRouter initialEntries={['/help']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <App />
       </MemoryRouter>
     );
@@ -118,7 +123,7 @@ describe('App', () => {
 
   test('renders protected app routes under /app/*', () => {
     render(
-      <MemoryRouter initialEntries={['/app']}>
+      <MemoryRouter initialEntries={['/app']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <App />
       </MemoryRouter>
     );
@@ -128,7 +133,7 @@ describe('App', () => {
 
   test('renders admin route with protection', () => {
     render(
-      <MemoryRouter initialEntries={['/admin']}>
+      <MemoryRouter initialEntries={['/admin']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <App />
       </MemoryRouter>
     );
@@ -138,7 +143,7 @@ describe('App', () => {
 
   test('renders 404 for unknown routes', () => {
     render(
-      <MemoryRouter initialEntries={['/unknown-route']}>
+      <MemoryRouter initialEntries={['/unknown-route']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <App />
       </MemoryRouter>
     );
@@ -147,7 +152,7 @@ describe('App', () => {
 
   test('renders LandingOrApp for root path', () => {
     render(
-      <MemoryRouter initialEntries={['/']}>
+      <MemoryRouter initialEntries={['/']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <App />
       </MemoryRouter>
     );

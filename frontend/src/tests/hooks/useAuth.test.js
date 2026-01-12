@@ -1,30 +1,38 @@
 import { renderHook, waitFor } from '@testing-library/react';
-import { useAuth } from '../hooks/useAuth';
-import axios from '../services/api';
-import { getApiUrl } from '../services/api';
+import { useAuth } from '../../hooks/useAuth';
+import axios from '../../services/api';
+import { getApiUrl } from '../../services/api';
 
-const mockAxiosGet = jest.fn();
-
-jest.mock('../services/api', () => {
-  const actualAxios = jest.requireActual('axios');
-  return {
-    getApiUrl: jest.fn(() => 'http://localhost:8000/api'),
-    default: {
-      ...actualAxios.default,
-      get: mockAxiosGet,
+jest.mock('../../services/api', () => ({
+  __esModule: true,
+  getApiUrl: jest.fn(() => 'http://localhost:8000/api'),
+  default: {
+    get: jest.fn(),
+    post: jest.fn(),
+    put: jest.fn(),
+    delete: jest.fn(),
+    patch: jest.fn(),
+    defaults: {
+      withCredentials: true,
+      xsrfCookieName: 'csrf_token_client',
+      xsrfHeaderName: 'X-CSRF-Token',
     },
-  };
-});
+    interceptors: {
+      request: { use: jest.fn(), eject: jest.fn() },
+      response: { use: jest.fn(), eject: jest.fn() },
+    },
+  },
+}));
 
 describe('useAuth', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     getApiUrl.mockReturnValue('http://localhost:8000/api');
-    mockAxiosGet.mockClear();
+    axios.get.mockResolvedValue({ data: { user: null } });
   });
 
   test('returns loading state initially', () => {
-    mockAxiosGet.mockImplementation(() => new Promise(() => {}));
+    axios.get.mockReturnValue(new Promise(() => {}));
 
     const { result } = renderHook(() => useAuth());
 
@@ -35,7 +43,7 @@ describe('useAuth', () => {
 
   test('fetches user data on mount', async () => {
     const mockUser = { id: 1, email: 'test@example.com', is_admin: false };
-    mockAxiosGet.mockResolvedValue({
+    axios.get.mockResolvedValue({
       data: { user: mockUser },
     });
 
@@ -45,14 +53,14 @@ describe('useAuth', () => {
       expect(result.current.authLoading).toBe(false);
     });
 
-    expect(mockAxiosGet).toHaveBeenCalledWith('http://localhost:8000/api/auth/me');
+    expect(axios.get).toHaveBeenCalledWith('http://localhost:8000/api/auth/me');
     expect(result.current.user).toEqual(mockUser);
     expect(result.current.isAdmin).toBe(false);
   });
 
   test('sets user and isAdmin from API response', async () => {
     const mockAdminUser = { id: 2, email: 'admin@example.com', is_admin: true };
-    mockAxiosGet.mockResolvedValue({
+    axios.get.mockResolvedValue({
       data: { user: mockAdminUser },
     });
 
@@ -68,7 +76,7 @@ describe('useAuth', () => {
 
   test('handles API errors gracefully', async () => {
     const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    mockAxiosGet.mockRejectedValue(new Error('Network error'));
+    axios.get.mockRejectedValue(new Error('Network error'));
 
     const { result } = renderHook(() => useAuth());
 
@@ -84,7 +92,7 @@ describe('useAuth', () => {
   });
 
   test('handles null user response', async () => {
-    mockAxiosGet.mockResolvedValue({
+    axios.get.mockResolvedValue({
       data: { user: null },
     });
 
@@ -100,7 +108,7 @@ describe('useAuth', () => {
 
   test('provides checkAuth function', async () => {
     const mockUser = { id: 1, email: 'test@example.com', is_admin: false };
-    mockAxiosGet.mockResolvedValue({
+    axios.get.mockResolvedValue({
       data: { user: mockUser },
     });
 
@@ -113,7 +121,7 @@ describe('useAuth', () => {
     expect(typeof result.current.checkAuth).toBe('function');
 
     const newUser = { id: 2, email: 'new@example.com', is_admin: true };
-    mockAxiosGet.mockResolvedValue({
+    axios.get.mockResolvedValue({
       data: { user: newUser },
     });
 

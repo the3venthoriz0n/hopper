@@ -1,18 +1,18 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import LandingOrApp from '../../components/layout/LandingOrApp';
-import { useAuth } from '../../hooks/useAuth';
-import LoadingScreen from '../../components/common/LoadingScreen';
-import PublicLanding from '../../components/auth/PublicLanding';
+import LandingOrApp from '../../../components/layout/LandingOrApp';
+import { useAuth } from '../../../hooks/useAuth';
+import LoadingScreen from '../../../components/common/LoadingScreen';
+import PublicLanding from '../../../components/auth/PublicLanding';
 
-jest.mock('../../hooks/useAuth');
-jest.mock('../../components/common/LoadingScreen', () => {
+jest.mock('../../../hooks/useAuth');
+jest.mock('../../../components/common/LoadingScreen', () => {
   return function LoadingScreen() {
     return <div>Loading...</div>;
   };
 });
-jest.mock('../../components/auth/PublicLanding', () => {
+jest.mock('../../../components/auth/PublicLanding', () => {
   return function PublicLanding() {
     return <div data-testid="public-landing">Public Landing</div>;
   };
@@ -32,7 +32,7 @@ describe('LandingOrApp', () => {
     });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <LandingOrApp />
       </MemoryRouter>
     );
@@ -51,7 +51,7 @@ describe('LandingOrApp', () => {
     });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <LandingOrApp />
       </MemoryRouter>
     );
@@ -68,7 +68,7 @@ describe('LandingOrApp', () => {
     });
 
     render(
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <LandingOrApp />
       </MemoryRouter>
     );

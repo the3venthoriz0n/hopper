@@ -1,12 +1,19 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-import ProtectedRoute from '../../components/auth/ProtectedRoute';
-import { useAuth } from '../../hooks/useAuth';
-import LoadingScreen from '../../components/common/LoadingScreen';
+import ProtectedRoute from '../../../components/auth/ProtectedRoute';
+import { useAuth } from '../../../hooks/useAuth';
+import LoadingScreen from '../../../components/common/LoadingScreen';
 
-jest.mock('../../hooks/useAuth');
-jest.mock('../../components/common/LoadingScreen', () => {
+const mockNavigate = jest.fn();
+
+jest.mock('react-router-dom', () => ({
+  ...jest.requireActual('react-router-dom'),
+  useNavigate: () => mockNavigate,
+}));
+
+jest.mock('../../../hooks/useAuth');
+jest.mock('../../../components/common/LoadingScreen', () => {
   return function LoadingScreen() {
     return <div>Loading...</div>;
   };
@@ -18,12 +25,20 @@ const TestChild = ({ user, isAdmin }) => (
   </div>
 );
 
+const renderWithRouter = (ui, { initialEntries = ['/'] } = {}) => {
+  return render(
+    <MemoryRouter 
+      initialEntries={initialEntries} 
+      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+    >
+      {ui}
+    </MemoryRouter>
+  );
+};
+
 describe('ProtectedRoute', () => {
-  const mockNavigate = jest.fn();
-  
   beforeEach(() => {
     jest.clearAllMocks();
-    require('react-router-dom').useNavigate = () => mockNavigate;
   });
 
   test('renders loading screen during auth check', () => {
@@ -34,12 +49,10 @@ describe('ProtectedRoute', () => {
       authLoading: true,
     });
 
-    render(
-      <MemoryRouter>
-        <ProtectedRoute>
-          <TestChild />
-        </ProtectedRoute>
-      </MemoryRouter>
+    renderWithRouter(
+      <ProtectedRoute>
+        <TestChild />
+      </ProtectedRoute>
     );
 
     expect(screen.getByText('Loading...')).toBeInTheDocument();
@@ -54,12 +67,11 @@ describe('ProtectedRoute', () => {
       authLoading: false,
     });
 
-    render(
-      <MemoryRouter initialEntries={['/app']}>
-        <ProtectedRoute>
-          <TestChild />
-        </ProtectedRoute>
-      </MemoryRouter>
+    renderWithRouter(
+      <ProtectedRoute>
+        <TestChild />
+      </ProtectedRoute>,
+      { initialEntries: ['/app'] }
     );
 
     expect(screen.queryByTestId('protected-content')).not.toBeInTheDocument();
@@ -74,12 +86,10 @@ describe('ProtectedRoute', () => {
       authLoading: false,
     });
 
-    render(
-      <MemoryRouter>
-        <ProtectedRoute>
-          <TestChild />
-        </ProtectedRoute>
-      </MemoryRouter>
+    renderWithRouter(
+      <ProtectedRoute>
+        <TestChild />
+      </ProtectedRoute>
     );
 
     expect(screen.getByTestId('protected-content')).toBeInTheDocument();
@@ -95,12 +105,10 @@ describe('ProtectedRoute', () => {
       authLoading: false,
     });
 
-    render(
-      <MemoryRouter>
-        <ProtectedRoute>
-          <TestChild />
-        </ProtectedRoute>
-      </MemoryRouter>
+    renderWithRouter(
+      <ProtectedRoute>
+        <TestChild />
+      </ProtectedRoute>
     );
 
     const content = screen.getByTestId('protected-content');
@@ -117,12 +125,11 @@ describe('ProtectedRoute', () => {
       authLoading: false,
     });
 
-    render(
-      <MemoryRouter initialEntries={['/admin']}>
-        <ProtectedRoute requireAdmin>
-          <TestChild />
-        </ProtectedRoute>
-      </MemoryRouter>
+    renderWithRouter(
+      <ProtectedRoute requireAdmin>
+        <TestChild />
+      </ProtectedRoute>,
+      { initialEntries: ['/admin'] }
     );
 
     expect(screen.queryByTestId('protected-content')).not.toBeInTheDocument();
@@ -137,12 +144,10 @@ describe('ProtectedRoute', () => {
       authLoading: false,
     });
 
-    render(
-      <MemoryRouter>
-        <ProtectedRoute requireAdmin>
-          <TestChild />
-        </ProtectedRoute>
-      </MemoryRouter>
+    renderWithRouter(
+      <ProtectedRoute requireAdmin>
+        <TestChild />
+      </ProtectedRoute>
     );
 
     expect(screen.getByTestId('protected-content')).toBeInTheDocument();

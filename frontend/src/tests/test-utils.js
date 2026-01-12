@@ -1,12 +1,42 @@
 import React from 'react';
 import { render } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
-import axios from 'axios';
 
-jest.mock('axios');
+jest.mock('axios', () => ({
+  get: jest.fn(),
+  post: jest.fn(),
+  put: jest.fn(),
+  delete: jest.fn(),
+  patch: jest.fn(),
+  defaults: {
+    withCredentials: true,
+    xsrfCookieName: 'csrf_token_client',
+    xsrfHeaderName: 'X-CSRF-Token',
+  },
+  interceptors: {
+    request: { use: jest.fn(), eject: jest.fn() },
+    response: { use: jest.fn(), eject: jest.fn() },
+  },
+}));
+
 jest.mock('../services/api', () => ({
   getApiUrl: () => 'http://localhost:8000/api',
-  default: axios,
+  default: {
+    get: jest.fn(),
+    post: jest.fn(),
+    put: jest.fn(),
+    delete: jest.fn(),
+    patch: jest.fn(),
+    defaults: {
+      withCredentials: true,
+      xsrfCookieName: 'csrf_token_client',
+      xsrfHeaderName: 'X-CSRF-Token',
+    },
+    interceptors: {
+      request: { use: jest.fn(), eject: jest.fn() },
+      response: { use: jest.fn(), eject: jest.fn() },
+    },
+  },
 }));
 
 export const mockUseAuth = (overrides = {}) => ({
@@ -36,14 +66,17 @@ export const renderWithRouter = (ui, { route = '/' } = {}) => {
 };
 
 export const mockAxiosGet = (response) => {
+  const axios = require('axios');
   axios.get.mockResolvedValue(response);
 };
 
 export const mockAxiosPost = (response) => {
+  const axios = require('axios');
   axios.post.mockResolvedValue(response);
 };
 
 export const mockAxiosError = (error) => {
+  const axios = require('axios');
   axios.get.mockRejectedValue(error);
   axios.post.mockRejectedValue(error);
 };
