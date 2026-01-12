@@ -157,7 +157,7 @@ export default function VideoItem({
                 // Status priority: success > failed > uploading > pending
                 // Only explicit 'success' or 'failed' from backend show colored borders
                 // Everything else (pending, undefined, etc.) shows grey
-                let progressValue = 100;
+                let progressValue = 0; // Start at 0 to avoid blip to 100%
                 let progressStatus = 'pending'; // Default: grey border
                 
                 if (status === 'success') {
@@ -169,73 +169,95 @@ export default function VideoItem({
                   progressValue = 100;
                   progressStatus = 'failed';
                 } else if (platformProgress !== undefined && typeof platformProgress === 'number' && platformProgress >= 0 && platformProgress <= 100) {
-                  // Actively uploading - show progress with cyan border
+                  // Actively uploading - show progress with orange border
                   // Check if video is uploading OR platform has progress data
                   if (v.status === 'uploading' || status === 'pending') {
                     progressValue = Math.max(0, Math.min(100, platformProgress));
                     progressStatus = 'uploading';
                   } else {
                     // Has progress but video not actively uploading - show as pending
-                    progressValue = 100;
+                    progressValue = 0;
                     progressStatus = 'pending';
                   }
                 } else {
-                  // Pending or any other state - show full grey border
-                  progressValue = 100;
+                  // Pending or any other state - show empty grey border (0% progress)
+                  progressValue = 0;
                   progressStatus = 'pending';
                 }
                 
                 return (
-                  <button
+                  <div
                     key={platform}
-                    className="destination-status-button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setDestinationModal({ videoId: v.id, platform, video: v });
-                    }}
-                    title={title}
                     style={{
                       display: 'flex',
+                      flexDirection: 'column',
                       alignItems: 'center',
-                      justifyContent: 'center',
-                      padding: `${BUTTON_CONFIG.PADDING_VERTICAL}px ${BUTTON_CONFIG.PADDING_HORIZONTAL}px`,
-                      border: 'none',
-                      borderRadius: `${BUTTON_CONFIG.BORDER_RADIUS}px`,
-                      background: backgroundColor,
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                      opacity: status === 'pending' ? 0.7 : 1,
-                      width: `${BUTTON_CONFIG.SIZE}px`,
-                      height: `${BUTTON_CONFIG.SIZE}px`,
-                      minWidth: `${BUTTON_CONFIG.SIZE}px`,
-                      position: 'relative' // For perimeter progress positioning
-                    }}
-                    onMouseEnter={(e) => {
-                      if (status === 'pending') {
-                        e.currentTarget.style.opacity = '1';
-                      } else {
-                        e.currentTarget.style.transform = 'scale(1.05)';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      if (status === 'pending') {
-                        e.currentTarget.style.opacity = '0.7';
-                      } else {
-                        e.currentTarget.style.transform = 'scale(1)';
-                      }
+                      gap: '2px'
                     }}
                   >
-                    {platformIcon}
-                    {/* Perimeter progress indicator - shows status for all states, acts as the border */}
-                    <PerimeterProgress
-                      progress={progressValue}
-                      status={progressStatus}
-                      buttonSize={BUTTON_CONFIG.SIZE}
-                      padding={BUTTON_CONFIG.PADDING_VERTICAL}
-                      borderRadius={BUTTON_CONFIG.BORDER_RADIUS}
-                      strokeWidth={2}
-                    />
-                  </button>
+                    <button
+                      className="destination-status-button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDestinationModal({ videoId: v.id, platform, video: v });
+                      }}
+                      title={title}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: `${BUTTON_CONFIG.PADDING_VERTICAL}px ${BUTTON_CONFIG.PADDING_HORIZONTAL}px`,
+                        border: 'none',
+                        borderRadius: `${BUTTON_CONFIG.BORDER_RADIUS}px`,
+                        background: backgroundColor,
+                        cursor: 'pointer',
+                        transition: 'all 0.2s ease',
+                        opacity: status === 'pending' ? 0.7 : 1,
+                        width: `${BUTTON_CONFIG.SIZE}px`,
+                        height: `${BUTTON_CONFIG.SIZE}px`,
+                        minWidth: `${BUTTON_CONFIG.SIZE}px`,
+                        position: 'relative' // For perimeter progress positioning
+                      }}
+                      onMouseEnter={(e) => {
+                        if (status === 'pending') {
+                          e.currentTarget.style.opacity = '1';
+                        } else {
+                          e.currentTarget.style.transform = 'scale(1.05)';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (status === 'pending') {
+                          e.currentTarget.style.opacity = '0.7';
+                        } else {
+                          e.currentTarget.style.transform = 'scale(1)';
+                        }
+                      }}
+                    >
+                      {platformIcon}
+                      {/* Perimeter progress indicator - shows status for all states, acts as the border */}
+                      <PerimeterProgress
+                        progress={progressValue}
+                        status={progressStatus}
+                        buttonSize={BUTTON_CONFIG.SIZE}
+                        padding={BUTTON_CONFIG.PADDING_VERTICAL}
+                        borderRadius={BUTTON_CONFIG.BORDER_RADIUS}
+                        strokeWidth={2}
+                      />
+                    </button>
+                    {/* Percentage display - always reserve space, only show when uploading */}
+                    <span
+                      style={{
+                        fontSize: '0.6rem',
+                        color: HOPPER_COLORS.warning,
+                        fontWeight: '500',
+                        lineHeight: '1',
+                        minHeight: '0.7rem',
+                        visibility: (progressStatus === 'uploading' && platformProgress !== undefined && typeof platformProgress === 'number') ? 'visible' : 'hidden'
+                      }}
+                    >
+                      {platformProgress !== undefined && typeof platformProgress === 'number' ? Math.round(platformProgress) : 0}%
+                    </span>
+                  </div>
                 );
               })}
             </div>

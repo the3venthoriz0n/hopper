@@ -121,8 +121,8 @@ export default function PerimeterProgress({
   } else if (status === 'failed') {
     progressColor = HOPPER_COLORS.error;
   } else if (status === 'uploading') {
-    // Use cyan/blue color for uploading progress
-    progressColor = HOPPER_COLORS.cyan || HOPPER_COLORS.info || '#00bcd4';
+    // Use orange color for uploading progress
+    progressColor = HOPPER_COLORS.warning;
   } else {
     progressColor = 'rgba(255, 255, 255, 0.2)'; // Neutral color for pending
   }
@@ -131,9 +131,14 @@ export default function PerimeterProgress({
   const backgroundStrokeColor = 'rgba(255, 255, 255, 0.2)';
   const backgroundOffset = 0; // Full background stroke (always visible)
   
-  // Progress stroke: for uploading, show animated progress; for others, show full colored border
+  // Progress stroke: for uploading, show animated progress; for success/failed show full border; for pending show empty
   const isUploading = status === 'uploading';
-  const finalProgress = isUploading ? Math.max(0, Math.min(100, displayProgress)) : 100;
+  const isSuccessOrFailed = status === 'success' || status === 'failed';
+  const finalProgress = isUploading 
+    ? Math.max(0, Math.min(100, displayProgress))
+    : isSuccessOrFailed 
+    ? 100 
+    : 0; // Pending states show 0% (empty border)
   
   // Use measured path length for accurate progress calculation
   // strokeDashoffset: 0 = full stroke visible, pathLength = no stroke visible
@@ -141,16 +146,17 @@ export default function PerimeterProgress({
   const progressOffset = pathLength > 0 ? pathLength - (finalProgress / 100) * pathLength : 0;
   
   // Create rounded square path following the perimeter
-  // Start from top-left corner, go clockwise: top -> right -> bottom -> left
+  // Start from top center (12 o'clock), go clockwise: top -> right -> bottom -> left -> back to top
   const x = pathX;
   const y = pathY;
   const size = pathSize;
   const r = pathRadius;
+  const centerX = x + size / 2;
   
   // Path: M (start), L (line), A (arc)
-  // Start from top-left, go clockwise around
+  // Start from top center, go clockwise around
   const pathData = `
-    M ${x + r},${y}
+    M ${centerX},${y}
     L ${x + size - r},${y}
     A ${r},${r} 0 0 1 ${x + size},${y + r}
     L ${x + size},${y + size - r}
@@ -159,6 +165,7 @@ export default function PerimeterProgress({
     A ${r},${r} 0 0 1 ${x},${y + size - r}
     L ${x},${y + r}
     A ${r},${r} 0 0 1 ${x + r},${y}
+    L ${centerX},${y}
     Z
   `;
   
@@ -172,7 +179,7 @@ export default function PerimeterProgress({
         left: 0,
         width: `${totalSize}px`,
         height: `${totalSize}px`,
-        transform: 'rotate(-90deg)', // Start from top (0% = top)
+        // No rotation needed - path starts at top center
         transformOrigin: `${totalSize / 2}px ${totalSize / 2}px`,
         pointerEvents: 'none',
         overflow: 'visible'
@@ -204,7 +211,7 @@ export default function PerimeterProgress({
         strokeLinejoin="round"
         style={{
           transition: status === 'uploading' ? 'stroke-dashoffset 0.1s linear, stroke 0.3s ease' : 'stroke-dashoffset 0.3s ease, stroke 0.3s ease',
-          filter: status === 'uploading' ? 'drop-shadow(0 0 4px rgba(0, 242, 234, 0.5))' : 'none'
+          filter: status === 'uploading' ? 'drop-shadow(0 0 4px rgba(255, 179, 0, 0.5))' : 'none'
         }}
       />
     </svg>

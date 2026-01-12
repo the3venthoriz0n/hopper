@@ -94,6 +94,12 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(cleanup_task())
         logger.info("Cleanup task started")
         
+        # Start upload worker task
+        logger.info("Starting upload worker task...")
+        from app.tasks.upload_worker import upload_worker_task
+        asyncio.create_task(upload_worker_task())
+        logger.info("Upload worker task started")
+        
         # Start WebSocket manager Redis subscription
         logger.info("Starting WebSocket manager...")
         from app.services.websocket_service import websocket_manager

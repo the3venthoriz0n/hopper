@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -16,6 +16,7 @@ from app.db.helpers import (
 )
 from app.db.redis import set_upload_progress
 from app.db.session import get_db
+from app.db.task_queue import enqueue_task
 from app.models.video import Video
 from app.services.token_service import calculate_tokens_from_bytes
 from app.services.video import (
@@ -304,10 +305,61 @@ async def get_upload_limits():
     }
 
 
+@upload_router.get("")
+async def get_upload_error():
+    """Handle GET requests to /api/upload - this endpoint only accepts POST"""
+    raise HTTPException(
+        status_code=405,
+        detail="Method not allowed. Use POST /api/upload to upload videos."
+    )
+
+
 @upload_router.post("")
 async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
-    """Upload all pending videos to all enabled destinations (immediate or scheduled)"""
-    try:
-        return await upload_all_pending_videos(user_id, db)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    """Upload all pending videos to all enabled destinations (immediate or scheduled)
+    
+    Enqueues task and returns immediately (202 Accepted) to avoid Cloudflare 524 timeout.
+    Task is processed asynchronously by background worker with unlimited concurrency.
+    """
+    # Quick validation before enqueueing
+    upload_context = build_upload_context(user_id, db)
+    enabled_destinations = upload_context["enabled_destinations"]
+    
+    if not enabled_destinations:
+        raise HTTPException(
+            status_code=400,
+            detail="No enabled and connected destinations. Enable at least one destination and ensure it's connected."
+        )
+    
+    user_videos = get_user_videos(user_id, db=db)
+    pending_videos = [v for v in user_videos if v.status in ['pending', 'failed', 'uploading', 'cancelled']]
+    
+    if not pending_videos:
+        statuses = {}
+        for v in user_videos:
+            status = v.status or 'unknown'
+            statuses[status] = statuses.get(status, 0) + 1
+        raise HTTPException(
+            status_code=400,
+            detail=f"No videos ready to upload. Add videos first. Current video statuses: {statuses}"
+        )
+    
+    # Enqueue task
+    task_id = enqueue_task(
+        task_type="upload_videos",
+        payload={"user_id": user_id},
+        retry_count=0,
+        max_retries=3
+    )
+    
+    # Return 202 Accepted immediately
+    return JSONResponse(
+        status_code=202,
+        content={
+            "ok": True,
+            "message": f"Upload started for {len(pending_videos)} video(s). Progress will be updated via WebSocket events.",
+            "task_id": task_id,
+            "videos_queued": len(pending_videos),
+            "status": "processing"
+        }
+    )
