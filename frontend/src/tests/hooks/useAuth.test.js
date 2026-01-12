@@ -1,4 +1,5 @@
 import { renderHook, waitFor } from '@testing-library/react';
+import { act } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import axios from '../../services/api';
 import { getApiUrl } from '../../services/api';
@@ -125,7 +126,9 @@ describe('useAuth', () => {
       data: { user: newUser },
     });
 
-    await result.current.checkAuth();
+    await act(async () => {
+      await result.current.checkAuth();
+    });
 
     await waitFor(() => {
       expect(result.current.user).toEqual(newUser);

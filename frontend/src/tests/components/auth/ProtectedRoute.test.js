@@ -1,21 +1,25 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { render, screen, waitFor } from '../../test-utils';
 import ProtectedRoute from '../../../components/auth/ProtectedRoute';
 import { useAuth } from '../../../hooks/useAuth';
-import LoadingScreen from '../../../components/common/LoadingScreen';
 
 const mockNavigate = jest.fn();
 
 jest.mock('react-router-dom', () => ({
   ...jest.requireActual('react-router-dom'),
   useNavigate: () => mockNavigate,
+  Navigate: ({ to }) => {
+    // Simply call navigate immediately without useEffect
+    mockNavigate(to);
+    return null; // Return null instead of a div
+  },
 }));
 
 jest.mock('../../../hooks/useAuth');
+
 jest.mock('../../../components/common/LoadingScreen', () => {
   return function LoadingScreen() {
-    return <div>Loading...</div>;
+    return <div data-testid="loading-screen">Loading...</div>;
   };
 });
 
@@ -24,17 +28,6 @@ const TestChild = ({ user, isAdmin }) => (
     Protected Content - User: {user?.email || 'None'} - Admin: {isAdmin ? 'Yes' : 'No'}
   </div>
 );
-
-const renderWithRouter = (ui, { initialEntries = ['/'] } = {}) => {
-  return render(
-    <MemoryRouter 
-      initialEntries={initialEntries} 
-      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
-    >
-      {ui}
-    </MemoryRouter>
-  );
-};
 
 describe('ProtectedRoute', () => {
   beforeEach(() => {
@@ -49,13 +42,13 @@ describe('ProtectedRoute', () => {
       authLoading: true,
     });
 
-    renderWithRouter(
+    render(
       <ProtectedRoute>
         <TestChild />
       </ProtectedRoute>
     );
 
-    expect(screen.getByText('Loading...')).toBeInTheDocument();
+    expect(screen.getByTestId('loading-screen')).toBeInTheDocument();
     expect(screen.queryByTestId('protected-content')).not.toBeInTheDocument();
   });
 
@@ -67,13 +60,14 @@ describe('ProtectedRoute', () => {
       authLoading: false,
     });
 
-    renderWithRouter(
+    render(
       <ProtectedRoute>
         <TestChild />
       </ProtectedRoute>,
       { initialEntries: ['/app'] }
     );
 
+    expect(mockNavigate).toHaveBeenCalledWith('/login');
     expect(screen.queryByTestId('protected-content')).not.toBeInTheDocument();
   });
 
@@ -86,7 +80,7 @@ describe('ProtectedRoute', () => {
       authLoading: false,
     });
 
-    renderWithRouter(
+    render(
       <ProtectedRoute>
         <TestChild />
       </ProtectedRoute>
@@ -105,7 +99,7 @@ describe('ProtectedRoute', () => {
       authLoading: false,
     });
 
-    renderWithRouter(
+    render(
       <ProtectedRoute>
         <TestChild />
       </ProtectedRoute>
@@ -125,13 +119,14 @@ describe('ProtectedRoute', () => {
       authLoading: false,
     });
 
-    renderWithRouter(
+    render(
       <ProtectedRoute requireAdmin>
         <TestChild />
       </ProtectedRoute>,
       { initialEntries: ['/admin'] }
     );
 
+    expect(mockNavigate).toHaveBeenCalledWith('/app');
     expect(screen.queryByTestId('protected-content')).not.toBeInTheDocument();
   });
 
@@ -144,7 +139,7 @@ describe('ProtectedRoute', () => {
       authLoading: false,
     });
 
-    renderWithRouter(
+    render(
       <ProtectedRoute requireAdmin>
         <TestChild />
       </ProtectedRoute>
