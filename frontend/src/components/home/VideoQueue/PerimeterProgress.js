@@ -121,7 +121,8 @@ export default function PerimeterProgress({
   } else if (status === 'failed') {
     progressColor = HOPPER_COLORS.error;
   } else if (status === 'uploading') {
-    progressColor = HOPPER_COLORS.info || '#00bcd4'; // Cyan/blue for uploading
+    // Use cyan/blue color for uploading progress
+    progressColor = HOPPER_COLORS.cyan || HOPPER_COLORS.info || '#00bcd4';
   } else {
     progressColor = 'rgba(255, 255, 255, 0.2)'; // Neutral color for pending
   }
@@ -203,7 +204,7 @@ export default function PerimeterProgress({
         strokeLinejoin="round"
         style={{
           transition: status === 'uploading' ? 'stroke-dashoffset 0.1s linear, stroke 0.3s ease' : 'stroke-dashoffset 0.3s ease, stroke 0.3s ease',
-          filter: status === 'uploading' ? 'drop-shadow(0 0 4px rgba(0, 188, 212, 0.5))' : 'none'
+          filter: status === 'uploading' ? 'drop-shadow(0 0 4px rgba(0, 242, 234, 0.5))' : 'none'
         }}
       />
     </svg>

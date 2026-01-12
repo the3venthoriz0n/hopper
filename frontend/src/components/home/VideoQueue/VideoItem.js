@@ -168,10 +168,17 @@ export default function VideoItem({
                   // Explicit failed from backend - red border
                   progressValue = 100;
                   progressStatus = 'failed';
-                } else if (status === 'pending' && platformProgress !== undefined && typeof platformProgress === 'number' && platformProgress >= 0 && platformProgress <= 100) {
+                } else if (platformProgress !== undefined && typeof platformProgress === 'number' && platformProgress >= 0 && platformProgress <= 100) {
                   // Actively uploading - show progress with cyan border
-                  progressValue = Math.max(0, Math.min(100, platformProgress));
-                  progressStatus = 'uploading';
+                  // Check if video is uploading OR platform has progress data
+                  if (v.status === 'uploading' || status === 'pending') {
+                    progressValue = Math.max(0, Math.min(100, platformProgress));
+                    progressStatus = 'uploading';
+                  } else {
+                    // Has progress but video not actively uploading - show as pending
+                    progressValue = 100;
+                    progressStatus = 'pending';
+                  }
                 } else {
                   // Pending or any other state - show full grey border
                   progressValue = 100;

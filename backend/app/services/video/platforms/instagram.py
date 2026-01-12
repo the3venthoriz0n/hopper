@@ -102,6 +102,7 @@ async def _poll_container_status(
             
             status_response = await client.get(status_url, params=status_params)
             
+            status_code = None
             if status_response.status_code == 200:
                 status_data = status_response.json()
                 status_code = status_data.get('status_code')
@@ -126,32 +127,41 @@ async def _poll_container_status(
                     instagram_logger.debug(f"Container returned ERROR status (attempt {attempt + 1}/{max_retries}), continuing to poll...")
                 elif status_code == "EXPIRED":
                     raise Exception(f"Container expired (not published within 24 hours)")
-                # IN_PROGRESS - continue polling
+                # IN_PROGRESS - continue polling and update progress
             else:
                 instagram_logger.warning(f"Status check failed with HTTP {status_response.status_code}, retrying...")
+                # If status check failed, assume IN_PROGRESS for progress calculation
+                status_code = "IN_PROGRESS"
+            
+            # Update progress during polling (for IN_PROGRESS status or when status unknown)
+            if status_code == "IN_PROGRESS" or status_code is None:
+                # Map polling attempts to progress percentage (20-90% range)
+                # Use attempt + 1 to get current attempt number (0-indexed to 1-indexed)
+                # Distribute progress 20-90% based on attempts completed
+                current_attempt = attempt + 1
+                # Calculate progress: 20% at start, 90% at max_retries
+                # Use (current_attempt / max_retries) to get progress ratio
+                progress = 20 + int((current_attempt / max_retries) * 70)
+                # Ensure progress doesn't exceed 89% (90% is reserved for FINISHED)
+                progress = min(89, max(20, progress))
+                
+                # Get previous progress to check if we should publish
+                from app.db.redis import get_platform_upload_progress, get_upload_progress
+                previous_progress = get_platform_upload_progress(user_id, video_id, "instagram") or get_upload_progress(user_id, video_id) or 20
+                
+                # Only update if progress has increased
+                if progress > previous_progress:
+                    set_upload_progress(user_id, video_id, progress)
+                    set_platform_upload_progress(user_id, video_id, "instagram", progress)
+                    
+                    # Publish WebSocket progress event (1% increments)
+                    from app.services.video.helpers import should_publish_progress
+                    from app.services.event_service import publish_upload_progress
+                    if should_publish_progress(progress, previous_progress):
+                        await publish_upload_progress(user_id, video_id, "instagram", progress)
             
             if attempt < max_retries - 1:
                 await asyncio.sleep(retry_delay)
-                
-                # Map status_code to progress percentages
-                # IN_PROGRESS: 20-90% (Instagram downloading/processing from our server)
-                # FINISHED: 90% (ready to publish)
-                if status_code == "IN_PROGRESS":
-                    # Distribute progress 20-90% based on attempts
-                    progress = 20 + int((attempt / max_retries) * 70)
-                else:
-                    # For other statuses, use previous progress or default
-                    progress = get_platform_upload_progress(user_id, video_id, "instagram") or get_upload_progress(user_id, video_id) or 20
-                
-                set_upload_progress(user_id, video_id, progress)
-                set_platform_upload_progress(user_id, video_id, "instagram", progress)
-                
-                # Publish WebSocket progress event (1% increments or at first attempt)
-                previous_progress = get_platform_upload_progress(user_id, video_id, "instagram") or get_upload_progress(user_id, video_id) or 0
-                from app.services.video.helpers import should_publish_progress
-                from app.services.event_service import publish_upload_progress
-                if should_publish_progress(progress, previous_progress) or attempt == 0:
-                    await publish_upload_progress(user_id, video_id, "instagram", progress)
     finally:
         # Always clear the active session flag when done (success or failure)
         clear_active_upload_session(video_id, "instagram")
