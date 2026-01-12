@@ -50,9 +50,9 @@ jobs:
           docker images | grep hopper-backend-test || (echo "❌ Image not found!" && exit 1)
           echo "✅ Image verified!"
 
-      - name: Run comprehensive test suite
+      - name: Run backend test suite
         run: |
-          echo "🧪 Running comprehensive test suite..."
+          echo "🧪 Running backend test suite..."
           # Generate a valid Fernet key for testing (44 chars, base64-encoded)
           TEST_ENCRYPTION_KEY=$(docker run --rm hopper-backend-test:latest python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
           docker run --rm \
@@ -62,7 +62,36 @@ jobs:
             -e LOG_LEVEL=INFO \
             hopper-backend-test:latest \
             python -m pytest /app/tests/ -v --tb=short -m "not skip"
-          echo "✅ Comprehensive test suite passed!"
+          echo "✅ Backend test suite passed!"
+
+      - name: Build frontend image for testing
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          target: dev
+          push: false
+          load: true
+          tags: hopper-frontend-test:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            REACT_APP_VERSION=test
+
+      - name: Verify frontend image was built
+        run: |
+          echo "🔍 Verifying frontend test image exists..."
+          docker images | grep hopper-frontend-test || (echo "❌ Image not found!" && exit 1)
+          echo "✅ Image verified!"
+
+      - name: Run frontend test suite
+        run: |
+          echo "🧪 Running frontend test suite..."
+          docker run --rm \
+            -e CI=true \
+            hopper-frontend-test:latest \
+            npm test
+          echo "✅ Frontend test suite passed!"
 
       - name: Start services for security tests
         run: |

@@ -1,4 +1,4 @@
-.PHONY: help sync up down rebuild logs shell clean test test-security rebuild-grafana clear-grafana-cache setup-stripe backup-db restore-db list-backups
+.PHONY: help sync up down rebuild logs shell clean test test-frontend test-security rebuild-grafana clear-grafana-cache setup-stripe backup-db restore-db list-backups
 
 # Default environment (can be overridden: make up ENV=prod)
 ENV ?= dev
@@ -21,7 +21,8 @@ help:
 	@echo "Usage: make <target> [ENV=dev|prod] [SERVICE=frontend|backend]"
 	@echo ""
 	@echo "Targets:"
-	@echo "  test          Run unit tests"
+	@echo "  test          Run backend unit tests"
+	@echo "  test-frontend Run frontend unit tests"
 	@echo "  test-security Run security tests (requires API to be running)"
 	@echo "  sync          Sync local code to remote server"
 	@echo "  up            Start services (with build, runs tests first)"
@@ -59,8 +60,16 @@ test:
 	@if [ "$(ENV)" = "prod" ]; then \
 		echo "⏭️  Skipping tests for prod environment (use deploy.sh for production deployments)"; \
 	else \
-		echo "🧪 Running comprehensive test suite..."; \
+		echo "🧪 Running backend tests..."; \
 		$(COMPOSE) run --rm backend $(TEST_CMD); \
+	fi
+
+test-frontend:
+	@if [ "$(ENV)" = "prod" ]; then \
+		echo "⏭️  Skipping tests for prod environment (use deploy.sh for production deployments)"; \
+	else \
+		echo "🧪 Running frontend tests..."; \
+		$(COMPOSE) run --rm frontend npm test; \
 	fi
 
 test-integration:
