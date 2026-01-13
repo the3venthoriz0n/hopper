@@ -361,6 +361,14 @@
           "format": "table",
           "instant": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "{service_name=\"hopper-backend\"} |= \"Login event\" | regexp \"username=(?P<username>[^\\\\s]+).*user_id=(?P<user_id>[^\\\\s]+).*timestamp=(?P<timestamp>[^\\\\s]+).*ip=(?P<ip>[^\\\\s]+).*method=(?P<method>[^\\\\s]+)\"",
+          "refId": "B"
         }
       ],
       "title": "Active Users List",
@@ -369,16 +377,42 @@
           "id": "organize",
           "options": {
             "excludeByName": {
-              "Time": true
+              "Time": true,
+              "last_activity": true
             },
             "indexByName": {
-              "last_activity": 2,
               "user_email": 0,
               "user_id": 1
             },
             "renameByName": {
-              "last_activity": "Last Login",
               "user_email": "User Email",
+              "user_id": "User ID"
+            }
+          }
+        },
+        {
+          "id": "extractFields",
+          "options": {
+            "format": "auto",
+            "source": "Line"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Line": true,
+              "timestamp": true,
+              "ip": true,
+              "method": true,
+              "username": true
+            },
+            "indexByName": {
+              "Time": 0,
+              "user_id": 1
+            },
+            "renameByName": {
+              "Time": "Last Login",
               "user_id": "User ID"
             }
           }
@@ -391,14 +425,26 @@
                 "aggregations": [],
                 "operation": "groupby"
               },
-              "User Email": {
-                "aggregations": ["lastNotNull"],
-                "operation": "aggregate"
-              },
               "Last Login": {
                 "aggregations": ["max"],
                 "operation": "aggregate"
               }
+            }
+          }
+        },
+        {
+          "id": "merge",
+          "options": {
+            "reducers": []
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": {
+              "User Email": 0,
+              "User ID": 1,
+              "Last Login": 2
             }
           }
         }

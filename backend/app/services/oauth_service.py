@@ -603,7 +603,7 @@ async def revoke_youtube_token(access_token: str) -> bool:
         access_token: The access token to revoke (decrypted)
         
     Returns:
-        True if revocation succeeded, False otherwise
+        True if revocation succeeded or token is already invalid, False otherwise
     """
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -615,11 +615,29 @@ async def revoke_youtube_token(access_token: str) -> bool:
             if response.status_code == 200:
                 youtube_logger.info("Successfully revoked YouTube token with provider")
                 return True
+            elif response.status_code == 400:
+                # Check if token is already invalid/not revocable (similar to Instagram handling)
+                try:
+                    error_data = response.json()
+                    error = error_data.get("error", "")
+                    error_description = error_data.get("error_description", "")
+                    
+                    if error == "invalid_token" or "not revocable" in error_description.lower():
+                        # Token is already invalid/revoked - this is fine, treat as success
+                        youtube_logger.debug("YouTube token already invalid/not revocable, skipping revocation (expected)")
+                        return True
+                except (ValueError, KeyError):
+                    # Response is not JSON or doesn't have expected structure
+                    pass
+                
+                # Other 400 errors - log as warning
+                youtube_logger.warning(f"YouTube token revocation returned status {response.status_code}: {response.text[:200]}")
+                return False
             else:
                 youtube_logger.warning(f"YouTube token revocation returned status {response.status_code}: {response.text[:200]}")
                 return False
     except Exception as e:
-        youtube_logger.warning(f"Failed to revoke YouTube token with provider: {e}")
+        youtube_logger.debug(f"Failed to revoke YouTube token with provider (token may already be invalid): {e}")
         return False
 
 
