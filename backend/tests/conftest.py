@@ -383,6 +383,114 @@ def auto_mock_stripe():
     # Use patch.object to patch Price.list directly on the stripe module
     import stripe as stripe_module
     from app.services import stripe_service
+    from app.core.config import settings
+    from datetime import datetime, timezone
+    
+    # ROOT CAUSE FIX: Pre-populate StripeRegistry._cache with mock plan configurations
+    # This ensures tests work even if sync() returns early due to missing STRIPE_SECRET_KEY
+    def populate_stripe_registry_cache():
+        """Pre-populate StripeRegistry cache with mock plan configurations"""
+        from app.services.stripe_service import StripeRegistry
+        
+        # Build cache entries matching the structure created by sync()
+        cache_entries = {
+            "free_price": {
+                "price_id": "price_free",
+                "product_id": "prod_free",
+                "name": "Free",
+                "description": "Free plan",
+                "tokens": 10,
+                "hidden": False,
+                "max_accrual": None,
+                "recurring_interval": "month",
+                "amount_dollars": 0.0,
+                "currency": "USD",
+                "formatted": "Free"
+            },
+            "free_daily_price": {
+                "price_id": "price_free_daily",
+                "product_id": "prod_free_daily",
+                "name": "Free Daily",
+                "description": "3 tokens per day",
+                "tokens": 3,
+                "hidden": False,
+                "max_accrual": 10,
+                "recurring_interval": "day",
+                "amount_dollars": 0.0,
+                "currency": "USD",
+                "formatted": "Free"
+            },
+            "starter_price": {
+                "price_id": "price_starter",
+                "product_id": "prod_starter",
+                "name": "Starter",
+                "description": "Starter plan",
+                "tokens": 300,
+                "hidden": False,
+                "max_accrual": None,
+                "recurring_interval": "month",
+                "amount_dollars": 3.0,
+                "currency": "USD",
+                "formatted": "$3.00"
+            },
+            "starter_overage_price": {
+                "price_id": "price_starter_overage",
+                "product_id": "prod_starter_overage",
+                "name": "Starter Overage",
+                "description": "Starter overage",
+                "tokens": 0,
+                "hidden": False,
+                "max_accrual": None,
+                "recurring_interval": "month",
+                "amount_dollars": 0.015,
+                "currency": "USD",
+                "formatted": "$0.02"
+            },
+            "creator_price": {
+                "price_id": "price_creator",
+                "product_id": "prod_creator",
+                "name": "Creator",
+                "description": "Creator plan",
+                "tokens": 1250,
+                "hidden": False,
+                "max_accrual": None,
+                "recurring_interval": "month",
+                "amount_dollars": 10.0,
+                "currency": "USD",
+                "formatted": "$10.00"
+            },
+            "creator_overage_price": {
+                "price_id": "price_creator_overage",
+                "product_id": "prod_creator_overage",
+                "name": "Creator Overage",
+                "description": "Creator overage",
+                "tokens": 0,
+                "hidden": False,
+                "max_accrual": None,
+                "recurring_interval": "month",
+                "amount_dollars": 0.008,
+                "currency": "USD",
+                "formatted": "$0.01"
+            },
+            "unlimited_price": {
+                "price_id": "price_unlimited",
+                "product_id": "prod_unlimited",
+                "name": "Unlimited",
+                "description": "Unlimited tokens",
+                "tokens": -1,
+                "hidden": True,
+                "max_accrual": None,
+                "recurring_interval": "month",
+                "amount_dollars": 0.0,
+                "currency": "USD",
+                "formatted": "Free"
+            }
+        }
+        
+        # Populate cache and set last_sync to prevent sync() from running
+        StripeRegistry._cache = cache_entries
+        StripeRegistry._last_sync = datetime.now(timezone.utc)
+        StripeRegistry._sync_attempts = 0
     
     # Store original Price.list if it exists
     original_price_list = getattr(stripe_module.Price, 'list', None)
@@ -415,8 +523,13 @@ def auto_mock_stripe():
             mock_obj.Price.list = Mock(return_value=mock_list_result)
         return mock_obj
     
-    with patch.object(stripe_module.Price, 'list', return_value=mock_list_result, create=True), \
+    # ROOT CAUSE FIX: Patch settings.STRIPE_SECRET_KEY to prevent sync() from returning early
+    # and pre-populate StripeRegistry cache before any tests run
+    with patch.object(settings, 'STRIPE_SECRET_KEY', 'sk_test_mock_key'), \
+         patch.object(stripe_module.Price, 'list', return_value=mock_list_result, create=True), \
          patch('app.services.stripe_service.stripe') as mock_stripe_module:
+        # Pre-populate StripeRegistry cache immediately
+        populate_stripe_registry_cache()
         # Mock Customer operations
         mock_customer = Mock(id="cus_test123", email="delivered@resend.dev")
         mock_stripe_module.Customer.create = Mock(return_value=mock_customer)
