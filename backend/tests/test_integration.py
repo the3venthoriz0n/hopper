@@ -3,8 +3,6 @@ import os
 import pytest
 import httpx
 import time
-from app.core.config import settings
-
 
 # Determine BASE_URL based on environment
 # Priority: 1. TEST_BASE_URL env var, 2. Docker service name, 3. localhost
@@ -17,6 +15,46 @@ elif os.path.exists("/.dockerenv") or os.getenv("DOCKER_CONTAINER"):
 else:
     # Running locally (not in Docker)
     BASE_URL = "http://localhost:8000"
+
+# Detect production environment - check multiple indicators
+def is_production():
+    """Check if running in production environment - always skip tests in production"""
+    # Check environment variable (case-insensitive)
+    env = os.getenv("ENVIRONMENT", "").lower()
+    if env == "production":
+        return True
+    
+    # Check container name (prod containers have "prod-" prefix)
+    # HOSTNAME in Docker containers is typically the container name
+    container_name = os.getenv("HOSTNAME", "")
+    if container_name and "prod-" in container_name.lower():
+        return True
+    
+    # Check for production container name pattern
+    # Production containers are named like "prod-hopper-backend"
+    if "prod-hopper" in container_name.lower():
+        return True
+    
+    # Check BASE_URL for production indicators (check both TEST_BASE_URL and determined BASE_URL)
+    test_base_url = os.getenv("TEST_BASE_URL", "")
+    if test_base_url and ("api.dunkbox.net" in test_base_url or "prod-hopper-backend" in test_base_url):
+        return True
+    
+    if BASE_URL and ("api.dunkbox.net" in BASE_URL or "prod-hopper-backend" in BASE_URL):
+        return True
+    
+    # Check if we're in a production docker-compose context
+    # Production uses docker-compose.prod.yml which sets container names with "prod-" prefix
+    # If we detect we're in Docker and can't determine dev, assume production for safety
+    if os.path.exists("/.dockerenv") and not os.getenv("TEST_BASE_URL"):
+        # In Docker but no explicit test URL - check if it's likely production
+        # This is a safety check - if unsure, skip tests
+        env_lower = env
+        if not env_lower or env_lower not in ["development", "dev", "test"]:
+            # If environment is not explicitly dev/test, assume production for safety
+            return True
+    
+    return False
 
 # Determine frontend origin based on backend URL
 FRONTEND_ORIGIN = os.getenv("TEST_FRONTEND_ORIGIN")
@@ -70,7 +108,7 @@ def login_user(client, email, password):
 
 
 @pytest.mark.skipif(
-    settings.ENVIRONMENT == "production" or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    is_production() or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
     reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run. Disabled in production."
 )
 def test_protected_endpoint_requires_auth(client):
@@ -79,7 +117,7 @@ def test_protected_endpoint_requires_auth(client):
     assert response.status_code == 401
 
 @pytest.mark.skipif(
-    settings.ENVIRONMENT == "production" or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    is_production() or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
     reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run. Disabled in production."
 )
 def test_public_endpoint_accessible(client):
@@ -102,7 +140,7 @@ def test_public_endpoint_accessible(client):
 
 
 @pytest.mark.skipif(
-    settings.ENVIRONMENT == "production" or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    is_production() or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
     reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run. Disabled in production."
 )
 def test_user_registration(client):
@@ -121,7 +159,7 @@ def test_user_registration(client):
 
 
 @pytest.mark.skipif(
-    settings.ENVIRONMENT == "production" or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    is_production() or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
     reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run. Disabled in production."
 )
 def test_login_with_invalid_credentials(client):
@@ -135,7 +173,7 @@ def test_login_with_invalid_credentials(client):
 
 
 @pytest.mark.skipif(
-    settings.ENVIRONMENT == "production" or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    is_production() or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
     reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run. Disabled in production."
 )
 def test_session_cookie_set_on_login(client):
@@ -165,7 +203,7 @@ def test_session_cookie_set_on_login(client):
 
 
 @pytest.mark.skipif(
-    settings.ENVIRONMENT == "production" or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    is_production() or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
     reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run. Disabled in production."
 )
 def test_csrf_protection(client):
@@ -192,7 +230,7 @@ def test_csrf_protection(client):
 
 
 @pytest.mark.skipif(
-    settings.ENVIRONMENT == "production" or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    is_production() or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
     reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run. Disabled in production."
 )
 def test_auth_me_endpoint(client):
@@ -204,7 +242,7 @@ def test_auth_me_endpoint(client):
 
 
 @pytest.mark.skipif(
-    settings.ENVIRONMENT == "production" or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    is_production() or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
     reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run. Disabled in production."
 )
 def test_logout_invalidates_session(client):

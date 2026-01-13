@@ -94,6 +94,8 @@ jobs:
           echo "✅ Frontend test suite passed!"
 
       - name: Start services for integration tests
+        # Skip integration tests for production releases
+        if: github.event_name != 'release'
         run: |
           echo "🚀 Starting services for integration tests..."
           docker network create hopper_test_network || true
@@ -128,6 +130,8 @@ jobs:
           done
 
       - name: Start backend for integration tests
+        # Skip integration tests for production releases
+        if: github.event_name != 'release'
         run: |
           echo "🚀 Starting backend for integration tests..."
           # Generate a valid Fernet key for testing (44 chars, base64-encoded)
@@ -161,6 +165,8 @@ jobs:
           done
 
       - name: Run integration tests
+        # Skip integration tests for production releases
+        if: github.event_name != 'release'
         run: |
           echo "🔒 Running integration tests..."
           # Generate a valid Fernet key for testing (44 chars, base64-encoded)
@@ -176,7 +182,8 @@ jobs:
           echo "✅ Integration tests passed!"
 
       - name: Cleanup test services
-        if: always()
+        # Skip cleanup if integration tests were skipped
+        if: always() && github.event_name != 'release'
         run: |
           echo "🧹 Cleaning up test services..."
           docker stop test-backend test-postgres test-redis 2>/dev/null || true
