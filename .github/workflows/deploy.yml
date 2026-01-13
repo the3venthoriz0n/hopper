@@ -168,6 +168,7 @@ jobs:
           docker run --rm \
             --network hopper_test_network \
             -e ENCRYPTION_KEY="$TEST_ENCRYPTION_KEY" \
+            -e RUN_INTEGRATION_TESTS=true \
             -e TEST_BASE_URL=http://test-backend:8000 \
             -e TEST_FRONTEND_ORIGIN=http://localhost:3000 \
             hopper-backend-test:latest \
