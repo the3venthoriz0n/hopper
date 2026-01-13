@@ -1,4 +1,4 @@
-"""Simplified security tests for hopper backend API"""
+"""Integration tests for hopper backend API"""
 import os
 import pytest
 import httpx
@@ -231,4 +231,3 @@ def test_logout_invalidates_session(client):
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

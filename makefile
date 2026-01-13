@@ -73,9 +73,9 @@ test-frontend:
 	fi
 
 test-integration:
-	@echo "🔒 Running security integration tests for $(ENV) environment..."; \
+	@echo "🔒 Running integration tests for $(ENV) environment..."; \
 	echo "⚠️  Note: These tests require a running backend server"; \
-	$(COMPOSE) run --rm -e RUN_INTEGRATION_TESTS=true -e ENV=$(ENV) backend python -m pytest /app/tests/test_security.py -v --tb=short;
+	$(COMPOSE) run --rm -e RUN_INTEGRATION_TESTS=true -e ENV=$(ENV) backend python -m pytest /app/tests/test_integration.py -v --tb=short;
 
 up: sync
 	@echo "🚀 Starting $(ENV) environment..."

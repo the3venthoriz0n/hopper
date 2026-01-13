@@ -36,7 +36,7 @@ jobs:
       - name: Build backend image for testing
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./backend
           file: ./backend/Dockerfile
           push: false
           load: true
@@ -93,9 +93,9 @@ jobs:
             npm test
           echo "✅ Frontend test suite passed!"
 
-      - name: Start services for security tests
+      - name: Start services for integration tests
         run: |
-          echo "🚀 Starting services for security tests..."
+          echo "🚀 Starting services for integration tests..."
           docker network create hopper_test_network || true
           
           # Start PostgreSQL
@@ -127,9 +127,9 @@ jobs:
             sleep 2
           done
 
-      - name: Start backend for security tests
+      - name: Start backend for integration tests
         run: |
-          echo "🚀 Starting backend for security tests..."
+          echo "🚀 Starting backend for integration tests..."
           # Generate a valid Fernet key for testing (44 chars, base64-encoded)
           TEST_ENCRYPTION_KEY=$(docker run --rm hopper-backend-test:latest python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
           docker run -d --name test-backend \
@@ -160,9 +160,9 @@ jobs:
             sleep 2
           done
 
-      - name: Run security tests
+      - name: Run integration tests
         run: |
-          echo "🔒 Running security tests..."
+          echo "🔒 Running integration tests..."
           # Generate a valid Fernet key for testing (44 chars, base64-encoded)
           TEST_ENCRYPTION_KEY=$(docker run --rm hopper-backend-test:latest python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
           docker run --rm \
@@ -171,8 +171,8 @@ jobs:
             -e TEST_BASE_URL=http://test-backend:8000 \
             -e TEST_FRONTEND_ORIGIN=http://localhost:3000 \
             hopper-backend-test:latest \
-            python -m pytest /app/tests/test_security.py -v
-          echo "✅ Security tests passed!"
+            python -m pytest /app/tests/test_integration.py -v
+          echo "✅ Integration tests passed!"
 
       - name: Cleanup test services
         if: always()
@@ -241,7 +241,7 @@ jobs:
       - name: Build and push backend
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./backend
           file: ./backend/Dockerfile
           push: true
           tags: |
