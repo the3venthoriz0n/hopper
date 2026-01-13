@@ -664,12 +664,13 @@ def fetch_tiktok_publish_status(user_id: int, publish_id: str, db: Session = Non
         )
         
         if response.status_code == 404:
-            # ROOT CAUSE FIX: 404 typically means the publish_id is no longer valid for status checking.
-            tiktok_logger.debug(
+            # ROOT CAUSE FIX: 404 means the video was already published and publish_id is no longer valid.
+            # Return PUBLISHED status so the caller can complete the upload instead of polling indefinitely.
+            tiktok_logger.info(
                 f"TikTok status API returned 404 for publish_id {publish_id} (user {user_id}). "
-                f"This usually means the video was already published and publish_id is no longer valid for status checking."
+                f"Video was published - publish_id is no longer valid for status checking. Marking as PUBLISHED."
             )
-            return None
+            return {"status": "PUBLISHED", "video_id": None}
         elif response.status_code != 200:
             tiktok_logger.warning(
                 f"Failed to fetch TikTok status for publish_id {publish_id} (user {user_id}): "

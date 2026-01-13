@@ -82,53 +82,60 @@ async def status_checker_task():
                             status = status_data.get("status", "UNKNOWN")
                             
                             if status == "PUBLISHED":
-                                # Video was published - get tiktok_id
+                                # Video was published - get tiktok_id (may be None if 404 was returned)
                                 tiktok_id = status_data.get("video_id")
+                                # ROOT CAUSE FIX: Handle PUBLISHED status even when video_id is None (from 404)
+                                # Having tiktok_publish_id means video was published, so we should mark it as uploaded
+                                custom_settings = custom_settings.copy()
                                 if tiktok_id:
-                                    # Update video with tiktok_id
-                                    custom_settings = custom_settings.copy()
                                     custom_settings["tiktok_id"] = tiktok_id
-                                    old_status = video.status
+                                old_status = video.status
+                                
+                                # Check if all destinations are done
+                                from app.services.video import check_upload_success
+                                all_settings = get_all_user_settings(video.user_id, db=db)
+                                all_tokens = get_all_oauth_tokens(video.user_id, db=db)
+                                dest_settings = all_settings.get("destinations", {})
+                                
+                                # Check all enabled destinations
+                                enabled_destinations = []
+                                if all_settings.get("youtube", {}).get("youtube_enabled"):
+                                    enabled_destinations.append("youtube")
+                                if all_settings.get("tiktok", {}).get("tiktok_enabled"):
+                                    enabled_destinations.append("tiktok")
+                                if all_settings.get("instagram", {}).get("instagram_enabled"):
+                                    enabled_destinations.append("instagram")
+                                
+                                all_done = all(check_upload_success(video, dest) for dest in enabled_destinations)
+                                
+                                if all_done and video.status != "uploaded":
+                                    update_video(video.id, video.user_id, db=db, custom_settings=custom_settings, status="uploaded")
                                     
-                                    # Check if all destinations are done
-                                    from app.services.video import check_upload_success
-                                    all_settings = get_all_user_settings(video.user_id, db=db)
-                                    all_tokens = get_all_oauth_tokens(video.user_id, db=db)
-                                    dest_settings = all_settings.get("destinations", {})
+                                    # Refresh video and build full response (backend is source of truth)
+                                    db.refresh(video)
+                                    from app.services.event_service import publish_video_status_changed
+                                    from app.services.video.helpers import build_video_response
+                                    video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
                                     
-                                    # Check all enabled destinations
-                                    enabled_destinations = []
-                                    if all_settings.get("youtube", {}).get("youtube_enabled"):
-                                        enabled_destinations.append("youtube")
-                                    if all_settings.get("tiktok", {}).get("tiktok_enabled"):
-                                        enabled_destinations.append("tiktok")
-                                    if all_settings.get("instagram", {}).get("instagram_enabled"):
-                                        enabled_destinations.append("instagram")
-                                    
-                                    all_done = all(check_upload_success(video, dest) for dest in enabled_destinations)
-                                    
-                                    if all_done and video.status != "uploaded":
-                                        update_video(video.id, video.user_id, db=db, custom_settings=custom_settings, status="uploaded")
-                                        
-                                        # Refresh video and build full response (backend is source of truth)
-                                        db.refresh(video)
-                                        from app.services.event_service import publish_video_status_changed
-                                        from app.services.video.helpers import build_video_response
-                                        video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
-                                        
-                                        await publish_video_status_changed(video.user_id, video.id, old_status, "uploaded", video_dict=video_dict)
+                                    await publish_video_status_changed(video.user_id, video.id, old_status, "uploaded", video_dict=video_dict)
+                                    if tiktok_id:
                                         status_logger.info(f"TikTok video {video.id} published successfully, tiktok_id: {tiktok_id}")
                                     else:
-                                        update_video(video.id, video.user_id, db=db, custom_settings=custom_settings)
-                                        
-                                        # Refresh video and build full response (backend is source of truth)
-                                        db.refresh(video)
-                                        from app.services.event_service import publish_video_updated
-                                        from app.services.video.helpers import build_video_response
-                                        video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
-                                        
-                                        await publish_video_updated(video.user_id, video.id, {"tiktok_id": tiktok_id})
+                                        status_logger.info(f"TikTok video {video.id} published successfully (via 404), publish_id: {tiktok_publish_id}")
+                                else:
+                                    update_video(video.id, video.user_id, db=db, custom_settings=custom_settings)
+                                    
+                                    # Refresh video and build full response (backend is source of truth)
+                                    db.refresh(video)
+                                    from app.services.event_service import publish_video_updated
+                                    from app.services.video.helpers import build_video_response
+                                    video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
+                                    
+                                    await publish_video_updated(video.user_id, video.id, video_dict=video_dict)
+                                    if tiktok_id:
                                         status_logger.info(f"TikTok video {video.id} updated with tiktok_id: {tiktok_id}")
+                                    else:
+                                        status_logger.info(f"TikTok video {video.id} updated (published via 404), publish_id: {tiktok_publish_id}")
                                 
                             elif status in ["PROCESSING_DOWNLOAD", "PROCESSING_UPLOAD", "PROCESSING"]:
                                 # Map status to progress percentages

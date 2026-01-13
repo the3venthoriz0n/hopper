@@ -75,6 +75,12 @@ async def scheduler_task():
                         try:
                             scheduled_time = datetime.fromisoformat(video.scheduled_time) if isinstance(video.scheduled_time, str) else video.scheduled_time
                             
+                            # ROOT CAUSE FIX: Skip if scheduled_time is None (defensive programming)
+                            # This can happen due to race conditions where video is updated between query and processing
+                            if scheduled_time is None:
+                                logger.warning(f"Skipping video {video.id} - scheduled_time is None (likely updated between query and processing)")
+                                continue
+                            
                             # ROOT CAUSE FIX: Upload if scheduled time has passed
                             # This handles both:
                             # 1. Videos scheduled for future upload (status="scheduled")

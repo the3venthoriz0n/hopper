@@ -263,34 +263,6 @@ export default function VideoItem({
             </div>
           )}
         </div>
-        {v.tiktok_publish_status && (
-          <div style={{
-            marginTop: '6px',
-            fontSize: '0.75rem',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '4px'
-          }}>
-            <span style={{ color: HOPPER_COLORS.grey, flexShrink: 0 }}>TikTok:</span>
-            <span style={flexTextStyle}>
-              {v.tiktok_publish_status === 'PUBLISHED' && (
-                <span style={{ color: HOPPER_COLORS.tokenGreen, fontWeight: '500' }}>Published</span>
-              )}
-              {v.tiktok_publish_status === 'PROCESSING' && (
-                <span style={{ color: HOPPER_COLORS.warning, fontWeight: '500' }}>Processing...</span>
-              )}
-              {v.tiktok_publish_status === 'FAILED' && (
-                <span style={{ color: HOPPER_COLORS.error, fontWeight: '500' }}>Failed</span>
-              )}
-              {!['PUBLISHED', 'PROCESSING', 'FAILED'].includes(v.tiktok_publish_status) && (
-                <span style={{ color: HOPPER_COLORS.grey, fontWeight: '500' }}>{v.tiktok_publish_status}</span>
-              )}
-              {v.tiktok_publish_error && (
-                <span style={{ color: HOPPER_COLORS.error, fontSize: '0.7rem', marginLeft: '4px' }} title={v.tiktok_publish_error}>({v.tiktok_publish_error})</span>
-              )}
-            </span>
-          </div>
-        )}
         {/* Status section - only shows non-upload statuses (scheduled, cancelled, etc.) */}
         <div className="status" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
           <span style={flexTextStyle}>

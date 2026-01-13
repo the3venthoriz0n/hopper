@@ -40,9 +40,24 @@ export const getWebSocketUrl = (url = '/ws') => {
   return `${protocol}//${hostname}${port}${url}`;
 };
 
-// Response interceptor for error handling
+// Response interceptor for error handling and CSRF token refresh
 axios.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // ROOT CAUSE FIX: Always refresh CSRF token from response headers
+    // This prevents stale token issues when token is refreshed between requests
+    const token = response.headers['x-csrf-token'] || response.headers['X-CSRF-Token'];
+    if (token) {
+      // Update cookie so it's available for next request
+      Cookies.set('csrf_token_client', token, { 
+        secure: true, 
+        sameSite: 'lax',
+        path: '/'
+      });
+      // Update in-memory token
+      csrfToken = token;
+    }
+    return response;
+  },
   (error) => Promise.reject(error)
 );
 

@@ -685,6 +685,14 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         publish_id = init_data["data"]["publish_id"]
         
         tiktok_logger.info(f"Initialized, publish_id: {publish_id}")
+        
+        # ROOT CAUSE FIX: Save publish_id to database immediately so status_checker can track it
+        # even if this upload task times out. This ensures long-running uploads aren't lost.
+        custom_settings = video.custom_settings or {}
+        custom_settings = custom_settings.copy()
+        custom_settings['tiktok_publish_id'] = publish_id
+        update_video(video_id, user_id, db=db, custom_settings=custom_settings, status="uploading")
+        
         progress = 10
         set_upload_progress(user_id, video_id, progress)
         set_platform_upload_progress(user_id, video_id, "tiktok", progress)
@@ -868,6 +876,19 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                     await publish_upload_progress(user_id, video_id, "tiktok", progress)
                     last_published_progress = progress
                     break
+                elif status == "PUBLISHED":
+                    # ROOT CAUSE FIX: 404 returned PUBLISHED status - video was published, complete upload
+                    # video_id may be None, but status_checker can fetch it later if needed
+                    progress = 100
+                    set_upload_progress(user_id, video_id, progress)
+                    set_platform_upload_progress(user_id, video_id, "tiktok", progress)
+                    await publish_upload_progress(user_id, video_id, "tiktok", progress)
+                    last_published_progress = progress
+                    tiktok_logger.info(
+                        f"TikTok upload completed via 404 PUBLISHED status - "
+                        f"User {user_id}, Video {video_id} ({video.filename}), publish_id: {publish_id}"
+                    )
+                    break
                 elif status == "FAILED":
                     # Upload failed
                     error_msg = status_data.get("fail_reason", "Upload failed")
@@ -879,7 +900,18 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
             
             # If we exit the loop without PUBLISH_COMPLETE, it means we timed out
             if poll_count >= max_polls:
-                raise Exception(f"TikTok upload timeout after {max_polls * 5} seconds of polling")
+                # ROOT CAUSE FIX: Don't fail on timeout - hand off to status_checker
+                # publish_id is already saved, so status_checker can continue monitoring
+                # TikTok uploads can take longer than 10 minutes, especially for large files
+                tiktok_logger.info(
+                    f"TikTok upload polling timeout after {max_polls * 5} seconds - "
+                    f"handing off to status_checker for User {user_id}, Video {video_id} ({video.filename}), "
+                    f"publish_id: {publish_id}. Status checker will continue monitoring."
+                )
+                # Ensure video status is "uploading" so status_checker picks it up
+                update_video(video_id, user_id, db=db, status="uploading")
+                # Return successfully - status_checker will complete the monitoring
+                return
         
         # Check for cancellation before marking as success
         if _cancellation_flags.get(video_id, False):
