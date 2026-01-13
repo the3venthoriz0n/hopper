@@ -3,6 +3,7 @@ import os
 import pytest
 import httpx
 import time
+from app.core.config import settings
 
 
 # Determine BASE_URL based on environment
@@ -69,8 +70,8 @@ def login_user(client, email, password):
 
 
 @pytest.mark.skipif(
-    not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
-    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run."
+    settings.ENVIRONMENT == "production" or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run. Disabled in production."
 )
 def test_protected_endpoint_requires_auth(client):
     """Test that protected endpoints require authentication"""
@@ -78,8 +79,8 @@ def test_protected_endpoint_requires_auth(client):
     assert response.status_code == 401
 
 @pytest.mark.skipif(
-    not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
-    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run."
+    settings.ENVIRONMENT == "production" or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run. Disabled in production."
 )
 def test_public_endpoint_accessible(client):
     """Test that public endpoints are accessible"""
@@ -101,15 +102,16 @@ def test_public_endpoint_accessible(client):
 
 
 @pytest.mark.skipif(
-    not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
-    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run."
+    settings.ENVIRONMENT == "production" or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run. Disabled in production."
 )
 def test_user_registration(client):
     """Test user registration with valid data"""
     test_email = f"delivered+registration_{int(time.time())}@resend.dev"
     response = register_user(client, test_email, "SecurePassword123!")
     
-    assert response.status_code in [200, 400]
+    # Accept 200 (success), 400 (validation error), 503 (service unavailable), but not 500
+    assert response.status_code in [200, 400, 503], f"Unexpected status code {response.status_code}: {response.text}"
     if response.status_code == 200:
         data = response.json()
         assert data["user"]["email"] == test_email
@@ -119,8 +121,8 @@ def test_user_registration(client):
 
 
 @pytest.mark.skipif(
-    not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
-    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run."
+    settings.ENVIRONMENT == "production" or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run. Disabled in production."
 )
 def test_login_with_invalid_credentials(client):
     """Test that login fails with invalid credentials"""
@@ -133,8 +135,8 @@ def test_login_with_invalid_credentials(client):
 
 
 @pytest.mark.skipif(
-    not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
-    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run."
+    settings.ENVIRONMENT == "production" or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run. Disabled in production."
 )
 def test_session_cookie_set_on_login(client):
     """Test that login sets session cookie (requires email verification)"""
@@ -163,8 +165,8 @@ def test_session_cookie_set_on_login(client):
 
 
 @pytest.mark.skipif(
-    not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
-    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run."
+    settings.ENVIRONMENT == "production" or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run. Disabled in production."
 )
 def test_csrf_protection(client):
     """Test that POST requests without CSRF token are rejected"""
@@ -190,8 +192,8 @@ def test_csrf_protection(client):
 
 
 @pytest.mark.skipif(
-    not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
-    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run."
+    settings.ENVIRONMENT == "production" or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run. Disabled in production."
 )
 def test_auth_me_endpoint(client):
     """Test that /api/auth/me returns user info or None"""
@@ -202,8 +204,8 @@ def test_auth_me_endpoint(client):
 
 
 @pytest.mark.skipif(
-    not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
-    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run."
+    settings.ENVIRONMENT == "production" or not os.getenv("RUN_INTEGRATION_TESTS", "").lower() == "true",
+    reason="Integration test - requires running backend server. Set RUN_INTEGRATION_TESTS=true to run. Disabled in production."
 )
 def test_logout_invalidates_session(client):
     """Test that logout invalidates the session"""

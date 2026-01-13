@@ -611,9 +611,13 @@ def register_user(email: str, password: str) -> dict:
         raise ValueError("Password must be at least 8 characters long")
     
     # Check existing user
-    existing_user = get_user_by_email(email)
-    if existing_user:
-        raise ValueError("Email already registered. Please log in, reset your password, or resend the verification email.")
+    try:
+        existing_user = get_user_by_email(email)
+        if existing_user:
+            raise ValueError("Email already registered. Please log in, reset your password, or resend the verification email.")
+    except Exception as e:
+        logger.error(f"Database error checking existing user during registration: {e}", exc_info=True)
+        raise ValueError("Registration service temporarily unavailable. Please try again.")
     
     # Initiate registration
     verification_code, password_hash = initiate_registration(email, password)
@@ -660,9 +664,16 @@ def login_user(email: str, password: str, db: Session, request: Optional[Request
     logger = logging.getLogger(__name__)
     
     # Authenticate user
-    user = authenticate_user(email, password, db=db)
-    if not user:
-        raise ValueError("Invalid email or password")
+    try:
+        user = authenticate_user(email, password, db=db)
+        if not user:
+            raise ValueError("Invalid email or password")
+    except ValueError:
+        # Re-raise ValueError as-is (invalid credentials)
+        raise
+    except Exception as e:
+        logger.error(f"Database error during authentication: {e}", exc_info=True)
+        raise ValueError("Login service temporarily unavailable. Please try again.")
     
     # Check email verification
     if not getattr(user, "is_email_verified", False):
