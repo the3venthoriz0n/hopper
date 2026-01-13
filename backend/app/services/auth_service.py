@@ -2,6 +2,7 @@
 import bcrypt
 import logging
 import secrets
+import redis
 from typing import Optional, Tuple, Dict
 from fastapi import Request
 import httpx
@@ -267,9 +268,22 @@ def create_session(user_id: int) -> str:
         
     Returns:
         str: Session ID
+        
+    Raises:
+        ValueError: If Redis operations fail
     """
+    logger = logging.getLogger(__name__)
+    
     session_id = secrets.token_urlsafe(32)
-    set_session(session_id, user_id)
+    try:
+        set_session(session_id, user_id)
+    except (redis.ConnectionError, redis.TimeoutError, redis.BusyLoadingError) as e:
+        logger.error(f"Redis connection error creating session: {e}", exc_info=True)
+        raise ValueError(f"Login service temporarily unavailable. Please try again.")
+    except Exception as e:
+        logger.error(f"Unexpected Redis error creating session: {e}", exc_info=True)
+        raise ValueError(f"Login failed due to service error.")
+    
     return session_id
 
 
@@ -299,15 +313,34 @@ def initiate_registration(email: str, password: str) -> Tuple[str, str]:
         
     Returns:
         tuple: (verification_code, password_hash)
+        
+    Raises:
+        ValueError: If Redis operations fail
     """
+    logger = logging.getLogger(__name__)
+    
     # Hash password and store in pending registration
     password_hash = hash_password(password)
-    set_pending_registration(email, password_hash)
+    try:
+        set_pending_registration(email, password_hash)
+    except (redis.ConnectionError, redis.TimeoutError, redis.BusyLoadingError) as e:
+        logger.error(f"Redis connection error during registration: {e}", exc_info=True)
+        raise ValueError(f"Registration service temporarily unavailable. Please try again.")
+    except Exception as e:
+        logger.error(f"Unexpected Redis error during registration: {e}", exc_info=True)
+        raise ValueError(f"Registration failed due to service error.")
     
     # Generate and store email verification code (6-character, uppercase A-Z/0-9)
     alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
     verification_code = "".join(secrets.choice(alphabet) for _ in range(6))
-    set_email_verification_code(email, verification_code)
+    try:
+        set_email_verification_code(email, verification_code)
+    except (redis.ConnectionError, redis.TimeoutError, redis.BusyLoadingError) as e:
+        logger.error(f"Redis connection error storing verification code: {e}", exc_info=True)
+        raise ValueError(f"Registration service temporarily unavailable. Please try again.")
+    except Exception as e:
+        logger.error(f"Unexpected Redis error storing verification code: {e}", exc_info=True)
+        raise ValueError(f"Registration failed due to service error.")
     
     return verification_code, password_hash
 

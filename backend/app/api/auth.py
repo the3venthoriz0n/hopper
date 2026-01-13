@@ -27,7 +27,10 @@ def register(request_data: RegisterRequest, request: Request, response: Response
     try:
         return register_user(request_data.email, request_data.password)
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        error_msg = str(e)
+        if "service temporarily unavailable" in error_msg.lower() or "service error" in error_msg.lower():
+            raise HTTPException(503, error_msg)
+        raise HTTPException(400, error_msg)
     except Exception as e:
         logger.error(f"Registration error: {e}", exc_info=True)
         raise HTTPException(500, "Registration failed")
@@ -46,6 +49,8 @@ def login(request_data: LoginRequest, request: Request, response: Response, db: 
             raise HTTPException(401, error_msg)
         elif "Email address not verified" in error_msg:
             raise HTTPException(403, error_msg)
+        elif "service temporarily unavailable" in error_msg.lower() or "service error" in error_msg.lower():
+            raise HTTPException(503, error_msg)
         else:
             raise HTTPException(401, error_msg)
     except Exception as e:

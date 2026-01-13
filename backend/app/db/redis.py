@@ -16,10 +16,18 @@ def get_redis_client():
     """Get or create Redis client (lazy initialization)
     
     This prevents connection attempts during import, allowing mocks to be applied first.
+    Configured with appropriate timeouts and retry settings for production reliability.
     """
     global _client
     if _client is None:
-        _client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        _client = redis.from_url(
+            settings.REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+            retry_on_timeout=True,
+            health_check_interval=30
+        )
     return _client
 
 def get_async_redis_client():
