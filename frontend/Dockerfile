@@ -16,6 +16,10 @@ ENV REACT_APP_VERSION=${REACT_APP_VERSION}
 COPY package*.json ./
 RUN npm install
 
+# Copy source code and public assets for tests (needed in CI/CD where there's no volume mount)
+COPY src/ ./src/
+COPY public/ ./public/
+
 EXPOSE 3000
 
 # Start React dev server (code mounted as volume in docker-compose)
