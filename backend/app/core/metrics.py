@@ -254,6 +254,58 @@ def update_active_users_detail_gauge(active_users_data: dict, db) -> None:
         logger.error(f"Failed to update active_users_detail_gauge: {e}", exc_info=True)
 
 
+def update_scheduled_uploads_detail_gauge(db) -> None:
+    """
+    Update the scheduled_uploads_detail_gauge with scheduled videos and their details.
+    
+    Args:
+        db: Database session to query scheduled videos
+    """
+    try:
+        from app.models.video import Video
+        from app.models.user import User
+        from datetime import datetime, timezone
+        
+        # Query all scheduled videos with their user information
+        scheduled_videos = db.query(Video, User).join(
+            User, Video.user_id == User.id
+        ).filter(
+            Video.status == 'scheduled',
+            Video.scheduled_time.isnot(None)
+        ).all()
+        
+        # Clear existing gauge data by clearing all label combinations
+        scheduled_uploads_detail_gauge._metrics.clear()
+        
+        # Populate gauge with current scheduled videos
+        for video, user in scheduled_videos:
+            try:
+                # Format timestamps as ISO strings for Prometheus labels
+                scheduled_time_str = video.scheduled_time.isoformat() if video.scheduled_time else ""
+                created_at_str = video.created_at.isoformat() if video.created_at else ""
+                
+                # Set gauge with labels - value is always 1 (video is scheduled)
+                scheduled_uploads_detail_gauge.labels(
+                    user_id=str(video.user_id),
+                    user_email=user.email,
+                    filename=video.filename,
+                    scheduled_time=scheduled_time_str,
+                    created_at=created_at_str,
+                    status=video.status
+                ).set(1)
+            except Exception as e:
+                # Skip videos that cause errors but continue processing others
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to update metrics for video {video.id}: {e}")
+                continue
+    except Exception as e:
+        # Never let metric updates break the metrics endpoint
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to update scheduled_uploads_detail_gauge: {e}", exc_info=True)
+
+
 def update_active_subscriptions_gauge(db) -> None:
     """
     Update the active_subscriptions_gauge with counts of active subscriptions by plan type.

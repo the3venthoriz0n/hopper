@@ -294,10 +294,6 @@
               {
                 "color": "green",
                 "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
               }
             ]
           }
@@ -306,7 +302,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "user_email"
+              "options": "User Email"
             },
             "properties": [
               {
@@ -318,7 +314,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Last Login"
+              "options": "Last Activity"
             },
             "properties": [
               {
@@ -373,10 +369,15 @@
               "__name__": true,
               "Value": true
             },
+            "includeByName": {
+              "user_email": true,
+              "user_id": true,
+              "last_activity": true
+            },
             "indexByName": {
               "user_email": 0,
-              "user_id": 1,
-              "last_activity": 2
+              "last_activity": 1,
+              "user_id": 2
             },
             "renameByName": {
               "user_email": "User Email",
@@ -424,7 +425,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "user_email"
+              "options": "User"
             },
             "properties": [
               {
@@ -442,22 +443,6 @@
               {
                 "id": "custom.width",
                 "value": 250
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Current Time"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 200
-              },
-              {
-                "id": "unit",
-                "value": "time: YYYY-MM-DD h:mm:ss a"
               }
             ]
           },
@@ -530,17 +515,27 @@
         {
           "id": "organize",
           "options": {
-            "excludeByName": {},
+            "excludeByName": {
+              "__name__": true,
+              "Value": true,
+              "Time": true,
+              "user_id": true
+            },
+            "includeByName": {
+              "user_email": true,
+              "filename": true,
+              "created_at": true,
+              "scheduled_time": true,
+              "status": true
+            },
             "indexByName": {
-              "Time": 4,
-              "created_at": 2,
+              "user_email": 0,
               "filename": 1,
+              "created_at": 2,
               "scheduled_time": 3,
-              "status": 5,
-              "user_email": 0
+              "status": 4
             },
             "renameByName": {
-              "Time": "Current Time",
               "created_at": "Added to Queue",
               "filename": "Filename",
               "scheduled_time": "Scheduled Upload Time",
@@ -678,7 +673,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 24
+        "y": 33
       },
       "id": 7,
       "options": {
@@ -801,7 +796,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 24
+        "y": 33
       },
       "id": 8,
       "options": {
@@ -958,7 +953,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 33
+        "y": 24
       },
       "id": 26,
       "options": {
@@ -998,9 +993,16 @@
               "Line": true,
               "timestamp": true
             },
+            "includeByName": {
+              "Time": true,
+              "username": true,
+              "ip": true,
+              "method": true,
+              "user_id": true
+            },
             "indexByName": {
-              "Time": 0,
-              "username": 1,
+              "username": 0,
+              "Time": 1,
               "ip": 2,
               "method": 3,
               "user_id": 4

@@ -14,7 +14,8 @@ def metrics_endpoint(db: Session = Depends(get_db)):
     from app.core.metrics import (
         update_active_users_gauge_from_sessions,
         update_active_users_detail_gauge,
-        update_active_subscriptions_gauge
+        update_active_subscriptions_gauge,
+        update_scheduled_uploads_detail_gauge
     )
     from app.db.redis import get_active_users_with_timestamps
     from app.models.user import User
@@ -28,6 +29,9 @@ def metrics_endpoint(db: Session = Depends(get_db)):
     
     # Update active subscriptions gauge with current data
     update_active_subscriptions_gauge(db)
+    
+    # Update scheduled uploads detail gauge with current data
+    update_scheduled_uploads_detail_gauge(db)
     
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
