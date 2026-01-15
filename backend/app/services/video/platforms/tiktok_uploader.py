@@ -38,7 +38,7 @@ tiktok_logger = logging.getLogger("tiktok")
 async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None, session_id: str = None):
     """Upload a single video to TikTok - queries database directly"""
     # Import metrics from centralized location
-    from app.core.metrics import successful_uploads_counter, failed_uploads_gauge
+    from app.core.metrics import successful_uploads_counter
     # Import cancellation flag to check for cancellation during upload
     from app.services.video.orchestrator import _cancellation_flags
     
@@ -80,7 +80,6 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
             )
             
             record_platform_error(video_id, user_id, "tiktok", error_msg, db=db)
-            failed_uploads_gauge.inc()
             return
     
     # Get TikTok credentials from database
@@ -98,7 +97,6 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                 }
             )
             record_platform_error(video_id, user_id, "tiktok", error_msg, db=db)
-            failed_uploads_gauge.inc()
             return
     
     # Decrypt access token
@@ -145,7 +143,6 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                     exc_info=True
                 )
                 record_platform_error(video_id, user_id, "tiktok", error_msg, db=db)
-                failed_uploads_gauge.inc()
                 return
         else:
             error_msg = "Access token expired and no refresh token available. Please reconnect your TikTok account."
@@ -160,7 +157,6 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                 }
             )
             record_platform_error(video_id, user_id, "tiktok", error_msg, db=db)
-            failed_uploads_gauge.inc()
             return
     
     # Get settings from database
@@ -202,7 +198,6 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                         }
                     )
                     record_platform_error(video_id, user_id, "tiktok", error_msg, db=db)
-                    failed_uploads_gauge.inc()
                     return
                 refresh_token_decrypted = decrypt(tiktok_token.refresh_token) if tiktok_token.refresh_token else None
                 if refresh_token_decrypted:
@@ -227,7 +222,6 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                             exc_info=True
                         )
                         record_platform_error(video_id, user_id, "tiktok", error_msg, db=db)
-                        failed_uploads_gauge.inc()
                         return
                 else:
                     error_msg = f"Access token is invalid and no refresh token available. Please reconnect your TikTok account. Error: {error_msg}"
@@ -242,7 +236,6 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                         }
                     )
                     record_platform_error(video_id, user_id, "tiktok", error_msg, db=db)
-                    failed_uploads_gauge.inc()
                     return
             else:
                 # Other error - re-raise
@@ -263,7 +256,6 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                 }
             )
             record_platform_error(video_id, user_id, "tiktok", error_msg, db=db)
-            failed_uploads_gauge.inc()
             raise Exception(error_msg)
         
         # Get video file
@@ -338,7 +330,6 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                         }
                     )
                     record_platform_error(video_id, user_id, "tiktok", error_msg, db=db)
-                    failed_uploads_gauge.inc()
                     raise Exception(error_msg)
                 tiktok_logger.debug(f"Video duration validated: {video_duration_seconds:.1f}s <= {max_video_post_duration_sec}s")
             except Exception as duration_error:
@@ -382,7 +373,6 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                 }
             )
             record_platform_error(video_id, user_id, "tiktok", error_msg, db=db)
-            failed_uploads_gauge.inc()
             return
         
         try:
@@ -401,7 +391,6 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                 }
             )
             record_platform_error(video_id, user_id, "tiktok", error_msg, db=db)
-            failed_uploads_gauge.inc()
             return
         
         # Check creator_info for disabled interactions
@@ -568,7 +557,6 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                             }
                         )
                         record_platform_error(video_id, user_id, "tiktok", error_msg, db=db)
-                        failed_uploads_gauge.inc()
                         return
                     refresh_token_decrypted = decrypt(tiktok_token.refresh_token) if tiktok_token.refresh_token else None
                     if refresh_token_decrypted:
@@ -626,7 +614,6 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                                 exc_info=True
                             )
                             record_platform_error(video_id, user_id, "tiktok", error_msg, db=db)
-                            failed_uploads_gauge.inc()
                             return
             except:
                 pass

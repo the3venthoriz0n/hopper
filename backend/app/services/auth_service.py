@@ -667,20 +667,33 @@ def login_user(email: str, password: str, db: Session, request: Optional[Request
     try:
         user = authenticate_user(email, password, db=db)
         if not user:
+            login_attempts_counter.labels(status="failure", method="email").inc()
             raise ValueError("Invalid email or password")
-    except ValueError:
+    except ValueError as e:
+        # Track failed login attempt if not already tracked above
+        error_msg = str(e)
+        # Only track here if we haven't already tracked it above
+        # (email verification check will track its own failure)
+        if "Invalid email or password" in error_msg:
+            # Already tracked above, just re-raise
+            pass
         # Re-raise ValueError as-is (invalid credentials)
         raise
     except Exception as e:
         logger.error(f"Database error during authentication: {e}", exc_info=True)
+        login_attempts_counter.labels(status="failure", method="email").inc()
         raise ValueError("Login service temporarily unavailable. Please try again.")
     
     # Check email verification
     if not getattr(user, "is_email_verified", False):
+        login_attempts_counter.labels(status="failure", method="email").inc()
         raise ValueError("Email address not verified")
     
     # Create session
     session_id = create_session(user.id)
+    
+    # Track successful login attempt
+    login_attempts_counter.labels(status="success", method="email").inc()
     
     # Extract IP address if request is provided
     client_ip = get_client_ip(request) if request else "unknown"

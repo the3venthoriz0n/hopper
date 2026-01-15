@@ -346,3 +346,75 @@ def update_active_subscriptions_gauge(db) -> None:
         import logging
         logger = logging.getLogger(__name__)
         logger.error(f"Failed to update active_subscriptions_gauge: {e}", exc_info=True)
+
+
+def update_upload_status_gauges(db) -> None:
+    """
+    Update upload status gauges by querying database for video counts by status.
+    
+    Args:
+        db: Database session to query videos
+    """
+    try:
+        from app.models.video import Video
+        from sqlalchemy import func
+        
+        # Query video counts grouped by status
+        results = db.query(
+            Video.status,
+            func.count(Video.id).label('count')
+        ).group_by(
+            Video.status
+        ).all()
+        
+        # Initialize counts
+        queued_count = 0
+        scheduled_count = 0
+        current_count = 0
+        failed_count = 0
+        
+        # Aggregate counts by status
+        for status, count in results:
+            if status == 'pending':
+                queued_count = count
+            elif status == 'scheduled':
+                scheduled_count = count
+            elif status == 'uploading':
+                current_count = count
+            elif status == 'failed':
+                failed_count = count
+        
+        # Update gauges
+        try:
+            queued_uploads_gauge.set(queued_count)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to update queued_uploads_gauge: {e}")
+        
+        try:
+            scheduled_uploads_gauge.set(scheduled_count)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to update scheduled_uploads_gauge: {e}")
+        
+        try:
+            current_uploads_gauge.set(current_count)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to update current_uploads_gauge: {e}")
+        
+        try:
+            failed_uploads_gauge.set(failed_count)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to update failed_uploads_gauge: {e}")
+            
+    except Exception as e:
+        # Never let metric updates break the metrics endpoint
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to update upload_status_gauges: {e}", exc_info=True)

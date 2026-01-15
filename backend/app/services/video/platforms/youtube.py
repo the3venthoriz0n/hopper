@@ -27,7 +27,7 @@ youtube_logger = logging.getLogger("youtube")
 async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
     """Upload a single video to YouTube - queries database directly"""
     # Import metrics from centralized location
-    from app.core.metrics import successful_uploads_counter, failed_uploads_gauge
+    from app.core.metrics import successful_uploads_counter
     # Import cancellation flag to check for cancellation during upload
     from app.services.video.orchestrator import _cancellation_flags
     
@@ -70,7 +70,6 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
             )
             
             record_platform_error(video_id, user_id, "youtube", error_msg, db=db)
-            failed_uploads_gauge.inc()
             return
     
     # Get YouTube credentials from database
@@ -88,7 +87,6 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
                 }
             )
             record_platform_error(video_id, user_id, "youtube", error_msg, db=db)
-            failed_uploads_gauge.inc()
             return
     
     # Convert OAuth token to Google Credentials
