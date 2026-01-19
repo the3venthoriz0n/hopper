@@ -25,8 +25,8 @@ function DeleteYourData() {
         
         <h2>4. Need Help?</h2>
         <p>If you have trouble deleting your data or have questions about data privacy, please contact us at{' '}
-          <a href="mailto:andrewkpln+hopper@gmail.com" className="page-link">
-            andrewkpln+hopper@gmail.com
+          <a href="mailto:syndic.apps@gmail.com" className="page-link">
+            syndic.apps@gmail.com
           </a>
           .
         </p>

@@ -41,8 +41,8 @@ function Privacy() {
         <p>
           If you have any questions about this Privacy Policy or how your data is handled, you can
           contact us at{' '}
-          <a href="mailto:andrewkpln+hopper@gmail.com" className="page-link">
-            andrewkpln+hopper@gmail.com
+          <a href="mailto:syndic.apps@gmail.com" className="page-link">
+            syndic.apps@gmail.com
           </a>
           .
         </p>
