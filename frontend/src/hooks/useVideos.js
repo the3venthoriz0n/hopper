@@ -172,26 +172,7 @@ export function useVideos(
   }, []);
 
   const addVideo = useCallback(async (file) => {
-    // Use maxFileSize from backend config (9GB or 10GB), fallback to 10GB if not provided
-    const maxSizeBytes = maxFileSize?.bytes || (10 * 1024 * 1024 * 1024); // 10GB default
-    const maxSizeDisplay = maxFileSize?.display || '10 GB';
-    
-    if (file.size > maxSizeBytes) {
-      const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-      const fileSizeGB = (file.size / (1024 * 1024 * 1024)).toFixed(2);
-      const errorMsg = `File too large: ${file.name} is ${fileSizeMB} MB (${fileSizeGB} GB). Maximum file size is ${maxSizeDisplay}.`;
-      
-      setNotification({
-        type: 'error',
-        title: 'File Too Large',
-        message: errorMsg,
-        videoFilename: file.name
-      });
-      setTimeout(() => setNotification(null), 10000);
-      if (setMessage) setMessage(`❌ ${errorMsg}`);
-      return;
-    }
-    
+    // Backend is the source of truth for validation - let backend validate and report errors
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const tempVideo = {
       id: tempId,
@@ -236,10 +217,11 @@ export function useVideos(
       
       const isTimeout = err.code === 'ECONNABORTED' || err.message?.includes('timeout');
       const isNetworkError = !err.response && (err.code === 'ERR_NETWORK' || err.code === 'ECONNRESET');
+      // Backend is source of truth - check for backend validation errors
       const isFileSizeError = err.response?.status === 413 || 
-                              (!err.response && file.size > maxSizeBytes) ||
-                              (err.message && (err.message.includes('413') || err.message.includes('Payload Too Large')));
+                              err.response?.status === 400 && err.response?.data?.detail?.includes('too large');
       
+      // Always prioritize backend error message
       let errorMsg = err.response?.data?.detail || err.message || 'Error adding video';
       
       if (isTimeout) {
@@ -272,18 +254,14 @@ export function useVideos(
         });
         setTimeout(() => setNotification(null), 15000);
       } else if (isFileSizeError) {
-        const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-        const fileSizeGB = (file.size / (1024 * 1024 * 1024)).toFixed(2);
-        const maxSizeDisplay = maxFileSize?.display || '10 GB';
-        errorMsg = err.response?.data?.detail || `File too large: ${file.name} is ${fileSizeMB} MB (${fileSizeGB} GB). Maximum file size is ${maxSizeDisplay}.`;
-        
+        // Backend error message is authoritative - display it as-is
         setNotification({
           type: 'error',
           title: 'File Too Large',
           message: errorMsg,
           videoFilename: file.name
         });
-        setTimeout(() => setNotification(null), 10000);
+        setTimeout(() => setNotification(null), 15000);
       } else if (err.response?.status === 400 && (errorMsg.includes('Insufficient tokens') || errorMsg.includes('Insufficient'))) {
         setNotification({
           type: 'error',

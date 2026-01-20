@@ -109,10 +109,9 @@ async def handle_file_upload(
                 if file_size > settings.MAX_FILE_SIZE:
                     size_mb = file_size / (1024 * 1024)
                     size_gb = file_size / (1024 * 1024 * 1024)
-                    max_mb = settings.MAX_FILE_SIZE / (1024 * 1024)
                     max_gb = settings.MAX_FILE_SIZE / (1024 * 1024 * 1024)
                     raise ValueError(
-                        f"File too large: {file.filename} is {size_mb:.2f} MB ({size_gb:.2f} GB). Maximum file size is {max_mb:.0f} MB ({max_gb:.0f} GB)."
+                        f"File too large: {file.filename} is {size_mb:.2f} MB ({size_gb:.2f} GB). Maximum file size is {max_gb:.0f} GB."
                     )
                 
                 f.write(chunk)

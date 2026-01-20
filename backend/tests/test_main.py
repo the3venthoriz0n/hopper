@@ -93,7 +93,7 @@ class TestRateLimiting:
 class TestVideoCleanup:
     """Test video file cleanup with R2 storage"""
     
-    @patch('app.services.video.helpers.get_r2_service')
+    @patch('app.services.storage.r2_service.get_r2_service')
     def test_cleanup_existing_file(self, mock_get_r2_service):
         """Test cleanup removes existing R2 object"""
         from app.models import Video
@@ -113,7 +113,7 @@ class TestVideoCleanup:
         assert result is True
         mock_r2_service.delete_object.assert_called_once_with("user_123/video_456_test.mp4")
     
-    @patch('app.services.video.helpers.get_r2_service')
+    @patch('app.services.storage.r2_service.get_r2_service')
     def test_cleanup_nonexistent_file(self, mock_get_r2_service):
         """Test cleanup succeeds when R2 object already deleted"""
         from app.models import Video
@@ -132,7 +132,7 @@ class TestVideoCleanup:
         assert result is True
         mock_r2_service.delete_object.assert_called_once_with("user_123/video_456_nonexistent.mp4")
     
-    @patch('app.services.video.helpers.get_r2_service')
+    @patch('app.services.storage.r2_service.get_r2_service')
     def test_cleanup_r2_error(self, mock_get_r2_service):
         """Test cleanup handles R2 deletion errors"""
         from app.models import Video
@@ -151,7 +151,7 @@ class TestVideoCleanup:
         assert result is False
         mock_r2_service.delete_object.assert_called_once_with("user_123/video_456_file.mp4")
     
-    @patch('app.services.video.helpers.get_r2_service')
+    @patch('app.services.storage.r2_service.get_r2_service')
     def test_cleanup_skips_tiktok_pull_from_url(self, mock_get_r2_service):
         """Test cleanup skips deletion when TikTok PULL_FROM_URL is in progress"""
         from app.models import Video

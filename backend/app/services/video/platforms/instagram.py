@@ -199,7 +199,7 @@ def _build_error_context(
 
 async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = None):
     """Upload a single video to Instagram using file_url method (like TikTok)"""
-    from app.core.metrics import successful_uploads_counter
+    from app.core.metrics import successful_uploads_counter, failed_uploads_gauge
     # Import cancellation flag to check for cancellation during upload
     from app.services.video.orchestrator import _cancellation_flags
     
@@ -291,7 +291,12 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         r2_service = get_r2_service()
         
         if not r2_service.object_exists(video.path):
-            error_msg = f"R2 object not found: {video.path}"
+            # Check if this is an old local path
+            from app.services.storage.r2_service import _is_old_local_path
+            if _is_old_local_path(video.path):
+                error_msg = f"Video has old local file path (pre-R2 migration): {video.path}. Please re-upload the video."
+            else:
+                error_msg = f"R2 object not found: {video.path}"
             instagram_logger.error(
                 f"❌ Instagram upload FAILED - R2 object not found - User {user_id}, Video {video_id} ({video.filename}): "
                 f"R2 object key: {video.path}",

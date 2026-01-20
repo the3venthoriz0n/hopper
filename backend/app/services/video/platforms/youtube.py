@@ -27,7 +27,7 @@ youtube_logger = logging.getLogger("youtube")
 async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = None):
     """Upload a single video to YouTube - queries database directly"""
     # Import metrics from centralized location
-    from app.core.metrics import successful_uploads_counter
+    from app.core.metrics import successful_uploads_counter, failed_uploads_gauge
     # Import cancellation flag to check for cancellation during upload
     from app.services.video.orchestrator import _cancellation_flags
     
@@ -229,13 +229,11 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
             youtube_logger.error(
                 f"❌ YouTube upload FAILED - No R2 object key - User {user_id}, Video {video_id} ({video.filename})",
                 extra={
-                    "context": {
-                        "user_id": user_id,
-                        "video_id": video_id,
-                        "video_filename": video.filename,
-                        "platform": "youtube",
-                        "error_type": "FileNotFound",
-                    }
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "video_filename": video.filename,
+                    "platform": "youtube",
+                    "error_type": "FileNotFound",
                 }
             )
             record_platform_error(video_id, user_id, "youtube", error_msg, db=db)
@@ -245,19 +243,22 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
         r2_service = get_r2_service()
         
         if not r2_service.object_exists(video.path):
-            error_msg = f"R2 object not found: {video.path}"
+            # Check if this is an old local path
+            from app.services.storage.r2_service import _is_old_local_path
+            if _is_old_local_path(video.path):
+                error_msg = f"Video has old local file path (pre-R2 migration): {video.path}. Please re-upload the video."
+            else:
+                error_msg = f"R2 object not found: {video.path}"
             youtube_logger.error(
                 f"❌ YouTube upload FAILED - R2 object not found - User {user_id}, Video {video_id} ({video.filename}): "
                 f"R2 object key: {video.path}",
                 extra={
-                    "context": {
-                        "user_id": user_id,
-                        "video_id": video_id,
-                        "video_filename": video.filename,
-                        "r2_object_key": video.path,
-                        "platform": "youtube",
-                        "error_type": "FileNotFound",
-                    }
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "video_filename": video.filename,
+                    "r2_object_key": video.path,
+                    "platform": "youtube",
+                    "error_type": "FileNotFound",
                 }
             )
             record_platform_error(video_id, user_id, "youtube", error_msg, db=db)
@@ -276,14 +277,12 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
                 f"❌ YouTube upload FAILED - R2 download failed - User {user_id}, Video {video_id} ({video.filename}): "
                 f"R2 object key: {video.path}",
                 extra={
-                    "context": {
-                        "user_id": user_id,
-                        "video_id": video_id,
-                        "video_filename": video.filename,
-                        "r2_object_key": video.path,
-                        "platform": "youtube",
-                        "error_type": "DownloadFailed",
-                    }
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "video_filename": video.filename,
+                    "r2_object_key": video.path,
+                    "platform": "youtube",
+                    "error_type": "DownloadFailed",
                 }
             )
             record_platform_error(video_id, user_id, "youtube", error_msg, db=db)
@@ -307,62 +306,62 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
             chunk_count = 0
             last_published_progress = -1
             while response is None:
-            # Check for cancellation during upload
-            if _cancellation_flags.get(video_id, False):
-                youtube_logger.info(f"YouTube upload cancelled for video {video_id} during upload")
-                raise Exception("Upload cancelled by user")
+                # Check for cancellation during upload
+                if _cancellation_flags.get(video_id, False):
+                    youtube_logger.info(f"YouTube upload cancelled for video {video_id} during upload")
+                    raise Exception("Upload cancelled by user")
+                
+                status, response = request.next_chunk()
+                if status:
+                    progress = int(status.progress() * 100)
+                    set_upload_progress(user_id, video_id, progress)
+                    set_platform_upload_progress(user_id, video_id, "youtube", progress)
+                    # Publish websocket event for real-time progress updates (1% increments or at completion)
+                    from app.services.video.helpers import should_publish_progress
+                    if should_publish_progress(progress, last_published_progress):
+                        await publish_upload_progress(user_id, video_id, "youtube", progress)
+                        last_published_progress = progress
+                    chunk_count += 1
+                    if chunk_count % 10 == 0 or progress == 100:  # Log every 10 chunks or at completion
+                        youtube_logger.info(f"Upload progress: {progress}%")
             
-            status, response = request.next_chunk()
-            if status:
-                progress = int(status.progress() * 100)
-                set_upload_progress(user_id, video_id, progress)
-                set_platform_upload_progress(user_id, video_id, "youtube", progress)
-                # Publish websocket event for real-time progress updates (1% increments or at completion)
-                from app.services.video.helpers import should_publish_progress
-                if should_publish_progress(progress, last_published_progress):
-                    await publish_upload_progress(user_id, video_id, "youtube", progress)
-                    last_published_progress = progress
-                chunk_count += 1
-                if chunk_count % 10 == 0 or progress == 100:  # Log every 10 chunks or at completion
-                    youtube_logger.info(f"Upload progress: {progress}%")
-        
-        # Update video in database with success
-        custom_settings = custom_settings.copy() if custom_settings else {}
-        custom_settings['youtube_id'] = response['id']
-        update_video(video_id, user_id, db=db, status="uploaded", custom_settings=custom_settings)
-        set_upload_progress(user_id, video_id, 100)
-        set_platform_upload_progress(user_id, video_id, "youtube", 100)
-        # Publish final progress update
-        await publish_upload_progress(user_id, video_id, "youtube", 100)
-        youtube_logger.info(f"Successfully uploaded {video.filename}, YouTube ID: {response['id']}")
-        
-        # Increment successful uploads counter
-        successful_uploads_counter.inc()
-        
-        # Deduct tokens after successful upload (only if not already deducted)
-        if video.tokens_consumed == 0:
-            # Use stored tokens_required with fallback for backward compatibility
-            tokens_required = video.tokens_required if video.tokens_required is not None else (calculate_tokens_from_bytes(video.file_size_bytes) if video.file_size_bytes else 0)
-            if tokens_required > 0:
-                await deduct_tokens(
-                    user_id=user_id,
-                    tokens=tokens_required,
-                    transaction_type='upload',
-                    video_id=video.id,
-                    metadata={
-                        'filename': video.filename,
-                        'platform': 'youtube',
-                        'youtube_id': response['id'],
-                        'file_size_bytes': video.file_size_bytes,
-                        'file_size_mb': round(video.file_size_bytes / (1024 * 1024), 2)
-                    },
-                    db=db
-                )
-            # Update tokens_consumed in video record to prevent double-charging
-            update_video(video_id, user_id, db=db, tokens_consumed=tokens_required)
-            youtube_logger.info(f"Deducted {tokens_required} tokens for user {user_id} (first platform upload)")
-        else:
-            youtube_logger.info(f"Tokens already deducted for this video (tokens_consumed={video.tokens_consumed}), skipping")
+            # Update video in database with success
+            custom_settings = custom_settings.copy() if custom_settings else {}
+            custom_settings['youtube_id'] = response['id']
+            update_video(video_id, user_id, db=db, status="uploaded", custom_settings=custom_settings)
+            set_upload_progress(user_id, video_id, 100)
+            set_platform_upload_progress(user_id, video_id, "youtube", 100)
+            # Publish final progress update
+            await publish_upload_progress(user_id, video_id, "youtube", 100)
+            youtube_logger.info(f"Successfully uploaded {video.filename}, YouTube ID: {response['id']}")
+            
+            # Increment successful uploads counter
+            successful_uploads_counter.inc()
+            
+            # Deduct tokens after successful upload (only if not already deducted)
+            if video.tokens_consumed == 0:
+                # Use stored tokens_required with fallback for backward compatibility
+                tokens_required = video.tokens_required if video.tokens_required is not None else (calculate_tokens_from_bytes(video.file_size_bytes) if video.file_size_bytes else 0)
+                if tokens_required > 0:
+                    await deduct_tokens(
+                        user_id=user_id,
+                        tokens=tokens_required,
+                        transaction_type='upload',
+                        video_id=video.id,
+                        metadata={
+                            'filename': video.filename,
+                            'platform': 'youtube',
+                            'youtube_id': response['id'],
+                            'file_size_bytes': video.file_size_bytes,
+                            'file_size_mb': round(video.file_size_bytes / (1024 * 1024), 2)
+                        },
+                        db=db
+                    )
+                # Update tokens_consumed in video record to prevent double-charging
+                update_video(video_id, user_id, db=db, tokens_consumed=tokens_required)
+                youtube_logger.info(f"Deducted {tokens_required} tokens for user {user_id} (first platform upload)")
+            else:
+                youtube_logger.info(f"Tokens already deducted for this video (tokens_consumed={video.tokens_consumed}), skipping")
         finally:
             # Clean up temp file
             if 'temp_video_path' in locals() and temp_video_path and temp_video_path.exists():

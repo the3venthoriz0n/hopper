@@ -292,14 +292,15 @@ async def retry_failed_upload_route(video_id: int, user_id: int = Depends(requir
 @upload_router.get("/limits")
 async def get_upload_limits():
     """Get upload size limits"""
-    # Temporary: 100MB limit due to Cloudflare free plan restrictions
-    MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100MB in bytes
+    from app.core.config import settings
+    MAX_UPLOAD_SIZE = settings.MAX_FILE_SIZE  # 10GB in bytes
+    max_gb = MAX_UPLOAD_SIZE / (1024 * 1024 * 1024)
     max_mb = MAX_UPLOAD_SIZE / (1024 * 1024)
     return {
         "max_file_size_bytes": MAX_UPLOAD_SIZE,
         "max_file_size_mb": int(max_mb),
-        "max_file_size_gb": max_mb / 1024,
-        "max_file_size_display": f"{int(max_mb)} MB"
+        "max_file_size_gb": max_gb,
+        "max_file_size_display": f"{int(max_gb)} GB"
     }
 
 

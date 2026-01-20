@@ -12,6 +12,24 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+def _is_old_local_path(object_key: str) -> bool:
+    """Check if object_key is an old local file path (pre-R2 migration)
+    
+    Args:
+        object_key: R2 object key to check
+        
+    Returns:
+        True if the key appears to be an old local file path, False otherwise
+    """
+    if not object_key:
+        return False
+    # Old paths typically start with /app/uploads/ (old Docker container path)
+    # Valid R2 keys are relative paths like "user_123/video_456.mp4" or "user_123/pending_1234567890_file.mp4"
+    # They never start with / and always start with "user_"
+    # Any absolute path (starting with /) is an old local path
+    return object_key.startswith('/')
+
+
 class R2Service:
     """Service for interacting with Cloudflare R2 storage"""
     
@@ -214,6 +232,11 @@ class R2Service:
             True if object exists, False otherwise
         """
         if not object_key:
+            return False
+        
+        # Check if this is an old local file path (pre-R2 migration)
+        if _is_old_local_path(object_key):
+            logger.debug(f"Object key appears to be old local path (pre-R2 migration): {object_key}")
             return False
         
         try:
