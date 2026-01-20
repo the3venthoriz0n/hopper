@@ -94,7 +94,12 @@ export function useVideos(
           return prevVideos;
         }
         
-        return [...uniqueData, ...tempVideos];
+        // Remove temp videos that now have real videos (matched by filename)
+        const remainingTempVideos = tempVideos.filter(tempV => 
+          !uniqueData.some(realV => realV.filename === tempV.filename)
+        );
+        
+        return [...uniqueData, ...remainingTempVideos];
       });
       
       if (user) {
@@ -193,16 +198,27 @@ export function useVideos(
       return;
     }
     
-    const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const tempVideo = {
-      id: tempId,
-      filename: file.name,
-      status: 'uploading',
-      progress: 0,
-      file_size_bytes: file.size,
-      tokens_consumed: 0
-    };
-    setVideos(prev => [...prev, tempVideo]);
+    // Check if temp video already exists for this filename (from uploadFilesSequentially)
+    const existingTempVideo = videos.find(v => 
+      typeof v.id === 'string' && 
+      v.id.startsWith('temp-') && 
+      v.filename === file.name
+    );
+    
+    const tempId = existingTempVideo?.id || `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Only create new temp video if one doesn't exist
+    if (!existingTempVideo) {
+      const tempVideo = {
+        id: tempId,
+        filename: file.name,
+        status: 'uploading',
+        progress: 0,
+        file_size_bytes: file.size,
+        tokens_consumed: 0
+      };
+      setVideos(prev => [...prev, tempVideo]);
+    }
     
     // Calculate timeout based on file size (1 minute per 100MB, with min 5min and max 2 hours)
     const timeoutMs = Math.max(5 * 60 * 1000, Math.min(2 * 60 * 60 * 1000, (file.size / (100 * 1024 * 1024)) * 60 * 1000));
@@ -316,14 +332,35 @@ export function useVideos(
         fileName: file.name
       });
     }
-  }, [maxFileSize, setMessage, setNotification]);
+  }, [videos, maxFileSize, setMessage, setNotification]);
 
   const uploadFilesSequentially = useCallback(async (files) => {
+    // Create temp video placeholders for all files immediately
+    const tempVideos = files.map((file, index) => {
+      const tempId = `temp-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`;
+      return {
+        id: tempId,
+        filename: file.name,
+        status: 'uploading',
+        progress: 0,
+        file_size_bytes: file.size,
+        tokens_consumed: 0
+      };
+    });
+    
+    // Add all temp videos to state immediately - they'll appear in queue right away
+    setVideos(prev => [...prev, ...tempVideos]);
+    
+    // Upload files sequentially - addVideo will find and update the matching temp video
     for (const file of files) {
       try {
-        await addVideo(file);
+        await addVideo(file); // addVideo will find temp video by filename and update it
       } catch (err) {
         console.error(`Failed to upload ${file.name}:`, err);
+        // Remove the corresponding temp video on failure
+        setVideos(prev => prev.filter(v => 
+          !(typeof v.id === 'string' && v.id.startsWith('temp-') && v.filename === file.name)
+        ));
       }
     }
   }, [addVideo]);
