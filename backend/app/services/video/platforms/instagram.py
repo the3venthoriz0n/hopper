@@ -329,10 +329,15 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         instagram_logger.info(f"Uploading {video.filename} to Instagram as {media_type} using file_url method")
         set_upload_progress(user_id, video_id, 10)
         
-        # Generate presigned R2 download URL (valid for 1 hour)
-        file_url = r2_service.generate_download_url(video.path, expires_in=3600)
+        # Use public domain URL if configured (for Instagram URL ownership verification)
+        # Otherwise fall back to presigned URL
+        if settings.R2_PUBLIC_DOMAIN:
+            file_url = f"https://{settings.R2_PUBLIC_DOMAIN}/{video.path}"
+            instagram_logger.info(f"Using public domain URL for Instagram download: {file_url}")
+        else:
+            file_url = r2_service.generate_download_url(video.path, expires_in=3600)
+            instagram_logger.info(f"Using presigned R2 URL for Instagram download")
         
-        instagram_logger.info(f"Generated presigned R2 URL for Instagram to download")
         set_upload_progress(user_id, video_id, 20)
         
         async with httpx.AsyncClient(timeout=300.0) as client:
