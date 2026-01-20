@@ -1,6 +1,5 @@
 """Videos API routes"""
 import logging
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -333,43 +332,22 @@ async def get_presigned_upload_url(
     Validates file size and generates R2 object key, returns presigned URL
     for direct client-to-R2 upload (bypasses backend).
     """
-    from app.db.helpers import get_user_videos, get_user_settings
+    from app.services.video.file_handler import get_presigned_upload_url_service
     
-    # Validate file size
-    if request.file_size > settings.MAX_FILE_SIZE:
-        size_mb = request.file_size / (1024 * 1024)
-        size_gb = request.file_size / (1024 * 1024 * 1024)
-        max_gb = settings.MAX_FILE_SIZE / (1024 * 1024 * 1024)
-        raise HTTPException(
-            413,
-            f"File too large: {request.filename} is {size_mb:.2f} MB ({size_gb:.2f} GB). Maximum file size is {max_gb:.0f} GB."
-        )
-    
-    # Check for duplicates
-    global_settings = get_user_settings(user_id, "global", db=db)
-    if not global_settings.get("allow_duplicates", False):
-        existing_videos = get_user_videos(user_id, db=db)
-        if any(v.filename == request.filename for v in existing_videos):
-            raise HTTPException(400, f"Duplicate video: {request.filename} is already in the queue")
-    
-    # Generate R2 object key: user_{user_id}/pending_{timestamp}_{filename}
-    timestamp = int(time.time() * 1000)  # milliseconds for uniqueness
-    object_key = f"user_{user_id}/pending_{timestamp}_{request.filename}"
-    
-    # Generate presigned URL
     try:
-        r2_service = get_r2_service()
-        upload_url = r2_service.generate_upload_url(
-            object_key,
+        return get_presigned_upload_url_service(
+            filename=request.filename,
+            file_size=request.file_size,
             content_type=request.content_type,
-            expires_in=settings.R2_PRESIGNED_URL_EXPIRY
+            user_id=user_id,
+            db=db
         )
-        
-        return {
-            "upload_url": upload_url,
-            "object_key": object_key,
-            "expires_in": settings.R2_PRESIGNED_URL_EXPIRY
-        }
+    except ValueError as e:
+        error_msg = str(e)
+        if "too large" in error_msg.lower():
+            raise HTTPException(413, error_msg)
+        else:
+            raise HTTPException(400, error_msg)
     except Exception as e:
         logger.error(f"Failed to generate presigned URL for user {user_id}: {e}", exc_info=True)
         raise HTTPException(500, f"Failed to generate upload URL: {str(e)}")
@@ -385,42 +363,22 @@ async def initiate_multipart_upload(
     
     Validates file size and creates multipart upload in R2, returns upload_id.
     """
-    from app.db.helpers import get_user_videos, get_user_settings
+    from app.services.video.file_handler import initiate_multipart_upload_service
     
-    # Validate file size
-    if request.file_size > settings.MAX_FILE_SIZE:
-        size_mb = request.file_size / (1024 * 1024)
-        size_gb = request.file_size / (1024 * 1024 * 1024)
-        max_gb = settings.MAX_FILE_SIZE / (1024 * 1024 * 1024)
-        raise HTTPException(
-            413,
-            f"File too large: {request.filename} is {size_mb:.2f} MB ({size_gb:.2f} GB). Maximum file size is {max_gb:.0f} GB."
-        )
-    
-    # Check for duplicates
-    global_settings = get_user_settings(user_id, "global", db=db)
-    if not global_settings.get("allow_duplicates", False):
-        existing_videos = get_user_videos(user_id, db=db)
-        if any(v.filename == request.filename for v in existing_videos):
-            raise HTTPException(400, f"Duplicate video: {request.filename} is already in the queue")
-    
-    # Generate R2 object key: user_{user_id}/pending_{timestamp}_{filename}
-    timestamp = int(time.time() * 1000)  # milliseconds for uniqueness
-    object_key = f"user_{user_id}/pending_{timestamp}_{request.filename}"
-    
-    # Create multipart upload
     try:
-        r2_service = get_r2_service()
-        upload_id = r2_service.create_multipart_upload(
-            object_key,
-            content_type=request.content_type
+        return initiate_multipart_upload_service(
+            filename=request.filename,
+            file_size=request.file_size,
+            content_type=request.content_type,
+            user_id=user_id,
+            db=db
         )
-        
-        return {
-            "upload_id": upload_id,
-            "object_key": object_key,
-            "expires_in": settings.R2_PRESIGNED_URL_EXPIRY
-        }
+    except ValueError as e:
+        error_msg = str(e)
+        if "too large" in error_msg.lower():
+            raise HTTPException(413, error_msg)
+        else:
+            raise HTTPException(400, error_msg)
     except Exception as e:
         logger.error(f"Failed to initiate multipart upload for user {user_id}: {e}", exc_info=True)
         raise HTTPException(500, f"Failed to initiate multipart upload: {str(e)}")
@@ -432,25 +390,21 @@ async def get_multipart_part_url(
     user_id: int = Depends(require_csrf_new)
 ):
     """Get presigned URL for uploading a specific part in multipart upload"""
-    # Validate object_key belongs to user
-    if not request.object_key.startswith(f"user_{user_id}/"):
-        raise HTTPException(403, "Invalid object key for user")
+    from app.services.video.file_handler import get_multipart_part_url_service
     
     try:
-        r2_service = get_r2_service()
-        upload_url = r2_service.generate_presigned_url_for_part(
-            request.object_key,
-            request.upload_id,
-            request.part_number,
-            expires_in=settings.R2_PRESIGNED_URL_EXPIRY
+        return get_multipart_part_url_service(
+            object_key=request.object_key,
+            upload_id=request.upload_id,
+            part_number=request.part_number,
+            user_id=user_id
         )
-        
-        return {
-            "upload_url": upload_url,
-            "expires_in": settings.R2_PRESIGNED_URL_EXPIRY
-        }
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        error_msg = str(e)
+        if "invalid" in error_msg.lower() or "ownership" in error_msg.lower():
+            raise HTTPException(403, error_msg)
+        else:
+            raise HTTPException(400, error_msg)
     except Exception as e:
         logger.error(f"Failed to generate part URL for user {user_id}: {e}", exc_info=True)
         raise HTTPException(500, f"Failed to generate part URL: {str(e)}")
@@ -465,32 +419,23 @@ async def complete_multipart_upload(
     
     Combines all uploaded parts into final object.
     """
-    # Validate object_key belongs to user
-    if not request.object_key.startswith(f"user_{user_id}/"):
-        raise HTTPException(403, "Invalid object key for user")
+    from app.services.video.file_handler import complete_multipart_upload_service
+    from app.services.storage.r2_service import get_r2_service
     
     try:
-        r2_service = get_r2_service()
         parts = [{"PartNumber": p.part_number, "ETag": p.etag} for p in request.parts]
-        
-        success = r2_service.complete_multipart_upload(
-            request.object_key,
-            request.upload_id,
-            parts
+        return complete_multipart_upload_service(
+            object_key=request.object_key,
+            upload_id=request.upload_id,
+            parts=parts,
+            user_id=user_id
         )
-        
-        if not success:
-            raise HTTPException(500, "Failed to complete multipart upload")
-        
-        # Get object size
-        object_size = r2_service.get_object_size(request.object_key)
-        
-        return {
-            "object_key": request.object_key,
-            "size": object_size or 0
-        }
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        error_msg = str(e)
+        if "invalid" in error_msg.lower() or "ownership" in error_msg.lower():
+            raise HTTPException(403, error_msg)
+        else:
+            raise HTTPException(400, error_msg)
     except Exception as e:
         logger.error(f"Failed to complete multipart upload for user {user_id}: {e}", exc_info=True)
         # Try to abort on failure
@@ -515,10 +460,6 @@ async def confirm_upload(
     """
     from app.services.video.file_handler import confirm_upload as confirm_upload_handler
     
-    # Validate object_key belongs to user
-    if not request.object_key.startswith(f"user_{user_id}/"):
-        raise HTTPException(403, "Invalid object key for user")
-    
     try:
         return await confirm_upload_handler(
             object_key=request.object_key,
@@ -528,7 +469,11 @@ async def confirm_upload(
             db=db
         )
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        error_msg = str(e)
+        if "invalid" in error_msg.lower() or "ownership" in error_msg.lower():
+            raise HTTPException(403, error_msg)
+        else:
+            raise HTTPException(400, error_msg)
     except Exception as e:
         logger.error(f"Failed to confirm upload for user {user_id}: {e}", exc_info=True)
         raise HTTPException(500, f"Failed to confirm upload: {str(e)}")

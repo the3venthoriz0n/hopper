@@ -28,6 +28,72 @@ upload_logger = logging.getLogger("upload")
 logger = logging.getLogger(__name__)
 
 
+# Helper functions for validation and R2 operations
+def _validate_file_size(file_size: int, filename: str) -> None:
+    """Validate file size against MAX_FILE_SIZE
+    
+    Args:
+        file_size: File size in bytes
+        filename: File name for error message
+        
+    Raises:
+        ValueError: If file size exceeds MAX_FILE_SIZE
+    """
+    if file_size > settings.MAX_FILE_SIZE:
+        size_mb = file_size / (1024 * 1024)
+        size_gb = file_size / (1024 * 1024 * 1024)
+        max_gb = settings.MAX_FILE_SIZE / (1024 * 1024 * 1024)
+        raise ValueError(
+            f"File too large: {filename} is {size_mb:.2f} MB ({size_gb:.2f} GB). Maximum file size is {max_gb:.0f} GB."
+        )
+
+
+def _check_duplicate_filename(filename: str, user_id: int, db: Session) -> None:
+    """Check for duplicate filename if duplicates are not allowed
+    
+    Args:
+        filename: File name to check
+        user_id: User ID
+        db: Database session
+        
+    Raises:
+        ValueError: If duplicate found and duplicates not allowed
+    """
+    global_settings = get_user_settings(user_id, "global", db=db)
+    if not global_settings.get("allow_duplicates", False):
+        existing_videos = get_user_videos(user_id, db=db)
+        if any(v.filename == filename for v in existing_videos):
+            raise ValueError(f"Duplicate video: {filename} is already in the queue")
+
+
+def _generate_r2_object_key(filename: str, user_id: int) -> str:
+    """Generate unique R2 object key
+    
+    Args:
+        filename: File name
+        user_id: User ID
+        
+    Returns:
+        R2 object key: user_{user_id}/pending_{timestamp}_{filename}
+    """
+    timestamp = int(time.time() * 1000)  # milliseconds for uniqueness
+    return f"user_{user_id}/pending_{timestamp}_{filename}"
+
+
+def _validate_object_key_ownership(object_key: str, user_id: int) -> None:
+    """Validate that object_key belongs to user
+    
+    Args:
+        object_key: R2 object key to validate
+        user_id: User ID
+        
+    Raises:
+        ValueError: If object_key does not belong to user
+    """
+    if not object_key.startswith(f"user_{user_id}/"):
+        raise ValueError("Invalid object key for user")
+
+
 async def confirm_upload(
     object_key: str,
     filename: str,
@@ -60,15 +126,15 @@ async def confirm_upload(
         f"({file_size / (1024*1024):.2f} MB, R2 key: {object_key})"
     )
     
+    # Validate object_key belongs to user
+    _validate_object_key_ownership(object_key, user_id)
+    
     # Get user settings
     global_settings = get_user_settings(user_id, "global", db=db)
     youtube_settings = get_user_settings(user_id, "youtube", db=db)
     
     # Check for duplicates if not allowed
-    if not global_settings.get("allow_duplicates", False):
-        existing_videos = get_user_videos(user_id, db=db)
-        if any(v.filename == filename for v in existing_videos):
-            raise ValueError(f"Duplicate video: {filename} is already in the queue")
+    _check_duplicate_filename(filename, user_id, db)
     
     # Verify R2 object exists
     r2_service = get_r2_service()
@@ -172,6 +238,176 @@ async def confirm_upload(
     
     # Return the same format as GET /api/videos for consistency
     return video_dict
+
+
+# Service functions for presigned upload operations
+def get_presigned_upload_url_service(
+    filename: str,
+    file_size: int,
+    content_type: Optional[str],
+    user_id: int,
+    db: Session
+) -> Dict[str, Any]:
+    """Get presigned URL for single file upload to R2
+    
+    Args:
+        filename: File name
+        file_size: File size in bytes
+        content_type: Optional content type (MIME type)
+        user_id: User ID
+        db: Database session
+        
+    Returns:
+        Dict with upload_url, object_key, expires_in
+        
+    Raises:
+        ValueError: For validation errors (file too large, duplicate)
+        Exception: For R2 errors
+    """
+    _validate_file_size(file_size, filename)
+    _check_duplicate_filename(filename, user_id, db)
+    
+    object_key = _generate_r2_object_key(filename, user_id)
+    
+    r2_service = get_r2_service()
+    upload_url = r2_service.generate_upload_url(
+        object_key,
+        content_type=content_type,
+        expires_in=settings.R2_PRESIGNED_URL_EXPIRY
+    )
+    
+    return {
+        "upload_url": upload_url,
+        "object_key": object_key,
+        "expires_in": settings.R2_PRESIGNED_URL_EXPIRY
+    }
+
+
+def initiate_multipart_upload_service(
+    filename: str,
+    file_size: int,
+    content_type: Optional[str],
+    user_id: int,
+    db: Session
+) -> Dict[str, Any]:
+    """Initiate multipart upload for large files
+    
+    Args:
+        filename: File name
+        file_size: File size in bytes
+        content_type: Optional content type (MIME type)
+        user_id: User ID
+        db: Database session
+        
+    Returns:
+        Dict with upload_id, object_key, expires_in
+        
+    Raises:
+        ValueError: For validation errors (file too large, duplicate)
+        Exception: For R2 errors
+    """
+    _validate_file_size(file_size, filename)
+    _check_duplicate_filename(filename, user_id, db)
+    
+    object_key = _generate_r2_object_key(filename, user_id)
+    
+    r2_service = get_r2_service()
+    upload_id = r2_service.create_multipart_upload(
+        object_key,
+        content_type=content_type
+    )
+    
+    return {
+        "upload_id": upload_id,
+        "object_key": object_key,
+        "expires_in": settings.R2_PRESIGNED_URL_EXPIRY
+    }
+
+
+def get_multipart_part_url_service(
+    object_key: str,
+    upload_id: str,
+    part_number: int,
+    user_id: int
+) -> Dict[str, Any]:
+    """Get presigned URL for uploading a part in multipart upload
+    
+    Args:
+        object_key: R2 object key
+        upload_id: Multipart upload ID
+        part_number: Part number (1-indexed)
+        user_id: User ID
+        
+    Returns:
+        Dict with upload_url, expires_in
+        
+    Raises:
+        ValueError: For validation errors (invalid object key)
+        Exception: For R2 errors
+    """
+    _validate_object_key_ownership(object_key, user_id)
+    
+    r2_service = get_r2_service()
+    upload_url = r2_service.generate_presigned_url_for_part(
+        object_key,
+        upload_id,
+        part_number,
+        expires_in=settings.R2_PRESIGNED_URL_EXPIRY
+    )
+    
+    return {
+        "upload_url": upload_url,
+        "expires_in": settings.R2_PRESIGNED_URL_EXPIRY
+    }
+
+
+def complete_multipart_upload_service(
+    object_key: str,
+    upload_id: str,
+    parts: List[Dict[str, any]],
+    user_id: int
+) -> Dict[str, Any]:
+    """Complete multipart upload in R2
+    
+    Args:
+        object_key: R2 object key
+        upload_id: Multipart upload ID
+        parts: List of dicts with 'PartNumber' and 'ETag' keys
+        user_id: User ID
+        
+    Returns:
+        Dict with object_key, size
+        
+    Raises:
+        ValueError: For validation errors (invalid object key)
+        Exception: For R2 errors
+    """
+    _validate_object_key_ownership(object_key, user_id)
+    
+    r2_service = get_r2_service()
+    
+    # Format parts for boto3
+    formatted_parts = [
+        {"PartNumber": p["PartNumber"], "ETag": p["ETag"]}
+        for p in parts
+    ]
+    
+    success = r2_service.complete_multipart_upload(
+        object_key,
+        upload_id,
+        formatted_parts
+    )
+    
+    if not success:
+        raise Exception("Failed to complete multipart upload")
+    
+    # Get object size
+    object_size = r2_service.get_object_size(object_key)
+    
+    return {
+        "object_key": object_key,
+        "size": object_size or 0
+    }
 
 
 async def delete_video_files(
