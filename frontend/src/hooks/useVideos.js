@@ -172,13 +172,14 @@ export function useVideos(
   }, []);
 
   const addVideo = useCallback(async (file) => {
-    // Temporary: 100MB limit due to Cloudflare restrictions
-    const maxSizeBytes = 100 * 1024 * 1024; // 100MB
-    const maxSizeDisplay = '100 MB';
+    // Use maxFileSize from backend config (9GB or 10GB), fallback to 10GB if not provided
+    const maxSizeBytes = maxFileSize?.bytes || (10 * 1024 * 1024 * 1024); // 10GB default
+    const maxSizeDisplay = maxFileSize?.display || '10 GB';
     
     if (file.size > maxSizeBytes) {
       const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-      const errorMsg = `File too large: ${file.name} is ${fileSizeMB} MB. Maximum file size is ${maxSizeDisplay}.`;
+      const fileSizeGB = (file.size / (1024 * 1024 * 1024)).toFixed(2);
+      const errorMsg = `File too large: ${file.name} is ${fileSizeMB} MB (${fileSizeGB} GB). Maximum file size is ${maxSizeDisplay}.`;
       
       setNotification({
         type: 'error',
@@ -202,6 +203,7 @@ export function useVideos(
     };
     setVideos(prev => [...prev, tempVideo]);
     
+    // Calculate timeout based on file size (1 minute per 100MB, with min 5min and max 2 hours)
     const timeoutMs = Math.max(5 * 60 * 1000, Math.min(2 * 60 * 60 * 1000, (file.size / (100 * 1024 * 1024)) * 60 * 1000));
     
     try {
@@ -246,7 +248,7 @@ export function useVideos(
         const isLikelyProxyTimeout = timeoutMs >= 100000 && fileSizeMB < 500;
         
         if (isLikelyProxyTimeout) {
-          errorMsg = `Upload timeout: The file "${file.name}" (${fileSizeMB} MB) timed out after ${timeoutMinutes} minutes. This is likely due to a proxy timeout (e.g., Cloudflare has a 100-second limit on free plans). Please try again or contact support.`;
+          errorMsg = `Upload timeout: The file "${file.name}" (${fileSizeMB} MB) timed out after ${timeoutMinutes} minutes. The connection may be too slow. Please try again or contact support.`;
         } else {
           errorMsg = `Upload timeout: The file "${file.name}" (${fileSizeMB} MB) timed out after ${timeoutMinutes} minutes. The connection may be too slow or there may be a proxy timeout. Please try a smaller file or check your internet connection.`;
         }
@@ -271,8 +273,9 @@ export function useVideos(
         setTimeout(() => setNotification(null), 15000);
       } else if (isFileSizeError) {
         const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-        const maxSizeDisplay = '100 MB';
-        errorMsg = err.response?.data?.detail || `File too large: ${file.name} is ${fileSizeMB} MB. Maximum file size is ${maxSizeDisplay}.`;
+        const fileSizeGB = (file.size / (1024 * 1024 * 1024)).toFixed(2);
+        const maxSizeDisplay = maxFileSize?.display || '10 GB';
+        errorMsg = err.response?.data?.detail || `File too large: ${file.name} is ${fileSizeMB} MB (${fileSizeGB} GB). Maximum file size is ${maxSizeDisplay}.`;
         
         setNotification({
           type: 'error',

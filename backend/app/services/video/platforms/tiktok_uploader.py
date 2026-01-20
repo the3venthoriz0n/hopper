@@ -258,35 +258,61 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
             record_platform_error(video_id, user_id, "tiktok", error_msg, db=db)
             raise Exception(error_msg)
         
-        # Get video file
-        stored_path = Path(video.path).resolve()
-        fallback_path = (settings.UPLOAD_DIR / video.filename).resolve()
-        
-        if stored_path.exists():
-            video_path = stored_path
-        elif fallback_path.exists():
-            video_path = fallback_path
-            tiktok_logger.info(
-                f"Using fallback path for TikTok upload - User {user_id}, Video {video_id} ({video.filename}): "
-                f"Stored path not found: {stored_path}, using fallback: {fallback_path}"
-            )
-        else:
-            error_msg = f"Video file not found at {stored_path} or {fallback_path}"
+        # Get video file from R2
+        if not video.path:
+            error_msg = f"Video has no R2 object key"
             tiktok_logger.error(
-                f"❌ TikTok upload FAILED - File not found - User {user_id}, Video {video_id} ({video.filename}): "
-                f"Stored path: {stored_path} (exists: {stored_path.exists()}), "
-                f"Fallback path: {fallback_path} (exists: {fallback_path.exists()})",
+                f"❌ TikTok upload FAILED - No R2 object key - User {user_id}, Video {video_id} ({video.filename})",
                 extra={
                     "user_id": user_id,
                     "video_id": video_id,
                     "video_filename": video.filename,
-                    "stored_path": str(stored_path),
-                    "fallback_path": str(fallback_path),
                     "platform": "tiktok",
                     "error_type": "FileNotFound",
                 }
             )
             raise FileNotFoundError(error_msg)
+        
+        from app.services.storage.r2_service import get_r2_service
+        r2_service = get_r2_service()
+        
+        if not r2_service.object_exists(video.path):
+            error_msg = f"R2 object not found: {video.path}"
+            tiktok_logger.error(
+                f"❌ TikTok upload FAILED - R2 object not found - User {user_id}, Video {video_id} ({video.filename}): "
+                f"R2 object key: {video.path}",
+                extra={
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "video_filename": video.filename,
+                    "r2_object_key": video.path,
+                    "platform": "tiktok",
+                    "error_type": "FileNotFound",
+                }
+            )
+            raise FileNotFoundError(error_msg)
+        
+        # Download from R2 to temp file for FILE_UPLOAD method
+        import tempfile
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{video.filename}")
+        video_path = Path(temp_file.name)
+        temp_file.close()
+        
+        if not r2_service.download_file(video.path, video_path):
+            error_msg = f"Failed to download video from R2: {video.path}"
+            tiktok_logger.error(
+                f"❌ TikTok upload FAILED - R2 download failed - User {user_id}, Video {video_id} ({video.filename}): "
+                f"R2 object key: {video.path}",
+                extra={
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "video_filename": video.filename,
+                    "r2_object_key": video.path,
+                    "platform": "tiktok",
+                    "error_type": "DownloadFailed",
+                }
+            )
+            raise Exception(error_msg)
         
         video_size = video_path.stat().st_size
         if video_size == 0:
@@ -427,27 +453,25 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         video_url = None
         upload_method = None
         
-        stored_path = Path(video.path).resolve()
-        fallback_path = (settings.UPLOAD_DIR / video.filename).resolve()
-        file_exists = stored_path.exists() or fallback_path.exists()
+        # Check if R2 object exists
+        from app.services.storage.r2_service import get_r2_service
+        r2_service = get_r2_service()
+        r2_object_exists = video.path and r2_service.object_exists(video.path)
         
-        if use_pull_from_url and file_exists:
-            # Generate secure access token for video file (valid for 1 hour)
-            video_access_token = generate_video_access_token(video_id, user_id, expires_in_hours=1)
-            video_url = f"{settings.BACKEND_URL.rstrip('/')}/api/videos/{video_id}/file?token={video_access_token}"
+        if use_pull_from_url and r2_object_exists:
+            # Generate presigned R2 download URL (valid for 1 hour)
+            video_url = r2_service.generate_download_url(video.path, expires_in=3600)
             upload_method = "PULL_FROM_URL"
-            actual_path = stored_path if stored_path.exists() else fallback_path
             tiktok_logger.info(
-                f"TikTok upload method: PULL_FROM_URL (URL) - User {user_id}, Video {video_id} ({video.filename}), "
-                f"file exists at: {actual_path}"
+                f"TikTok upload method: PULL_FROM_URL (R2 URL) - User {user_id}, Video {video_id} ({video.filename}), "
+                f"R2 object: {video.path}"
             )
         else:
-            if use_pull_from_url and not file_exists:
+            if use_pull_from_url and not r2_object_exists:
                 tiktok_logger.warning(
-                    f"TikTok upload method: PULL_FROM_URL (URL) skipped - file not found, falling back to FILE_UPLOAD (file) - "
+                    f"TikTok upload method: PULL_FROM_URL (URL) skipped - R2 object not found, falling back to FILE_UPLOAD (file) - "
                     f"User {user_id}, Video {video_id} ({video.filename}). "
-                    f"Stored path: {stored_path} (exists: {stored_path.exists()}), "
-                    f"Fallback path: {fallback_path} (exists: {fallback_path.exists()})"
+                    f"R2 object key: {video.path}"
                 )
             use_pull_from_url = False
             upload_method = "FILE_UPLOAD"
@@ -689,117 +713,126 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         
         # Step 2: Upload video file (only for FILE_UPLOAD method)
         if not use_pull_from_url:
-            upload_url = init_data["data"].get("upload_url")
-            if not upload_url:
-                raise Exception("TikTok did not return upload_url for FILE_UPLOAD method")
-            
-            tiktok_logger.info(
-                f"TikTok uploading video file using FILE_UPLOAD (file) method - "
-                f"User {user_id}, Video {video_id} ({video.filename})"
-            )
-            
-            file_ext = video.filename.rsplit('.', 1)[-1].lower() if '.' in video.filename else 'mp4'
-            content_type = {'mp4': 'video/mp4', 'mov': 'video/quicktime', 'webm': 'video/webm'}.get(file_ext, 'video/mp4')
-            
-            # Check for cancellation before file upload
-            if _cancellation_flags.get(video_id, False):
-                tiktok_logger.info(f"TikTok upload cancelled for video {video_id} before file upload")
-                raise Exception("Upload cancelled by user")
-            
-            # Stream file upload with progress tracking
-            chunk_size = 1024 * 1024  # 1MB chunks
-            uploaded_bytes = 0
-            progress_tasks = []  # Store progress publish tasks
-            
-            async def generate_chunks():
-                """Async generator to stream file in chunks and track progress"""
-                nonlocal uploaded_bytes, last_published_progress
-                with open(video_path, 'rb') as f:
-                    while True:
-                        # Check for cancellation during upload
-                        if _cancellation_flags.get(video_id, False):
-                            tiktok_logger.info(f"TikTok upload cancelled for video {video_id} during file upload")
-                            raise Exception("Upload cancelled by user")
-                        
-                        chunk = f.read(chunk_size)
-                        if not chunk:
-                            break
-                        
-                        uploaded_bytes += len(chunk)
-                        # Map to 10-90% range (10% = after init, 90% = upload complete)
-                        progress = 10 + int((uploaded_bytes / video_size) * 80)
-                        set_upload_progress(user_id, video_id, progress)
-                        set_platform_upload_progress(user_id, video_id, "tiktok", progress)
-                        
-                        # Publish progress updates (1% increments)
-                        from app.services.video.helpers import should_publish_progress
-                        if should_publish_progress(progress, last_published_progress):
-                            # Schedule progress publish (non-blocking)
-                            task = asyncio.create_task(publish_upload_progress(user_id, video_id, "tiktok", progress))
-                            progress_tasks.append(task)
-                            last_published_progress = progress
-                        
-                        yield chunk
-            
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                upload_response = await client.put(
-                    upload_url,
-                    headers={
-                        "Content-Range": f"bytes 0-{video_size - 1}/{video_size}",
-                        "Content-Type": content_type
-                    },
-                    content=generate_chunks()
-                )
-            
-            # Wait for any pending progress publish tasks
-            if progress_tasks:
-                await asyncio.gather(*progress_tasks, return_exceptions=True)
-            
-            # Check for cancellation after file upload
-            if _cancellation_flags.get(video_id, False):
-                tiktok_logger.info(f"TikTok upload cancelled for video {video_id} after file upload")
-                raise Exception("Upload cancelled by user")
-            
-            if upload_response.status_code not in [200, 201]:
-                import json as json_module
-                error_context = {
-                    "user_id": user_id,
-                    "video_id": video_id,
-                    "video_filename": video.filename,
-                    "platform": "tiktok",
-                    "http_status": upload_response.status_code,
-                    "stage": "file_upload",
-                    "publish_id": publish_id if 'publish_id' in locals() else None,
-                    "video_size": video_size if 'video_size' in locals() else None,
-                }
+            try:
+                upload_url = init_data["data"].get("upload_url")
+                if not upload_url:
+                    raise Exception("TikTok did not return upload_url for FILE_UPLOAD method")
                 
-                try:
-                    response_data = upload_response.json()
-                    error_context["response_data"] = json_module.dumps(response_data)
-                    error = response_data.get("error", {})
-                    error_msg = error.get("message", upload_response.text)
-                    error_context["error_code"] = error.get('code')
-                    error_context["error_message"] = error_msg
+                tiktok_logger.info(
+                    f"TikTok uploading video file using FILE_UPLOAD (file) method - "
+                    f"User {user_id}, Video {video_id} ({video.filename})"
+                )
+                
+                file_ext = video.filename.rsplit('.', 1)[-1].lower() if '.' in video.filename else 'mp4'
+                content_type = {'mp4': 'video/mp4', 'mov': 'video/quicktime', 'webm': 'video/webm'}.get(file_ext, 'video/mp4')
+                
+                # Check for cancellation before file upload
+                if _cancellation_flags.get(video_id, False):
+                    tiktok_logger.info(f"TikTok upload cancelled for video {video_id} before file upload")
+                    raise Exception("Upload cancelled by user")
+                
+                # Stream file upload with progress tracking
+                chunk_size = 1024 * 1024  # 1MB chunks
+                uploaded_bytes = 0
+                progress_tasks = []  # Store progress publish tasks
+                
+                async def generate_chunks():
+                    """Async generator to stream file in chunks and track progress"""
+                    nonlocal uploaded_bytes, last_published_progress
+                    with open(video_path, 'rb') as f:
+                        while True:
+                            # Check for cancellation during upload
+                            if _cancellation_flags.get(video_id, False):
+                                tiktok_logger.info(f"TikTok upload cancelled for video {video_id} during file upload")
+                                raise Exception("Upload cancelled by user")
+                            
+                            chunk = f.read(chunk_size)
+                            if not chunk:
+                                break
+                            
+                            uploaded_bytes += len(chunk)
+                            # Map to 10-90% range (10% = after init, 90% = upload complete)
+                            progress = 10 + int((uploaded_bytes / video_size) * 80)
+                            set_upload_progress(user_id, video_id, progress)
+                            set_platform_upload_progress(user_id, video_id, "tiktok", progress)
+                            
+                            # Publish progress updates (1% increments)
+                            from app.services.video.helpers import should_publish_progress
+                            if should_publish_progress(progress, last_published_progress):
+                                # Schedule progress publish (non-blocking)
+                                task = asyncio.create_task(publish_upload_progress(user_id, video_id, "tiktok", progress))
+                                progress_tasks.append(task)
+                                last_published_progress = progress
+                            
+                            yield chunk
+                
+                async with httpx.AsyncClient(timeout=300.0) as client:
+                    upload_response = await client.put(
+                        upload_url,
+                        headers={
+                            "Content-Range": f"bytes 0-{video_size - 1}/{video_size}",
+                            "Content-Type": content_type
+                        },
+                        content=generate_chunks()
+                    )
+                
+                # Wait for any pending progress publish tasks
+                if progress_tasks:
+                    await asyncio.gather(*progress_tasks, return_exceptions=True)
+                
+                # Check for cancellation after file upload
+                if _cancellation_flags.get(video_id, False):
+                    tiktok_logger.info(f"TikTok upload cancelled for video {video_id} after file upload")
+                    raise Exception("Upload cancelled by user")
+                
+                if upload_response.status_code not in [200, 201]:
+                    import json as json_module
+                    error_context = {
+                        "user_id": user_id,
+                        "video_id": video_id,
+                        "video_filename": video.filename,
+                        "platform": "tiktok",
+                        "http_status": upload_response.status_code,
+                        "stage": "file_upload",
+                        "publish_id": publish_id if 'publish_id' in locals() else None,
+                        "video_size": video_size if 'video_size' in locals() else None,
+                    }
                     
-                    tiktok_logger.error(
-                        f"❌ TikTok upload FAILED - File upload error - User {user_id}, Video {video_id} ({video.filename}): "
-                        f"HTTP {upload_response.status_code} - {error_msg}",
-                        extra=error_context
-                    )
-                    tiktok_logger.error(f"Full upload response: {json_module.dumps(response_data, indent=2)}")
-                except Exception as parse_error:
-                    error_context["raw_response"] = upload_response.text
-                    error_context["parse_error"] = str(parse_error)
-                    error_msg = upload_response.text
-                    tiktok_logger.error(
-                        f"❌ TikTok upload FAILED - File upload error (parse failed) - User {user_id}, Video {video_id} ({video.filename}): "
-                        f"HTTP {upload_response.status_code}",
-                        extra=error_context
-                    )
-                    tiktok_logger.error(f"Raw upload response: {upload_response.text}")
-                raise Exception(f"Upload failed: {upload_response.status_code} - {error_msg}")
-            
-            tiktok_logger.info("File upload completed")
+                    try:
+                        response_data = upload_response.json()
+                        error_context["response_data"] = json_module.dumps(response_data)
+                        error = response_data.get("error", {})
+                        error_msg = error.get("message", upload_response.text)
+                        error_context["error_code"] = error.get('code')
+                        error_context["error_message"] = error_msg
+                        
+                        tiktok_logger.error(
+                            f"❌ TikTok upload FAILED - File upload error - User {user_id}, Video {video_id} ({video.filename}): "
+                            f"HTTP {upload_response.status_code} - {error_msg}",
+                            extra=error_context
+                        )
+                        tiktok_logger.error(f"Full upload response: {json_module.dumps(response_data, indent=2)}")
+                    except Exception as parse_error:
+                        error_context["raw_response"] = upload_response.text
+                        error_context["parse_error"] = str(parse_error)
+                        error_msg = upload_response.text
+                        tiktok_logger.error(
+                            f"❌ TikTok upload FAILED - File upload error (parse failed) - User {user_id}, Video {video_id} ({video.filename}): "
+                            f"HTTP {upload_response.status_code}",
+                            extra=error_context
+                        )
+                        tiktok_logger.error(f"Raw upload response: {upload_response.text}")
+                    raise Exception(f"Upload failed: {upload_response.status_code} - {error_msg}")
+                
+                tiktok_logger.info("File upload completed")
+            finally:
+                # Clean up temp file
+                if 'video_path' in locals() and video_path and video_path.exists():
+                    try:
+                        video_path.unlink()
+                        tiktok_logger.debug(f"Cleaned up temp file: {video_path}")
+                    except Exception as e:
+                        tiktok_logger.warning(f"Failed to clean up temp file {video_path}: {e}")
         else:
             # PULL_FROM_URL method: TikTok will download the file automatically
             # Check for cancellation before marking as success
@@ -966,12 +999,14 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         }
         
         try:
-            video_path = Path(video.path).resolve() if video.path else None
-            if video_path:
-                context["video_path"] = str(video_path)
-                context["file_exists"] = video_path.exists()
-                if video_path.exists():
-                    context["actual_file_size_bytes"] = video_path.stat().st_size
+            from app.services.storage.r2_service import get_r2_service
+            r2_service = get_r2_service()
+            if video.path:
+                context["r2_object_key"] = video.path
+                context["r2_object_exists"] = r2_service.object_exists(video.path)
+                r2_size = r2_service.get_object_size(video.path)
+                if r2_size:
+                    context["actual_file_size_bytes"] = r2_size
         except Exception:
             pass
         

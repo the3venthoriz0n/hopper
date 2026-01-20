@@ -399,19 +399,19 @@ def record_platform_error(video_id: int, user_id: int, platform: str, error_mess
 
 
 def cleanup_video_file(video: Video) -> bool:
-    """Delete video file from disk after successful upload
+    """Delete video file from R2 after successful upload
     
     This is called after all destinations succeed. The database record
-    is kept for history, but the physical file is removed to save space.
+    is kept for history, but the R2 object is removed to save space.
     
     ROOT CAUSE FIX: Don't delete files if TikTok is using PULL_FROM_URL
     (has tiktok_publish_id but no tiktok_id yet) - TikTok still needs to download it.
     
     Args:
-        video: Video object with path to file
+        video: Video object with R2 object key in path field
         
     Returns:
-        True if cleanup succeeded or file already gone, False on error
+        True if cleanup succeeded or object already gone, False on error
     """
     try:
         # Check if TikTok is using PULL_FROM_URL and still downloading
@@ -427,14 +427,19 @@ def cleanup_video_file(video: Video) -> bool:
             )
             return True  # Don't delete yet, but return success
         
-        # ROOT CAUSE FIX: Resolve path to absolute to ensure proper file access
-        video_path = Path(video.path).resolve()
-        if video_path.exists():
-            video_path.unlink()
-            upload_logger.info(f"Cleaned up video file: {video.filename} ({video_path})")
+        # Delete from R2
+        if not video.path:
+            upload_logger.debug(f"Video {video.filename} has no R2 object key, nothing to clean up")
+            return True
+        
+        from app.services.storage.r2_service import get_r2_service
+        r2_service = get_r2_service()
+        
+        if r2_service.delete_object(video.path):
+            upload_logger.info(f"Cleaned up video file from R2: {video.filename} (R2 key: {video.path})")
             return True
         else:
-            upload_logger.debug(f"Video file already removed: {video.filename}")
+            upload_logger.debug(f"Video file already removed from R2 or doesn't exist: {video.filename}")
             return True
     except Exception as e:
         upload_logger.error(
@@ -448,7 +453,7 @@ def get_video_duration(video_path: Path) -> float:
     """Get video duration in seconds using ffprobe
     
     Args:
-        video_path: Path to video file
+        video_path: Path to video file (local file path)
         
     Returns:
         Duration in seconds as float

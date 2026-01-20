@@ -91,59 +91,100 @@ class TestRateLimiting:
 
 
 class TestVideoCleanup:
-    """Test video file cleanup"""
+    """Test video file cleanup with R2 storage"""
     
-    def test_cleanup_existing_file(self):
-        """Test cleanup removes existing file"""
+    @patch('app.services.video.helpers.get_r2_service')
+    def test_cleanup_existing_file(self, mock_get_r2_service):
+        """Test cleanup removes existing R2 object"""
         from app.models import Video
         
-        # Create temporary file
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.mp4') as tmp:
-            tmp.write("test")
-            temp_path = tmp.name
-        
-        try:
-            mock_video = Mock(spec=Video)
-            mock_video.path = temp_path
-            mock_video.filename = "test.mp4"
-            
-            assert os.path.exists(temp_path)
-            result = cleanup_video_file(mock_video)
-            
-            assert result is True
-            assert not os.path.exists(temp_path)
-        finally:
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-    
-    def test_cleanup_nonexistent_file(self):
-        """Test cleanup succeeds when file already deleted"""
-        from app.models import Video
+        # Mock R2 service
+        mock_r2_service = Mock()
+        mock_r2_service.delete_object.return_value = True
+        mock_get_r2_service.return_value = mock_r2_service
         
         mock_video = Mock(spec=Video)
-        mock_video.path = "/tmp/nonexistent.mp4"
+        mock_video.path = "user_123/video_456_test.mp4"  # R2 object key format
+        mock_video.filename = "test.mp4"
+        mock_video.custom_settings = {}
+        
+        result = cleanup_video_file(mock_video)
+        
+        assert result is True
+        mock_r2_service.delete_object.assert_called_once_with("user_123/video_456_test.mp4")
+    
+    @patch('app.services.video.helpers.get_r2_service')
+    def test_cleanup_nonexistent_file(self, mock_get_r2_service):
+        """Test cleanup succeeds when R2 object already deleted"""
+        from app.models import Video
+        
+        # Mock R2 service - delete_object returns True even if object doesn't exist
+        mock_r2_service = Mock()
+        mock_r2_service.delete_object.return_value = True
+        mock_get_r2_service.return_value = mock_r2_service
+        
+        mock_video = Mock(spec=Video)
+        mock_video.path = "user_123/video_456_nonexistent.mp4"  # R2 object key format
         mock_video.filename = "nonexistent.mp4"
+        mock_video.custom_settings = {}
         
         result = cleanup_video_file(mock_video)
         assert result is True
+        mock_r2_service.delete_object.assert_called_once_with("user_123/video_456_nonexistent.mp4")
     
-    def test_cleanup_permission_error(self):
-        """Test cleanup handles permission errors"""
+    @patch('app.services.video.helpers.get_r2_service')
+    def test_cleanup_r2_error(self, mock_get_r2_service):
+        """Test cleanup handles R2 deletion errors"""
+        from app.models import Video
+        
+        # Mock R2 service to raise an exception
+        mock_r2_service = Mock()
+        mock_r2_service.delete_object.side_effect = Exception("R2 connection error")
+        mock_get_r2_service.return_value = mock_r2_service
+        
+        mock_video = Mock(spec=Video)
+        mock_video.path = "user_123/video_456_file.mp4"  # R2 object key format
+        mock_video.filename = "file.mp4"
+        mock_video.custom_settings = {}
+        
+        result = cleanup_video_file(mock_video)
+        assert result is False
+        mock_r2_service.delete_object.assert_called_once_with("user_123/video_456_file.mp4")
+    
+    @patch('app.services.video.helpers.get_r2_service')
+    def test_cleanup_skips_tiktok_pull_from_url(self, mock_get_r2_service):
+        """Test cleanup skips deletion when TikTok PULL_FROM_URL is in progress"""
+        from app.models import Video
+        
+        mock_r2_service = Mock()
+        mock_get_r2_service.return_value = mock_r2_service
+        
+        mock_video = Mock(spec=Video)
+        mock_video.path = "user_123/video_456_test.mp4"
+        mock_video.filename = "test.mp4"
+        # TikTok PULL_FROM_URL in progress (has publish_id but no tiktok_id)
+        mock_video.custom_settings = {
+            "tiktok_publish_id": "publish_123",
+            "tiktok_id": None
+        }
+        
+        result = cleanup_video_file(mock_video)
+        
+        # Should return True but not call delete_object
+        assert result is True
+        mock_r2_service.delete_object.assert_not_called()
+    
+    def test_cleanup_no_path(self):
+        """Test cleanup succeeds when video has no R2 object key"""
         from app.models import Video
         
         mock_video = Mock(spec=Video)
-        mock_video.path = "/protected/file.mp4"
-        mock_video.filename = "file.mp4"
+        mock_video.path = None
+        mock_video.filename = "test.mp4"
+        mock_video.custom_settings = {}
         
-        with patch('app.services.video.helpers.Path') as mock_path:
-            mock_path_instance = MagicMock()
-            mock_path_instance.resolve.return_value = mock_path_instance
-            mock_path.return_value = mock_path_instance
-            mock_path_instance.exists.return_value = True
-            mock_path_instance.unlink.side_effect = PermissionError()
-            
-            result = cleanup_video_file(mock_video)
-            assert result is False
+        result = cleanup_video_file(mock_video)
+        assert result is True
 
 
 class TestStripeFunctionality:

@@ -274,15 +274,30 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         update_video(video_id, user_id, db=db, status="uploading")
         set_upload_progress(user_id, video_id, 0)
         
-        video_path = Path(video.path).resolve()
-        if not video_path.exists():
-            error_msg = f"Video file not found: {video_path}"
+        # Verify R2 object exists
+        if not video.path:
+            error_msg = f"Video has no R2 object key"
             instagram_logger.error(
-                f"❌ Instagram upload FAILED - File not found - User {user_id}, Video {video_id} ({video.filename}): "
-                f"Path: {video_path}",
+                f"❌ Instagram upload FAILED - No R2 object key - User {user_id}, Video {video_id} ({video.filename})",
                 extra=_build_error_context(
                     user_id, video_id, video.filename, "file_check",
-                    video_path=str(video_path),
+                    error_type="FileNotFound"
+                )
+            )
+            record_platform_error(video_id, user_id, "instagram", error_msg, db=db)
+            raise FileNotFoundError(error_msg)
+        
+        from app.services.storage.r2_service import get_r2_service
+        r2_service = get_r2_service()
+        
+        if not r2_service.object_exists(video.path):
+            error_msg = f"R2 object not found: {video.path}"
+            instagram_logger.error(
+                f"❌ Instagram upload FAILED - R2 object not found - User {user_id}, Video {video_id} ({video.filename}): "
+                f"R2 object key: {video.path}",
+                extra=_build_error_context(
+                    user_id, video_id, video.filename, "file_check",
+                    r2_object_key=video.path,
                     error_type="FileNotFound"
                 )
             )
@@ -309,10 +324,10 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         instagram_logger.info(f"Uploading {video.filename} to Instagram as {media_type} using file_url method")
         set_upload_progress(user_id, video_id, 10)
         
-        video_access_token = generate_video_access_token(video_id, user_id, expires_in_hours=1)
-        file_url = f"{settings.BACKEND_URL.rstrip('/')}/api/videos/{video_id}/file?token={video_access_token}"
+        # Generate presigned R2 download URL (valid for 1 hour)
+        file_url = r2_service.generate_download_url(video.path, expires_in=3600)
         
-        instagram_logger.info(f"Generated secure file_url for Instagram to download")
+        instagram_logger.info(f"Generated presigned R2 URL for Instagram to download")
         set_upload_progress(user_id, video_id, 20)
         
         async with httpx.AsyncClient(timeout=300.0) as client:
@@ -505,12 +520,14 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         )
         
         try:
-            video_path = Path(video.path).resolve() if video.path else None
-            if video_path:
-                context["video_path"] = str(video_path)
-                context["file_exists"] = video_path.exists()
-                if video_path.exists():
-                    context["actual_file_size_bytes"] = video_path.stat().st_size
+            from app.services.storage.r2_service import get_r2_service
+            r2_service = get_r2_service()
+            if video.path:
+                context["r2_object_key"] = video.path
+                context["r2_object_exists"] = r2_service.object_exists(video.path)
+                r2_size = r2_service.get_object_size(video.path)
+                if r2_size:
+                    context["actual_file_size_bytes"] = r2_size
         except Exception:
             pass
         

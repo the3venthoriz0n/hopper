@@ -118,7 +118,7 @@ class TestOwnershipValidation:
         video = Video(
             user_id=user2.id,
             filename="test.mp4",
-            path="/tmp/test.mp4",
+            path=f"user_{user2.id}/video_1_test.mp4",  # R2 object key format
             status="pending"
         )
         db_session.add(video)

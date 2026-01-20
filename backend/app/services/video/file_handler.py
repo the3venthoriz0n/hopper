@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
@@ -20,6 +22,7 @@ from app.services.token_service import calculate_tokens_from_bytes, check_tokens
 from app.utils.templates import replace_template_placeholders
 from app.utils.video_tokens import verify_video_access_token
 from app.services.video.helpers import build_video_response
+from app.services.storage.r2_service import get_r2_service
 
 upload_logger = logging.getLogger("upload")
 logger = logging.getLogger(__name__)
@@ -60,18 +63,22 @@ async def handle_file_upload(
         if any(v.filename == file.filename for v in existing_videos):
             raise ValueError(f"Duplicate video: {file.filename} is already in the queue")
     
-    # Save file to disk with streaming and size validation
-    # ROOT CAUSE FIX: Use streaming to handle large files without loading entire file into memory
-    path = settings.UPLOAD_DIR / file.filename
+    # Stream file to temporary file, then upload to R2
+    # Use streaming to handle large files without loading entire file into memory
+    temp_file = None
     file_size = 0
     start_time = asyncio.get_event_loop().time()
     last_log_time = start_time
     chunk_count = 0
+    r2_object_key = None
     
     try:
+        # Create temporary file for streaming upload
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file.filename}")
+        temp_path = Path(temp_file.name)
         chunk_size = 1024 * 1024  # 1MB chunks
         
-        with open(path, "wb") as f:
+        with open(temp_path, "wb") as f:
             while True:
                 # Read chunk with explicit timeout to detect connection issues
                 try:
@@ -100,11 +107,6 @@ async def handle_file_upload(
                 
                 # Validate file size during streaming (before writing entire file)
                 if file_size > settings.MAX_FILE_SIZE:
-                    # Clean up partial file
-                    try:
-                        path.unlink()
-                    except:
-                        pass
                     size_mb = file_size / (1024 * 1024)
                     size_gb = file_size / (1024 * 1024 * 1024)
                     max_mb = settings.MAX_FILE_SIZE / (1024 * 1024)
@@ -115,45 +117,56 @@ async def handle_file_upload(
                 
                 f.write(chunk)
         
+        # Upload to R2
+        upload_logger.info(f"Uploading {file.filename} to R2 for user {user_id}...")
+        r2_service = get_r2_service()
+        
+        # Generate R2 object key: user_{user_id}/pending_{timestamp}_{filename}
+        # Will be updated to user_{user_id}/video_{video_id}_{filename} after video creation
+        timestamp = int(time.time() * 1000)  # milliseconds for uniqueness
+        r2_object_key = f"user_{user_id}/pending_{timestamp}_{file.filename}"
+        
+        if not r2_service.upload_file(temp_path, r2_object_key):
+            raise Exception("Failed to upload file to R2 storage")
+        
         elapsed_total = asyncio.get_event_loop().time() - start_time
         avg_speed = (file_size / (1024 * 1024)) / elapsed_total if elapsed_total > 0 else 0
         upload_logger.info(
-            f"Video added for user {user_id}: {file.filename} "
+            f"Video uploaded to R2 for user {user_id}: {file.filename} "
             f"({file_size / (1024*1024):.2f} MB, {chunk_count} chunks, "
-            f"{avg_speed:.2f} MB/s, {elapsed_total:.1f}s total)"
+            f"{avg_speed:.2f} MB/s, {elapsed_total:.1f}s total, R2 key: {r2_object_key})"
         )
     except ValueError:
         raise
     except asyncio.TimeoutError as e:
-        # Clean up partial file on timeout
-        try:
-            if path.exists():
-                path.unlink()
-        except:
-            pass
         elapsed = asyncio.get_event_loop().time() - start_time if 'start_time' in locals() else 0
         upload_logger.error(
             f"Upload timeout for user {user_id}: {file.filename} "
-            f"(received {file_size / (1024*1024):.2f} MB in {elapsed:.1f}s, {chunk_count} chunks) - "
-            f"Likely caused by proxy/reverse proxy timeout (Cloudflare default: 100s free, 600s paid)",
+            f"(received {file_size / (1024*1024):.2f} MB in {elapsed:.1f}s, {chunk_count} chunks)",
             exc_info=True
         )
         raise Exception(
             f"Upload timeout: The file upload was interrupted after {elapsed:.0f} seconds. "
-            f"This is likely due to a proxy timeout (e.g., Cloudflare). "
             f"Please try again or contact support if the issue persists."
         )
     except Exception as e:
-        # Clean up partial file on error
-        try:
-            if path.exists():
-                path.unlink()
-        except:
-            pass
+        # Clean up temp file and R2 object on error
+        if temp_path and temp_path.exists():
+            try:
+                temp_path.unlink()
+            except:
+                pass
+        if r2_object_key:
+            try:
+                r2_service = get_r2_service()
+                r2_service.delete_object(r2_object_key)
+            except:
+                pass
+        
         error_type = type(e).__name__
         elapsed = asyncio.get_event_loop().time() - start_time if 'start_time' in locals() else 0
         
-        # Check for connection-related errors that might indicate proxy timeout
+        # Check for connection-related errors
         error_str = str(e).lower()
         is_connection_error = any(keyword in error_str for keyword in [
             'connection', 'reset', 'closed', 'broken', 'timeout', 
@@ -164,21 +177,28 @@ async def handle_file_upload(
             upload_logger.error(
                 f"Connection error during upload for user {user_id}: {file.filename} "
                 f"(received {file_size / (1024*1024):.2f} MB in {elapsed:.1f}s, {chunk_count} chunks) - "
-                f"Error: {error_type}: {str(e)} - Likely proxy/reverse proxy timeout",
+                f"Error: {error_type}: {str(e)}",
                 exc_info=True
             )
             raise Exception(
                 f"Upload failed: Connection was interrupted after {elapsed:.0f} seconds. "
-                f"This may be due to a proxy timeout. Please try again."
+                f"Please try again."
             )
         else:
             upload_logger.error(
-                f"Failed to save video file for user {user_id}: {file.filename} "
+                f"Failed to upload video file for user {user_id}: {file.filename} "
                 f"(received {file_size / (1024*1024):.2f} MB in {elapsed:.1f}s, {chunk_count} chunks, "
                 f"error: {error_type}: {str(e)})",
                 exc_info=True
             )
-            raise Exception(f"Failed to save video file: {str(e)}")
+            raise Exception(f"Failed to upload video file: {str(e)}")
+    finally:
+        # Always clean up temp file
+        if temp_path and temp_path.exists():
+            try:
+                temp_path.unlink()
+            except:
+                pass
     
     # Calculate tokens required for this upload (1 token = 10MB)
     tokens_required = calculate_tokens_from_bytes(file_size)
@@ -221,25 +241,25 @@ async def handle_file_upload(
         global_settings.get('wordbank', [])
     ) if desc_template else ''
     
-    # Verify file was actually written to disk
-    resolved_path = path.resolve()
-    if not resolved_path.exists():
+    # Verify R2 object exists
+    r2_service = get_r2_service()
+    if not r2_service.object_exists(r2_object_key):
         upload_logger.error(
             f"CRITICAL: File upload appeared to succeed for user {user_id}: {file.filename} "
-            f"but file does not exist at {resolved_path}. File size reported: {file_size} bytes"
+            f"but R2 object does not exist at {r2_object_key}. File size reported: {file_size} bytes"
         )
-        raise Exception(f"File upload failed: file was not saved to disk")
+        raise Exception(f"File upload failed: file was not saved to R2")
     
-    # Verify file size matches what we wrote
-    actual_file_size = resolved_path.stat().st_size
-    if actual_file_size != file_size:
+    # Verify R2 object size matches what we uploaded
+    r2_object_size = r2_service.get_object_size(r2_object_key)
+    if r2_object_size and r2_object_size != file_size:
         upload_logger.warning(
             f"File size mismatch for user {user_id}: {file.filename}. "
-            f"Expected: {file_size} bytes, Actual: {actual_file_size} bytes"
+            f"Expected: {file_size} bytes, R2 object size: {r2_object_size} bytes"
         )
     
     # Add to database with file size and tokens
-    # ROOT CAUSE FIX: Store absolute path to prevent path resolution issues
+    # Store R2 object key in path field
     # 
     # TOKEN DEDUCTION STRATEGY:
     # Tokens are NOT deducted when adding to queue - only when successfully uploaded to platforms.
@@ -252,7 +272,7 @@ async def handle_file_upload(
     video = add_user_video(
         user_id=user_id,
         filename=file.filename,
-        path=str(resolved_path),  # Ensure absolute path
+        path=r2_object_key,  # Store R2 object key
         generated_title=youtube_title,
         generated_description=youtube_description,
         file_size_bytes=file_size,
@@ -260,6 +280,23 @@ async def handle_file_upload(
         tokens_consumed=0,  # Don't consume tokens yet - only on successful upload
         db=db
     )
+    
+    # Update R2 object key to final format: user_{user_id}/video_{video_id}_{filename}
+    final_r2_key = f"user_{user_id}/video_{video.id}_{file.filename}"
+    if r2_object_key != final_r2_key:
+        # Copy object to new key (R2 doesn't support rename, so we copy and delete)
+        try:
+            if r2_service.copy_object(r2_object_key, final_r2_key):
+                r2_service.delete_object(r2_object_key)
+                # Update database with final key
+                video.path = final_r2_key
+                db.commit()
+                upload_logger.info(f"Renamed R2 object from {r2_object_key} to {final_r2_key}")
+            else:
+                upload_logger.warning(f"Failed to copy R2 object from {r2_object_key} to {final_r2_key}. Using original key.")
+        except Exception as e:
+            upload_logger.warning(f"Failed to rename R2 object from {r2_object_key} to {final_r2_key}: {e}. Using original key.")
+            # Continue with original key - not critical
     
     upload_logger.info(f"Video added to queue for user {user_id}: {file.filename} ({file_size / (1024*1024):.2f} MB, will cost {tokens_required} tokens on upload)")
     
@@ -320,13 +357,11 @@ async def delete_video_files(
             if exclude_status and video.status in exclude_status:
                 continue
             
-            # Clean up file if it exists
-            video_path = Path(video.path).resolve()
-            if video_path.exists():
-                try:
-                    video_path.unlink()
-                except Exception as e:
-                    upload_logger.warning(f"Could not delete file {video_path}: {e}")
+            # Delete from R2 if it exists
+            r2_service = get_r2_service()
+            if video.path:
+                if not r2_service.delete_object(video.path):
+                    upload_logger.warning(f"Could not delete R2 object {video.path}")
             
             # Delete from database
             db.delete(video)
@@ -350,18 +385,18 @@ def serve_video_file(
     token: str,
     db: Session
 ) -> Dict[str, Any]:
-    """Serve video file with token verification
+    """Generate presigned download URL for video file from R2
     
     Args:
         video_id: Video ID
-        token: Access token for video file
+        token: Access token for video file (for verification)
         db: Database session
     
     Returns:
-        Dict with 'path', 'filename', 'media_type', and 'headers'
+        Dict with 'url', 'filename', 'media_type', 'expires_in'
     
     Raises:
-        ValueError: If video not found or token invalid
+        ValueError: If video not found, token invalid, or R2 object doesn't exist
     """
     # Get video to verify it exists and get user_id
     video = db.query(Video).filter(Video.id == video_id).first()
@@ -374,24 +409,19 @@ def serve_video_file(
         logger.warning(f"Invalid or expired token for video_id: {video_id}, user_id: {video.user_id}")
         raise ValueError("Invalid or expired access token")
     
-    # Try the stored path first
-    video_path = Path(video.path).resolve()
+    # Verify R2 object exists
+    if not video.path:
+        logger.error(f"Video {video_id} has no R2 object key (path is empty)")
+        raise ValueError("Video file not found in storage")
     
-    # If stored path doesn't exist, try fallback: UPLOAD_DIR / filename
-    if not video_path.exists():
-        fallback_path = (settings.UPLOAD_DIR / video.filename).resolve()
-        
-        if fallback_path.exists():
-            logger.info(f"Using fallback path for video_id {video_id}: {fallback_path} (stored path not found: {video_path})")
-            video_path = fallback_path
-        else:
-            logger.error(
-                f"Video file not found for video_id {video_id}: "
-                f"Stored path: {video_path} (exists: False), "
-                f"Fallback path: {fallback_path} (exists: False), "
-                f"UPLOAD_DIR: {settings.UPLOAD_DIR}, Filename: {video.filename}"
-            )
-            raise ValueError(f"Video file not found at {video_path} or {fallback_path}")
+    r2_service = get_r2_service()
+    if not r2_service.object_exists(video.path):
+        logger.error(f"R2 object not found for video_id {video_id}: {video.path}")
+        raise ValueError(f"Video file not found in storage: {video.path}")
+    
+    # Generate presigned download URL (valid for 1 hour)
+    expires_in = 3600
+    download_url = r2_service.generate_download_url(video.path, expires_in=expires_in)
     
     # Determine media type
     file_ext = video.filename.rsplit('.', 1)[-1].lower() if '.' in video.filename else 'mp4'
@@ -402,12 +432,9 @@ def serve_video_file(
     }.get(file_ext, 'video/mp4')
     
     return {
-        "path": str(video_path),
+        "url": download_url,
         "filename": video.filename,
         "media_type": media_type,
-        "headers": {
-            "Accept-Ranges": "bytes",
-            "Cache-Control": "public, max-age=3600"  # Cache for 1 hour
-        }
+        "expires_in": expires_in
     }
 

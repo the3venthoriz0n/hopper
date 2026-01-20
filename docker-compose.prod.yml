@@ -64,7 +64,6 @@ services:
     ports:
       - "8001:8000"
     volumes:
-      - backend_uploads:/app/uploads
       - backend_sessions:/app/sessions
     depends_on:
       - postgres
@@ -190,7 +189,6 @@ networks:
 volumes:
   postgres_data:
   redis_data:
-  backend_uploads:
   backend_sessions:
   prometheus_data:
   grafana_data:

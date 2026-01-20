@@ -24,7 +24,7 @@ class TestModelRelationships:
         video = Video(
             user_id=test_user.id,
             filename="test.mp4",
-            path="/tmp/test.mp4",
+            path=f"user_{test_user.id}/video_1_test.mp4",  # R2 object key format
             status="pending"
         )
         db_session.add(video)
@@ -94,7 +94,7 @@ class TestModelRelationships:
         video = Video(
             user_id=test_user.id,
             filename="test.mp4",
-            path="/tmp/test.mp4",
+            path=f"user_{test_user.id}/video_1_test.mp4",  # R2 object key format
             status="pending"
         )
         db_session.add(video)
@@ -128,13 +128,13 @@ class TestCascadeDeletes:
         video1 = Video(
             user_id=test_user.id,
             filename="test1.mp4",
-            path="/tmp/test1.mp4",
+            path=f"user_{test_user.id}/video_1_test1.mp4",  # R2 object key format
             status="pending"
         )
         video2 = Video(
             user_id=test_user.id,
             filename="test2.mp4",
-            path="/tmp/test2.mp4",
+            path=f"user_{test_user.id}/video_2_test2.mp4",  # R2 object key format
             status="pending"
         )
         db_session.add_all([video1, video2])
@@ -381,7 +381,7 @@ class TestJSONColumnCompatibility:
         video = Video(
             user_id=test_user.id,
             filename="test.mp4",
-            path="/tmp/test.mp4",
+            path=f"user_{test_user.id}/video_1_test.mp4",  # R2 object key format
             status="pending",
             custom_settings=complex_settings
         )

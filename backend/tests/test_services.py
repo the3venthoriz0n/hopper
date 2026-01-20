@@ -128,7 +128,7 @@ class TestTokenService:
         video = Video(
             user_id=test_user.id,
             filename="test.mp4",
-            path="/tmp/test.mp4",
+            path=f"user_{test_user.id}/video_1_test.mp4",  # R2 object key format
             status="pending"
         )
         db_session.add(video)

@@ -39,3 +39,5 @@ python-dotenv==1.0.0
 # Email (Resend)
 resend==2.1.0
 svix>=1.0.0
+# Cloudflare R2 Storage (S3-compatible API)
+boto3>=1.34.0

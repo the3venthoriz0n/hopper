@@ -222,22 +222,17 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
             snippet_body['tags'] = tags
         
         youtube_logger.info(f"Preparing upload request - Title: {title[:50]}..., Visibility: {visibility}")
-        # ROOT CAUSE FIX: Resolve path to absolute to ensure file is found
-        video_path = Path(video.path).resolve()
-        youtube_logger.debug(f"Video path: {video_path}")
         
-        # Verify file exists before attempting upload
-        if not video_path.exists():
-            error_msg = f"Video file not found: {video_path}"
+        # Verify R2 object exists and download to temp file
+        if not video.path:
+            error_msg = f"Video has no R2 object key"
             youtube_logger.error(
-                f"❌ YouTube upload FAILED - File not found - User {user_id}, Video {video_id} ({video.filename}): "
-                f"Path: {video_path}",
+                f"❌ YouTube upload FAILED - No R2 object key - User {user_id}, Video {video_id} ({video.filename})",
                 extra={
                     "context": {
                         "user_id": user_id,
                         "video_id": video_id,
                         "video_filename": video.filename,
-                        "video_path": str(video_path),
                         "platform": "youtube",
                         "error_type": "FileNotFound",
                     }
@@ -246,23 +241,72 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
             record_platform_error(video_id, user_id, "youtube", error_msg, db=db)
             raise FileNotFoundError(error_msg)
         
-        request = youtube.videos().insert(
-            part='snippet,status',
-            body={
-                'snippet': snippet_body,
-                'status': {
-                    'privacyStatus': visibility,
-                    'selfDeclaredMadeForKids': made_for_kids
-                }
-            },
-            media_body=MediaFileUpload(str(video_path), resumable=True)
-        )
+        from app.services.storage.r2_service import get_r2_service
+        r2_service = get_r2_service()
         
-        youtube_logger.info("Starting resumable upload...")
-        response = None
-        chunk_count = 0
-        last_published_progress = -1
-        while response is None:
+        if not r2_service.object_exists(video.path):
+            error_msg = f"R2 object not found: {video.path}"
+            youtube_logger.error(
+                f"❌ YouTube upload FAILED - R2 object not found - User {user_id}, Video {video_id} ({video.filename}): "
+                f"R2 object key: {video.path}",
+                extra={
+                    "context": {
+                        "user_id": user_id,
+                        "video_id": video_id,
+                        "video_filename": video.filename,
+                        "r2_object_key": video.path,
+                        "platform": "youtube",
+                        "error_type": "FileNotFound",
+                    }
+                }
+            )
+            record_platform_error(video_id, user_id, "youtube", error_msg, db=db)
+            raise FileNotFoundError(error_msg)
+        
+        # Download from R2 to temp file for YouTube upload
+        import tempfile
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{video.filename}")
+        temp_video_path = Path(temp_file.name)
+        temp_file.close()
+        
+        youtube_logger.debug(f"Downloading from R2: {video.path} to temp file: {temp_video_path}")
+        if not r2_service.download_file(video.path, temp_video_path):
+            error_msg = f"Failed to download video from R2: {video.path}"
+            youtube_logger.error(
+                f"❌ YouTube upload FAILED - R2 download failed - User {user_id}, Video {video_id} ({video.filename}): "
+                f"R2 object key: {video.path}",
+                extra={
+                    "context": {
+                        "user_id": user_id,
+                        "video_id": video_id,
+                        "video_filename": video.filename,
+                        "r2_object_key": video.path,
+                        "platform": "youtube",
+                        "error_type": "DownloadFailed",
+                    }
+                }
+            )
+            record_platform_error(video_id, user_id, "youtube", error_msg, db=db)
+            raise Exception(error_msg)
+        
+        try:
+            request = youtube.videos().insert(
+                part='snippet,status',
+                body={
+                    'snippet': snippet_body,
+                    'status': {
+                        'privacyStatus': visibility,
+                        'selfDeclaredMadeForKids': made_for_kids
+                    }
+                },
+                media_body=MediaFileUpload(str(temp_video_path), resumable=True)
+            )
+            
+            youtube_logger.info("Starting resumable upload...")
+            response = None
+            chunk_count = 0
+            last_published_progress = -1
+            while response is None:
             # Check for cancellation during upload
             if _cancellation_flags.get(video_id, False):
                 youtube_logger.info(f"YouTube upload cancelled for video {video_id} during upload")
@@ -319,8 +363,23 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
             youtube_logger.info(f"Deducted {tokens_required} tokens for user {user_id} (first platform upload)")
         else:
             youtube_logger.info(f"Tokens already deducted for this video (tokens_consumed={video.tokens_consumed}), skipping")
+        finally:
+            # Clean up temp file
+            if 'temp_video_path' in locals() and temp_video_path and temp_video_path.exists():
+                try:
+                    temp_video_path.unlink()
+                    youtube_logger.debug(f"Cleaned up temp file: {temp_video_path}")
+                except Exception as cleanup_error:
+                    youtube_logger.warning(f"Failed to clean up temp file {temp_video_path}: {cleanup_error}")
     
     except Exception as e:
+        # Clean up temp file on error
+        if 'temp_video_path' in locals() and temp_video_path and temp_video_path.exists():
+            try:
+                temp_video_path.unlink()
+            except:
+                pass
+        
         error_type = type(e).__name__
         error_msg = str(e)
         
@@ -337,14 +396,16 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
             "error_message": error_msg,
         }
         
-        # Add video path if available
+        # Add R2 object info if available
         try:
-            video_path = Path(video.path).resolve() if video.path else None
-            if video_path:
-                context["video_path"] = str(video_path)
-                context["file_exists"] = video_path.exists()
-                if video_path.exists():
-                    context["actual_file_size_bytes"] = video_path.stat().st_size
+            from app.services.storage.r2_service import get_r2_service
+            r2_service = get_r2_service()
+            if video.path:
+                context["r2_object_key"] = video.path
+                context["r2_object_exists"] = r2_service.object_exists(video.path)
+                r2_size = r2_service.get_object_size(video.path)
+                if r2_size:
+                    context["actual_file_size_bytes"] = r2_size
         except Exception:
             pass
         

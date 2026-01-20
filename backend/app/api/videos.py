@@ -133,7 +133,7 @@ def get_video_file(
     token: str = Query(..., description="Access token for video file"),
     db: Session = Depends(get_db)
 ):
-    """Serve video file for TikTok PULL_FROM_URL
+    """Get presigned R2 download URL for video file
     
     This endpoint requires a signed token to prevent unauthorized access.
     The token is time-limited (1 hour) and includes video_id + user_id verification.
@@ -150,20 +150,18 @@ def get_video_file(
         db: Database session
     
     Returns:
-        Video file with proper headers for TikTok
+        JSON response with presigned R2 download URL (redirects to R2)
     
     Raises:
         HTTPException 404: Video not found
         HTTPException 403: Invalid or expired token
     """
+    from fastapi.responses import RedirectResponse
+    
     try:
         file_info = serve_video_file(video_id, token, db)
-        return FileResponse(
-            path=file_info["path"],
-            media_type=file_info["media_type"],
-            filename=file_info["filename"],
-            headers=file_info["headers"]
-        )
+        # Redirect to presigned R2 URL
+        return RedirectResponse(url=file_info["url"], status_code=302)
     except ValueError as e:
         error_msg = str(e)
         if "not found" in error_msg.lower():

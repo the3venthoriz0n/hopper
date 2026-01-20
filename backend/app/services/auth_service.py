@@ -508,9 +508,9 @@ def delete_user_account(user_id: int, db: Session) -> dict:
     
     user_email = user.email
     
-    # Collect video file paths before deletion
+    # Collect video R2 object keys before deletion
     videos = db.query(Video).filter(Video.user_id == user_id).all()
-    video_file_paths = [video.path for video in videos if video.path]
+    video_r2_keys = [video.path for video in videos if video.path]
     
     # Count related records before deletion
     videos_count = len(videos)
@@ -549,20 +549,24 @@ def delete_user_account(user_id: int, db: Session) -> dict:
         security_logger.error(f"Failed to delete user {user_id} from database: {e}", exc_info=True)
         raise ValueError(f"Failed to delete account: {str(e)}")
     
-    # Clean up video files from disk
+    # Clean up video files from R2
     files_deleted = 0
     files_failed = 0
     
-    for video_path in video_file_paths:
+    from app.services.storage.r2_service import get_r2_service
+    r2_service = get_r2_service()
+    
+    for r2_object_key in video_r2_keys:
         try:
-            path = Path(video_path).resolve()
-            if path.exists():
-                path.unlink()
+            if r2_service.delete_object(r2_object_key):
                 files_deleted += 1
-                upload_logger.debug(f"Deleted video file: {video_path}")
+                upload_logger.debug(f"Deleted video file from R2: {r2_object_key}")
+            else:
+                upload_logger.debug(f"Video file already removed from R2 or doesn't exist: {r2_object_key}")
+                files_deleted += 1  # Count as success if already gone
         except Exception as e:
             files_failed += 1
-            upload_logger.warning(f"Failed to delete video file {video_path}: {e}")
+            upload_logger.warning(f"Failed to delete video file from R2 {r2_object_key}: {e}")
     
     # Log deletion
     security_logger.info(

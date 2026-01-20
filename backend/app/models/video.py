@@ -12,7 +12,7 @@ class Video(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     filename = Column(String(255), nullable=False)
-    path = Column(String(512), nullable=False)
+    path = Column(String(512), nullable=False)  # R2 object key (e.g., "user_{user_id}/video_{video_id}_{filename}")
     status = Column(String(50), default="pending", nullable=False)  # pending, uploading, completed, failed
     generated_title = Column(Text)
     generated_description = Column(Text)  # Generated description to prevent re-randomization
