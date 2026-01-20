@@ -112,7 +112,7 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
     setDraggedVideo,
     setOverrideInputValues,
     loadVideos,
-    uploadFilesSequentially,
+    uploadFilesConcurrently,
     handleFileDrop: handleFileDropFromHook,
     removeVideo,
     updateVideoSettings,
@@ -437,7 +437,7 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
 
       <DropZone
         handleFileDrop={handleFileDropFromHook}
-        uploadFilesSequentially={uploadFilesSequentially}
+        uploadFilesConcurrently={uploadFilesConcurrently}
         maxFileSize={maxFileSize}
       />
 

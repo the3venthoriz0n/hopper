@@ -7,7 +7,7 @@ import { HOPPER_COLORS } from '../../../utils/colors';
  */
 export default function DropZone({
   handleFileDrop,
-  uploadFilesSequentially,
+  uploadFilesConcurrently,
   maxFileSize,
 }) {
   const handleClick = () => {
@@ -17,7 +17,7 @@ export default function DropZone({
   const handleFileChange = (e) => {
     const files = Array.from(e.target.files);
     if (files.length > 0) {
-      uploadFilesSequentially(files);
+      uploadFilesConcurrently(files);
     }
     e.target.value = ''; // Reset input
   };

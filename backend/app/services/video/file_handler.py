@@ -94,76 +94,44 @@ def _validate_object_key_ownership(object_key: str, user_id: int) -> None:
         raise ValueError("Invalid object key for user")
 
 
-async def confirm_upload(
-    object_key: str,
+async def initiate_upload_service(
     filename: str,
     file_size: int,
     user_id: int,
     db: Session
 ) -> Dict[str, Any]:
-    """Confirm upload and create video record after R2 upload completes
+    """Create video record immediately with 'uploading' status
     
-    This function is called after a file has been successfully uploaded to R2
-    using presigned URLs. It validates the R2 object, creates the video record,
-    and returns the video data.
+    This creates the video record before R2 upload starts so it appears
+    in the queue with progress tracking.
     
     Args:
-        object_key: R2 object key where file was uploaded
-        filename: Original filename
+        filename: File name
         file_size: File size in bytes
         user_id: User ID
         db: Database session
         
     Returns:
-        Dict with video response (same format as GET /api/videos)
+        Dict with video data (same format as GET /api/videos)
         
     Raises:
-        ValueError: For validation errors (duplicate, R2 object not found, etc.)
-        Exception: For database or R2 errors
+        ValueError: For validation errors (file too large, duplicate)
     """
-    upload_logger.info(
-        f"Confirming upload for user {user_id}: {filename} "
-        f"({file_size / (1024*1024):.2f} MB, R2 key: {object_key})"
-    )
-    
-    # Validate object_key belongs to user
-    _validate_object_key_ownership(object_key, user_id)
-    
-    # Get user settings
-    global_settings = get_user_settings(user_id, "global", db=db)
-    youtube_settings = get_user_settings(user_id, "youtube", db=db)
+    # Validate file size
+    _validate_file_size(file_size, filename)
     
     # Check for duplicates if not allowed
     _check_duplicate_filename(filename, user_id, db)
     
-    # Verify R2 object exists
-    r2_service = get_r2_service()
-    if not r2_service.object_exists(object_key):
-        upload_logger.error(
-            f"R2 object not found for user {user_id}: {filename} at {object_key}"
-        )
-        raise ValueError(f"Upload failed: file was not saved to R2")
-    
-    # Verify R2 object size matches expected size
-    r2_object_size = r2_service.get_object_size(object_key)
-    if r2_object_size and r2_object_size != file_size:
-        upload_logger.warning(
-            f"File size mismatch for user {user_id}: {filename}. "
-            f"Expected: {file_size} bytes, R2 object size: {r2_object_size} bytes"
-        )
-        # Use actual R2 size if available
-        if r2_object_size:
-            file_size = r2_object_size
-    
-    # Calculate tokens required for this upload (1 token = 10MB)
+    # Calculate tokens required
     tokens_required = calculate_tokens_from_bytes(file_size)
     
-    # Check token availability before adding to queue
+    # Check token availability
     if not check_tokens_available(user_id, tokens_required, db, include_queued_videos=True):
         queued_videos = get_user_videos(user_id, db=db)
         total_tokens_required = tokens_required
         for video in queued_videos:
-            if video.status in ('pending', 'scheduled') and video.tokens_consumed == 0:
+            if video.status in ('pending', 'scheduled', 'uploading') and video.tokens_consumed == 0:
                 video_tokens = video.tokens_required if video.tokens_required is not None else (
                     calculate_tokens_from_bytes(video.file_size_bytes) if video.file_size_bytes else 0
                 )
@@ -177,6 +145,10 @@ async def confirm_upload(
         )
         raise ValueError(error_msg)
     
+    # Get user settings for title generation
+    global_settings = get_user_settings(user_id, "global", db=db)
+    youtube_settings = get_user_settings(user_id, "youtube", db=db)
+    
     # Generate YouTube title and description (to prevent re-randomization)
     filename_no_ext = filename.rsplit('.', 1)[0]
     title_template = youtube_settings.get('title_template', '') or global_settings.get('title_template', '{filename}')
@@ -186,7 +158,6 @@ async def confirm_upload(
         global_settings.get('wordbank', [])
     )
     
-    # Generate description once to prevent re-randomization when templates use {random}
     desc_template = youtube_settings.get('description_template', '') or global_settings.get('description_template', '')
     youtube_description = replace_template_placeholders(
         desc_template,
@@ -194,22 +165,113 @@ async def confirm_upload(
         global_settings.get('wordbank', [])
     ) if desc_template else ''
     
-    # Add to database with file size and tokens
-    # Store R2 object key in path field
+    # Create temporary R2 object key (will be updated in confirm_upload)
+    temp_object_key = _generate_r2_object_key(filename, user_id)
+    
+    # Create video record with 'uploading' status
     video = add_user_video(
         user_id=user_id,
         filename=filename,
-        path=object_key,  # Store R2 object key
+        path=temp_object_key,  # Temporary path, will be updated in confirm_upload
         generated_title=youtube_title,
         generated_description=youtube_description,
         file_size_bytes=file_size,
         tokens_required=tokens_required,
-        tokens_consumed=0,  # Don't consume tokens yet - only on successful upload
+        tokens_consumed=0,
         db=db
     )
     
+    # Update status to 'uploading'
+    from app.db.helpers import update_video
+    update_video(video.id, user_id, db=db, status="uploading")
+    db.refresh(video)
+    
+    # Build video response
+    all_settings = get_all_user_settings(user_id, db=db)
+    all_tokens = get_all_oauth_tokens(user_id, db=db)
+    video_dict = build_video_response(video, all_settings, all_tokens, user_id)
+    
+    upload_logger.info(
+        f"Video upload initiated for user {user_id}: {filename} "
+        f"({file_size / (1024*1024):.2f} MB, video_id: {video.id})"
+    )
+    
+    # Publish event
+    from app.services.event_service import publish_video_added
+    await publish_video_added(user_id, video_dict)
+    
+    return video_dict
+
+
+async def confirm_upload(
+    video_id: int,
+    object_key: str,
+    filename: str,
+    file_size: int,
+    user_id: int,
+    db: Session
+) -> Dict[str, Any]:
+    """Confirm upload and update video record after R2 upload completes
+    
+    This updates an existing video record (created by initiate_upload)
+    with the final R2 object key and verifies the upload.
+    
+    Args:
+        video_id: Video ID of existing video record
+        object_key: R2 object key where file was uploaded
+        filename: Original filename
+        file_size: File size in bytes
+        user_id: User ID
+        db: Database session
+        
+    Returns:
+        Dict with video response (same format as GET /api/videos)
+        
+    Raises:
+        ValueError: For validation errors (R2 object not found, etc.)
+        Exception: For database or R2 errors
+    """
+    upload_logger.info(
+        f"Confirming upload for user {user_id}, video {video_id}: {filename} "
+        f"({file_size / (1024*1024):.2f} MB, R2 key: {object_key})"
+    )
+    
+    # Get existing video record
+    video = db.query(Video).filter(
+        Video.id == video_id,
+        Video.user_id == user_id,
+        Video.status == "uploading"
+    ).first()
+    
+    if not video:
+        raise ValueError("Video not found or not in uploading status")
+    
+    # Validate object_key belongs to user
+    _validate_object_key_ownership(object_key, user_id)
+    
+    # Verify R2 object exists
+    r2_service = get_r2_service()
+    if not r2_service.object_exists(object_key):
+        upload_logger.error(
+            f"R2 object not found for user {user_id}, video {video_id}: {filename} at {object_key}"
+        )
+        from app.db.helpers import update_video
+        update_video(video_id, user_id, db=db, status="failed", error="R2 object not found after upload")
+        raise ValueError(f"Upload failed: file was not saved to R2")
+    
+    # Verify R2 object size matches expected size
+    r2_object_size = r2_service.get_object_size(object_key)
+    if r2_object_size and r2_object_size != file_size:
+        upload_logger.warning(
+            f"File size mismatch for user {user_id}, video {video_id}: {filename}. "
+            f"Expected: {file_size} bytes, R2 object size: {r2_object_size} bytes"
+        )
+        # Use actual R2 size if available
+        if r2_object_size:
+            file_size = r2_object_size
+    
     # Update R2 object key to final format: user_{user_id}/video_{video_id}_{filename}
-    final_r2_key = f"user_{user_id}/video_{video.id}_{filename}"
+    final_r2_key = f"user_{user_id}/video_{video_id}_{filename}"
     if object_key != final_r2_key:
         # Copy object to new key (R2 doesn't support rename, so we copy and delete)
         try:
@@ -225,18 +287,23 @@ async def confirm_upload(
             upload_logger.warning(f"Failed to rename R2 object from {object_key} to {final_r2_key}: {e}. Using original key.")
             # Continue with original key - not critical
     
-    upload_logger.info(f"Video added to queue for user {user_id}: {filename} ({file_size / (1024*1024):.2f} MB, will cost {tokens_required} tokens on upload)")
+    # Update status to pending (ready for destination uploads)
+    from app.db.helpers import update_video
+    old_status = video.status
+    update_video(video_id, user_id, db=db, status="pending")
+    db.refresh(video)
     
-    # Build video response using the same helper function as GET endpoint
+    upload_logger.info(f"Video upload confirmed for user {user_id}: {filename} ({file_size / (1024*1024):.2f} MB, will cost {video.tokens_required} tokens on upload)")
+    
+    # Build video response
     all_settings = get_all_user_settings(user_id, db=db)
     all_tokens = get_all_oauth_tokens(user_id, db=db)
     video_dict = build_video_response(video, all_settings, all_tokens, user_id)
     
-    # Publish event with full video data
-    from app.services.event_service import publish_video_added
-    await publish_video_added(user_id, video_dict)
+    # Publish status change event
+    from app.services.event_service import publish_video_status_changed
+    await publish_video_status_changed(user_id, video_id, old_status, "pending", video_dict=video_dict)
     
-    # Return the same format as GET /api/videos for consistency
     return video_dict
 
 

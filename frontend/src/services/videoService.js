@@ -246,18 +246,52 @@ export const completeMultipartUpload = async (objectKey, uploadId, parts) => {
 };
 
 /**
- * Confirm upload and create video record
+ * Initiate upload - create video record immediately with 'uploading' status
+ * @param {string} filename - File name
+ * @param {number} fileSize - File size in bytes
+ * @returns {Promise<object>} Video data
+ */
+export const initiateUpload = async (filename, fileSize) => {
+  const csrfToken = Cookies.get('csrf_token_client');
+  const res = await axios.post(`${API}/upload/initiate`, {
+    filename,
+    file_size: fileSize
+  }, {
+    headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
+  });
+  return res.data;
+};
+
+/**
+ * Confirm upload and update video record
+ * @param {number} videoId - Video ID
  * @param {string} objectKey - R2 object key
  * @param {string} filename - File name
  * @param {number} fileSize - File size in bytes
  * @returns {Promise<object>} Video data
  */
-export const confirmUpload = async (objectKey, filename, fileSize) => {
+export const confirmUpload = async (videoId, objectKey, filename, fileSize) => {
   const csrfToken = Cookies.get('csrf_token_client');
   const res = await axios.post(`${API}/upload/confirm`, {
+    video_id: videoId,
     object_key: objectKey,
     filename,
     file_size: fileSize
+  }, {
+    headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
+  });
+  return res.data;
+};
+
+/**
+ * Fail upload - remove video record on upload failure
+ * @param {number} videoId - Video ID
+ * @returns {Promise<object>} Response
+ */
+export const failUpload = async (videoId) => {
+  const csrfToken = Cookies.get('csrf_token_client');
+  const res = await axios.post(`${API}/upload/fail`, {
+    video_id: videoId
   }, {
     headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
   });

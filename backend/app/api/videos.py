@@ -80,10 +80,20 @@ class MultipartCompleteRequest(BaseModel):
     parts: list[MultipartPart]
 
 
+class InitiateUploadRequest(BaseModel):
+    filename: str
+    file_size: int
+
+
 class ConfirmUploadRequest(BaseModel):
+    video_id: int
     object_key: str
     filename: str
     file_size: int
+
+
+class FailUploadRequest(BaseModel):
+    video_id: int
 
 
 @router.get("")
@@ -321,6 +331,39 @@ async def get_upload_limits():
     }
 
 
+@upload_router.post("/initiate")
+async def initiate_upload(
+    request: InitiateUploadRequest,
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
+    """Create video record immediately with 'uploading' status
+    
+    This is called before R2 upload starts so the video appears in queue
+    with progress tracking.
+    """
+    from app.services.video.file_handler import initiate_upload_service
+    
+    try:
+        return await initiate_upload_service(
+            filename=request.filename,
+            file_size=request.file_size,
+            user_id=user_id,
+            db=db
+        )
+    except ValueError as e:
+        error_msg = str(e)
+        if "too large" in error_msg.lower():
+            raise HTTPException(413, error_msg)
+        elif "duplicate" in error_msg.lower():
+            raise HTTPException(400, error_msg)
+        else:
+            raise HTTPException(400, error_msg)
+    except Exception as e:
+        logger.error(f"Failed to initiate upload for user {user_id}: {e}", exc_info=True)
+        raise HTTPException(500, f"Failed to initiate upload: {str(e)}")
+
+
 @upload_router.post("/presigned")
 async def get_presigned_upload_url(
     request: PresignedUploadRequest,
@@ -453,15 +496,17 @@ async def confirm_upload(
     user_id: int = Depends(require_csrf_new),
     db: Session = Depends(get_db)
 ):
-    """Confirm upload and create video record
+    """Confirm upload and update video record
     
     Called after file is successfully uploaded to R2. Validates R2 object exists,
-    creates video record in database, and returns video data.
+    updates existing video record (created by initiate_upload) with final R2 key,
+    and returns video data.
     """
     from app.services.video.file_handler import confirm_upload as confirm_upload_handler
     
     try:
         return await confirm_upload_handler(
+            video_id=request.video_id,
             object_key=request.object_key,
             filename=request.filename,
             file_size=request.file_size,
@@ -472,11 +517,42 @@ async def confirm_upload(
         error_msg = str(e)
         if "invalid" in error_msg.lower() or "ownership" in error_msg.lower():
             raise HTTPException(403, error_msg)
+        elif "not found" in error_msg.lower():
+            raise HTTPException(404, error_msg)
         else:
             raise HTTPException(400, error_msg)
     except Exception as e:
         logger.error(f"Failed to confirm upload for user {user_id}: {e}", exc_info=True)
         raise HTTPException(500, f"Failed to confirm upload: {str(e)}")
+
+
+@upload_router.post("/fail")
+async def fail_upload(
+    request: FailUploadRequest,
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
+    """Mark upload as failed or delete video record on upload failure"""
+    from app.db.helpers import delete_video
+    
+    # Verify video belongs to user and is in uploading status
+    video = db.query(Video).filter(
+        Video.id == request.video_id,
+        Video.user_id == user_id,
+        Video.status == "uploading"  # Only allow failing videos that are uploading
+    ).first()
+    
+    if not video:
+        raise HTTPException(404, "Video not found or cannot be failed")
+    
+    # Delete the video record (cleanup)
+    delete_video(request.video_id, user_id, db=db)
+    
+    # Publish deletion event
+    from app.services.event_service import publish_video_deleted
+    await publish_video_deleted(user_id, request.video_id)
+    
+    return {"ok": True, "message": "Upload failed and video removed"}
 
 
 @upload_router.get("")

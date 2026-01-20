@@ -55,9 +55,6 @@ export function useVideos(
       });
       
       setVideos(prevVideos => {
-        const tempVideos = prevVideos.filter(v => typeof v.id === 'string' && v.id.startsWith('temp-'));
-        const tempVideoIds = new Set(tempVideos.map(v => v.id));
-        
         if (prevVideos && prevVideos.length > 0) {
           uniqueData.forEach(newVideo => {
             const prevVideo = prevVideos.find(v => v.id === newVideo.id);
@@ -89,17 +86,12 @@ export function useVideos(
           });
         }
         
-        const prevRealVideos = prevVideos.filter(v => !tempVideoIds.has(v.id));
-        if (JSON.stringify(prevRealVideos) === JSON.stringify(uniqueData)) {
+        // Check if videos changed
+        if (JSON.stringify(prevVideos) === JSON.stringify(uniqueData)) {
           return prevVideos;
         }
         
-        // Remove temp videos that now have real videos (matched by filename)
-        const remainingTempVideos = tempVideos.filter(tempV => 
-          !uniqueData.some(realV => realV.filename === tempV.filename)
-        );
-        
-        return [...uniqueData, ...remainingTempVideos];
+        return uniqueData;
       });
       
       if (user) {
@@ -118,17 +110,11 @@ export function useVideos(
   }, [user, loadSubscription, setNotification]);
 
   const isUploading = useMemo(() => {
-    return videos.some(v => 
-      v.status === 'uploading' && 
-      !(typeof v.id === 'string' && v.id.startsWith('temp-'))
-    );
+    return videos.some(v => v.status === 'uploading');
   }, [videos]);
 
   const derivedMessage = useMemo(() => {
-    const uploadingCount = videos.filter(v => 
-      v.status === 'uploading' && 
-      !(typeof v.id === 'string' && v.id.startsWith('temp-'))
-    ).length;
+    const uploadingCount = videos.filter(v => v.status === 'uploading').length;
     
     const uploadedCount = videos.filter(v => 
       v.status === 'uploaded' || v.status === 'completed'
@@ -198,33 +184,26 @@ export function useVideos(
       return;
     }
     
-    // Check if temp video already exists for this filename (from uploadFilesSequentially)
-    const existingTempVideo = videos.find(v => 
-      typeof v.id === 'string' && 
-      v.id.startsWith('temp-') && 
-      v.filename === file.name
-    );
-    
-    const tempId = existingTempVideo?.id || `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Only create new temp video if one doesn't exist
-    if (!existingTempVideo) {
-      const tempVideo = {
-        id: tempId,
-        filename: file.name,
-        status: 'uploading',
-        progress: 0,
-        file_size_bytes: file.size,
-        tokens_consumed: 0
-      };
-      setVideos(prev => [...prev, tempVideo]);
-    }
-    
-    // Determine if we should use multipart upload (files > 100MB)
-    const MULTIPART_THRESHOLD = 100 * 1024 * 1024; // 100MB
-    const useMultipart = file.size > MULTIPART_THRESHOLD;
+    let videoId = null;
     
     try {
+      // Step 1: Create video record immediately with 'uploading' status
+      const videoInit = await videoService.initiateUpload(file.name, file.size);
+      videoId = videoInit.id;
+      
+      // Add video to queue immediately
+      setVideos(prev => {
+        const exists = prev.some(v => v.id === videoInit.id);
+        if (exists) {
+          return prev.map(v => v.id === videoInit.id ? videoInit : v);
+        }
+        return [...prev, videoInit];
+      });
+      
+      // Step 2: Get presigned URL and upload to R2 with progress tracking
+      const MULTIPART_THRESHOLD = 100 * 1024 * 1024; // 100MB
+      const useMultipart = file.size > MULTIPART_THRESHOLD;
+      
       let objectKey;
       let uploadId;
       
@@ -247,7 +226,7 @@ export function useVideos(
           return await videoService.completeMultipartUpload(objKey, upId, parts);
         };
         
-        // Upload using multipart
+        // Upload using multipart with progress tracking
         await videoService.uploadToR2Multipart(
           file,
           uploadId,
@@ -255,8 +234,9 @@ export function useVideos(
           (progressEvent) => {
             if (progressEvent.total) {
               const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              // Update video progress in state
               setVideos(prev => prev.map(v =>
-                v.id === tempId ? { ...v, progress: percent } : v
+                v.id === videoId ? { ...v, upload_progress: percent } : v
               ));
             }
           },
@@ -272,37 +252,44 @@ export function useVideos(
         );
         objectKey = presignedData.object_key;
         
-        // Upload directly to R2
+        // Upload directly to R2 with progress tracking
         await videoService.uploadToR2Direct(
           file,
           presignedData.upload_url,
           (progressEvent) => {
             if (progressEvent.total) {
               const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              // Update video progress in state
               setVideos(prev => prev.map(v =>
-                v.id === tempId ? { ...v, progress: percent } : v
+                v.id === videoId ? { ...v, upload_progress: percent } : v
               ));
             }
           }
         );
       }
       
-      // Confirm upload and create video record
-      const videoData = await videoService.confirmUpload(objectKey, file.name, file.size);
+      // Step 3: Confirm upload and update video record
+      const videoData = await videoService.confirmUpload(videoId, objectKey, file.name, file.size);
       
-      setVideos(prev => {
-        const withoutTemp = prev.filter(v => v.id !== tempId);
-        const exists = withoutTemp.some(v => v.id === videoData.id);
-        if (exists) {
-          return withoutTemp.map(v => v.id === videoData.id ? videoData : v);
-        }
-        return [...withoutTemp, videoData];
-      });
+      // Update video in state
+      setVideos(prev => prev.map(v => 
+        v.id === videoId ? videoData : v
+      ));
       
       const tokensRequired = videoData.tokens_required || 0;
       if (setMessage) setMessage(`✅ Added ${file.name} to queue (will cost ${tokensRequired} ${tokensRequired === 1 ? 'token' : 'tokens'} on upload)`);
     } catch (err) {
-      setVideos(prev => prev.filter(v => v.id !== tempId));
+      // On failure, remove video from queue
+      if (videoId) {
+        try {
+          await videoService.failUpload(videoId);
+          setVideos(prev => prev.filter(v => v.id !== videoId));
+        } catch (cleanupErr) {
+          // If cleanup fails, just remove from state
+          console.error('Failed to cleanup failed upload:', cleanupErr);
+          setVideos(prev => prev.filter(v => v.id !== videoId));
+        }
+      }
       
       const isTimeout = err.code === 'ECONNABORTED' || err.message?.includes('timeout');
       const isNetworkError = !err.response && (err.code === 'ERR_NETWORK' || err.code === 'ECONNRESET');
@@ -315,14 +302,7 @@ export function useVideos(
       
       if (isTimeout) {
         const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-        const timeoutMinutes = (timeoutMs / (60 * 1000)).toFixed(1);
-        const isLikelyProxyTimeout = timeoutMs >= 100000 && fileSizeMB < 500;
-        
-        if (isLikelyProxyTimeout) {
-          errorMsg = `Upload timeout: The file "${file.name}" (${fileSizeMB} MB) timed out after ${timeoutMinutes} minutes. The connection may be too slow. Please try again or contact support.`;
-        } else {
-          errorMsg = `Upload timeout: The file "${file.name}" (${fileSizeMB} MB) timed out after ${timeoutMinutes} minutes. The connection may be too slow or there may be a proxy timeout. Please try a smaller file or check your internet connection.`;
-        }
+        errorMsg = `Upload timeout: The file "${file.name}" (${fileSizeMB} MB) timed out. Please try again or check your connection.`;
         
         setNotification({
           type: 'error',
@@ -333,7 +313,7 @@ export function useVideos(
         setTimeout(() => setNotification(null), 20000);
       } else if (isNetworkError) {
         const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-        errorMsg = `Network error: The upload of "${file.name}" (${fileSizeMB} MB) was interrupted. This may be due to file size limits, network issues, or server timeout. Please try a smaller file.`;
+        errorMsg = `Network error: The upload of "${file.name}" (${fileSizeMB} MB) was interrupted. Please try again.`;
         
         setNotification({
           type: 'error',
@@ -385,37 +365,21 @@ export function useVideos(
         fileName: file.name
       });
     }
-  }, [videos, maxFileSize, setMessage, setNotification]);
+  }, [maxFileSize, setMessage, setNotification]);
 
-  const uploadFilesSequentially = useCallback(async (files) => {
-    // Create temp video placeholders for all files immediately
-    const tempVideos = files.map((file, index) => {
-      const tempId = `temp-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`;
-      return {
-        id: tempId,
-        filename: file.name,
-        status: 'uploading',
-        progress: 0,
-        file_size_bytes: file.size,
-        tokens_consumed: 0
-      };
+  const uploadFilesConcurrently = useCallback(async (files) => {
+    // Upload all files to R2 concurrently - videos appear in queue only after upload completes
+    const uploadPromises = files.map(async (file) => {
+      try {
+        await addVideo(file);
+      } catch (err) {
+        // Error handling is done in addVideo - just log here
+        console.error(`Failed to upload ${file.name}:`, err);
+      }
     });
     
-    // Add all temp videos to state immediately - they'll appear in queue right away
-    setVideos(prev => [...prev, ...tempVideos]);
-    
-    // Upload files sequentially - addVideo will find and update the matching temp video
-    for (const file of files) {
-      try {
-        await addVideo(file); // addVideo will find temp video by filename and update it
-      } catch (err) {
-        console.error(`Failed to upload ${file.name}:`, err);
-        // Remove the corresponding temp video on failure
-        setVideos(prev => prev.filter(v => 
-          !(typeof v.id === 'string' && v.id.startsWith('temp-') && v.filename === file.name)
-        ));
-      }
-    }
+    // Wait for all uploads to complete (or fail)
+    await Promise.all(uploadPromises);
   }, [addVideo]);
 
   const handleFileDrop = useCallback((e) => {
@@ -424,9 +388,9 @@ export function useVideos(
       f.type.startsWith('video/')
     );
     if (files.length > 0) {
-      uploadFilesSequentially(files);
+      uploadFilesConcurrently(files);
     }
-  }, [uploadFilesSequentially]);
+  }, [uploadFilesConcurrently]);
 
   const removeVideo = useCallback(async (id) => {
     try {
@@ -625,10 +589,7 @@ export function useVideos(
   }, [draggedVideo, videos, setMessage]);
 
   const cancelAllUploads = useCallback(async () => {
-    const uploadingVideos = videos.filter(v => 
-      v.status === 'uploading' && 
-      !(typeof v.id === 'string' && v.id.startsWith('temp-'))
-    );
+    const uploadingVideos = videos.filter(v => v.status === 'uploading');
     if (uploadingVideos.length === 0) {
       return;
     }
@@ -645,18 +606,16 @@ export function useVideos(
       const cancelPromises = uploadingVideos.map(v => videoService.cancelVideoUpload(v.id));
       await Promise.all(cancelPromises);
       
-      const updatedVideos = await videoService.loadVideos();
-      setVideos(updatedVideos);
+      await loadVideos();
       
       if (setMessage) setMessage(`✅ Cancelled ${uploadingVideos.length} upload(s)`);
     } catch (err) {
-      const updatedVideos = await videoService.loadVideos();
-      setVideos(updatedVideos);
+      await loadVideos();
       
       const errorMsg = err.response?.data?.detail || err.response?.data?.message || err.message || 'Failed to cancel uploads';
       if (setMessage) setMessage(`❌ ${errorMsg}`);
     }
-  }, [videos, setMessage]);
+  }, [videos, setMessage, loadVideos]);
 
   const upload = useCallback(async () => {
     if (tiktok.enabled && tiktokSettings.commercial_content_disclosure) {
@@ -705,8 +664,9 @@ export function useVideos(
     try {
       const res = await videoService.uploadVideos();
       
+      // Load updated videos for both state update and checking TikTok uploads
       const updatedVideos = await videoService.loadVideos();
-      setVideos(updatedVideos);
+      await loadVideos();
       
       const hasSuccessfulTiktokUploads = updatedVideos.some(video => {
         const tiktokId = video.custom_settings?.tiktok_id;
@@ -754,10 +714,9 @@ export function useVideos(
         if (setMessage) setMessage(`❌ Upload failed: ${errorMsg}`);
       }
       
-      const updatedVideos = await videoService.loadVideos();
-      setVideos(updatedVideos);
+      await loadVideos();
     }
-  }, [youtube, tiktok, instagram, tiktokSettings, globalSettings, tokenBalance, subscription, videos, setMessage, setNotification]);
+  }, [youtube, tiktok, instagram, tiktokSettings, globalSettings, tokenBalance, subscription, videos, setMessage, setNotification, loadVideos]);
 
   return {
     videos,
@@ -774,7 +733,7 @@ export function useVideos(
     setExpandedDestinationErrors,
     loadVideos,
     addVideo,
-    uploadFilesSequentially,
+    uploadFilesConcurrently,
     handleFileDrop,
     removeVideo,
     clearAllVideos,

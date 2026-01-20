@@ -1,12 +1,14 @@
 """Upload orchestration - background tasks, retries, batch operations"""
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
 from app.db.helpers import get_user_videos, get_user_settings, update_video
+from app.db.session import SessionLocal
 from app.models.video import Video
 from app.services.token_service import check_tokens_available, get_token_balance, calculate_tokens_from_bytes
 from app.services.video.helpers import (
@@ -75,6 +77,267 @@ def calculate_scheduled_time(
     return scheduled_time
 
 
+async def _upload_single_video_to_destinations(
+    video_id: int,
+    user_id: int,
+    enabled_destinations: list,
+    upload_context: Dict[str, Any]
+) -> Tuple[str, int]:  # Returns (result: "succeeded"|"failed"|"cancelled", video_id)
+    """Upload a single video to all enabled destinations
+    
+    This function is called concurrently for multiple videos.
+    Each call gets its own database session for thread-safety.
+    
+    Args:
+        video_id: Video ID to upload
+        user_id: User ID
+        enabled_destinations: List of enabled destination names
+        upload_context: Upload context dict (for settings, tokens, etc.)
+    
+    Returns:
+        Tuple of (result, video_id) where result is "succeeded", "failed", or "cancelled"
+    """
+    # Create a new database session for this concurrent task
+    db = SessionLocal()
+    try:
+        # Import DESTINATION_UPLOADERS
+        from app.services.video import DESTINATION_UPLOADERS
+        
+        # Get video from database
+        from app.models.video import Video as VideoModel
+        video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
+        
+        if not video:
+            upload_logger.error(f"Video {video_id} not found for user {user_id}")
+            return ("failed", video_id)
+        
+        # Check token availability before uploading (only if tokens not already consumed)
+        if video.tokens_consumed == 0:
+            tokens_required = video.tokens_required if video.tokens_required is not None else calculate_tokens_from_bytes(video.file_size_bytes) if video.file_size_bytes else 0
+            
+            if tokens_required > 0 and not check_tokens_available(user_id, tokens_required, db):
+                balance_info = get_token_balance(user_id, db)
+                tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
+                error_msg = f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining"
+                upload_logger.error(
+                    f"Upload blocked for user {user_id}, video {video_id} ({video.filename}): {error_msg}"
+                )
+                old_status = video.status
+                update_video(video_id, user_id, db=db, status="failed", error=error_msg)
+                
+                # Refresh video and build full response
+                db.refresh(video)
+                from app.services.event_service import publish_video_status_changed
+                from app.services.video.helpers import build_video_response
+                from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+                all_settings = get_all_user_settings(user_id, db=db)
+                all_tokens = get_all_oauth_tokens(user_id, db=db)
+                video_dict = build_video_response(video, all_settings, all_tokens, user_id)
+                
+                # Publish status change event
+                await publish_video_status_changed(user_id, video_id, old_status, "failed", video_dict=video_dict)
+                
+                return ("failed", video_id)
+        
+        # Check if upload was cancelled before starting
+        if _cancellation_flags.get(video_id, False):
+            upload_logger.info(f"Upload cancelled for video {video_id} before starting")
+            _cancellation_flags.pop(video_id, None)
+            old_status = video.status
+            update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
+            
+            # Refresh video and build full response
+            db.refresh(video)
+            from app.services.event_service import publish_video_status_changed
+            from app.services.video.helpers import build_video_response
+            from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+            all_settings = get_all_user_settings(user_id, db=db)
+            all_tokens = get_all_oauth_tokens(user_id, db=db)
+            video_dict = build_video_response(video, all_settings, all_tokens, user_id)
+            
+            await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
+            return ("cancelled", video_id)
+        
+        # Set status to uploading before starting
+        old_status = video.status
+        if old_status == "cancelled":
+            update_video(video_id, user_id, db=db, status="uploading", error=None)
+        else:
+            update_video(video_id, user_id, db=db, status="uploading")
+        
+        # Clear any previous cancellation flag
+        _cancellation_flags.pop(video_id, None)
+        
+        # Refresh video and build full response
+        db.refresh(video)
+        from app.services.event_service import publish_video_status_changed
+        from app.services.video.helpers import build_video_response
+        from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+        all_settings = get_all_user_settings(user_id, db=db)
+        all_tokens = get_all_oauth_tokens(user_id, db=db)
+        video_dict = build_video_response(video, all_settings, all_tokens, user_id)
+        
+        # Publish status change event
+        await publish_video_status_changed(user_id, video_id, old_status, "uploading", video_dict=video_dict)
+        
+        # Initialize platform_errors in custom_settings
+        if video.custom_settings is None:
+            video.custom_settings = {}
+        if "platform_errors" not in video.custom_settings:
+            video.custom_settings["platform_errors"] = {}
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(video, "custom_settings")
+        db.commit()
+        
+        # Track if upload was cancelled during processing
+        upload_cancelled = False
+        
+        # Upload to all enabled destinations
+        for dest_name in enabled_destinations:
+            # Check for cancellation before each destination
+            if _cancellation_flags.get(video_id, False):
+                upload_logger.info(f"Upload cancelled for video {video_id} during {dest_name} upload")
+                _cancellation_flags.pop(video_id, None)
+                
+                # Get current video status
+                current_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
+                old_status = current_video.status if current_video else "uploading"
+                
+                update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
+                
+                # Refresh video and build full response
+                db.refresh(current_video)
+                all_settings = get_all_user_settings(user_id, db=db)
+                all_tokens = get_all_oauth_tokens(user_id, db=db)
+                video_dict = build_video_response(current_video, all_settings, all_tokens, user_id)
+                
+                await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
+                upload_cancelled = True
+                break  # Exit destination loop
+            
+            uploader_func = DESTINATION_UPLOADERS.get(dest_name)
+            if uploader_func:
+                try:
+                    await uploader_func(user_id, video_id, db=db)
+                    
+                    # Check for cancellation after each upload
+                    if _cancellation_flags.get(video_id, False):
+                        upload_logger.info(f"Upload cancelled for video {video_id} after {dest_name} upload")
+                        _cancellation_flags.pop(video_id, None)
+                        
+                        # Get current video status
+                        current_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
+                        old_status = current_video.status if current_video else "uploading"
+                        
+                        update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
+                        
+                        # Refresh video and build full response
+                        db.refresh(current_video)
+                        all_settings = get_all_user_settings(user_id, db=db)
+                        all_tokens = get_all_oauth_tokens(user_id, db=db)
+                        video_dict = build_video_response(current_video, all_settings, all_tokens, user_id)
+                        
+                        await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
+                        upload_cancelled = True
+                        break  # Exit destination loop
+                except Exception as upload_err:
+                    # Check if error is due to cancellation
+                    if "cancelled by user" in str(upload_err).lower():
+                        upload_logger.info(f"Upload cancelled for {dest_name}: {upload_err}")
+                    else:
+                        upload_logger.error(f"Upload failed for {dest_name}: {upload_err}")
+                        # Record platform-specific error
+                        record_platform_error(video_id, user_id, dest_name, str(upload_err), db=db)
+                    # Continue to next destination (or break if cancelled)
+                    if "cancelled by user" in str(upload_err).lower():
+                        upload_cancelled = True
+                        break
+        
+        # Skip final status check if upload was cancelled
+        if upload_cancelled:
+            return ("cancelled", video_id)
+        
+        # Check final status and collect actual error messages
+        updated_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
+        if updated_video:
+            succeeded = []
+            failed = []
+            
+            for dest_name in enabled_destinations:
+                if check_upload_success(updated_video, dest_name):
+                    succeeded.append(dest_name)
+                else:
+                    failed.append(dest_name)
+            
+            # Get actual error message from video if it exists
+            actual_error = updated_video.error
+            
+            if len(succeeded) == len(enabled_destinations):
+                old_status = updated_video.status
+                update_video(video_id, user_id, db=db, status="uploaded")
+                
+                # Refresh video to get updated status
+                db.refresh(updated_video)
+                
+                # Build full video response
+                all_settings = get_all_user_settings(user_id, db=db)
+                all_tokens = get_all_oauth_tokens(user_id, db=db)
+                video_dict = build_video_response(updated_video, all_settings, all_tokens, user_id)
+                
+                # Publish status change event
+                await publish_video_status_changed(user_id, video_id, old_status, "uploaded", video_dict=video_dict)
+                
+                return ("succeeded", video_id)
+            elif len(succeeded) > 0:
+                # Partial success
+                old_status = updated_video.status
+                
+                if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
+                    update_video(video_id, user_id, db=db, status="failed", error=actual_error)
+                else:
+                    update_video(video_id, user_id, db=db, status="failed", 
+                               error=f"Partial upload: succeeded ({', '.join(succeeded)}), failed ({', '.join(failed)})")
+                
+                # Refresh video and build full response
+                db.refresh(updated_video)
+                all_settings = get_all_user_settings(user_id, db=db)
+                all_tokens = get_all_oauth_tokens(user_id, db=db)
+                video_dict = build_video_response(updated_video, all_settings, all_tokens, user_id)
+                
+                await publish_video_status_changed(user_id, video_id, old_status, "failed", video_dict=video_dict)
+                return ("failed", video_id)
+            else:
+                # All failed
+                old_status = updated_video.status
+                
+                if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
+                    update_video(video_id, user_id, db=db, status="failed", error=actual_error)
+                else:
+                    update_video(video_id, user_id, db=db, status="failed", 
+                               error=f"Upload failed for all destinations: {', '.join(failed)}")
+                
+                # Refresh video and build full response
+                db.refresh(updated_video)
+                all_settings = get_all_user_settings(user_id, db=db)
+                all_tokens = get_all_oauth_tokens(user_id, db=db)
+                video_dict = build_video_response(updated_video, all_settings, all_tokens, user_id)
+                
+                await publish_video_status_changed(user_id, video_id, old_status, "failed", video_dict=video_dict)
+                return ("failed", video_id)
+        
+        return ("failed", video_id)
+    except Exception as e:
+        upload_logger.error(f"Error uploading video {video_id} for user {user_id}: {e}", exc_info=True)
+        # Update video status to failed
+        try:
+            update_video(video_id, user_id, db=db, status="failed", error=f"Upload error: {str(e)}")
+        except:
+            pass
+        return ("failed", video_id)
+    finally:
+        db.close()
+
+
 async def upload_all_pending_videos(
     user_id: int,
     db: Session
@@ -127,257 +390,37 @@ async def upload_all_pending_videos(
     
     # If upload immediately is enabled, upload all at once to all enabled destinations
     if upload_immediately:
+        # Create concurrent tasks for all videos
+        tasks = [
+            _upload_single_video_to_destinations(
+                video.id,
+                user_id,
+                enabled_destinations,
+                upload_context
+            )
+            for video in pending_videos
+        ]
+        
+        # Run all uploads concurrently
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Count results
         videos_succeeded = 0
         videos_failed = 0
         videos_cancelled = 0
         
-        for video in pending_videos:
-            video_id = video.id
-            
-            # Check token availability before uploading (only if tokens not already consumed)
-            if video.tokens_consumed == 0:
-                # Use stored tokens_required with fallback for backward compatibility
-                tokens_required = video.tokens_required if video.tokens_required is not None else calculate_tokens_from_bytes(video.file_size_bytes) if video.file_size_bytes else 0
-                
-                if tokens_required > 0 and not check_tokens_available(user_id, tokens_required, db):
-                    balance_info = get_token_balance(user_id, db)
-                    tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
-                    error_msg = f"Insufficient tokens: Need {tokens_required} tokens but only have {tokens_remaining} remaining"
-                    upload_logger.error(
-                        f"Upload blocked for user {user_id}, video {video_id} ({video.filename}): {error_msg}"
-                    )
-                    old_status = video.status
-                    update_video(video_id, user_id, db=db, status="failed", error=error_msg)
-                    
-                    # Refresh video and build full response (backend is source of truth)
-                    db.refresh(video)
-                    from app.services.event_service import publish_video_status_changed
-                    from app.services.video.helpers import build_video_response
-                    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
-                    all_settings = get_all_user_settings(user_id, db=db)
-                    all_tokens = get_all_oauth_tokens(user_id, db=db)
-                    video_dict = build_video_response(video, all_settings, all_tokens, user_id)
-                    
-                    # Publish status change event with full video data
-                    await publish_video_status_changed(user_id, video_id, old_status, "failed", video_dict=video_dict)
-                    
-                    videos_failed += 1
-                    continue
-            
-            # Check if upload was cancelled before starting
-            if _cancellation_flags.get(video_id, False):
-                upload_logger.info(f"Upload cancelled for video {video_id} before starting")
-                _cancellation_flags.pop(video_id, None)
-                old_status = video.status
-                update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
-                
-                # Refresh video and build full response (backend is source of truth)
-                db.refresh(video)
-                from app.services.event_service import publish_video_status_changed
-                from app.services.video.helpers import build_video_response
-                from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
-                all_settings = get_all_user_settings(user_id, db=db)
-                all_tokens = get_all_oauth_tokens(user_id, db=db)
-                video_dict = build_video_response(video, all_settings, all_tokens, user_id)
-                
-                await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
-                videos_cancelled += 1
-                continue
-            
-            # Set status to uploading before starting
-            # If video was cancelled, reset error and clear cancellation flag
-            old_status = video.status
-            if old_status == "cancelled":
-                update_video(video_id, user_id, db=db, status="uploading", error=None)
+        for result in results:
+            if isinstance(result, Exception):
+                upload_logger.error(f"Exception in concurrent upload: {result}", exc_info=True)
+                videos_failed += 1
             else:
-                update_video(video_id, user_id, db=db, status="uploading")
-            
-            # Clear any previous cancellation flag
-            _cancellation_flags.pop(video_id, None)
-            
-            # Get video object from database for building response
-            from app.models.video import Video as VideoModel
-            video_obj = db.query(VideoModel).filter(VideoModel.id == video_id).first()
-            
-            if video_obj:
-                # Refresh video and build full response (backend is source of truth)
-                db.refresh(video_obj)
-                from app.services.event_service import publish_video_status_changed
-                from app.services.video.helpers import build_video_response
-                from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
-                all_settings = get_all_user_settings(user_id, db=db)
-                all_tokens = get_all_oauth_tokens(user_id, db=db)
-                video_dict = build_video_response(video_obj, all_settings, all_tokens, user_id)
-                
-                # Publish status change event with full video data
-                await publish_video_status_changed(user_id, video_id, old_status, "uploading", video_dict=video_dict)
-                
-                # Initialize platform_errors in custom_settings
-                if video_obj.custom_settings is None:
-                    video_obj.custom_settings = {}
-                if "platform_errors" not in video_obj.custom_settings:
-                    video_obj.custom_settings["platform_errors"] = {}
-                from sqlalchemy.orm.attributes import flag_modified
-                flag_modified(video_obj, "custom_settings")
-                db.commit()
-            
-            # Track if upload was cancelled during processing
-            upload_cancelled = False
-            
-            # Upload to all enabled destinations
-            for dest_name in enabled_destinations:
-                # Check for cancellation before each destination
-                if _cancellation_flags.get(video_id, False):
-                    upload_logger.info(f"Upload cancelled for video {video_id} during {dest_name} upload")
-                    _cancellation_flags.pop(video_id, None)
-                    
-                    # Get current video status
-                    from app.models.video import Video as VideoModel
-                    current_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
-                    old_status = current_video.status if current_video else "uploading"
-                    
-                    update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
-                    
-                    # Refresh video and build full response (backend is source of truth)
-                    db.refresh(current_video)
-                    from app.services.event_service import publish_video_status_changed
-                    from app.services.video.helpers import build_video_response
-                    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
-                    all_settings = get_all_user_settings(user_id, db=db)
-                    all_tokens = get_all_oauth_tokens(user_id, db=db)
-                    video_dict = build_video_response(current_video, all_settings, all_tokens, user_id)
-                    
-                    await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
-                    videos_cancelled += 1
-                    upload_cancelled = True
-                    break  # Exit destination loop
-                
-                uploader_func = DESTINATION_UPLOADERS.get(dest_name)
-                if uploader_func:
-                    try:
-                        await uploader_func(user_id, video_id, db=db)
-                        
-                        # Check for cancellation after each upload
-                        if _cancellation_flags.get(video_id, False):
-                            upload_logger.info(f"Upload cancelled for video {video_id} after {dest_name} upload")
-                            _cancellation_flags.pop(video_id, None)
-                            
-                            # Get current video status
-                            from app.models.video import Video as VideoModel
-                            current_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
-                            old_status = current_video.status if current_video else "uploading"
-                            
-                            update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
-                            
-                            # Refresh video and build full response (backend is source of truth)
-                            db.refresh(current_video)
-                            from app.services.event_service import publish_video_status_changed
-                            from app.services.video.helpers import build_video_response
-                            from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
-                            all_settings = get_all_user_settings(user_id, db=db)
-                            all_tokens = get_all_oauth_tokens(user_id, db=db)
-                            video_dict = build_video_response(current_video, all_settings, all_tokens, user_id)
-                            
-                            await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
-                            videos_cancelled += 1
-                            upload_cancelled = True
-                            break  # Exit destination loop
-                    except Exception as upload_err:
-                        # Check if error is due to cancellation
-                        if "cancelled by user" in str(upload_err).lower():
-                            upload_logger.info(f"Upload cancelled for {dest_name}: {upload_err}")
-                            # Don't record as platform error - cancellation is intentional
-                            # The cancellation flag and status update are already handled
-                        else:
-                            upload_logger.error(f"Upload failed for {dest_name}: {upload_err}")
-                            # Record platform-specific error
-                            record_platform_error(video_id, user_id, dest_name, str(upload_err), db=db)
-                        # Continue to next destination (or break if cancelled)
-                        if "cancelled by user" in str(upload_err).lower():
-                            upload_cancelled = True
-                            break
-            
-            # Skip final status check if upload was cancelled
-            if upload_cancelled:
-                continue
-            
-            # Check final status and collect actual error messages
-            updated_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
-            if updated_video:
-                succeeded = []
-                failed = []
-                
-                for dest_name in enabled_destinations:
-                    if check_upload_success(updated_video, dest_name):
-                        succeeded.append(dest_name)
-                    else:
-                        failed.append(dest_name)
-                
-                # Get actual error message from video if it exists
-                actual_error = updated_video.error
-                
-                if len(succeeded) == len(enabled_destinations):
-                    old_status = updated_video.status
-                    update_video(video_id, user_id, db=db, status="uploaded")
-                    
-                    # Refresh video to get updated status
-                    db.refresh(updated_video)
-                    
-                    # Build full video response (backend is source of truth)
-                    from app.services.video.helpers import build_video_response
-                    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
-                    all_settings = get_all_user_settings(user_id, db=db)
-                    all_tokens = get_all_oauth_tokens(user_id, db=db)
-                    video_dict = build_video_response(updated_video, all_settings, all_tokens, user_id)
-                    
-                    # Publish status change event with full video data
-                    from app.services.event_service import publish_video_status_changed
-                    await publish_video_status_changed(user_id, video_id, old_status, "uploaded", video_dict=video_dict)
-                    
+                result_type, video_id = result
+                if result_type == "succeeded":
                     videos_succeeded += 1
-                elif len(succeeded) > 0:
-                    # Partial success - preserve actual error if it's platform-specific, otherwise list failed destinations
-                    old_status = updated_video.status
-                    from app.services.event_service import publish_video_status_changed
-                    from app.services.video.helpers import build_video_response
-                    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
-                    
-                    if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
-                        update_video(video_id, user_id, db=db, status="failed", error=actual_error)
-                    else:
-                        # List which destinations succeeded and failed (like old implementation)
-                        update_video(video_id, user_id, db=db, status="failed", 
-                                   error=f"Partial upload: succeeded ({', '.join(succeeded)}), failed ({', '.join(failed)})")
-                    
-                    # Refresh video and build full response
-                    db.refresh(updated_video)
-                    all_settings = get_all_user_settings(user_id, db=db)
-                    all_tokens = get_all_oauth_tokens(user_id, db=db)
-                    video_dict = build_video_response(updated_video, all_settings, all_tokens, user_id)
-                    
-                    await publish_video_status_changed(user_id, video_id, old_status, "failed", video_dict=video_dict)
+                elif result_type == "failed":
                     videos_failed += 1
-                else:
-                    # All failed - preserve actual error if it's platform-specific, otherwise list failed destinations
-                    old_status = updated_video.status
-                    from app.services.event_service import publish_video_status_changed
-                    from app.services.video.helpers import build_video_response
-                    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
-                    
-                    if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
-                        update_video(video_id, user_id, db=db, status="failed", error=actual_error)
-                    else:
-                        update_video(video_id, user_id, db=db, status="failed", 
-                                   error=f"Upload failed for all destinations: {', '.join(failed)}")
-                    
-                    # Refresh video and build full response
-                    db.refresh(updated_video)
-                    all_settings = get_all_user_settings(user_id, db=db)
-                    all_tokens = get_all_oauth_tokens(user_id, db=db)
-                    video_dict = build_video_response(updated_video, all_settings, all_tokens, user_id)
-                    
-                    await publish_video_status_changed(user_id, video_id, old_status, "failed", video_dict=video_dict)
-                    videos_failed += 1
+                elif result_type == "cancelled":
+                    videos_cancelled += 1
         
         # Build appropriate message based on results
         if videos_succeeded > 0 and videos_failed == 0 and videos_cancelled == 0:
