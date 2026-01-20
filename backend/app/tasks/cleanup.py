@@ -57,52 +57,18 @@ async def cleanup_task():
                 if cleaned_count > 0:
                     cleanup_logger.info(f"Cleaned up {cleaned_count} old uploaded video files")
                 
-                # 2. Find and remove orphaned files (files without database records)
-                # IMPORTANT: Exclude files that belong to scheduled videos to prevent deletion before upload
-                if settings.UPLOAD_DIR.exists():
-                    all_files = set(settings.UPLOAD_DIR.glob("*"))
-                    # Get all video paths from database - include ALL videos (scheduled, pending, etc.)
-                    # ROOT CAUSE FIX: Resolve all paths to absolute to ensure proper comparison
-                    all_video_paths = set(Path(v.path).resolve() for v in db.query(Video).all())
-                    
-                    # Also explicitly get paths of scheduled videos as extra protection
-                    scheduled_video_paths = set(
-                        Path(v.path).resolve() for v in db.query(Video).filter(
-                            Video.status == "scheduled"
-                        ).all()
-                    )
-                    
-                    orphaned_files = all_files - all_video_paths
-                    orphaned_count = 0
-                    for orphaned_file in orphaned_files:
-                        # Extra safety: double-check this file doesn't belong to a scheduled video
-                        if orphaned_file in scheduled_video_paths:
-                            cleanup_logger.warning(f"Skipping file that belongs to scheduled video: {orphaned_file.name}")
-                            continue
-                            
-                        if orphaned_file.is_file():
-                            try:
-                                orphaned_file.unlink()
-                                orphaned_count += 1
-                                cleanup_files_removed_counter.inc()
-                                cleanup_logger.info(f"Removed orphaned file: {orphaned_file.name}")
-                            except Exception as e:
-                                cleanup_logger.error(f"Failed to remove orphaned file {orphaned_file.name}: {e}")
-                    
-                    # Update orphaned videos metric (count remaining orphaned files)
-                    remaining_orphaned = len([f for f in (all_files - all_video_paths) if f.is_file() and f not in scheduled_video_paths])
-                    orphaned_videos_gauge.set(remaining_orphaned)
-                    
-                    if orphaned_count > 0:
-                        cleanup_logger.info(f"Removed {orphaned_count} orphaned files")
+                # 2. Orphaned file cleanup removed - R2 storage doesn't have orphaned files in the same way
+                # R2 objects are managed through the database path field, so orphaned objects would need
+                # R2 API calls to detect. This is not implemented as it's not critical for operation.
+                # If needed, a separate R2 cleanup task could be added to list and compare R2 objects.
                 
-                # Update storage metrics
+                # Update storage metrics - R2 storage size tracking would require R2 API calls
+                # For now, set to 0 as we're no longer using local storage
                 try:
-                    if settings.UPLOAD_DIR.exists():
-                        total_size = sum(f.stat().st_size for f in settings.UPLOAD_DIR.glob("*") if f.is_file())
-                        storage_size_gauge.labels(type="upload_dir").set(total_size)
+                    storage_size_gauge.labels(type="upload_dir").set(0)
+                    orphaned_videos_gauge.set(0)
                 except Exception as e:
-                    cleanup_logger.warning(f"Failed to calculate storage size: {e}")
+                    cleanup_logger.warning(f"Failed to update storage metrics: {e}")
                 
                 cleanup_runs_counter.labels(status="success").inc()
                 cleanup_logger.info("Cleanup task completed")

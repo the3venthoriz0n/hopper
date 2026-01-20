@@ -418,6 +418,12 @@ jobs:
           RESEND_API_KEY=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_RESEND_API_KEY || secrets.DEV_RESEND_API_KEY }}
           RESEND_FROM_EMAIL=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_RESEND_FROM_EMAIL || secrets.DEV_RESEND_FROM_EMAIL }}
           GRAFANA_PASSWORD=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_GRAFANA_PASSWORD || secrets.DEV_GRAFANA_PASSWORD || 'admin' }}
+          R2_ACCOUNT_ID=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_ACCOUNT_ID || secrets.DEV_R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_ACCESS_KEY_ID || secrets.DEV_R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_SECRET_ACCESS_KEY || secrets.DEV_R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_BUCKET_NAME || secrets.DEV_R2_BUCKET_NAME }}
+          R2_ENDPOINT_URL=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_ENDPOINT_URL || secrets.DEV_R2_ENDPOINT_URL }}
+          R2_PUBLIC_DOMAIN=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_PUBLIC_DOMAIN || secrets.DEV_R2_PUBLIC_DOMAIN || '' }}
           GITHUB_REPOSITORY=${{ github.repository }}
           TAG=$FULL_TAG
           GHCR_IMAGE_BACKEND=ghcr.io/${{ github.repository }}/hopper-backend:${{ steps.vars.outputs.short_tag }}
