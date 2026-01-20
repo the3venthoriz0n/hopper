@@ -220,22 +220,75 @@ export function useVideos(
       setVideos(prev => [...prev, tempVideo]);
     }
     
-    // Calculate timeout based on file size (1 minute per 100MB, with min 5min and max 2 hours)
-    const timeoutMs = Math.max(5 * 60 * 1000, Math.min(2 * 60 * 60 * 1000, (file.size / (100 * 1024 * 1024)) * 60 * 1000));
+    // Determine if we should use multipart upload (files > 100MB)
+    const MULTIPART_THRESHOLD = 100 * 1024 * 1024; // 100MB
+    const useMultipart = file.size > MULTIPART_THRESHOLD;
     
     try {
-      const videoData = await videoService.uploadVideo(
-        file,
-        (progressEvent) => {
-          if (progressEvent.total) {
-            const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-            setVideos(prev => prev.map(v =>
-              v.id === tempId ? { ...v, progress: percent } : v
-            ));
+      let objectKey;
+      let uploadId;
+      
+      if (useMultipart) {
+        // Initiate multipart upload
+        const multipartInit = await videoService.initiateMultipartUpload(
+          file.name,
+          file.size,
+          file.type
+        );
+        objectKey = multipartInit.object_key;
+        uploadId = multipartInit.upload_id;
+        
+        // Helper functions for multipart upload
+        const getPartUrl = async (objKey, upId, partNum) => {
+          return await videoService.getMultipartPartUrl(objKey, upId, partNum);
+        };
+        
+        const completeUpload = async (objKey, upId, parts) => {
+          return await videoService.completeMultipartUpload(objKey, upId, parts);
+        };
+        
+        // Upload using multipart
+        await videoService.uploadToR2Multipart(
+          file,
+          uploadId,
+          objectKey,
+          (progressEvent) => {
+            if (progressEvent.total) {
+              const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              setVideos(prev => prev.map(v =>
+                v.id === tempId ? { ...v, progress: percent } : v
+              ));
+            }
+          },
+          getPartUrl,
+          completeUpload
+        );
+      } else {
+        // Get presigned URL for single upload
+        const presignedData = await videoService.getPresignedUploadUrl(
+          file.name,
+          file.size,
+          file.type
+        );
+        objectKey = presignedData.object_key;
+        
+        // Upload directly to R2
+        await videoService.uploadToR2Direct(
+          file,
+          presignedData.upload_url,
+          (progressEvent) => {
+            if (progressEvent.total) {
+              const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              setVideos(prev => prev.map(v =>
+                v.id === tempId ? { ...v, progress: percent } : v
+              ));
+            }
           }
-        },
-        timeoutMs
-      );
+        );
+      }
+      
+      // Confirm upload and create video record
+      const videoData = await videoService.confirmUpload(objectKey, file.name, file.size);
       
       setVideos(prev => {
         const withoutTemp = prev.filter(v => v.id !== tempId);

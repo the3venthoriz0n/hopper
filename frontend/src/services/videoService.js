@@ -168,3 +168,208 @@ export const getQueueTokenCount = async () => {
   const res = await axios.get(`${API}/videos/queue-token-count`);
   return res.data.queue_token_count;
 };
+
+/**
+ * Get presigned URL for single file upload to R2
+ * @param {string} filename - File name
+ * @param {number} fileSize - File size in bytes
+ * @param {string} contentType - Content type (MIME type)
+ * @returns {Promise<object>} {upload_url, object_key, expires_in}
+ */
+export const getPresignedUploadUrl = async (filename, fileSize, contentType = null) => {
+  const csrfToken = Cookies.get('csrf_token_client');
+  const res = await axios.post(`${API}/upload/presigned`, {
+    filename,
+    file_size: fileSize,
+    content_type: contentType
+  }, {
+    headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
+  });
+  return res.data;
+};
+
+/**
+ * Initiate multipart upload for large files
+ * @param {string} filename - File name
+ * @param {number} fileSize - File size in bytes
+ * @param {string} contentType - Content type (MIME type)
+ * @returns {Promise<object>} {upload_id, object_key, expires_in}
+ */
+export const initiateMultipartUpload = async (filename, fileSize, contentType = null) => {
+  const csrfToken = Cookies.get('csrf_token_client');
+  const res = await axios.post(`${API}/upload/multipart/initiate`, {
+    filename,
+    file_size: fileSize,
+    content_type: contentType
+  }, {
+    headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
+  });
+  return res.data;
+};
+
+/**
+ * Get presigned URL for uploading a part in multipart upload
+ * @param {string} objectKey - R2 object key
+ * @param {string} uploadId - Multipart upload ID
+ * @param {number} partNumber - Part number (1-indexed)
+ * @returns {Promise<object>} {upload_url, expires_in}
+ */
+export const getMultipartPartUrl = async (objectKey, uploadId, partNumber) => {
+  const csrfToken = Cookies.get('csrf_token_client');
+  const res = await axios.post(`${API}/upload/multipart/part-url`, {
+    object_key: objectKey,
+    upload_id: uploadId,
+    part_number: partNumber
+  }, {
+    headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
+  });
+  return res.data;
+};
+
+/**
+ * Complete multipart upload
+ * @param {string} objectKey - R2 object key
+ * @param {string} uploadId - Multipart upload ID
+ * @param {Array<{part_number: number, etag: string}>} parts - Array of parts with ETags
+ * @returns {Promise<object>} {object_key, size}
+ */
+export const completeMultipartUpload = async (objectKey, uploadId, parts) => {
+  const csrfToken = Cookies.get('csrf_token_client');
+  const res = await axios.post(`${API}/upload/multipart/complete`, {
+    object_key: objectKey,
+    upload_id: uploadId,
+    parts: parts.map(p => ({ part_number: p.part_number, etag: p.etag }))
+  }, {
+    headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
+  });
+  return res.data;
+};
+
+/**
+ * Confirm upload and create video record
+ * @param {string} objectKey - R2 object key
+ * @param {string} filename - File name
+ * @param {number} fileSize - File size in bytes
+ * @returns {Promise<object>} Video data
+ */
+export const confirmUpload = async (objectKey, filename, fileSize) => {
+  const csrfToken = Cookies.get('csrf_token_client');
+  const res = await axios.post(`${API}/upload/confirm`, {
+    object_key: objectKey,
+    filename,
+    file_size: fileSize
+  }, {
+    headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
+  });
+  return res.data;
+};
+
+/**
+ * Upload file directly to R2 using presigned URL
+ * @param {File} file - File to upload
+ * @param {string} uploadUrl - Presigned upload URL
+ * @param {function} onProgress - Progress callback (receives {loaded, total})
+ * @returns {Promise<void>}
+ */
+export const uploadToR2Direct = async (file, uploadUrl, onProgress) => {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress({ loaded: e.loaded, total: e.total });
+      }
+    });
+    
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(`Upload failed with status ${xhr.status}: ${xhr.statusText}`));
+      }
+    });
+    
+    xhr.addEventListener('error', () => {
+      reject(new Error('Upload failed: network error'));
+    });
+    
+    xhr.addEventListener('abort', () => {
+      reject(new Error('Upload aborted'));
+    });
+    
+    xhr.open('PUT', uploadUrl);
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    xhr.send(file);
+  });
+};
+
+/**
+ * Upload file to R2 using multipart upload
+ * @param {File} file - File to upload
+ * @param {string} uploadId - Multipart upload ID
+ * @param {string} objectKey - R2 object key
+ * @param {function} onProgress - Progress callback (receives {loaded, total})
+ * @param {function} getPartUrl - Function to get presigned URL for a part
+ * @param {function} completeUpload - Function to complete multipart upload
+ * @returns {Promise<object>} {object_key, size}
+ */
+export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress, getPartUrl, completeUpload) => {
+  const MULTIPART_PART_SIZE = 100 * 1024 * 1024; // 100MB per part
+  const MAX_CONCURRENT_PARTS = 5; // Upload up to 5 parts in parallel
+  
+  const totalParts = Math.ceil(file.size / MULTIPART_PART_SIZE);
+  const parts = [];
+  const uploadedParts = [];
+  let uploadedBytes = 0;
+  
+  // Upload parts sequentially (can be parallelized later if needed)
+  for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
+    const start = (partNumber - 1) * MULTIPART_PART_SIZE;
+    const end = Math.min(start + MULTIPART_PART_SIZE, file.size);
+    const partBlob = file.slice(start, end);
+    
+    // Get presigned URL for this part
+    const { upload_url } = await getPartUrl(objectKey, uploadId, partNumber);
+    
+    // Upload part
+    const etag = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          // Extract ETag from response headers
+          const etag = xhr.getResponseHeader('ETag') || xhr.getResponseHeader('etag');
+          if (!etag) {
+            reject(new Error('Missing ETag in response'));
+            return;
+          }
+          // Remove quotes from ETag if present
+          const cleanEtag = etag.replace(/^"|"$/g, '');
+          resolve(cleanEtag);
+        } else {
+          reject(new Error(`Part ${partNumber} upload failed with status ${xhr.status}`));
+        }
+      });
+      
+      xhr.addEventListener('error', () => {
+        reject(new Error(`Part ${partNumber} upload failed: network error`));
+      });
+      
+      xhr.open('PUT', upload_url);
+      xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+      xhr.send(partBlob);
+    });
+    
+    uploadedParts.push({ part_number: partNumber, etag });
+    uploadedBytes += (end - start);
+    
+    // Update progress
+    if (onProgress) {
+      onProgress({ loaded: uploadedBytes, total: file.size });
+    }
+  }
+  
+  // Complete multipart upload
+  const result = await completeUpload(objectKey, uploadId, uploadedParts);
+  return result;
+};

@@ -2,7 +2,7 @@
 import logging
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Dict
 from botocore.exceptions import ClientError, BotoCoreError
 import boto3
 from botocore.config import Config
@@ -57,12 +57,13 @@ class R2Service:
         )
         logger.info(f"R2Service initialized for bucket: {self.bucket}")
     
-    def generate_upload_url(self, object_key: str, expires_in: int = 3600) -> str:
+    def generate_upload_url(self, object_key: str, content_type: Optional[str] = None, expires_in: int = None) -> str:
         """Generate presigned URL for direct upload to R2
         
         Args:
             object_key: R2 object key (path in bucket)
-            expires_in: URL expiration time in seconds (default: 1 hour)
+            content_type: Optional content type (MIME type) for the upload
+            expires_in: URL expiration time in seconds (default: from settings)
             
         Returns:
             Presigned PUT URL for uploading directly to R2
@@ -74,13 +75,20 @@ class R2Service:
         if not object_key:
             raise ValueError("object_key cannot be empty")
         
+        if expires_in is None:
+            expires_in = settings.R2_PRESIGNED_URL_EXPIRY
+        
         try:
+            params = {
+                'Bucket': self.bucket,
+                'Key': object_key
+            }
+            if content_type:
+                params['ContentType'] = content_type
+            
             url = self.s3_client.generate_presigned_url(
                 'put_object',
-                Params={
-                    'Bucket': self.bucket,
-                    'Key': object_key
-                },
+                Params=params,
                 ExpiresIn=expires_in
             )
             logger.debug(f"Generated upload URL for {object_key} (expires in {expires_in}s)")
@@ -313,6 +321,167 @@ class R2Service:
             return False
         except Exception as e:
             logger.error(f"Unexpected error copying {source_key} to {dest_key} in R2: {e}", exc_info=True)
+            return False
+    
+    def create_multipart_upload(self, object_key: str, content_type: Optional[str] = None) -> str:
+        """Initiate multipart upload to R2
+        
+        Args:
+            object_key: R2 object key (path in bucket)
+            content_type: Optional content type (MIME type) for the upload
+            
+        Returns:
+            Upload ID for the multipart upload
+            
+        Raises:
+            ValueError: If object_key is empty
+            Exception: If multipart upload initiation fails
+        """
+        if not object_key:
+            raise ValueError("object_key cannot be empty")
+        
+        try:
+            params = {
+                'Bucket': self.bucket,
+                'Key': object_key
+            }
+            if content_type:
+                params['ContentType'] = content_type
+            
+            response = self.s3_client.create_multipart_upload(**params)
+            upload_id = response['UploadId']
+            logger.debug(f"Created multipart upload for {object_key} (upload_id: {upload_id})")
+            return upload_id
+        except ClientError as e:
+            logger.error(f"Failed to create multipart upload for {object_key}: {e}", exc_info=True)
+            raise Exception(f"Failed to create multipart upload: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error creating multipart upload for {object_key}: {e}", exc_info=True)
+            raise Exception(f"Failed to create multipart upload: {str(e)}")
+    
+    def generate_presigned_url_for_part(self, object_key: str, upload_id: str, part_number: int, expires_in: int = None) -> str:
+        """Generate presigned URL for uploading a part in multipart upload
+        
+        Args:
+            object_key: R2 object key (path in bucket)
+            upload_id: Multipart upload ID from create_multipart_upload
+            part_number: Part number (1-indexed)
+            expires_in: URL expiration time in seconds (default: from settings)
+            
+        Returns:
+            Presigned PUT URL for uploading the part
+            
+        Raises:
+            ValueError: If object_key, upload_id, or part_number is invalid
+            Exception: If URL generation fails
+        """
+        if not object_key:
+            raise ValueError("object_key cannot be empty")
+        if not upload_id:
+            raise ValueError("upload_id cannot be empty")
+        if part_number < 1:
+            raise ValueError("part_number must be >= 1")
+        
+        if expires_in is None:
+            expires_in = settings.R2_PRESIGNED_URL_EXPIRY
+        
+        try:
+            url = self.s3_client.generate_presigned_url(
+                'upload_part',
+                Params={
+                    'Bucket': self.bucket,
+                    'Key': object_key,
+                    'UploadId': upload_id,
+                    'PartNumber': part_number
+                },
+                ExpiresIn=expires_in
+            )
+            logger.debug(f"Generated presigned URL for part {part_number} of {object_key} (expires in {expires_in}s)")
+            return url
+        except Exception as e:
+            logger.error(f"Failed to generate presigned URL for part {part_number} of {object_key}: {e}", exc_info=True)
+            raise Exception(f"Failed to generate presigned URL for part: {str(e)}")
+    
+    def complete_multipart_upload(self, object_key: str, upload_id: str, parts: List[Dict[str, any]]) -> bool:
+        """Complete multipart upload in R2
+        
+        Args:
+            object_key: R2 object key (path in bucket)
+            upload_id: Multipart upload ID from create_multipart_upload
+            parts: List of dicts with 'PartNumber' and 'ETag' keys
+            
+        Returns:
+            True if completion succeeded, False otherwise
+            
+        Raises:
+            ValueError: If object_key, upload_id, or parts are invalid
+            Exception: If completion fails
+        """
+        if not object_key:
+            raise ValueError("object_key cannot be empty")
+        if not upload_id:
+            raise ValueError("upload_id cannot be empty")
+        if not parts or len(parts) == 0:
+            raise ValueError("parts cannot be empty")
+        
+        try:
+            # Format parts for boto3 (needs PartNumber and ETag)
+            formatted_parts = [
+                {'PartNumber': part['PartNumber'], 'ETag': part['ETag']}
+                for part in parts
+            ]
+            
+            self.s3_client.complete_multipart_upload(
+                Bucket=self.bucket,
+                Key=object_key,
+                UploadId=upload_id,
+                MultipartUpload={'Parts': formatted_parts}
+            )
+            logger.info(f"Successfully completed multipart upload for {object_key} ({len(parts)} parts)")
+            return True
+        except ClientError as e:
+            logger.error(f"Failed to complete multipart upload for {object_key}: {e}", exc_info=True)
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error completing multipart upload for {object_key}: {e}", exc_info=True)
+            return False
+    
+    def abort_multipart_upload(self, object_key: str, upload_id: str) -> bool:
+        """Abort multipart upload in R2 (cleanup on failure)
+        
+        Args:
+            object_key: R2 object key (path in bucket)
+            upload_id: Multipart upload ID from create_multipart_upload
+            
+        Returns:
+            True if abort succeeded, False otherwise
+            
+        Raises:
+            ValueError: If object_key or upload_id is empty
+        """
+        if not object_key:
+            raise ValueError("object_key cannot be empty")
+        if not upload_id:
+            raise ValueError("upload_id cannot be empty")
+        
+        try:
+            self.s3_client.abort_multipart_upload(
+                Bucket=self.bucket,
+                Key=object_key,
+                UploadId=upload_id
+            )
+            logger.info(f"Successfully aborted multipart upload for {object_key}")
+            return True
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            if error_code == 'NoSuchUpload':
+                logger.debug(f"Multipart upload already aborted or doesn't exist: {object_key}")
+                return True  # Consider it success if already gone
+            else:
+                logger.error(f"Failed to abort multipart upload for {object_key}: {e}", exc_info=True)
+                return False
+        except Exception as e:
+            logger.error(f"Unexpected error aborting multipart upload for {object_key}: {e}", exc_info=True)
             return False
 
 

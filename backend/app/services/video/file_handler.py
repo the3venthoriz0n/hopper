@@ -28,29 +28,36 @@ upload_logger = logging.getLogger("upload")
 logger = logging.getLogger(__name__)
 
 
-async def handle_file_upload(
-    file: "UploadFile",
+async def confirm_upload(
+    object_key: str,
+    filename: str,
+    file_size: int,
     user_id: int,
     db: Session
 ) -> Dict[str, Any]:
-    """Handle file upload with streaming, validation, and database creation
+    """Confirm upload and create video record after R2 upload completes
+    
+    This function is called after a file has been successfully uploaded to R2
+    using presigned URLs. It validates the R2 object, creates the video record,
+    and returns the video data.
     
     Args:
-        file: FastAPI UploadFile object
+        object_key: R2 object key where file was uploaded
+        filename: Original filename
+        file_size: File size in bytes
         user_id: User ID
         db: Database session
-    
+        
     Returns:
         Dict with video response (same format as GET /api/videos)
-    
+        
     Raises:
-        ValueError: For validation errors (duplicate, file too large, etc.)
-        Exception: For file I/O errors
+        ValueError: For validation errors (duplicate, R2 object not found, etc.)
+        Exception: For database or R2 errors
     """
-    
     upload_logger.info(
-        f"Video upload method: FILE_UPLOAD (file) - Starting upload for user {user_id}: "
-        f"{file.filename} (Content-Type: {file.content_type})"
+        f"Confirming upload for user {user_id}: {filename} "
+        f"({file_size / (1024*1024):.2f} MB, R2 key: {object_key})"
     )
     
     # Get user settings
@@ -60,152 +67,33 @@ async def handle_file_upload(
     # Check for duplicates if not allowed
     if not global_settings.get("allow_duplicates", False):
         existing_videos = get_user_videos(user_id, db=db)
-        if any(v.filename == file.filename for v in existing_videos):
-            raise ValueError(f"Duplicate video: {file.filename} is already in the queue")
+        if any(v.filename == filename for v in existing_videos):
+            raise ValueError(f"Duplicate video: {filename} is already in the queue")
     
-    # Stream file to temporary file, then upload to R2
-    # Use streaming to handle large files without loading entire file into memory
-    temp_file = None
-    file_size = 0
-    start_time = asyncio.get_event_loop().time()
-    last_log_time = start_time
-    chunk_count = 0
-    r2_object_key = None
-    
-    try:
-        # Create temporary file for streaming upload
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{file.filename}")
-        temp_path = Path(temp_file.name)
-        chunk_size = 1024 * 1024  # 1MB chunks
-        
-        with open(temp_path, "wb") as f:
-            while True:
-                # Read chunk with explicit timeout to detect connection issues
-                try:
-                    chunk = await asyncio.wait_for(file.read(chunk_size), timeout=300.0)  # 5 minute timeout per chunk
-                except asyncio.TimeoutError:
-                    upload_logger.error(f"Chunk read timeout for user {user_id}: {file.filename} (received {file_size / (1024*1024):.2f} MB)")
-                    raise
-                
-                if not chunk:
-                    break
-                
-                file_size += len(chunk)
-                chunk_count += 1
-                current_time = asyncio.get_event_loop().time()
-                
-                # Log progress every 10MB or every 30 seconds
-                if file_size % (10 * 1024 * 1024) < chunk_size or (current_time - last_log_time) >= 30:
-                    elapsed = current_time - start_time
-                    speed_mbps = (file_size / (1024 * 1024)) / elapsed if elapsed > 0 else 0
-                    upload_logger.info(
-                        f"Upload progress for user {user_id}: {file.filename} - "
-                        f"{file_size / (1024*1024):.2f} MB received ({chunk_count} chunks, "
-                        f"{speed_mbps:.2f} MB/s, {elapsed:.1f}s elapsed)"
-                    )
-                    last_log_time = current_time
-                
-                # Validate file size during streaming (before writing entire file)
-                if file_size > settings.MAX_FILE_SIZE:
-                    size_mb = file_size / (1024 * 1024)
-                    size_gb = file_size / (1024 * 1024 * 1024)
-                    max_gb = settings.MAX_FILE_SIZE / (1024 * 1024 * 1024)
-                    raise ValueError(
-                        f"File too large: {file.filename} is {size_mb:.2f} MB ({size_gb:.2f} GB). Maximum file size is {max_gb:.0f} GB."
-                    )
-                
-                f.write(chunk)
-        
-        # Upload to R2
-        upload_logger.info(f"Uploading {file.filename} to R2 for user {user_id}...")
-        r2_service = get_r2_service()
-        
-        # Generate R2 object key: user_{user_id}/pending_{timestamp}_{filename}
-        # Will be updated to user_{user_id}/video_{video_id}_{filename} after video creation
-        timestamp = int(time.time() * 1000)  # milliseconds for uniqueness
-        r2_object_key = f"user_{user_id}/pending_{timestamp}_{file.filename}"
-        
-        if not r2_service.upload_file(temp_path, r2_object_key):
-            raise Exception("Failed to upload file to R2 storage")
-        
-        elapsed_total = asyncio.get_event_loop().time() - start_time
-        avg_speed = (file_size / (1024 * 1024)) / elapsed_total if elapsed_total > 0 else 0
-        upload_logger.info(
-            f"Video uploaded to R2 for user {user_id}: {file.filename} "
-            f"({file_size / (1024*1024):.2f} MB, {chunk_count} chunks, "
-            f"{avg_speed:.2f} MB/s, {elapsed_total:.1f}s total, R2 key: {r2_object_key})"
-        )
-    except ValueError:
-        raise
-    except asyncio.TimeoutError as e:
-        elapsed = asyncio.get_event_loop().time() - start_time if 'start_time' in locals() else 0
+    # Verify R2 object exists
+    r2_service = get_r2_service()
+    if not r2_service.object_exists(object_key):
         upload_logger.error(
-            f"Upload timeout for user {user_id}: {file.filename} "
-            f"(received {file_size / (1024*1024):.2f} MB in {elapsed:.1f}s, {chunk_count} chunks)",
-            exc_info=True
+            f"R2 object not found for user {user_id}: {filename} at {object_key}"
         )
-        raise Exception(
-            f"Upload timeout: The file upload was interrupted after {elapsed:.0f} seconds. "
-            f"Please try again or contact support if the issue persists."
+        raise ValueError(f"Upload failed: file was not saved to R2")
+    
+    # Verify R2 object size matches expected size
+    r2_object_size = r2_service.get_object_size(object_key)
+    if r2_object_size and r2_object_size != file_size:
+        upload_logger.warning(
+            f"File size mismatch for user {user_id}: {filename}. "
+            f"Expected: {file_size} bytes, R2 object size: {r2_object_size} bytes"
         )
-    except Exception as e:
-        # Clean up temp file and R2 object on error
-        if temp_path and temp_path.exists():
-            try:
-                temp_path.unlink()
-            except:
-                pass
-        if r2_object_key:
-            try:
-                r2_service = get_r2_service()
-                r2_service.delete_object(r2_object_key)
-            except:
-                pass
-        
-        error_type = type(e).__name__
-        elapsed = asyncio.get_event_loop().time() - start_time if 'start_time' in locals() else 0
-        
-        # Check for connection-related errors
-        error_str = str(e).lower()
-        is_connection_error = any(keyword in error_str for keyword in [
-            'connection', 'reset', 'closed', 'broken', 'timeout', 
-            'gateway', 'proxy', 'cloudflare'
-        ])
-        
-        if is_connection_error:
-            upload_logger.error(
-                f"Connection error during upload for user {user_id}: {file.filename} "
-                f"(received {file_size / (1024*1024):.2f} MB in {elapsed:.1f}s, {chunk_count} chunks) - "
-                f"Error: {error_type}: {str(e)}",
-                exc_info=True
-            )
-            raise Exception(
-                f"Upload failed: Connection was interrupted after {elapsed:.0f} seconds. "
-                f"Please try again."
-            )
-        else:
-            upload_logger.error(
-                f"Failed to upload video file for user {user_id}: {file.filename} "
-                f"(received {file_size / (1024*1024):.2f} MB in {elapsed:.1f}s, {chunk_count} chunks, "
-                f"error: {error_type}: {str(e)})",
-                exc_info=True
-            )
-            raise Exception(f"Failed to upload video file: {str(e)}")
-    finally:
-        # Always clean up temp file
-        if temp_path and temp_path.exists():
-            try:
-                temp_path.unlink()
-            except:
-                pass
+        # Use actual R2 size if available
+        if r2_object_size:
+            file_size = r2_object_size
     
     # Calculate tokens required for this upload (1 token = 10MB)
     tokens_required = calculate_tokens_from_bytes(file_size)
     
     # Check token availability before adding to queue
-    # For free plans, include queued videos to prevent queuing more than user can afford
     if not check_tokens_available(user_id, tokens_required, db, include_queued_videos=True):
-        # Calculate total for accurate error message
         queued_videos = get_user_videos(user_id, db=db)
         total_tokens_required = tokens_required
         for video in queued_videos:
@@ -219,12 +107,12 @@ async def handle_file_upload(
         tokens_remaining = balance_info.get('tokens_remaining', 0) if balance_info else 0
         error_msg = f"Insufficient tokens: Need {total_tokens_required} tokens total (including {total_tokens_required - tokens_required} from queued videos) but only have {tokens_remaining} remaining"
         upload_logger.warning(
-            f"Video upload blocked for user {user_id}: {file.filename} - {error_msg}"
+            f"Video upload blocked for user {user_id}: {filename} - {error_msg}"
         )
         raise ValueError(error_msg)
     
     # Generate YouTube title and description (to prevent re-randomization)
-    filename_no_ext = file.filename.rsplit('.', 1)[0]
+    filename_no_ext = filename.rsplit('.', 1)[0]
     title_template = youtube_settings.get('title_template', '') or global_settings.get('title_template', '{filename}')
     youtube_title = replace_template_placeholders(
         title_template,
@@ -240,72 +128,45 @@ async def handle_file_upload(
         global_settings.get('wordbank', [])
     ) if desc_template else ''
     
-    # Verify R2 object exists
-    r2_service = get_r2_service()
-    if not r2_service.object_exists(r2_object_key):
-        upload_logger.error(
-            f"CRITICAL: File upload appeared to succeed for user {user_id}: {file.filename} "
-            f"but R2 object does not exist at {r2_object_key}. File size reported: {file_size} bytes"
-        )
-        raise Exception(f"File upload failed: file was not saved to R2")
-    
-    # Verify R2 object size matches what we uploaded
-    r2_object_size = r2_service.get_object_size(r2_object_key)
-    if r2_object_size and r2_object_size != file_size:
-        upload_logger.warning(
-            f"File size mismatch for user {user_id}: {file.filename}. "
-            f"Expected: {file_size} bytes, R2 object size: {r2_object_size} bytes"
-        )
-    
     # Add to database with file size and tokens
     # Store R2 object key in path field
-    # 
-    # TOKEN DEDUCTION STRATEGY:
-    # Tokens are NOT deducted when adding to queue - only when successfully uploaded to platforms.
-    # This allows users to queue videos, reorder, edit, and remove without losing tokens.
-    # When a video is uploaded to multiple platforms (YouTube + TikTok + Instagram), tokens are
-    # only charged ONCE (on first successful platform upload). The video.tokens_consumed field
-    # tracks this to prevent double-charging across multiple platforms.
-    # NOTE: Tokens are NOT deducted here - they're deducted when video is successfully uploaded to platforms
-    # tokens_required is stored to avoid recalculation (DRY principle)
     video = add_user_video(
         user_id=user_id,
-        filename=file.filename,
-        path=r2_object_key,  # Store R2 object key
+        filename=filename,
+        path=object_key,  # Store R2 object key
         generated_title=youtube_title,
         generated_description=youtube_description,
         file_size_bytes=file_size,
-        tokens_required=tokens_required,  # Store calculated value to avoid recalculation
+        tokens_required=tokens_required,
         tokens_consumed=0,  # Don't consume tokens yet - only on successful upload
         db=db
     )
     
     # Update R2 object key to final format: user_{user_id}/video_{video_id}_{filename}
-    final_r2_key = f"user_{user_id}/video_{video.id}_{file.filename}"
-    if r2_object_key != final_r2_key:
+    final_r2_key = f"user_{user_id}/video_{video.id}_{filename}"
+    if object_key != final_r2_key:
         # Copy object to new key (R2 doesn't support rename, so we copy and delete)
         try:
-            if r2_service.copy_object(r2_object_key, final_r2_key):
-                r2_service.delete_object(r2_object_key)
+            if r2_service.copy_object(object_key, final_r2_key):
+                r2_service.delete_object(object_key)
                 # Update database with final key
                 video.path = final_r2_key
                 db.commit()
-                upload_logger.info(f"Renamed R2 object from {r2_object_key} to {final_r2_key}")
+                upload_logger.info(f"Renamed R2 object from {object_key} to {final_r2_key}")
             else:
-                upload_logger.warning(f"Failed to copy R2 object from {r2_object_key} to {final_r2_key}. Using original key.")
+                upload_logger.warning(f"Failed to copy R2 object from {object_key} to {final_r2_key}. Using original key.")
         except Exception as e:
-            upload_logger.warning(f"Failed to rename R2 object from {r2_object_key} to {final_r2_key}: {e}. Using original key.")
+            upload_logger.warning(f"Failed to rename R2 object from {object_key} to {final_r2_key}: {e}. Using original key.")
             # Continue with original key - not critical
     
-    upload_logger.info(f"Video added to queue for user {user_id}: {file.filename} ({file_size / (1024*1024):.2f} MB, will cost {tokens_required} tokens on upload)")
+    upload_logger.info(f"Video added to queue for user {user_id}: {filename} ({file_size / (1024*1024):.2f} MB, will cost {tokens_required} tokens on upload)")
     
     # Build video response using the same helper function as GET endpoint
-    # Get settings and tokens to compute titles (batch load to prevent N+1)
     all_settings = get_all_user_settings(user_id, db=db)
     all_tokens = get_all_oauth_tokens(user_id, db=db)
     video_dict = build_video_response(video, all_settings, all_tokens, user_id)
     
-    # Publish event with full video data (prevents race condition with frontend)
+    # Publish event with full video data
     from app.services.event_service import publish_video_added
     await publish_video_added(user_id, video_dict)
     

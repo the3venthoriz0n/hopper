@@ -17,7 +17,6 @@ from app.services.video.helpers import (
 )
 
 from app.services.video.file_handler import (
-    handle_file_upload,
     delete_video_files,
     serve_video_file,
 )
@@ -60,7 +59,6 @@ __all__ = [
     "cleanup_video_file",
     "get_video_duration",
     "get_google_client_config",
-    "handle_file_upload",
     "delete_video_files",
     "serve_video_file",
     "calculate_scheduled_time",
