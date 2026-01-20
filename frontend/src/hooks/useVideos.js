@@ -172,7 +172,27 @@ export function useVideos(
   }, []);
 
   const addVideo = useCallback(async (file) => {
-    // Backend is the source of truth for validation - let backend validate and report errors
+    // Use backend-provided limit for client-side validation (better UX - block before upload)
+    // Backend also validates as safety net
+    const maxSizeBytes = maxFileSize?.max_file_size_bytes || (10 * 1024 * 1024 * 1024); // 10GB default
+    const maxSizeDisplay = maxFileSize?.max_file_size_display || '10 GB';
+    
+    if (file.size > maxSizeBytes) {
+      const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+      const fileSizeGB = (file.size / (1024 * 1024 * 1024)).toFixed(2);
+      const errorMsg = `File too large: ${file.name} is ${fileSizeMB} MB (${fileSizeGB} GB). Maximum file size is ${maxSizeDisplay}.`;
+      
+      setNotification({
+        type: 'error',
+        title: 'File Too Large',
+        message: errorMsg,
+        videoFilename: file.name
+      });
+      setTimeout(() => setNotification(null), 10000);
+      if (setMessage) setMessage(`❌ ${errorMsg}`);
+      return;
+    }
+    
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const tempVideo = {
       id: tempId,
