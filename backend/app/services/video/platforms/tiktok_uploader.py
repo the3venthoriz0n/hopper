@@ -572,94 +572,94 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
             f"TikTok using PULL_FROM_URL (URL) method - TikTok will download the file automatically - "
             f"User {user_id}, Video {video_id} ({video.filename})"
         )
+        
+        # Start polling TikTok status for PULL_FROM_URL progress tracking
+        # Initial status will be PROCESSING_DOWNLOAD (10-50% range)
+        from app.services.video.platforms.tiktok_api import fetch_tiktok_publish_status
+        poll_count = 0
+        max_polls = 120  # Poll for up to 10 minutes (5 second intervals)
+        estimated_download_polls = 60  # Estimate download takes ~5 minutes
+        estimated_upload_polls = 60  # Estimate processing takes ~5 minutes
+        
+        while poll_count < max_polls:
+            # Check for cancellation
+            if _cancellation_flags.get(video_id, False):
+                tiktok_logger.info(f"TikTok upload cancelled for video {video_id} during PULL_FROM_URL polling")
+                raise Exception("Upload cancelled by user")
             
-            # Start polling TikTok status for PULL_FROM_URL progress tracking
-            # Initial status will be PROCESSING_DOWNLOAD (10-50% range)
-            from app.services.video.platforms.tiktok_api import fetch_tiktok_publish_status
-            poll_count = 0
-            max_polls = 120  # Poll for up to 10 minutes (5 second intervals)
-            estimated_download_polls = 60  # Estimate download takes ~5 minutes
-            estimated_upload_polls = 60  # Estimate processing takes ~5 minutes
+            await asyncio.sleep(5)  # Poll every 5 seconds
+            poll_count += 1
             
-            while poll_count < max_polls:
-                # Check for cancellation
-                if _cancellation_flags.get(video_id, False):
-                    tiktok_logger.info(f"TikTok upload cancelled for video {video_id} during PULL_FROM_URL polling")
-                    raise Exception("Upload cancelled by user")
-                
-                await asyncio.sleep(5)  # Poll every 5 seconds
-                poll_count += 1
-                
-                status_data = fetch_tiktok_publish_status(user_id, publish_id, db=db)
-                if not status_data:
-                    # Status not available yet, continue polling
-                    continue
-                
-                status = status_data.get("status")
-                
-                # Map status to progress percentages
-                if status == "PROCESSING_DOWNLOAD":
-                    # TikTok is downloading from our server: 10-50% range
-                    progress = 10 + int(min(poll_count / estimated_download_polls, 1.0) * 40)
-                    set_upload_progress(user_id, video_id, progress)
-                    set_platform_upload_progress(user_id, video_id, "tiktok", progress)
-                    if should_publish_progress(progress, last_published_progress):
-                        await publish_upload_progress(user_id, video_id, "tiktok", progress)
-                        last_published_progress = progress
-                elif status == "PROCESSING_UPLOAD":
-                    # TikTok is processing the video: 50-90% range
-                    download_polls = min(poll_count, estimated_download_polls)
-                    upload_polls = poll_count - download_polls
-                    progress = 50 + int(min(upload_polls / estimated_upload_polls, 1.0) * 40)
-                    set_upload_progress(user_id, video_id, progress)
-                    set_platform_upload_progress(user_id, video_id, "tiktok", progress)
-                    if should_publish_progress(progress, last_published_progress):
-                        await publish_upload_progress(user_id, video_id, "tiktok", progress)
-                        last_published_progress = progress
-                elif status == "PUBLISH_COMPLETE":
-                    # Upload complete: 100%
-                    progress = 100
-                    set_upload_progress(user_id, video_id, progress)
-                    set_platform_upload_progress(user_id, video_id, "tiktok", progress)
+            status_data = fetch_tiktok_publish_status(user_id, publish_id, db=db)
+            if not status_data:
+                # Status not available yet, continue polling
+                continue
+            
+            status = status_data.get("status")
+            
+            # Map status to progress percentages
+            if status == "PROCESSING_DOWNLOAD":
+                # TikTok is downloading from our server: 10-50% range
+                progress = 10 + int(min(poll_count / estimated_download_polls, 1.0) * 40)
+                set_upload_progress(user_id, video_id, progress)
+                set_platform_upload_progress(user_id, video_id, "tiktok", progress)
+                if should_publish_progress(progress, last_published_progress):
                     await publish_upload_progress(user_id, video_id, "tiktok", progress)
                     last_published_progress = progress
-                    break
-                elif status == "PUBLISHED":
-                    # ROOT CAUSE FIX: 404 returned PUBLISHED status - video was published, complete upload
-                    # video_id may be None, but status_checker can fetch it later if needed
-                    progress = 100
-                    set_upload_progress(user_id, video_id, progress)
-                    set_platform_upload_progress(user_id, video_id, "tiktok", progress)
+            elif status == "PROCESSING_UPLOAD":
+                # TikTok is processing the video: 50-90% range
+                download_polls = min(poll_count, estimated_download_polls)
+                upload_polls = poll_count - download_polls
+                progress = 50 + int(min(upload_polls / estimated_upload_polls, 1.0) * 40)
+                set_upload_progress(user_id, video_id, progress)
+                set_platform_upload_progress(user_id, video_id, "tiktok", progress)
+                if should_publish_progress(progress, last_published_progress):
                     await publish_upload_progress(user_id, video_id, "tiktok", progress)
                     last_published_progress = progress
-                    tiktok_logger.info(
-                        f"TikTok upload completed via 404 PUBLISHED status - "
-                        f"User {user_id}, Video {video_id} ({video.filename}), publish_id: {publish_id}"
-                    )
-                    break
-                elif status == "FAILED":
-                    # Upload failed
-                    error_msg = status_data.get("fail_reason", "Upload failed")
-                    raise Exception(f"TikTok upload failed: {error_msg}")
-                
-                # If we've been polling for a while and still processing, continue
-                if status in ["PROCESSING_DOWNLOAD", "PROCESSING_UPLOAD"]:
-                    continue
-            
-            # If we exit the loop without PUBLISH_COMPLETE, it means we timed out
-            if poll_count >= max_polls:
-                # ROOT CAUSE FIX: Don't fail on timeout - hand off to status_checker
-                # publish_id is already saved, so status_checker can continue monitoring
-                # TikTok uploads can take longer than 10 minutes, especially for large files
+            elif status == "PUBLISH_COMPLETE":
+                # Upload complete: 100%
+                progress = 100
+                set_upload_progress(user_id, video_id, progress)
+                set_platform_upload_progress(user_id, video_id, "tiktok", progress)
+                await publish_upload_progress(user_id, video_id, "tiktok", progress)
+                last_published_progress = progress
+                break
+            elif status == "PUBLISHED":
+                # ROOT CAUSE FIX: 404 returned PUBLISHED status - video was published, complete upload
+                # video_id may be None, but status_checker can fetch it later if needed
+                progress = 100
+                set_upload_progress(user_id, video_id, progress)
+                set_platform_upload_progress(user_id, video_id, "tiktok", progress)
+                await publish_upload_progress(user_id, video_id, "tiktok", progress)
+                last_published_progress = progress
                 tiktok_logger.info(
-                    f"TikTok upload polling timeout after {max_polls * 5} seconds - "
-                    f"handing off to status_checker for User {user_id}, Video {video_id} ({video.filename}), "
-                    f"publish_id: {publish_id}. Status checker will continue monitoring."
+                    f"TikTok upload completed via 404 PUBLISHED status - "
+                    f"User {user_id}, Video {video_id} ({video.filename}), publish_id: {publish_id}"
                 )
-                # Ensure video status is "uploading" so status_checker picks it up
-                update_video(video_id, user_id, db=db, status="uploading")
-                # Return successfully - status_checker will complete the monitoring
-                return
+                break
+            elif status == "FAILED":
+                # Upload failed
+                error_msg = status_data.get("fail_reason", "Upload failed")
+                raise Exception(f"TikTok upload failed: {error_msg}")
+            
+            # If we've been polling for a while and still processing, continue
+            if status in ["PROCESSING_DOWNLOAD", "PROCESSING_UPLOAD"]:
+                continue
+        
+        # If we exit the loop without PUBLISH_COMPLETE, it means we timed out
+        if poll_count >= max_polls:
+            # ROOT CAUSE FIX: Don't fail on timeout - hand off to status_checker
+            # publish_id is already saved, so status_checker can continue monitoring
+            # TikTok uploads can take longer than 10 minutes, especially for large files
+            tiktok_logger.info(
+                f"TikTok upload polling timeout after {max_polls * 5} seconds - "
+                f"handing off to status_checker for User {user_id}, Video {video_id} ({video.filename}), "
+                f"publish_id: {publish_id}. Status checker will continue monitoring."
+            )
+            # Ensure video status is "uploading" so status_checker picks it up
+            update_video(video_id, user_id, db=db, status="uploading")
+            # Return successfully - status_checker will complete the monitoring
+            return
         
         # Check for cancellation before marking as success
         if _cancellation_flags.get(video_id, False):
