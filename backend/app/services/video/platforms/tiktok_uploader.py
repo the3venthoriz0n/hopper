@@ -381,12 +381,22 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
             record_platform_error(video_id, user_id, "tiktok", error_msg, db=db)
             raise FileNotFoundError(error_msg)
         
-        # Generate presigned R2 download URL (valid for 1 hour)
-        video_url = r2_service.generate_download_url(video.path, expires_in=3600)
-        tiktok_logger.info(
-            f"TikTok upload method: PULL_FROM_URL (R2 URL) - User {user_id}, Video {video_id} ({video.filename}), "
-            f"R2 object: {video.path}"
-        )
+        # Use public domain URL if configured (for TikTok URL ownership verification)
+        # Otherwise fall back to presigned URL
+        if settings.R2_PUBLIC_DOMAIN:
+            # Construct public URL: https://domain.com/path/to/object
+            video_url = f"https://{settings.R2_PUBLIC_DOMAIN}/{video.path}"
+            tiktok_logger.info(
+                f"TikTok upload method: PULL_FROM_URL (Public Domain) - User {user_id}, Video {video_id} ({video.filename}), "
+                f"URL: {video_url}"
+            )
+        else:
+            # Fallback to presigned URL if public domain not configured
+            video_url = r2_service.generate_download_url(video.path, expires_in=3600)
+            tiktok_logger.info(
+                f"TikTok upload method: PULL_FROM_URL (Presigned R2 URL) - User {user_id}, Video {video_id} ({video.filename}), "
+                f"R2 object: {video.path}"
+            )
         
         # Step 1: Initialize upload with PULL_FROM_URL
         source_info = {
