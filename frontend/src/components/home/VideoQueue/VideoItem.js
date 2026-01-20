@@ -90,11 +90,11 @@ export default function VideoItem({
             </span>
           </div>
           {/* Progress bar for hopper server uploads (NOT for destination uploads) */}
-          {v.status === 'uploading' && (v.upload_progress !== undefined || v.progress !== undefined) && (
+          {v.status === 'uploading' && v.upload_progress !== undefined && v.upload_progress < 100 && (
             <div className="progress-bar" style={{ marginTop: '0.5rem' }}>
               <div 
                 className="progress-fill" 
-                style={{ width: `${v.upload_progress !== undefined ? v.upload_progress : v.progress}%` }}
+                style={{ width: `${v.upload_progress}%` }}
               />
             </div>
           )}
