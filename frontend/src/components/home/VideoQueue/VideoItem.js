@@ -90,7 +90,11 @@ export default function VideoItem({
             </span>
           </div>
           {/* Progress bar for hopper server uploads (NOT for destination uploads) */}
-          {v.status === 'uploading' && v.upload_progress !== undefined && v.upload_progress < 100 && (
+          {/* Only show during R2 upload: status is 'uploading', has upload_progress < 100, and no platform_progress (destination uploads haven't started) */}
+          {v.status === 'uploading' && 
+           v.upload_progress !== undefined && 
+           v.upload_progress < 100 && 
+           (!v.platform_progress || Object.keys(v.platform_progress).length === 0) && (
             <div className="progress-bar" style={{ marginTop: '0.5rem' }}>
               <div 
                 className="progress-fill" 

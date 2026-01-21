@@ -278,7 +278,6 @@ async def status_checker_task():
                                     db.refresh(video)
                                     from app.services.event_service import publish_video_status_changed
                                     from app.services.video.helpers import build_video_response
-                                    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
                                     all_settings = get_all_user_settings(video.user_id, db=db)
                                     all_tokens = get_all_oauth_tokens(video.user_id, db=db)
                                     video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
@@ -311,7 +310,6 @@ async def status_checker_task():
                                     db.refresh(video)
                                     from app.services.event_service import publish_video_status_changed
                                     from app.services.video.helpers import build_video_response
-                                    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
                                     all_settings = get_all_user_settings(video.user_id, db=db)
                                     all_tokens = get_all_oauth_tokens(video.user_id, db=db)
                                     video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
