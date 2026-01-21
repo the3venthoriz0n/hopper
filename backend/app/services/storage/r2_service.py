@@ -502,3 +502,45 @@ def get_r2_service() -> R2Service:
     if _r2_service is None:
         _r2_service = R2Service()
     return _r2_service
+
+
+def get_video_download_url(object_key: str, r2_service: Optional[R2Service] = None) -> str:
+    """DRY helper to get video download URL (custom domain or presigned)
+    
+    This centralizes URL construction logic for TikTok/Instagram uploads.
+    Handles both custom domain URLs (for URL ownership verification) and
+    presigned URLs (fallback when custom domain not configured).
+    
+    Args:
+        object_key: R2 object key (path in bucket)
+        r2_service: Optional R2Service instance (creates one if not provided)
+        
+    Returns:
+        str: Public URL (custom domain) or presigned URL
+        
+    Raises:
+        ValueError: If object_key is empty
+        Exception: If URL generation fails
+    """
+    if not object_key:
+        raise ValueError("object_key cannot be empty")
+    
+    if r2_service is None:
+        r2_service = get_r2_service()
+    
+    # Use public domain URL if configured (for TikTok/Instagram URL ownership verification)
+    # Otherwise fall back to presigned URL
+    if settings.R2_PUBLIC_DOMAIN:
+        # Construct public URL: https://domain.com/path/to/object
+        # Ensure path is properly formatted (no leading slash)
+        # R2 object keys should never have leading slashes, but strip just in case
+        normalized_path = object_key.lstrip('/')
+        video_url = f"https://{settings.R2_PUBLIC_DOMAIN}/{normalized_path}"
+        logger.debug(f"Using public domain URL for {object_key}: {video_url}")
+        return video_url
+    else:
+        # Fallback to presigned URL if public domain not configured
+        # Use longer expiry for TikTok/Instagram downloads (1 hour)
+        video_url = r2_service.generate_download_url(object_key, expires_in=3600)
+        logger.debug(f"Using presigned URL for {object_key}")
+        return video_url

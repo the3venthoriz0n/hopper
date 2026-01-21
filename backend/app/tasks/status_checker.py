@@ -20,6 +20,23 @@ logger = logging.getLogger(__name__)
 status_logger = logging.getLogger("status_checker")
 
 
+def _get_user_data_for_video(video, db):
+    """DRY helper to get user settings and tokens for a video
+    
+    This centralizes the call to avoid scoping issues and provides consistent error handling.
+    
+    Returns:
+        tuple: (all_settings, all_tokens) or (None, None) on error
+    """
+    try:
+        all_settings = get_all_user_settings(video.user_id, db=db)
+        all_tokens = get_all_oauth_tokens(video.user_id, db=db)
+        return all_settings, all_tokens
+    except Exception as e:
+        status_logger.error(f"Error getting user data for video {video.id}: {e}", exc_info=True)
+        return None, None
+
+
 async def status_checker_task():
     """Background task that periodically checks status for in-progress uploads
     
@@ -95,8 +112,9 @@ async def status_checker_task():
                                 
                                 # Check if all destinations are done
                                 from app.services.video import check_upload_success
-                                all_settings = get_all_user_settings(video.user_id, db=db)
-                                all_tokens = get_all_oauth_tokens(video.user_id, db=db)
+                                all_settings, all_tokens = _get_user_data_for_video(video, db)
+                                if all_settings is None or all_tokens is None:
+                                    continue
                                 dest_settings = all_settings.get("destinations", {})
                                 
                                 # Check all enabled destinations
@@ -219,8 +237,9 @@ async def status_checker_task():
                                 db.refresh(video)
                                 from app.services.event_service import publish_video_status_changed
                                 from app.services.video.helpers import build_video_response
-                                all_settings = get_all_user_settings(video.user_id, db=db)
-                                all_tokens = get_all_oauth_tokens(video.user_id, db=db)
+                                all_settings, all_tokens = _get_user_data_for_video(video, db)
+                                if all_settings is None or all_tokens is None:
+                                    continue
                                 video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
                                 
                                 await publish_video_status_changed(video.user_id, video.id, old_status, "failed", video_dict=video_dict)
@@ -329,8 +348,9 @@ async def status_checker_task():
                                         
                                         # Check if all destinations are done
                                         from app.services.video import check_upload_success
-                                        all_settings = get_all_user_settings(video.user_id, db=db)
-                                        all_tokens = get_all_oauth_tokens(video.user_id, db=db)
+                                        all_settings, all_tokens = _get_user_data_for_video(video, db)
+                                        if all_settings is None or all_tokens is None:
+                                            continue
                                         
                                         # Check all enabled destinations
                                         enabled_destinations = []
@@ -440,11 +460,10 @@ async def status_checker_task():
                                     db.refresh(video)
                                     from app.services.event_service import publish_video_status_changed
                                     from app.services.video.helpers import build_video_response
-                                    all_settings = get_all_user_settings(video.user_id, db=db)
-                                    all_tokens = get_all_oauth_tokens(video.user_id, db=db)
-                                    video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
-                                    
-                                    await publish_video_status_changed(video.user_id, video.id, old_status, "failed", video_dict=video_dict)
+                                    all_settings, all_tokens = _get_user_data_for_video(video, db)
+                                    if all_settings is not None and all_tokens is not None:
+                                        video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
+                                        await publish_video_status_changed(video.user_id, video.id, old_status, "failed", video_dict=video_dict)
                                     status_logger.warning(f"Instagram container {instagram_container_id} failed for video {video.id}")
                                 
                                 elif status_code == "EXPIRED":
@@ -472,11 +491,10 @@ async def status_checker_task():
                                     db.refresh(video)
                                     from app.services.event_service import publish_video_status_changed
                                     from app.services.video.helpers import build_video_response
-                                    all_settings = get_all_user_settings(video.user_id, db=db)
-                                    all_tokens = get_all_oauth_tokens(video.user_id, db=db)
-                                    video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
-                                    
-                                    await publish_video_status_changed(video.user_id, video.id, old_status, "failed", video_dict=video_dict)
+                                    all_settings, all_tokens = _get_user_data_for_video(video, db)
+                                    if all_settings is not None and all_tokens is not None:
+                                        video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
+                                        await publish_video_status_changed(video.user_id, video.id, old_status, "failed", video_dict=video_dict)
                                     status_logger.warning(f"Instagram container {instagram_container_id} expired for video {video.id}")
                                 
                                 # IN_PROGRESS - continue waiting

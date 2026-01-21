@@ -329,14 +329,12 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         instagram_logger.info(f"Uploading {video.filename} to Instagram as {media_type} using file_url method")
         set_upload_progress(user_id, video_id, 10)
         
-        # Use public domain URL if configured (for Instagram URL ownership verification)
-        # Otherwise fall back to presigned URL
-        if settings.R2_PUBLIC_DOMAIN:
-            file_url = f"https://{settings.R2_PUBLIC_DOMAIN}/{video.path}"
-            instagram_logger.info(f"Using public domain URL for Instagram download: {file_url}")
-        else:
-            file_url = r2_service.generate_download_url(video.path, expires_in=3600)
-            instagram_logger.info(f"Using presigned R2 URL for Instagram download")
+        # Get video URL using DRY helper (handles both custom domain and presigned URLs)
+        from app.services.storage.r2_service import get_video_download_url
+        file_url = get_video_download_url(video.path, r2_service)
+        instagram_logger.info(
+            f"Using {('public domain' if settings.R2_PUBLIC_DOMAIN else 'presigned')} URL for Instagram download: {file_url}, R2 path: {video.path}"
+        )
         
         set_upload_progress(user_id, video_id, 20)
         
@@ -387,6 +385,10 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
                             extra=error_context
                         )
                         raise Exception(error_msg)
+                    
+                    # Include file URL in error context for debugging (especially for custom domain issues)
+                    error_context["file_url"] = file_url if 'file_url' in locals() else "unknown"
+                    error_context["r2_public_domain"] = settings.R2_PUBLIC_DOMAIN
                 
                 instagram_logger.error(
                     f"❌ Instagram upload FAILED - Container creation error - User {user_id}, Video {video_id} ({video.filename}): "

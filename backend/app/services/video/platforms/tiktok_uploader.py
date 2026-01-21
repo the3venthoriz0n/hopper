@@ -381,22 +381,13 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
             record_platform_error(video_id, user_id, "tiktok", error_msg, db=db)
             raise FileNotFoundError(error_msg)
         
-        # Use public domain URL if configured (for TikTok URL ownership verification)
-        # Otherwise fall back to presigned URL
-        if settings.R2_PUBLIC_DOMAIN:
-            # Construct public URL: https://domain.com/path/to/object
-            video_url = f"https://{settings.R2_PUBLIC_DOMAIN}/{video.path}"
-            tiktok_logger.info(
-                f"TikTok upload method: PULL_FROM_URL (Public Domain) - User {user_id}, Video {video_id} ({video.filename}), "
-                f"URL: {video_url}"
-            )
-        else:
-            # Fallback to presigned URL if public domain not configured
-            video_url = r2_service.generate_download_url(video.path, expires_in=3600)
-            tiktok_logger.info(
-                f"TikTok upload method: PULL_FROM_URL (Presigned R2 URL) - User {user_id}, Video {video_id} ({video.filename}), "
-                f"R2 object: {video.path}"
-            )
+        # Get video URL using DRY helper (handles both custom domain and presigned URLs)
+        from app.services.storage.r2_service import get_video_download_url
+        video_url = get_video_download_url(video.path, r2_service)
+        tiktok_logger.info(
+            f"TikTok upload method: PULL_FROM_URL - User {user_id}, Video {video_id} ({video.filename}), "
+            f"URL: {video_url}, R2 path: {video.path}"
+        )
         
         # Step 1: Initialize upload with PULL_FROM_URL
         source_info = {
@@ -534,6 +525,10 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                         extra=error_context
                     )
                     raise Exception(user_friendly_error)
+                
+                # Include video URL in error context for debugging (especially for custom domain issues)
+                error_context["video_url"] = video_url if 'video_url' in locals() else "unknown"
+                error_context["r2_public_domain"] = settings.R2_PUBLIC_DOMAIN
                 
                 tiktok_logger.error(
                     f"❌ TikTok upload FAILED - Init error - User {user_id}, Video {video_id} ({video.filename}): "
