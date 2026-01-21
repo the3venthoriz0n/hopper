@@ -2,14 +2,142 @@
 import logging
 import tempfile
 from pathlib import Path
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
+from urllib.parse import quote
 from botocore.exceptions import ClientError, BotoCoreError
 import boto3
 from botocore.config import Config
+import httpx
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _encode_object_key_for_url(object_key: str) -> str:
+    """Properly URL-encode object key path segments
+    
+    Encodes each path segment individually while preserving forward slashes
+    as path separators. This ensures special characters, spaces, and unicode
+    are properly encoded for use in URLs.
+    
+    Args:
+        object_key: R2 object key (e.g., "user_21/video_754_2026-01-07_17-38-49.mp4")
+        
+    Returns:
+        URL-encoded object key with properly encoded path segments
+    """
+    if not object_key:
+        return ""
+    
+    # Split by forward slash to get path segments
+    segments = object_key.split('/')
+    
+    # URL-encode each segment individually
+    # Use safe='' to encode everything except what's necessary
+    encoded_segments = [quote(segment, safe='') for segment in segments]
+    
+    # Join back with forward slashes
+    return '/'.join(encoded_segments)
+
+
+def _validate_custom_domain_url(url: str, timeout: Optional[int] = None) -> Tuple[bool, Optional[str]]:
+    """Validate custom domain URL meets TikTok/Instagram requirements
+    
+    Checks:
+    - URL returns 200 OK (not 3xx redirect)
+    - Content-Type header is correct for video files
+    - Content-Length header is present
+    
+    Args:
+        url: Custom domain URL to validate
+        timeout: Request timeout in seconds (default from settings)
+        
+    Returns:
+        Tuple of (is_valid, error_message)
+        - is_valid: True if URL passes all checks
+        - error_message: None if valid, otherwise descriptive error message
+    """
+    if timeout is None:
+        timeout = settings.R2_URL_VALIDATION_TIMEOUT
+    
+    try:
+        # Perform HEAD request with follow_redirects=False to detect redirects
+        response = httpx.head(url, follow_redirects=False, timeout=timeout)
+        
+        # Check for redirects (TikTok/Instagram don't follow redirects)
+        if 300 <= response.status_code < 400:
+            location = response.headers.get('Location', 'unknown')
+            return False, (
+                f"Custom domain URL redirects (HTTP {response.status_code} -> {location}). "
+                f"TikTok/Instagram require direct file access with no redirects. "
+                f"Check R2 custom domain configuration."
+            )
+        
+        # Check for 200 OK
+        if response.status_code != 200:
+            if response.status_code == 403:
+                return False, (
+                    f"Custom domain URL is not publicly accessible (HTTP 403). "
+                    f"Configure R2 bucket for public access."
+                )
+            elif response.status_code == 404:
+                return False, (
+                    f"Video file not found at custom domain URL (HTTP 404). "
+                    f"Verify object exists in R2 bucket."
+                )
+            else:
+                return False, (
+                    f"Custom domain URL returned HTTP {response.status_code}. "
+                    f"Expected 200 OK for successful file access."
+                )
+        
+        # Verify Content-Type header
+        content_type = response.headers.get('Content-Type', '').lower()
+        video_mime_types = ['video/mp4', 'video/quicktime', 'video/webm', 'video/x-msvideo']
+        if not any(mime in content_type for mime in video_mime_types):
+            return False, (
+                f"Custom domain URL returns incorrect Content-Type: {content_type}. "
+                f"Expected video MIME type (video/mp4, etc.). Check R2 object metadata."
+            )
+        
+        # Verify Content-Length header
+        content_length = response.headers.get('Content-Length')
+        if not content_length:
+            return False, (
+                f"Custom domain URL missing Content-Length header. "
+                f"TikTok/Instagram require this header for video files."
+            )
+        
+        try:
+            length = int(content_length)
+            if length <= 0:
+                return False, (
+                    f"Custom domain URL has invalid Content-Length: {content_length}. "
+                    f"Expected positive integer."
+                )
+        except ValueError:
+            return False, (
+                f"Custom domain URL has invalid Content-Length: {content_length}. "
+                f"Expected integer."
+            )
+        
+        # All checks passed
+        return True, None
+        
+    except httpx.TimeoutException:
+        return False, (
+            f"Timeout validating custom domain URL (exceeded {timeout}s). "
+            f"URL may be unreachable or server is slow."
+        )
+    except httpx.RequestError as e:
+        return False, (
+            f"Error validating custom domain URL: {str(e)}. "
+            f"Check network connectivity and URL accessibility."
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error validating custom domain URL {url}: {e}", exc_info=True)
+        return False, f"Unexpected error validating URL: {str(e)}"
 
 
 def _is_old_local_path(object_key: str) -> bool:
@@ -504,43 +632,64 @@ def get_r2_service() -> R2Service:
     return _r2_service
 
 
-def get_video_download_url(object_key: str, r2_service: Optional[R2Service] = None) -> str:
-    """DRY helper to get video download URL (custom domain or presigned)
+def get_video_download_url(object_key: str, r2_service: Optional[R2Service] = None, validate: Optional[bool] = None) -> str:
+    """DRY helper to get video download URL (custom domain)
     
     This centralizes URL construction logic for TikTok/Instagram uploads.
-    Handles both custom domain URLs (for URL ownership verification) and
-    presigned URLs (fallback when custom domain not configured).
+    Uses custom domain URLs (required for URL ownership verification).
+    
+    Validates that the URL meets platform requirements:
+    - No redirects (TikTok/Instagram don't follow redirects)
+    - Proper Content-Type headers (video/mp4, etc.)
+    - Content-Length header present
+    - Publicly accessible (HTTP 200 OK)
     
     Args:
         object_key: R2 object key (path in bucket)
         r2_service: Optional R2Service instance (creates one if not provided)
+        validate: Whether to validate custom domain URLs (default: from settings)
         
     Returns:
-        str: Public URL (custom domain) or presigned URL
+        str: Public URL (custom domain)
         
     Raises:
-        ValueError: If object_key is empty
+        ValueError: If object_key is empty, R2_PUBLIC_DOMAIN not configured, or URL validation fails
         Exception: If URL generation fails
     """
     if not object_key:
         raise ValueError("object_key cannot be empty")
     
+    if not settings.R2_PUBLIC_DOMAIN:
+        raise ValueError(
+            "R2_PUBLIC_DOMAIN is not configured. Custom domain URLs are required for TikTok/Instagram uploads. "
+            "Configure R2_PUBLIC_DOMAIN in environment variables."
+        )
+    
     if r2_service is None:
         r2_service = get_r2_service()
     
-    # Use public domain URL if configured (for TikTok/Instagram URL ownership verification)
-    # Otherwise fall back to presigned URL
-    if settings.R2_PUBLIC_DOMAIN:
-        # Construct public URL: https://domain.com/path/to/object
-        # Ensure path is properly formatted (no leading slash)
-        # R2 object keys should never have leading slashes, but strip just in case
-        normalized_path = object_key.lstrip('/')
-        video_url = f"https://{settings.R2_PUBLIC_DOMAIN}/{normalized_path}"
-        logger.debug(f"Using public domain URL for {object_key}: {video_url}")
-        return video_url
+    # Encode object key properly for URL
+    encoded_path = _encode_object_key_for_url(object_key.lstrip('/'))
+    video_url = f"https://{settings.R2_PUBLIC_DOMAIN}/{encoded_path}"
+    
+    # Validate URL meets platform requirements (if enabled)
+    if validate is None:
+        validate = settings.R2_VALIDATE_CUSTOM_DOMAIN_URLS
+    
+    if validate:
+        is_valid, error_message = _validate_custom_domain_url(video_url)
+        if not is_valid:
+            logger.error(
+                f"Custom domain URL validation failed for {object_key}: {error_message}. "
+                f"URL: {video_url}"
+            )
+            raise ValueError(
+                f"Custom domain URL validation failed: {error_message}. "
+                f"Verify custom domain is configured in TikTok Developer Portal (URL Ownership Verification) "
+                f"and that R2 bucket allows public access with proper headers."
+            )
+        logger.debug(f"Custom domain URL validated successfully: {video_url}")
     else:
-        # Fallback to presigned URL if public domain not configured
-        # Use longer expiry for TikTok/Instagram downloads (1 hour)
-        video_url = r2_service.generate_download_url(object_key, expires_in=3600)
-        logger.debug(f"Using presigned URL for {object_key}")
-        return video_url
+        logger.debug(f"Using public domain URL (validation skipped): {video_url}")
+    
+    return video_url

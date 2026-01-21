@@ -117,15 +117,38 @@ async def publish_video_status_changed(
     )
 
 
-async def publish_video_updated(user_id: int, video_id: int, changes: Dict[str, Any]) -> None:
-    """Publish video_updated event"""
+async def publish_video_updated(
+    user_id: int, 
+    video_id: int, 
+    changes: Optional[Dict[str, Any]] = None,
+    video_dict: Optional[Dict[str, Any]] = None
+) -> None:
+    """Publish video_updated event
+    
+    DRY, extensible: Supports both partial updates (changes) and full video data (video_dict).
+    When video_dict is provided, it takes precedence (backend is source of truth pattern).
+    
+    Args:
+        user_id: User ID
+        video_id: Video ID
+        changes: Optional dict of specific changes (for partial updates)
+        video_dict: Optional full video data (backend is source of truth - preferred when available)
+    """
+    payload = {
+        "video_id": video_id
+    }
+    
+    # Include full video data if provided (backend is source of truth - takes precedence)
+    if video_dict:
+        payload["video"] = video_dict
+    elif changes:
+        # Fallback to changes dict for partial updates
+        payload["changes"] = changes
+    
     await publish_event(
         user_id,
         "video_updated",
-        {
-            "video_id": video_id,
-            "changes": changes
-        }
+        payload
     )
 
 

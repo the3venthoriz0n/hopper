@@ -381,13 +381,29 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
             record_platform_error(video_id, user_id, "tiktok", error_msg, db=db)
             raise FileNotFoundError(error_msg)
         
-        # Get video URL using DRY helper (handles both custom domain and presigned URLs)
+        # Get video URL using DRY helper (validates custom domain URLs)
         from app.services.storage.r2_service import get_video_download_url
-        video_url = get_video_download_url(video.path, r2_service)
-        tiktok_logger.info(
-            f"TikTok upload method: PULL_FROM_URL - User {user_id}, Video {video_id} ({video.filename}), "
-            f"URL: {video_url}, R2 path: {video.path}"
-        )
+        try:
+            video_url = get_video_download_url(video.path, r2_service)
+            tiktok_logger.info(
+                f"TikTok upload method: PULL_FROM_URL - User {user_id}, Video {video_id} ({video.filename}), "
+                f"URL: {video_url}, R2 path: {video.path}"
+            )
+        except ValueError as url_error:
+            error_msg = f"Failed to generate video URL: {str(url_error)}"
+            tiktok_logger.error(
+                f"❌ TikTok upload FAILED - URL generation error - User {user_id}, Video {video_id} ({video.filename}): {error_msg}",
+                extra={
+                    "user_id": user_id,
+                    "video_id": video_id,
+                    "video_filename": video.filename,
+                    "r2_object_key": video.path,
+                    "platform": "tiktok",
+                    "error_type": "URLGenerationFailed",
+                }
+            )
+            record_platform_error(video_id, user_id, "tiktok", error_msg, db=db)
+            raise ValueError(error_msg)
         
         # Step 1: Initialize upload with PULL_FROM_URL
         source_info = {
@@ -630,7 +646,7 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                 last_published_progress = progress
                 break
             elif status == "PUBLISHED":
-                # ROOT CAUSE FIX: 404 returned PUBLISHED status - video was published, complete upload
+                # 404 returned PUBLISHED status - video was published, complete upload
                 # video_id may be None, but status_checker can fetch it later if needed
                 progress = 100
                 set_upload_progress(user_id, video_id, progress)

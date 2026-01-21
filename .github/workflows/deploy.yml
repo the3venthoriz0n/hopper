@@ -424,6 +424,8 @@ jobs:
           R2_BUCKET_NAME=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_BUCKET_NAME || secrets.DEV_R2_BUCKET_NAME }}
           R2_ENDPOINT_URL=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_ENDPOINT_URL || secrets.DEV_R2_ENDPOINT_URL }}
           R2_PUBLIC_DOMAIN=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_PUBLIC_DOMAIN || secrets.DEV_R2_PUBLIC_DOMAIN || '' }}
+          R2_VALIDATE_CUSTOM_DOMAIN_URLS=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_VALIDATE_CUSTOM_DOMAIN_URLS || secrets.DEV_R2_VALIDATE_CUSTOM_DOMAIN_URLS || 'true' }}
+          R2_URL_VALIDATION_TIMEOUT=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_URL_VALIDATION_TIMEOUT || secrets.DEV_R2_URL_VALIDATION_TIMEOUT || '10' }}
           GITHUB_REPOSITORY=${{ github.repository }}
           TAG=$FULL_TAG
           GHCR_IMAGE_BACKEND=ghcr.io/${{ github.repository }}/hopper-backend:${{ steps.vars.outputs.short_tag }}

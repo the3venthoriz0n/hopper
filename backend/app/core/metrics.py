@@ -129,7 +129,7 @@ try:
         scheduled_uploads_detail_gauge = Gauge(
             'hopper_scheduled_uploads_detail',
             'Scheduled uploads with scheduled time and created date',
-            ['user_id', 'user_email', 'filename', 'scheduled_time', 'created_at', 'status']
+            ['user_id', 'user_email', 'filename', 'video_title', 'scheduled_time', 'created_at', 'status']
         )
     except ValueError:
         scheduled_uploads_detail_gauge = REGISTRY._names_to_collectors.get('hopper_scheduled_uploads_detail')
@@ -284,11 +284,15 @@ def update_scheduled_uploads_detail_gauge(db) -> None:
                 scheduled_time_str = video.scheduled_time.isoformat() if video.scheduled_time else ""
                 created_at_str = video.created_at.isoformat() if video.created_at else ""
                 
+                # Get video title (fallback to filename if title is None)
+                video_title = video.generated_title if video.generated_title else video.filename
+                
                 # Set gauge with labels - value is always 1 (video is scheduled)
                 scheduled_uploads_detail_gauge.labels(
                     user_id=str(video.user_id),
                     user_email=user.email,
                     filename=video.filename,
+                    video_title=video_title,
                     scheduled_time=scheduled_time_str,
                     created_at=created_at_str,
                     status=video.status

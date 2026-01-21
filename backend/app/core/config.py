@@ -61,6 +61,8 @@ class Settings(BaseSettings):
     R2_BUCKET_NAME: str = ""
     R2_ENDPOINT_URL: str = ""
     R2_PUBLIC_DOMAIN: str = ""
+    R2_VALIDATE_CUSTOM_DOMAIN_URLS: bool = True  # Validate custom domain URLs (redirects, headers) before use
+    R2_URL_VALIDATION_TIMEOUT: int = 10  # Timeout in seconds for URL validation requests
     R2_MULTIPART_THRESHOLD: int = 100 * 1024 * 1024  # 100MB - use multipart for files larger than this
     R2_MULTIPART_PART_SIZE: int = 100 * 1024 * 1024  # 100MB per part
     R2_PRESIGNED_URL_EXPIRY: int = 3600  # 1 hour

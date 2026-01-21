@@ -329,12 +329,25 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         instagram_logger.info(f"Uploading {video.filename} to Instagram as {media_type} using file_url method")
         set_upload_progress(user_id, video_id, 10)
         
-        # Get video URL using DRY helper (handles both custom domain and presigned URLs)
+        # Get video URL using DRY helper (validates custom domain URLs)
         from app.services.storage.r2_service import get_video_download_url
-        file_url = get_video_download_url(video.path, r2_service)
-        instagram_logger.info(
-            f"Using {('public domain' if settings.R2_PUBLIC_DOMAIN else 'presigned')} URL for Instagram download: {file_url}, R2 path: {video.path}"
-        )
+        try:
+            file_url = get_video_download_url(video.path, r2_service)
+            instagram_logger.info(
+                f"Using custom domain URL for Instagram download: {file_url}, R2 path: {video.path}"
+            )
+        except ValueError as url_error:
+            error_msg = f"Failed to generate video URL: {str(url_error)}"
+            instagram_logger.error(
+                f"❌ Instagram upload FAILED - URL generation error - User {user_id}, Video {video_id} ({video.filename}): {error_msg}",
+                extra=_build_error_context(
+                    user_id, video_id, video.filename, "url_generation",
+                    r2_object_key=video.path,
+                    error_type="URLGenerationFailed"
+                )
+            )
+            record_platform_error(video_id, user_id, "instagram", error_msg, db=db)
+            raise ValueError(error_msg)
         
         set_upload_progress(user_id, video_id, 20)
         

@@ -103,7 +103,7 @@ async def status_checker_task():
                             if status == "PUBLISHED":
                                 # Video was published - get tiktok_id (may be None if 404 was returned)
                                 tiktok_id = status_data.get("video_id")
-                                # ROOT CAUSE FIX: Handle PUBLISHED status even when video_id is None (from 404)
+                                # Handle PUBLISHED status even when video_id is None (from 404)
                                 # Having tiktok_publish_id means video was published, so we should mark it as uploaded
                                 custom_settings = custom_settings.copy()
                                 if tiktok_id:
