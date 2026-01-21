@@ -6,12 +6,14 @@ from typing import Dict, Any, Optional
 
 from app.db.helpers import update_video, get_oauth_token, get_all_user_settings, get_all_oauth_tokens
 from app.db.session import SessionLocal
-from app.db.redis import set_upload_progress, get_upload_progress, is_upload_active
+from app.db.redis import set_upload_progress, get_upload_progress, is_upload_active, set_platform_upload_progress, delete_upload_progress
 from app.models.video import Video
 from app.services.video.platforms.tiktok_api import fetch_tiktok_publish_status
-from app.services.event_service import publish_video_status_changed, publish_video_updated
+from app.services.event_service import publish_video_status_changed, publish_video_updated, publish_upload_progress
 from app.core.config import INSTAGRAM_GRAPH_API_BASE
 from app.utils.encryption import decrypt
+from app.services.token_service import deduct_tokens, calculate_tokens_from_bytes
+from app.core.metrics import successful_uploads_counter
 from sqlalchemy.orm.attributes import flag_modified
 
 logger = logging.getLogger(__name__)
@@ -108,8 +110,36 @@ async def status_checker_task():
                                 
                                 all_done = all(check_upload_success(video, dest) for dest in enabled_destinations)
                                 
+                                # Refresh video to get latest state before checking tokens
+                                db.refresh(video)
+                                
+                                # Deduct tokens if not already deducted (matches upload function behavior)
+                                if video.tokens_consumed == 0:
+                                    tokens_required = video.tokens_required if video.tokens_required is not None else (calculate_tokens_from_bytes(video.file_size_bytes) if video.file_size_bytes else 0)
+                                    if tokens_required > 0:
+                                        await deduct_tokens(
+                                            user_id=video.user_id,
+                                            tokens=tokens_required,
+                                            transaction_type='upload',
+                                            video_id=video.id,
+                                            metadata={
+                                                'filename': video.filename,
+                                                'platform': 'tiktok',
+                                                'tiktok_publish_id': tiktok_publish_id,
+                                                'tiktok_id': tiktok_id,
+                                                'file_size_bytes': video.file_size_bytes,
+                                                'file_size_mb': round(video.file_size_bytes / (1024 * 1024), 2) if video.file_size_bytes else 0
+                                            },
+                                            db=db
+                                        )
+                                        update_video(video.id, video.user_id, db=db, tokens_consumed=tokens_required)
+                                        status_logger.info(f"Deducted {tokens_required} tokens for user {video.user_id} (TikTok upload via status_checker)")
+                                
                                 if all_done and video.status != "uploaded":
                                     update_video(video.id, video.user_id, db=db, custom_settings=custom_settings, status="uploaded")
+                                    
+                                    # Increment successful uploads counter
+                                    successful_uploads_counter.inc()
                                     
                                     # Refresh video and build full response (backend is source of truth)
                                     db.refresh(video)
@@ -233,12 +263,144 @@ async def status_checker_task():
                                 status_code = status_data.get('status_code')
                                 
                                 if status_code == "FINISHED":
-                                    # Container is ready - but we need to check if it was published
-                                    # If video status is still "uploading", the publish step might have failed
-                                    # or the container is ready but not published yet
-                                    # For now, just update progress - the upload process should handle publishing
-                                    set_upload_progress(video.user_id, video.id, 80)
-                                    status_logger.debug(f"Instagram container {instagram_container_id} finished for video {video.id}")
+                                    # Container is ready - check if it was already published
+                                    instagram_id = custom_settings.get("instagram_id")
+                                    if instagram_id:
+                                        # Already published - just update progress
+                                        set_upload_progress(video.user_id, video.id, 100)
+                                        set_platform_upload_progress(video.user_id, video.id, "instagram", 100)
+                                        status_logger.debug(f"Instagram container {instagram_container_id} already published for video {video.id} (instagram_id: {instagram_id})")
+                                        continue
+                                    
+                                    # Check if upload is actively being processed - if yes, let upload function handle it
+                                    if is_upload_active(video.id, "instagram"):
+                                        status_logger.debug(f"Instagram container {instagram_container_id} finished but upload is active - letting upload function handle publishing")
+                                        set_upload_progress(video.user_id, video.id, 90)
+                                        set_platform_upload_progress(video.user_id, video.id, "instagram", 90)
+                                        continue
+                                    
+                                    # Container is FINISHED and not published - publish it now
+                                    status_logger.info(f"Instagram container {instagram_container_id} finished for video {video.id} - publishing via status_checker")
+                                    
+                                    try:
+                                        # Get business_account_id from token extra_data
+                                        extra_data = instagram_token.extra_data or {}
+                                        business_account_id = extra_data.get("business_account_id")
+                                        if not business_account_id:
+                                            status_logger.error(f"No business_account_id for video {video.id} - cannot publish")
+                                            continue
+                                        
+                                        # Publish the container
+                                        publish_url = f"{INSTAGRAM_GRAPH_API_BASE}/{business_account_id}/media_publish"
+                                        publish_data = {
+                                            "creation_id": instagram_container_id
+                                        }
+                                        publish_headers = {
+                                            "Authorization": f"Bearer {access_token.strip()}",
+                                            "Content-Type": "application/json"
+                                        }
+                                        
+                                        publish_response = await client.post(
+                                            publish_url,
+                                            json=publish_data,
+                                            headers=publish_headers
+                                        )
+                                        
+                                        if publish_response.status_code != 200:
+                                            import json as json_module
+                                            error_data = publish_response.json() if publish_response.headers.get('content-type', '').startswith('application/json') else publish_response.text
+                                            status_logger.error(
+                                                f"Failed to publish Instagram container {instagram_container_id} for video {video.id}: "
+                                                f"HTTP {publish_response.status_code} - {error_data}"
+                                            )
+                                            continue
+                                        
+                                        publish_result = publish_response.json()
+                                        media_id = publish_result.get('id')
+                                        
+                                        if not media_id:
+                                            status_logger.error(f"No media ID in publish response for video {video.id}: {publish_result}")
+                                            continue
+                                        
+                                        # Update video with instagram_id and status
+                                        custom_settings = custom_settings.copy()
+                                        custom_settings['instagram_id'] = media_id
+                                        old_status = video.status
+                                        
+                                        # Check if all destinations are done
+                                        from app.services.video import check_upload_success
+                                        all_settings = get_all_user_settings(video.user_id, db=db)
+                                        all_tokens = get_all_oauth_tokens(video.user_id, db=db)
+                                        
+                                        # Check all enabled destinations
+                                        enabled_destinations = []
+                                        if all_settings.get("youtube", {}).get("youtube_enabled"):
+                                            enabled_destinations.append("youtube")
+                                        if all_settings.get("tiktok", {}).get("tiktok_enabled"):
+                                            enabled_destinations.append("tiktok")
+                                        if all_settings.get("instagram", {}).get("instagram_enabled"):
+                                            enabled_destinations.append("instagram")
+                                        
+                                        all_done = all(check_upload_success(video, dest) for dest in enabled_destinations)
+                                        
+                                        # Update status based on whether all destinations are done
+                                        if all_done:
+                                            update_video(video.id, video.user_id, db=db, custom_settings=custom_settings, status="completed")
+                                        else:
+                                            update_video(video.id, video.user_id, db=db, custom_settings=custom_settings)
+                                        
+                                        # Update progress to 100%
+                                        set_upload_progress(video.user_id, video.id, 100)
+                                        set_platform_upload_progress(video.user_id, video.id, "instagram", 100)
+                                        await publish_upload_progress(video.user_id, video.id, "instagram", 100)
+                                        
+                                        # Increment successful uploads counter
+                                        successful_uploads_counter.inc()
+                                        
+                                        # Deduct tokens if not already deducted
+                                        db.refresh(video)
+                                        if video.tokens_consumed == 0:
+                                            tokens_required = video.tokens_required if video.tokens_required is not None else (calculate_tokens_from_bytes(video.file_size_bytes) if video.file_size_bytes else 0)
+                                            if tokens_required > 0:
+                                                await deduct_tokens(
+                                                    user_id=video.user_id,
+                                                    tokens=tokens_required,
+                                                    transaction_type='upload',
+                                                    video_id=video.id,
+                                                    metadata={
+                                                        'filename': video.filename,
+                                                        'platform': 'instagram',
+                                                        'instagram_id': media_id,
+                                                        'file_size_bytes': video.file_size_bytes,
+                                                        'file_size_mb': round(video.file_size_bytes / (1024 * 1024), 2) if video.file_size_bytes else 0
+                                                    },
+                                                    db=db
+                                                )
+                                                update_video(video.id, video.user_id, db=db, tokens_consumed=tokens_required)
+                                                status_logger.info(f"Deducted {tokens_required} tokens for user {video.user_id} (Instagram upload via status_checker)")
+                                        
+                                        # Refresh video and build full response
+                                        db.refresh(video)
+                                        from app.services.video.helpers import build_video_response
+                                        video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
+                                        
+                                        if all_done and old_status != "completed":
+                                            await publish_video_status_changed(video.user_id, video.id, old_status, "completed", video_dict=video_dict)
+                                        else:
+                                            await publish_video_updated(video.user_id, video.id, video_dict=video_dict)
+                                        
+                                        status_logger.info(f"Successfully published Instagram container {instagram_container_id} for video {video.id} via status_checker (media_id: {media_id})")
+                                        
+                                        # Clean up progress after a delay
+                                        await asyncio.sleep(2)
+                                        delete_upload_progress(video.user_id, video.id)
+                                        
+                                    except Exception as publish_error:
+                                        status_logger.error(
+                                            f"Error publishing Instagram container {instagram_container_id} for video {video.id}: {publish_error}",
+                                            exc_info=True
+                                        )
+                                        continue
                                 
                                 elif status_code == "ERROR":
                                     # ROOT CAUSE FIX: Only mark as failed if upload is NOT actively being processed
