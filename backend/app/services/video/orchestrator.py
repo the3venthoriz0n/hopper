@@ -477,9 +477,31 @@ async def retry_failed_upload(
     if not video:
         raise ValueError("Video not found")
     
-    # Only allow retry for failed videos
-    if video.status != "failed":
-        raise ValueError(f"Cannot retry video with status '{video.status}'. Only failed videos can be retried.")
+    # Allow retry for failed or cancelled videos
+    if video.status not in ["failed", "cancelled"]:
+        raise ValueError(f"Cannot retry video with status '{video.status}'. Only failed or cancelled videos can be retried.")
+    
+    # Check if R2 object exists before retrying
+    # If upload was cancelled before reaching R2, the object won't exist
+    from app.services.storage.r2_service import get_r2_service
+    r2_service = get_r2_service()
+    
+    if not video.path:
+        raise ValueError(
+            f"Cannot retry upload: Video file was never uploaded to storage. "
+            f"The upload was cancelled before completion. Please remove this video and upload it again."
+        )
+    
+    if not r2_service.object_exists(video.path):
+        raise ValueError(
+            f"Cannot retry upload: Video file not found in storage ({video.path}). "
+            f"The upload was cancelled before completion. Please remove this video and upload it again."
+        )
+    
+    # Clear all cancellation flags on retry
+    _cancellation_flags.pop(video_id, None)
+    from app.db.redis import clear_r2_upload_cancelled
+    clear_r2_upload_cancelled(video_id)
     
     # Store old status for websocket event
     old_status = video.status
@@ -516,18 +538,74 @@ async def retry_failed_upload(
     
     # Upload to all enabled destinations
     succeeded_destinations = []
+    upload_cancelled = False
+    
+    # Publish status change to "uploading" when retry starts (so frontend shows cancel button)
+    from app.models.video import Video as VideoModel
+    retry_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
+    if retry_video and retry_video.status == "pending":
+        # Set status to uploading and publish event so frontend knows upload started
+        update_video(video_id, user_id, db=db, status="uploading")
+        db.refresh(retry_video)
+        all_settings = get_all_user_settings(user_id, db=db)
+        all_tokens = get_all_oauth_tokens(user_id, db=db)
+        video_dict = build_video_response(retry_video, all_settings, all_tokens, user_id)
+        await publish_video_status_changed(user_id, video_id, "pending", "uploading", video_dict=video_dict)
+    
     for dest_name in enabled_destinations:
+        # Check for cancellation before each destination
+        if _cancellation_flags.get(video_id, False):
+            upload_logger.info(f"Retry upload cancelled for video {video_id} during {dest_name} upload")
+            _cancellation_flags.pop(video_id, None)
+            
+            # Get current video status
+            from app.models.video import Video as VideoModel
+            current_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
+            old_status = current_video.status if current_video else "uploading"
+            
+            update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
+            
+            # Refresh video and build full response
+            db.refresh(current_video)
+            all_settings = get_all_user_settings(user_id, db=db)
+            all_tokens = get_all_oauth_tokens(user_id, db=db)
+            video_dict = build_video_response(current_video, all_settings, all_tokens, user_id)
+            
+            await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
+            upload_cancelled = True
+            break  # Exit destination loop
+        
         uploader_func = DESTINATION_UPLOADERS.get(dest_name)
         if uploader_func:
             try:
-                # Set status to uploading
-                update_video(video_id, user_id, db=db, status="uploading")
-                
+                # Status is already set to uploading above, no need to set again
                 # Upload
                 if dest_name == "instagram":
                     await uploader_func(user_id, video_id, db=db)
                 else:
                     uploader_func(user_id, video_id, db=db)
+                
+                # Check for cancellation after each upload
+                if _cancellation_flags.get(video_id, False):
+                    upload_logger.info(f"Retry upload cancelled for video {video_id} after {dest_name} upload")
+                    _cancellation_flags.pop(video_id, None)
+                    
+                    # Get current video status
+                    from app.models.video import Video as VideoModel
+                    current_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
+                    old_status = current_video.status if current_video else "uploading"
+                    
+                    update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
+                    
+                    # Refresh video and build full response
+                    db.refresh(current_video)
+                    all_settings = get_all_user_settings(user_id, db=db)
+                    all_tokens = get_all_oauth_tokens(user_id, db=db)
+                    video_dict = build_video_response(current_video, all_settings, all_tokens, user_id)
+                    
+                    await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
+                    upload_cancelled = True
+                    break  # Exit destination loop
                 
                 # Check if upload succeeded
                 from app.models.video import Video as VideoModel
@@ -535,8 +613,22 @@ async def retry_failed_upload(
                 if updated_video and check_upload_success(updated_video, dest_name):
                     succeeded_destinations.append(dest_name)
             except Exception as upload_err:
-                upload_logger.error(f"Retry upload failed for {dest_name}: {upload_err}")
-                # Continue to next destination
+                # Check if error is due to cancellation
+                if "cancelled by user" in str(upload_err).lower():
+                    upload_logger.info(f"Retry upload cancelled for {dest_name}: {upload_err}")
+                    upload_cancelled = True
+                    break
+                else:
+                    upload_logger.error(f"Retry upload failed for {dest_name}: {upload_err}")
+                    # Continue to next destination
+    
+    # If upload was cancelled, return early
+    if upload_cancelled:
+        return {
+            "ok": True,
+            "succeeded": succeeded_destinations,
+            "message": f"Retry cancelled. Partial success: {', '.join(succeeded_destinations) if succeeded_destinations else 'none'}"
+        }
     
     # Update final status - preserve actual error messages
     from app.models.video import Video as VideoModel

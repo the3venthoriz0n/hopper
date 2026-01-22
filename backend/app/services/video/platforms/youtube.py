@@ -157,8 +157,29 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
     youtube_logger.info(f"Starting upload for {video.filename}")
     
     try:
+        # Store old status before updating
+        old_status = video.status
+        
         update_video(video_id, user_id, db=db, status="uploading")
         set_upload_progress(user_id, video_id, 0)
+        set_platform_upload_progress(user_id, video_id, "youtube", 0)
+        
+        # Publish initial status and progress immediately so frontend knows upload has started
+        from app.services.event_service import publish_video_status_changed, publish_upload_progress
+        from app.services.video.helpers import build_video_response
+        from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+        
+        # Refresh video and build full response
+        db.refresh(video)
+        all_settings = get_all_user_settings(user_id, db=db)
+        all_tokens = get_all_oauth_tokens(user_id, db=db)
+        video_dict = build_video_response(video, all_settings, all_tokens, user_id)
+        
+        # Publish status change event
+        await publish_video_status_changed(user_id, video_id, old_status, "uploading", video_dict=video_dict)
+        
+        # Publish initial progress
+        await publish_upload_progress(user_id, video_id, "youtube", 0)
         
         youtube_logger.debug("Building YouTube API client...")
         youtube = build('youtube', 'v3', credentials=youtube_creds)

@@ -218,7 +218,11 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
         if (payload.video) {
           updateVideoFromWebSocket(payload.video);
           const video = payload.video;
-          if (video.status === 'failed') {
+          // Only show notification for failed status, not cancelled (cancelled is intentional)
+          // Also check that error doesn't contain "cancelled" to be extra safe
+          if (video.status === 'failed' && 
+              video.error && 
+              !video.error.toLowerCase().includes('cancelled')) {
             setNotification({
               type: 'error',
               title: 'Upload Failed',
@@ -350,6 +354,23 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
   }, [setEditingVideo]);
 
   const derivedMessage = message || derivedMessageFromHook;
+  const [displayMessage, setDisplayMessage] = useState('');
+
+  // Update display message when derivedMessage changes
+  // Use message and derivedMessageFromHook as dependencies to avoid recalculation issues
+  useEffect(() => {
+    const currentMessage = message || derivedMessageFromHook;
+    if (currentMessage) {
+      setDisplayMessage(currentMessage);
+      // Clear message text after 30 seconds (but keep panel visible)
+      const timer = setTimeout(() => {
+        setDisplayMessage('');
+      }, 30000); // 30 seconds
+      return () => clearTimeout(timer);
+    } else {
+      setDisplayMessage('');
+    }
+  }, [message, derivedMessageFromHook]);
 
   if (authLoading) {
     return <div>Loading...</div>;
@@ -440,6 +461,34 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
         cancelAllUploads={cancelAllUploads}
       />
 
+      {/* Cancel button for uploading videos - similar to cancel scheduled */}
+      {videos.some(v => v.status === 'uploading') && (
+        <button 
+          className="cancel-scheduled-btn" 
+          onClick={async () => {
+            const uploadingVideos = videos.filter(v => v.status === 'uploading');
+            for (const video of uploadingVideos) {
+              try {
+                // Check if it's R2 upload (has upload_progress) or destination upload
+                if (video.upload_progress !== undefined && 
+                    video.upload_progress < 100 && 
+                    (!video.platform_progress || Object.keys(video.platform_progress).length === 0)) {
+                  await axios.post(`${API}/videos/${video.id}/cancel-r2`);
+                } else {
+                  await axios.post(`${API}/videos/${video.id}/cancel`);
+                }
+              } catch (err) {
+                console.error(`Failed to cancel video ${video.id}:`, err);
+              }
+            }
+            if (setMessage) setMessage(`🛑 Cancelling ${uploadingVideos.length} upload${uploadingVideos.length !== 1 ? 's' : ''}...`);
+            loadVideos();
+          }}
+        >
+          Cancel Upload ({videos.filter(v => v.status === 'uploading').length})
+        </button>
+      )}
+
       {videos.some(v => v.status === 'scheduled') && (
         <button className="cancel-scheduled-btn" onClick={cancelScheduled}>
           Cancel Scheduled ({videos.filter(v => v.status === 'scheduled').length})
@@ -452,7 +501,7 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
         maxFileSize={maxFileSize}
       />
 
-      {derivedMessage && <div className="message">{derivedMessage}</div>}
+      <div className="message">{displayMessage}</div>
       
       <VideoQueue
         videos={videos}

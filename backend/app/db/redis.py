@@ -214,6 +214,24 @@ def clear_active_upload_session(video_id: int, platform: str) -> None:
     get_redis_client().delete(key)
 
 
+def set_r2_upload_cancelled(video_id: int) -> None:
+    """Mark R2 upload as cancelled"""
+    key = f"r2_upload_cancelled:{video_id}"
+    get_redis_client().setex(key, 3600, "1")  # 1 hour TTL
+
+
+def is_r2_upload_cancelled(video_id: int) -> bool:
+    """Check if R2 upload is cancelled"""
+    key = f"r2_upload_cancelled:{video_id}"
+    return get_redis_client().exists(key) > 0
+
+
+def clear_r2_upload_cancelled(video_id: int) -> None:
+    """Clear R2 upload cancellation flag"""
+    key = f"r2_upload_cancelled:{video_id}"
+    get_redis_client().delete(key)
+
+
 def increment_rate_limit(identifier: str, window: int) -> int:
     """Increment rate limit counter and return current count.
     Uses Lua script to atomically increment and set TTL only for new keys (fixed window rate limiting)."""

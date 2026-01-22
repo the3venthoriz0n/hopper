@@ -286,7 +286,8 @@ export default function VideoItem({
         </div>
       </div>
       <div className="video-actions">
-        {v.status === 'failed' && (
+        {/* Retry button for failed or cancelled videos */}
+        {(v.status === 'failed' || v.status === 'cancelled') && (
           <button 
             onClick={async () => {
               try {
@@ -298,7 +299,7 @@ export default function VideoItem({
               }
             }}
             className="retry-upload-btn"
-            title="Retry failed upload"
+            title="Retry upload"
             style={{
               height: '32px',
               minWidth: '32px',
@@ -332,43 +333,60 @@ export default function VideoItem({
             🪙 {v.tokens_consumed || v.tokens_required || 0}
           </div>
         )}
-        <button 
-          onClick={() => removeVideo(v.id, setMessage)} 
-          disabled={v.status === 'uploading'}
-          style={{
-            height: '32px',
-            minWidth: '32px',
-            width: '32px',
-            padding: '0',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '1.25rem',
-            lineHeight: '1',
-            background: rgba(HOPPER_COLORS.rgb.adminRed, 0.1),
-            border: `1px solid ${rgba(HOPPER_COLORS.rgb.adminRed, 0.3)}`,
-            borderRadius: '6px',
-            color: HOPPER_COLORS.adminRed,
-            cursor: v.status === 'uploading' ? 'not-allowed' : 'pointer',
-            transition: 'all 0.2s',
-            boxSizing: 'border-box'
-          }}
-          onMouseEnter={(e) => {
-            if (v.status !== 'uploading') {
-              e.target.style.background = rgba(HOPPER_COLORS.rgb.adminRed, 0.2);
-              e.target.style.borderColor = rgba(HOPPER_COLORS.rgb.adminRed, 0.5);
-            }
-          }}
-          onMouseLeave={(e) => {
-            if (v.status !== 'uploading') {
-              e.target.style.background = rgba(HOPPER_COLORS.rgb.adminRed, 0.1);
-              e.target.style.borderColor = rgba(HOPPER_COLORS.rgb.adminRed, 0.3);
-            }
-          }}
-          title="Delete video"
-        >
-          ×
-        </button>
+        {(() => {
+          // Check if video is actively uploading (status or platform progress)
+          const isVideoUploading = v.status === 'uploading' || 
+            (v.platform_progress && Object.values(v.platform_progress).some(
+              progress => typeof progress === 'number' && progress >= 0 && progress < 100
+            ));
+          
+          return (
+            <button 
+              onClick={() => {
+                if (isVideoUploading) {
+                  if (setMessage) setMessage('⚠️ Cannot delete video while uploading. Please cancel the upload first.');
+                  return;
+                }
+                removeVideo(v.id, setMessage);
+              }} 
+              disabled={isVideoUploading}
+              style={{
+                height: '32px',
+                minWidth: '32px',
+                width: '32px',
+                padding: '0',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '1.25rem',
+                lineHeight: '1',
+                background: rgba(HOPPER_COLORS.rgb.adminRed, 0.1),
+                border: `1px solid ${rgba(HOPPER_COLORS.rgb.adminRed, 0.3)}`,
+                borderRadius: '6px',
+                color: HOPPER_COLORS.adminRed,
+                cursor: isVideoUploading ? 'not-allowed' : 'pointer',
+                opacity: isVideoUploading ? 0.5 : 1,
+                transition: 'all 0.2s',
+                boxSizing: 'border-box'
+              }}
+              onMouseEnter={(e) => {
+                if (!isVideoUploading) {
+                  e.target.style.background = rgba(HOPPER_COLORS.rgb.adminRed, 0.2);
+                  e.target.style.borderColor = rgba(HOPPER_COLORS.rgb.adminRed, 0.5);
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!isVideoUploading) {
+                  e.target.style.background = rgba(HOPPER_COLORS.rgb.adminRed, 0.1);
+                  e.target.style.borderColor = rgba(HOPPER_COLORS.rgb.adminRed, 0.3);
+                }
+              }}
+              title={isVideoUploading ? 'Cannot delete while uploading. Cancel upload first.' : 'Delete video'}
+            >
+              ×
+            </button>
+          );
+        })()}
       </div>
     </div>
   );

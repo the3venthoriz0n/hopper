@@ -88,6 +88,28 @@ export const cancelVideoUpload = async (id) => {
 };
 
 /**
+ * Cancel R2 upload
+ * @param {string|number} id - Video ID
+ * @returns {Promise<void>}
+ */
+export const cancelR2Upload = async (id) => {
+  const csrfToken = Cookies.get('csrf_token_client');
+  await axios.post(`${API}/videos/${id}/cancel-r2`, {}, {
+    headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
+  });
+};
+
+/**
+ * Check if R2 upload is cancelled (for polling during upload)
+ * @param {string|number} id - Video ID
+ * @returns {Promise<boolean>}
+ */
+export const checkR2Cancelled = async (id) => {
+  const res = await axios.get(`${API}/videos/${id}/r2-cancelled`);
+  return res.data.cancelled;
+};
+
+/**
  * Update video settings
  * @param {string|number} videoId - Video ID
  * @param {object} settings - Settings object
@@ -303,11 +325,30 @@ export const failUpload = async (videoId) => {
  * @param {File} file - File to upload
  * @param {string} uploadUrl - Presigned upload URL
  * @param {function} onProgress - Progress callback (receives {loaded, total})
+ * @param {function} checkCancellation - Optional function to check if upload is cancelled (returns Promise<boolean>)
  * @returns {Promise<void>}
  */
-export const uploadToR2Direct = async (file, uploadUrl, onProgress) => {
+export const uploadToR2Direct = async (file, uploadUrl, onProgress, checkCancellation = null) => {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    let cancellationCheckInterval = null;
+    
+    // Check cancellation periodically during upload
+    if (checkCancellation) {
+      cancellationCheckInterval = setInterval(async () => {
+        try {
+          const cancelled = await checkCancellation();
+          if (cancelled) {
+            clearInterval(cancellationCheckInterval);
+            xhr.abort();
+            reject(new Error('Upload cancelled by user'));
+          }
+        } catch (err) {
+          // Ignore errors from cancellation check
+          console.warn('Error checking cancellation:', err);
+        }
+      }, 1000); // Check every second
+    }
     
     xhr.upload.addEventListener('progress', (e) => {
       if (e.lengthComputable && onProgress) {
@@ -316,6 +357,9 @@ export const uploadToR2Direct = async (file, uploadUrl, onProgress) => {
     });
     
     xhr.addEventListener('load', () => {
+      if (cancellationCheckInterval) {
+        clearInterval(cancellationCheckInterval);
+      }
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve();
       } else {
@@ -324,11 +368,17 @@ export const uploadToR2Direct = async (file, uploadUrl, onProgress) => {
     });
     
     xhr.addEventListener('error', () => {
+      if (cancellationCheckInterval) {
+        clearInterval(cancellationCheckInterval);
+      }
       reject(new Error('Upload failed: network error'));
     });
     
     xhr.addEventListener('abort', () => {
-      reject(new Error('Upload aborted'));
+      if (cancellationCheckInterval) {
+        clearInterval(cancellationCheckInterval);
+      }
+      reject(new Error('Upload cancelled by user'));
     });
     
     xhr.open('PUT', uploadUrl);
@@ -345,9 +395,10 @@ export const uploadToR2Direct = async (file, uploadUrl, onProgress) => {
  * @param {function} onProgress - Progress callback (receives {loaded, total})
  * @param {function} getPartUrl - Function to get presigned URL for a part
  * @param {function} completeUpload - Function to complete multipart upload
+ * @param {function} checkCancellation - Optional function to check if upload is cancelled (returns Promise<boolean>)
  * @returns {Promise<object>} {object_key, size}
  */
-export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress, getPartUrl, completeUpload) => {
+export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress, getPartUrl, completeUpload, checkCancellation = null) => {
   const MULTIPART_PART_SIZE = 100 * 1024 * 1024; // 100MB per part
   const MAX_CONCURRENT_PARTS = 5; // Upload up to 5 parts in parallel
   
@@ -355,9 +406,21 @@ export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress,
   const parts = [];
   const uploadedParts = [];
   let uploadedBytes = 0;
+  let currentXhr = null;
   
   // Upload parts sequentially (can be parallelized later if needed)
   for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
+    // Check cancellation before each part
+    if (checkCancellation) {
+      const cancelled = await checkCancellation();
+      if (cancelled) {
+        if (currentXhr) {
+          currentXhr.abort();
+        }
+        throw new Error('Upload cancelled by user');
+      }
+    }
+    
     const start = (partNumber - 1) * MULTIPART_PART_SIZE;
     const end = Math.min(start + MULTIPART_PART_SIZE, file.size);
     const partBlob = file.slice(start, end);
@@ -368,6 +431,7 @@ export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress,
     // Upload part
     const etag = await new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
+      currentXhr = xhr;
       
       xhr.addEventListener('load', () => {
         if (xhr.status >= 200 && xhr.status < 300) {
@@ -389,11 +453,16 @@ export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress,
         reject(new Error(`Part ${partNumber} upload failed: network error`));
       });
       
+      xhr.addEventListener('abort', () => {
+        reject(new Error('Upload cancelled by user'));
+      });
+      
       xhr.open('PUT', upload_url);
       xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
       xhr.send(partBlob);
     });
     
+    currentXhr = null;
     uploadedParts.push({ part_number: partNumber, etag });
     uploadedBytes += (end - start);
     

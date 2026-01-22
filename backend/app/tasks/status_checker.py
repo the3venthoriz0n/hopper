@@ -252,6 +252,14 @@ async def status_checker_task():
                 # Check Instagram videos
                 for video in instagram_videos_to_check:
                     try:
+                        # Refresh video from database to ensure it still exists
+                        db.refresh(video)
+                        # Double-check video still exists (user may have deleted it)
+                        video_exists = db.query(Video).filter(Video.id == video.id).first()
+                        if not video_exists:
+                            status_logger.debug(f"Video {video.id} was deleted, skipping Instagram status check")
+                            continue
+                        
                         custom_settings = video.custom_settings or {}
                         instagram_container_id = custom_settings.get("instagram_container_id")
                         

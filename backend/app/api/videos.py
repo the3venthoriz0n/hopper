@@ -138,11 +138,15 @@ async def delete_all_videos(user_id: int = Depends(require_csrf_new), db: Sessio
 @router.delete("/{video_id}")
 async def delete_video_by_id(video_id: int, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Remove video from user's queue"""
-    result = await delete_video_files(user_id, video_id=video_id, db=db)
-    if result["deleted"] == 0:
-        raise HTTPException(404, "Video not found")
-    
-    return {"ok": True}
+    try:
+        result = await delete_video_files(user_id, video_id=video_id, db=db)
+        if result["deleted"] == 0:
+            raise HTTPException(404, "Video not found")
+        
+        return {"ok": True}
+    except ValueError as e:
+        # Handle validation errors (e.g., trying to delete uploading video or video with active platform uploads)
+        raise HTTPException(400, str(e))
 
 
 @router.post("/{video_id}/cancel")
@@ -152,6 +156,58 @@ async def cancel_video_upload(video_id: int, user_id: int = Depends(require_csrf
     if not result.get("ok"):
         raise HTTPException(400, result.get("message", "Failed to cancel upload"))
     return result
+
+
+@router.post("/{video_id}/cancel-r2")
+async def cancel_r2_upload(video_id: int, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
+    """Cancel R2 upload for a video (client-side upload)"""
+    from app.db.redis import set_r2_upload_cancelled
+    
+    # Verify video belongs to user
+    videos = get_user_videos(user_id, db=db)
+    video = next((v for v in videos if v.id == video_id), None)
+    
+    if not video:
+        raise HTTPException(404, "Video not found")
+    
+    # Only allow cancellation if video is uploading (R2 upload in progress)
+    if video.status != "uploading":
+        raise HTTPException(400, f"Cannot cancel R2 upload for video with status: {video.status}")
+    
+    # Set cancellation flag
+    set_r2_upload_cancelled(video_id)
+    
+    # Also update video status to cancelled immediately (not just set flag)
+    from app.db.helpers import update_video
+    old_status = video.status
+    update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
+    
+    # Publish status change event
+    from app.services.event_service import publish_video_status_changed
+    from app.services.video.helpers import build_video_response
+    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+    db.refresh(video)
+    all_settings = get_all_user_settings(user_id, db=db)
+    all_tokens = get_all_oauth_tokens(user_id, db=db)
+    video_dict = build_video_response(video, all_settings, all_tokens, user_id)
+    await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
+    
+    return {"ok": True, "message": "R2 upload cancelled"}
+
+
+@router.get("/{video_id}/r2-cancelled")
+async def check_r2_cancelled(video_id: int, user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
+    """Check if R2 upload is cancelled"""
+    from app.db.redis import is_r2_upload_cancelled
+    
+    # Verify video belongs to user
+    videos = get_user_videos(user_id, db=db)
+    video = next((v for v in videos if v.id == video_id), None)
+    
+    if not video:
+        raise HTTPException(404, "Video not found")
+    
+    return {"cancelled": is_r2_upload_cancelled(video_id)}
 
 
 @router.get("/{video_id}/file")

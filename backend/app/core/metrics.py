@@ -19,6 +19,14 @@ try:
     except ValueError:
         failed_uploads_gauge = REGISTRY._names_to_collectors.get('hopper_failed_uploads')
     
+    try:
+        cancelled_uploads_gauge = Gauge(
+            'hopper_cancelled_uploads',
+            'Number of cancelled video uploads'
+        )
+    except ValueError:
+        cancelled_uploads_gauge = REGISTRY._names_to_collectors.get('hopper_cancelled_uploads')
+    
     # Scheduler metrics
     try:
         scheduler_runs_counter = Counter(
@@ -171,6 +179,7 @@ except ImportError:
     
     successful_uploads_counter = NoOpCounter()
     failed_uploads_gauge = NoOpGauge()
+    cancelled_uploads_gauge = NoOpGauge()
     scheduler_runs_counter = NoOpCounter()
     scheduler_videos_processed_counter = NoOpCounter()
     cleanup_runs_counter = NoOpCounter()
@@ -376,6 +385,7 @@ def update_upload_status_gauges(db) -> None:
         scheduled_count = 0
         current_count = 0
         failed_count = 0
+        cancelled_count = 0
         
         # Aggregate counts by status
         for status, count in results:
@@ -387,6 +397,8 @@ def update_upload_status_gauges(db) -> None:
                 current_count = count
             elif status == 'failed':
                 failed_count = count
+            elif status == 'cancelled':
+                cancelled_count = count
         
         # Update gauges
         try:
@@ -416,6 +428,13 @@ def update_upload_status_gauges(db) -> None:
             import logging
             logger = logging.getLogger(__name__)
             logger.warning(f"Failed to update failed_uploads_gauge: {e}")
+        
+        try:
+            cancelled_uploads_gauge.set(cancelled_count)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to update cancelled_uploads_gauge: {e}")
             
     except Exception as e:
         # Never let metric updates break the metrics endpoint

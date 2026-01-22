@@ -655,6 +655,13 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                 tiktok_logger.info(f"TikTok upload cancelled for video {video_id} during PULL_FROM_URL polling")
                 raise Exception("Upload cancelled by user")
             
+            # Check if video still exists in database (user may have deleted it)
+            from app.models.video import Video
+            video_exists = db.query(Video).filter(Video.id == video_id).first()
+            if not video_exists:
+                tiktok_logger.info(f"Video {video_id} was deleted during TikTok upload polling, stopping poll")
+                raise Exception("Video was deleted during upload")
+            
             await asyncio.sleep(5)  # Poll every 5 seconds
             poll_count += 1
             

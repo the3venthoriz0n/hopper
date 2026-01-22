@@ -533,6 +533,49 @@ async def delete_video_files(
             if exclude_status and video.status in exclude_status:
                 continue
             
+            # ROOT CAUSE FIX: Prevent deletion of videos with active platform uploads
+            # Check if video has active platform uploads (even if status is "uploaded")
+            from app.db.redis import get_platform_upload_progress
+            platforms_to_check = ["youtube", "tiktok", "instagram"]
+            active_platforms = []
+            
+            for platform in platforms_to_check:
+                platform_progress = get_platform_upload_progress(video.user_id, video.id, platform)
+                if platform_progress is not None and platform_progress >= 0 and platform_progress < 100:
+                    active_platforms.append(platform)
+            
+            if active_platforms:
+                raise ValueError(
+                    f"Cannot delete video {video.id} ({video.filename}) while it is uploading to: {', '.join(active_platforms)}. "
+                    f"Please cancel the upload first, then delete the video."
+                )
+            
+            # ROOT CAUSE FIX: Prevent deletion of uploading videos - must cancel first
+            if video.status == "uploading":
+                raise ValueError(
+                    f"Cannot delete video {video.id} ({video.filename}) while it is uploading. "
+                    f"Please cancel the upload first, then delete the video."
+                )
+            
+            # Safety measure: Cancel any in-progress uploads before deletion (shouldn't reach here for uploading videos)
+            # This handles edge cases where status might change between check and deletion
+            from app.services.video.orchestrator import _cancellation_flags
+            from app.db.redis import set_r2_upload_cancelled, get_upload_progress
+            
+            # Set cancellation flag to stop any upload task
+            _cancellation_flags[video.id] = True
+            
+            # Also set R2 upload cancellation flag if it's an R2 upload
+            upload_progress = get_upload_progress(video.user_id, video.id)
+            # Check if it's an R2 upload (has upload_progress but no platform_progress)
+            has_platform_progress = any(
+                get_platform_upload_progress(video.user_id, video.id, platform) is not None
+                for platform in platforms_to_check
+            )
+            
+            if upload_progress is not None and upload_progress < 100 and not has_platform_progress:
+                set_r2_upload_cancelled(video.id)
+            
             # Delete from R2 if it exists
             r2_service = get_r2_service()
             if video.path:

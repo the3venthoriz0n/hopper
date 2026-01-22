@@ -81,11 +81,20 @@ async def _poll_container_status(
     # Import cancellation flag to check for cancellation during polling
     from app.services.video.orchestrator import _cancellation_flags
     from app.db.redis import set_active_upload_session, clear_active_upload_session
+    from app.models.video import Video
+    from app.db.session import SessionLocal
     
     instagram_logger.info(f"Polling container status for {container_id} (max {max_retries} attempts)")
     
     # Mark upload as active
     set_active_upload_session(video_id, "instagram")
+    
+    # Create a database session for checking if video exists
+    db = SessionLocal()
+    
+    # Track consecutive ERROR statuses to fail early on persistent errors
+    consecutive_errors = 0
+    max_consecutive_errors = 5  # Fail after 5 consecutive ERROR responses
     
     try:
         for attempt in range(max_retries):
@@ -93,6 +102,20 @@ async def _poll_container_status(
             if _cancellation_flags.get(video_id, False):
                 instagram_logger.info(f"Instagram upload cancelled for video {video_id} during polling")
                 raise Exception("Upload cancelled by user")
+            
+            # Check if video still exists in database (user may have deleted it)
+            # Expire all to ensure we get fresh data from database
+            db.expire_all()
+            video = db.query(Video).filter(Video.id == video_id).first()
+            if not video:
+                instagram_logger.warning(f"Video {video_id} was deleted during Instagram upload polling (attempt {attempt + 1}/{max_retries}), stopping poll immediately")
+                raise Exception("Video was deleted during upload")
+            
+            # Also check if video status changed (e.g., to cancelled or failed)
+            # Only stop polling if status is cancelled or failed, not uploaded (another destination may have completed)
+            if video.status in ["cancelled", "failed"]:
+                instagram_logger.info(f"Video {video_id} status changed to '{video.status}' during Instagram upload polling (attempt {attempt + 1}/{max_retries}), stopping poll")
+                raise Exception(f"Video status changed to {video.status}, stopping upload")
             
             status_url = f"{INSTAGRAM_GRAPH_API_BASE}/{container_id}"
             status_params = {
@@ -110,6 +133,8 @@ async def _poll_container_status(
                 instagram_logger.info(f"Container status: {status_code} (attempt {attempt + 1}/{max_retries})")
                 
                 if status_code == "FINISHED":
+                    # Reset error counter on success
+                    consecutive_errors = 0
                     instagram_logger.info(f"Video processed successfully, ready to publish")
                     # FINISHED status = 90% (ready to publish)
                     progress = 90
@@ -120,18 +145,38 @@ async def _poll_container_status(
                     await publish_upload_progress(user_id, video_id, "instagram", progress)
                     return status_code
                 elif status_code == "ERROR":
-                    # ERROR can be transient - continue polling unless we've exhausted retries
-                    if attempt == max_retries - 1:
-                        raise Exception(f"Instagram video processing failed with ERROR status after {max_retries} attempts")
-                    # Otherwise, continue polling (will retry on next iteration)
+                    consecutive_errors += 1
+                    instagram_logger.warning(
+                        f"Container returned ERROR status (attempt {attempt + 1}/{max_retries}, "
+                        f"consecutive errors: {consecutive_errors}/{max_consecutive_errors})"
+                    )
+                    
+                    # Fail immediately if we've seen too many consecutive errors
+                    if consecutive_errors >= max_consecutive_errors:
+                        instagram_logger.error(
+                            f"Instagram container {container_id} returned ERROR status "
+                            f"{consecutive_errors} times in a row. Failing upload."
+                        )
+                        raise Exception(
+                            f"Instagram video processing failed: Container returned ERROR status "
+                            f"{consecutive_errors} consecutive times. The video may be invalid or "
+                            f"Instagram may be experiencing issues."
+                        )
+                    
+                    # Otherwise, continue polling (ERROR can be transient)
                     instagram_logger.debug(f"Container returned ERROR status (attempt {attempt + 1}/{max_retries}), continuing to poll...")
                 elif status_code == "EXPIRED":
+                    consecutive_errors = 0  # Reset on different error type
                     raise Exception(f"Container expired (not published within 24 hours)")
+                else:
+                    # Reset error counter on any non-ERROR status (IN_PROGRESS, etc.)
+                    consecutive_errors = 0
                 # IN_PROGRESS - continue polling and update progress
             else:
                 instagram_logger.warning(f"Status check failed with HTTP {status_response.status_code}, retrying...")
                 # If status check failed, assume IN_PROGRESS for progress calculation
                 status_code = "IN_PROGRESS"
+                consecutive_errors = 0  # Reset on HTTP error (different from container ERROR)
             
             # Update progress during polling (for IN_PROGRESS status or when status unknown)
             if status_code == "IN_PROGRESS" or status_code is None:
@@ -183,6 +228,8 @@ async def _poll_container_status(
         # Clean up start time tracking
         if hasattr(_poll_container_status, '_start_times') and video_id in _poll_container_status._start_times:
             del _poll_container_status._start_times[video_id]
+        # Close database session
+        db.close()
     
     raise Exception(f"Video processing timeout after {max_retries * retry_delay} seconds")
 

@@ -266,7 +266,11 @@ export function useVideos(
             }
           },
           getPartUrl,
-          completeUpload
+          completeUpload,
+          async () => {
+            // Check cancellation before each part
+            return await videoService.checkR2Cancelled(videoId);
+          }
         );
       } else {
         // Get presigned URL for single upload
@@ -289,6 +293,10 @@ export function useVideos(
                 v.id === videoId ? { ...v, upload_progress: percent } : v
               ));
             }
+          },
+          async () => {
+            // Check cancellation periodically during upload
+            return await videoService.checkR2Cancelled(videoId);
           }
         );
       }
@@ -304,8 +312,13 @@ export function useVideos(
       const tokensRequired = videoData.tokens_required || 0;
       if (setMessage) setMessage(`✅ Added ${file.name} to queue (will cost ${tokensRequired} ${tokensRequired === 1 ? 'token' : 'tokens'} on upload)`);
     } catch (err) {
-      // On failure, remove video from queue
-      if (videoId) {
+      // Check if upload was cancelled - don't show error notification for cancellations
+      const isCancelled = err.message?.toLowerCase().includes('cancelled') || 
+                         err.message?.toLowerCase().includes('aborted') ||
+                         err.response?.data?.detail?.toLowerCase().includes('cancelled');
+      
+      // On failure, remove video from queue (unless cancelled - cancelled videos stay in queue with cancelled status)
+      if (videoId && !isCancelled) {
         try {
           await videoService.failUpload(videoId);
           setVideos(prev => prev.filter(v => v.id !== videoId));
@@ -314,6 +327,13 @@ export function useVideos(
           console.error('Failed to cleanup failed upload:', cleanupErr);
           setVideos(prev => prev.filter(v => v.id !== videoId));
         }
+      }
+      
+      // If cancelled, just return early - don't show any notifications
+      if (isCancelled) {
+        // Video status is already set to cancelled by backend, just reload to get updated status
+        if (loadVideos) loadVideos();
+        return;
       }
       
       const isTimeout = err.code === 'ECONNABORTED' || err.message?.includes('timeout');

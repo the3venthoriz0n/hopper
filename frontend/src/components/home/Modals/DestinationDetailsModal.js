@@ -293,6 +293,22 @@ export default function DestinationDetailsModal({
               borderRadius: '6px',
               fontSize: '0.9rem'
             }}>
+              {/* Filename - shown for all platforms */}
+              {video.filename && (
+                <div>
+                  <span style={{ fontWeight: '600', color: HOPPER_COLORS.light }}>Filename:</span>
+                  <div style={{
+                    marginTop: '0.25rem',
+                    padding: '0.5rem',
+                    background: rgba(HOPPER_COLORS.rgb.base, 0.2),
+                    borderRadius: '4px',
+                    color: HOPPER_COLORS.light,
+                    wordBreak: 'break-word'
+                  }}>
+                    {video.filename}
+                  </div>
+                </div>
+              )}
               {platform === 'youtube' && (
                 <>
                   <div>
