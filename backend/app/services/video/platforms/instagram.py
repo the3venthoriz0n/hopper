@@ -149,16 +149,15 @@ async def _poll_container_status(
                 from app.db.redis import get_platform_upload_progress, get_upload_progress
                 previous_progress = get_platform_upload_progress(user_id, video_id, "instagram") or get_upload_progress(user_id, video_id) or 20
                 
-                # Only update if progress has increased
-                if progress > previous_progress:
-                    set_upload_progress(user_id, video_id, progress)
-                    set_platform_upload_progress(user_id, video_id, "instagram", progress)
-                    
-                    # Publish WebSocket progress event (1% increments)
-                    from app.services.video.helpers import should_publish_progress
-                    from app.services.event_service import publish_upload_progress
-                    if should_publish_progress(progress, previous_progress):
-                        await publish_upload_progress(user_id, video_id, "instagram", progress)
+                # Always update progress (even if same, to ensure frontend sees it on first attempt)
+                set_upload_progress(user_id, video_id, progress)
+                set_platform_upload_progress(user_id, video_id, "instagram", progress)
+                
+                # Publish WebSocket progress event (1% increments or on first attempt)
+                from app.services.video.helpers import should_publish_progress
+                from app.services.event_service import publish_upload_progress
+                if attempt == 0 or should_publish_progress(progress, previous_progress):
+                    await publish_upload_progress(user_id, video_id, "instagram", progress)
             
             if attempt < max_retries - 1:
                 await asyncio.sleep(retry_delay)
@@ -274,8 +273,11 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
     # No need to set it again here - orchestrator handles status change events
     
     try:
-        # Set initial progress (status already "uploading" from orchestrator)
+        # Set initial progress and publish immediately so frontend sees it
         set_upload_progress(user_id, video_id, 0)
+        set_platform_upload_progress(user_id, video_id, "instagram", 0)
+        from app.services.event_service import publish_upload_progress
+        await publish_upload_progress(user_id, video_id, "instagram", 0)
         
         # Verify R2 object exists
         if not video.path:
@@ -289,6 +291,11 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             )
             record_platform_error(video_id, user_id, "instagram", error_msg, db=db)
             raise FileNotFoundError(error_msg)
+        
+        # After file validation, update progress
+        set_upload_progress(user_id, video_id, 5)
+        set_platform_upload_progress(user_id, video_id, "instagram", 5)
+        await publish_upload_progress(user_id, video_id, "instagram", 5)
         
         from app.services.storage.r2_service import get_r2_service
         r2_service = get_r2_service()
@@ -312,6 +319,11 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             record_platform_error(video_id, user_id, "instagram", error_msg, db=db)
             raise FileNotFoundError(error_msg)
         
+        # After R2 check passes, update progress
+        set_upload_progress(user_id, video_id, 7)
+        set_platform_upload_progress(user_id, video_id, "instagram", 7)
+        await publish_upload_progress(user_id, video_id, "instagram", 7)
+        
         db.refresh(video)
         filename_no_ext = video.filename.rsplit('.', 1)[0] if '.' in video.filename else video.filename
         custom_settings = video.custom_settings or {}
@@ -330,7 +342,11 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         media_type = _get_instagram_setting(custom_settings, instagram_settings, 'media_type', 'REELS')
         
         instagram_logger.info(f"Uploading {video.filename} to Instagram as {media_type} using file_url method")
+        
+        # After getting settings, update progress
         set_upload_progress(user_id, video_id, 10)
+        set_platform_upload_progress(user_id, video_id, "instagram", 10)
+        await publish_upload_progress(user_id, video_id, "instagram", 10)
         
         # Get video URL using DRY helper (validates custom domain URLs)
         from app.services.storage.r2_service import get_video_download_url
@@ -352,7 +368,10 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             record_platform_error(video_id, user_id, "instagram", error_msg, db=db)
             raise ValueError(error_msg)
         
-        set_upload_progress(user_id, video_id, 20)
+        # After URL generation, update progress
+        set_upload_progress(user_id, video_id, 15)
+        set_platform_upload_progress(user_id, video_id, "instagram", 15)
+        await publish_upload_progress(user_id, video_id, "instagram", 15)
         
         async with httpx.AsyncClient(timeout=300.0) as client:
             container_url = f"{INSTAGRAM_GRAPH_API_BASE}/{business_account_id}/media"
@@ -423,8 +442,11 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             custom_settings = custom_settings.copy() if custom_settings else {}
             custom_settings['instagram_container_id'] = container_id
             update_video(video_id, user_id, db=db, custom_settings=custom_settings)
-            # Container created, start polling at 20% (IN_PROGRESS range starts)
+            
+            # Container created, start polling at 20% - publish immediately
             set_upload_progress(user_id, video_id, 20)
+            set_platform_upload_progress(user_id, video_id, "instagram", 20)
+            await publish_upload_progress(user_id, video_id, "instagram", 20)
             
             instagram_logger.info(f"Waiting for Instagram to process video from URL...")
             
