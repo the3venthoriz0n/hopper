@@ -14,6 +14,7 @@ from app.services.video import (
     DESTINATION_UPLOADERS,
     build_upload_context, check_upload_success, cleanup_video_file
 )
+from app.services.video.helpers import set_platform_status
 
 # Import Prometheus metrics from centralized location
 from app.core.metrics import (
@@ -140,6 +141,8 @@ async def scheduler_task():
                                                 updated_video = db.query(Video).filter(Video.id == video_id).first()
                                                 if updated_video and check_upload_success(updated_video, dest_name):
                                                     success_count += 1
+                                                    # Set platform status to success
+                                                    await set_platform_status(video_id, user_id, dest_name, "success", error=None, db=db)
                                             except Exception as db_err:
                                                 # Session might be invalid - create a new one to check upload status
                                                 logger.warning(f"Session invalid when checking upload status for video {video_id}, creating new session: {db_err}")
@@ -153,6 +156,8 @@ async def scheduler_task():
                                                     updated_video = db.query(Video).filter(Video.id == video_id).first()
                                                     if updated_video and check_upload_success(updated_video, dest_name):
                                                         success_count += 1
+                                                        # Set platform status to success
+                                                        await set_platform_status(video_id, user_id, dest_name, "success", error=None, db=db)
                                                 except Exception:
                                                     # If still failing, use temporary session
                                                     temp_db = SessionLocal()
@@ -160,6 +165,8 @@ async def scheduler_task():
                                                         updated_video = temp_db.query(Video).filter(Video.id == video_id).first()
                                                         if updated_video and check_upload_success(updated_video, dest_name):
                                                             success_count += 1
+                                                            # Set platform status to success
+                                                            await set_platform_status(video_id, user_id, dest_name, "success", error=None, db=temp_db)
                                                     finally:
                                                         temp_db.close()
                                         except Exception as upload_err:
@@ -187,6 +194,21 @@ async def scheduler_task():
                                             )
                                             
                                             logger.debug(f"  Error uploading to {dest_name}: {upload_err}")
+                                            
+                                            # Set platform status to failed
+                                            try:
+                                                if db is None:
+                                                    db = SessionLocal()
+                                                await set_platform_status(video_id, user_id, dest_name, "failed", error=error_msg, db=db)
+                                            except Exception as status_err:
+                                                logger.warning(f"Failed to set platform status for {dest_name}: {status_err}")
+                                                # Try with temporary session
+                                                try:
+                                                    temp_db = SessionLocal()
+                                                    await set_platform_status(video_id, user_id, dest_name, "failed", error=error_msg, db=temp_db)
+                                                    temp_db.close()
+                                                except Exception:
+                                                    pass
                                 
                                 # Update final status - use shared session if valid, otherwise create new one
                                 # ROOT CAUSE FIX: Ensure session is valid before use

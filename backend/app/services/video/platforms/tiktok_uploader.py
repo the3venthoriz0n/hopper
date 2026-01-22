@@ -28,7 +28,7 @@ from app.services.video.platforms.tiktok_api import (
 
 # Import helpers from video/helpers module
 from app.services.video.helpers import (
-    record_platform_error
+    record_platform_error, set_platform_status
 )
 
 tiktok_logger = logging.getLogger("tiktok")
@@ -780,6 +780,8 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         if should_publish_progress(progress, last_published_progress):
             await publish_upload_progress(user_id, video_id, "tiktok", progress)
             last_published_progress = progress
+        # Set platform status to success (backup in case orchestrator/scheduler has timing issues)
+        await set_platform_status(video_id, user_id, "tiktok", "success", error=None, db=db)
         # Log successful upload completion with all relevant details
         tiktok_logger.info(
             f"TikTok upload successful - User {user_id}, Video {video_id} ({video.filename}), "

@@ -19,7 +19,7 @@ from app.db.redis import set_upload_progress, delete_upload_progress, set_platfo
 from app.services.event_service import publish_upload_progress
 from app.services.token_service import check_tokens_available, get_token_balance, deduct_tokens, calculate_tokens_from_bytes
 from app.utils.templates import get_video_title, get_video_description, replace_template_placeholders
-from app.services.video.helpers import record_platform_error
+from app.services.video.helpers import record_platform_error, set_platform_status
 
 youtube_logger = logging.getLogger("youtube")
 
@@ -330,7 +330,7 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
                     if chunk_count % 10 == 0 or progress == 100:  # Log every 10 chunks or at completion
                         youtube_logger.info(f"Upload progress: {progress}%")
             
-            # Update video in database with YouTube ID (platform status will be set to "success" by orchestrator)
+            # Update video in database with YouTube ID
             custom_settings = custom_settings.copy() if custom_settings else {}
             custom_settings['youtube_id'] = response['id']
             update_video(video_id, user_id, db=db, custom_settings=custom_settings)
@@ -338,6 +338,8 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
             set_platform_upload_progress(user_id, video_id, "youtube", 100)
             # Publish final progress update
             await publish_upload_progress(user_id, video_id, "youtube", 100)
+            # Set platform status to success (backup in case orchestrator/scheduler has timing issues)
+            await set_platform_status(video_id, user_id, "youtube", "success", error=None, db=db)
             youtube_logger.info(f"Successfully uploaded {video.filename}, YouTube ID: {response['id']}")
             
             # Increment successful uploads counter

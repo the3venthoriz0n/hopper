@@ -118,8 +118,9 @@ async def _poll_container_status(
                 raise Exception(f"Video status changed to {video.status}, stopping upload")
             
             status_url = f"{INSTAGRAM_GRAPH_API_BASE}/{container_id}"
+            # Request additional fields to get error details if available
             status_params = {
-                "fields": "status_code",
+                "fields": "status_code,status",
                 "access_token": access_token.strip()
             }
             
@@ -129,6 +130,7 @@ async def _poll_container_status(
             if status_response.status_code == 200:
                 status_data = status_response.json()
                 status_code = status_data.get('status_code')
+                status_message = status_data.get('status')  # May contain error details
                 
                 instagram_logger.info(f"Container status: {status_code} (attempt {attempt + 1}/{max_retries})")
                 
@@ -146,22 +148,65 @@ async def _poll_container_status(
                     return status_code
                 elif status_code == "ERROR":
                     consecutive_errors += 1
+                    
+                    # Get video metadata for error logging
+                    video_metadata = {}
+                    try:
+                        db.expire_all()
+                        video = db.query(Video).filter(Video.id == video_id).first()
+                        if video:
+                            video_metadata = {
+                                "video_filename": video.filename,
+                                "file_size_bytes": video.file_size_bytes,
+                                "file_size_mb": round(video.file_size_bytes / (1024 * 1024), 2) if video.file_size_bytes else None
+                            }
+                    except Exception:
+                        pass
+                    
+                    # Log full error details
+                    error_context = {
+                        "container_id": container_id,
+                        "consecutive_errors": consecutive_errors,
+                        "max_consecutive_errors": max_consecutive_errors,
+                        "attempt": attempt + 1,
+                        "max_retries": max_retries,
+                        "status_data": status_data,
+                        "status_message": status_message,
+                        **video_metadata
+                    }
+                    
                     instagram_logger.warning(
                         f"Container returned ERROR status (attempt {attempt + 1}/{max_retries}, "
-                        f"consecutive errors: {consecutive_errors}/{max_consecutive_errors})"
+                        f"consecutive errors: {consecutive_errors}/{max_consecutive_errors})",
+                        extra=error_context
                     )
                     
                     # Fail immediately if we've seen too many consecutive errors
                     if consecutive_errors >= max_consecutive_errors:
-                        instagram_logger.error(
-                            f"Instagram container {container_id} returned ERROR status "
-                            f"{consecutive_errors} times in a row. Failing upload."
-                        )
-                        raise Exception(
+                        error_msg = (
                             f"Instagram video processing failed: Container returned ERROR status "
                             f"{consecutive_errors} consecutive times. The video may be invalid or "
                             f"Instagram may be experiencing issues."
                         )
+                        if status_message:
+                            error_msg += f" Status message: {status_message}"
+                        
+                        instagram_logger.error(
+                            f"Instagram container {container_id} returned ERROR status "
+                            f"{consecutive_errors} times in a row. Failing upload. Full status data: {status_data}",
+                            extra=error_context
+                        )
+                        raise Exception(error_msg)
+                    
+                    # Add delay before retrying on ERROR to allow Instagram to recover
+                    # ERROR can be transient (e.g., temporary processing issues)
+                    if consecutive_errors > 0:
+                        delay_seconds = min(10 * consecutive_errors, 30)  # Exponential backoff, max 30 seconds
+                        instagram_logger.debug(
+                            f"Waiting {delay_seconds} seconds before retrying after ERROR status "
+                            f"(consecutive errors: {consecutive_errors})"
+                        )
+                        await asyncio.sleep(delay_seconds)
                     
                     # Otherwise, continue polling (ERROR can be transient)
                     instagram_logger.debug(f"Container returned ERROR status (attempt {attempt + 1}/{max_retries}), continuing to poll...")
