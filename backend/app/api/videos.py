@@ -51,6 +51,12 @@ upload_router = APIRouter(prefix="/api/upload", tags=["upload"])
 
 
 # Pydantic models for upload requests
+class PresignedUploadRequest(BaseModel):
+    filename: str
+    file_size: int
+    content_type: Optional[str] = None
+
+
 class MultipartInitiateRequest(BaseModel):
     filename: str
     file_size: int
@@ -412,6 +418,62 @@ async def initiate_upload(
     except Exception as e:
         logger.error(f"Failed to initiate upload for user {user_id}: {e}", exc_info=True)
         raise HTTPException(500, f"Failed to initiate upload: {str(e)}")
+
+
+@upload_router.post("/presigned")
+async def get_presigned_upload_url(
+    request_data: PresignedUploadRequest,
+    http_request: Request,
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
+    """Generate presigned URL for single file upload to R2
+    
+    Validates file size and generates R2 object key, returns presigned URL
+    for direct client-to-R2 upload (bypasses backend and Cloudflare limits).
+    """
+    from app.services.video.file_handler import get_presigned_upload_url_service
+    from app.core.security import get_client_ip
+    
+    # Log detailed request information for debugging
+    client_ip = get_client_ip(http_request)
+    content_type = http_request.headers.get("Content-Type", "unknown")
+    origin = http_request.headers.get("Origin", "none")
+    referer = http_request.headers.get("Referer", "none")
+    
+    logger.info(
+        f"Presigned upload request: user_id={user_id}, filename={request_data.filename}, "
+        f"file_size={request_data.file_size}, content_type={request_data.content_type}, "
+        f"client_ip={client_ip}, origin={origin}, referer={referer}"
+    )
+    
+    try:
+        result = get_presigned_upload_url_service(
+            filename=request_data.filename,
+            file_size=request_data.file_size,
+            content_type=request_data.content_type,
+            user_id=user_id,
+            db=db
+        )
+        logger.info(f"Successfully generated presigned URL for user {user_id}, filename={request_data.filename}")
+        return result
+    except ValueError as e:
+        error_msg = str(e)
+        logger.warning(
+            f"Validation error for presigned upload: user_id={user_id}, "
+            f"filename={request_data.filename}, file_size={request_data.file_size}, "
+            f"client_ip={client_ip}, error={error_msg}"
+        )
+        if "too large" in error_msg.lower():
+            raise HTTPException(413, error_msg)
+        else:
+            raise HTTPException(400, error_msg)
+    except Exception as e:
+        logger.error(
+            f"Failed to generate presigned URL for user {user_id}, filename={request_data.filename}, "
+            f"client_ip={client_ip}: {e}", exc_info=True
+        )
+        raise HTTPException(500, f"Failed to generate upload URL: {str(e)}")
 
 
 @upload_router.post("/multipart/initiate")

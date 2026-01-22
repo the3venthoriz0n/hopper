@@ -225,22 +225,23 @@ export function useVideos(
         return [...prev, videoInit];
       });
       
-      // Step 2: Get presigned URL and upload to R2 with progress tracking
+      // Step 2: Upload to R2 - choose method based on file size
+      // Use single-file presigned URL for small files (< 100MB) to bypass Cloudflare limit
+      // Use multipart upload for large files (>= 100MB)
       const MULTIPART_THRESHOLD = 100 * 1024 * 1024; // 100MB
-      const useMultipart = file.size > MULTIPART_THRESHOLD;
+      const useMultipart = file.size >= MULTIPART_THRESHOLD;
       
       let objectKey;
-      let uploadId;
       
       if (useMultipart) {
-        // Initiate multipart upload
+        // Initiate multipart upload for large files
         const multipartInit = await videoService.initiateMultipartUpload(
           file.name,
           file.size,
           file.type
         );
         objectKey = multipartInit.object_key;
-        uploadId = multipartInit.upload_id;
+        const uploadId = multipartInit.upload_id;
         
         // Helper functions for multipart upload
         const getPartUrl = async (objKey, upId, partNum) => {
@@ -273,7 +274,7 @@ export function useVideos(
           }
         );
       } else {
-        // Get presigned URL for single upload
+        // Get presigned URL for single-file upload (small files)
         const presignedData = await videoService.getPresignedUploadUrl(
           file.name,
           file.size,

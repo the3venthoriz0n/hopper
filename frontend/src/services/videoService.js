@@ -191,24 +191,6 @@ export const getQueueTokenCount = async () => {
   return res.data.queue_token_count;
 };
 
-/**
- * Get presigned URL for single file upload to R2
- * @param {string} filename - File name
- * @param {number} fileSize - File size in bytes
- * @param {string} contentType - Content type (MIME type)
- * @returns {Promise<object>} {upload_url, object_key, expires_in}
- */
-export const getPresignedUploadUrl = async (filename, fileSize, contentType = null) => {
-  const csrfToken = Cookies.get('csrf_token_client');
-  const res = await axios.post(`${API}/upload/presigned`, {
-    filename,
-    file_size: fileSize,
-    content_type: contentType
-  }, {
-    headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
-  });
-  return res.data;
-};
 
 /**
  * Initiate multipart upload for large files
@@ -230,11 +212,12 @@ export const initiateMultipartUpload = async (filename, fileSize, contentType = 
 };
 
 /**
- * Get presigned URL for uploading a part in multipart upload
+ * Get multipart part URL for uploading a part in multipart upload
  * @param {string} objectKey - R2 object key
  * @param {string} uploadId - Multipart upload ID
  * @param {number} partNumber - Part number (1-indexed)
  * @returns {Promise<object>} {upload_url, expires_in}
+ * Note: This uses multipart part URLs, not the single-file presigned endpoint
  */
 export const getMultipartPartUrl = async (objectKey, uploadId, partNumber) => {
   const csrfToken = Cookies.get('csrf_token_client');
@@ -388,12 +371,79 @@ export const uploadToR2Direct = async (file, uploadUrl, onProgress, checkCancell
 };
 
 /**
+ * Upload file directly to R2 using presigned URL
+ * @param {File} file - File to upload
+ * @param {string} uploadUrl - Presigned upload URL
+ * @param {function} onProgress - Progress callback (receives {loaded, total})
+ * @param {function} checkCancellation - Optional function to check if upload is cancelled (returns Promise<boolean>)
+ * @returns {Promise<void>}
+ */
+export const uploadToR2Direct = async (file, uploadUrl, onProgress, checkCancellation = null) => {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let cancellationCheckInterval = null;
+    
+    // Check cancellation periodically during upload
+    if (checkCancellation) {
+      cancellationCheckInterval = setInterval(async () => {
+        try {
+          const cancelled = await checkCancellation();
+          if (cancelled) {
+            clearInterval(cancellationCheckInterval);
+            xhr.abort();
+            reject(new Error('Upload cancelled by user'));
+          }
+        } catch (err) {
+          // Ignore errors from cancellation check
+          console.warn('Error checking cancellation:', err);
+        }
+      }, 1000); // Check every second
+    }
+    
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress({ loaded: e.loaded, total: e.total });
+      }
+    });
+    
+    xhr.addEventListener('load', () => {
+      if (cancellationCheckInterval) {
+        clearInterval(cancellationCheckInterval);
+      }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve();
+      } else {
+        reject(new Error(`Upload failed with status ${xhr.status}: ${xhr.statusText}`));
+      }
+    });
+    
+    xhr.addEventListener('error', () => {
+      if (cancellationCheckInterval) {
+        clearInterval(cancellationCheckInterval);
+      }
+      reject(new Error('Upload failed: network error'));
+    });
+    
+    xhr.addEventListener('abort', () => {
+      if (cancellationCheckInterval) {
+        clearInterval(cancellationCheckInterval);
+      }
+      reject(new Error('Upload cancelled by user'));
+    });
+    
+    xhr.open('PUT', uploadUrl);
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    xhr.send(file);
+  });
+};
+
+/**
  * Upload file to R2 using multipart upload
  * @param {File} file - File to upload
  * @param {string} uploadId - Multipart upload ID
  * @param {string} objectKey - R2 object key
  * @param {function} onProgress - Progress callback (receives {loaded, total})
- * @param {function} getPartUrl - Function to get presigned URL for a part
+ * @param {function} getPartUrl - Function to get multipart part URL for a part
  * @param {function} completeUpload - Function to complete multipart upload
  * @param {function} checkCancellation - Optional function to check if upload is cancelled (returns Promise<boolean>)
  * @returns {Promise<object>} {object_key, size}
@@ -425,7 +475,7 @@ export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress,
     const end = Math.min(start + MULTIPART_PART_SIZE, file.size);
     const partBlob = file.slice(start, end);
     
-    // Get presigned URL for this part
+    // Get multipart part URL for this part
     const { upload_url } = await getPartUrl(objectKey, uploadId, partNumber);
     
     // Upload part
