@@ -231,7 +231,7 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
           // Fallback: if payload doesn't include video, do full reload
           loadVideos();
         }
-        // Update queue token count if provided in event (when status changes affect queue)
+        // Update queue token count from backend (source of truth)
         if (payload.queue_token_count !== undefined) {
           setQueueTokenCount(payload.queue_token_count);
         }
@@ -309,7 +309,7 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
       default:
         console.log('Unhandled WebSocket event type:', eventType, payload);
     }
-  }, [loadVideos, loadSubscription, loadDestinations, loadGlobalSettings, loadYoutubeSettings, loadTiktokSettings, loadInstagramSettings, setNotification]);
+  }, [loadVideos, loadSubscription, loadDestinations, loadGlobalSettings, loadYoutubeSettings, loadTiktokSettings, loadInstagramSettings, setNotification, setQueueTokenCount, updateVideoFromWebSocket]);
 
   const { connected: wsConnected } = useWebSocket('/ws', handleWebSocketMessage, {
     reconnect: true,

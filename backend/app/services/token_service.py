@@ -108,29 +108,44 @@ def get_queue_token_count(user_id: int, db: Session) -> int:
     """Get total token count for queued videos (pending/scheduled, tokens not yet consumed)
     
     Backend is source of truth for queue token count.
+    Optimized to use database aggregation for performance.
     
     Args:
         user_id: User ID
         db: Database session
-    
+        
     Returns:
         Total tokens required for queued videos (integer)
     """
-    from app.db.helpers import get_user_videos
+    from app.models.video import Video
+    from sqlalchemy import func
     
-    queued_videos = get_user_videos(user_id, db=db)
-    total_tokens = 0
+    # Use database aggregation for videos with tokens_required set (fast path)
+    # Sum tokens_required for pending/scheduled videos where tokens_required is NOT NULL
+    result = db.query(
+        func.coalesce(func.sum(Video.tokens_required), 0)
+    ).filter(
+        Video.user_id == user_id,
+        Video.status.in_(['pending', 'scheduled']),
+        Video.tokens_consumed == 0,
+        Video.tokens_required.isnot(None)
+    ).scalar() or 0
     
-    for video in queued_videos:
-        # Only count videos that are pending/scheduled and haven't consumed tokens yet
-        if video.status in ('pending', 'scheduled') and video.tokens_consumed == 0:
-            # Use stored tokens_required with fallback to calculated from file_size_bytes
-            video_tokens = video.tokens_required if video.tokens_required is not None else (
-                calculate_tokens_from_bytes(video.file_size_bytes) if video.file_size_bytes else 0
-            )
-            total_tokens += video_tokens
+    # Handle videos where tokens_required is NULL (fallback to file_size_bytes calculation)
+    # This should be rare now that confirm_upload always sets tokens_required
+    videos_without_tokens = db.query(Video).filter(
+        Video.user_id == user_id,
+        Video.status.in_(['pending', 'scheduled']),
+        Video.tokens_consumed == 0,
+        Video.tokens_required.is_(None)
+    ).all()
     
-    return total_tokens
+    # Calculate tokens for videos without tokens_required set
+    for video in videos_without_tokens:
+        if video.file_size_bytes:
+            result += calculate_tokens_from_bytes(video.file_size_bytes)
+    
+    return int(result)
 
 
 def check_tokens_available(user_id: int, tokens_required: int, db: Session, include_queued_videos: bool = False) -> bool:
