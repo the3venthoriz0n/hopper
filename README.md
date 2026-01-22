@@ -20,4 +20,4 @@ Built with modern web technologies to deliver a reliable and scalable video mana
 
 ## License
 
-MIT
+GPL-3.0

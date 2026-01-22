@@ -1,6 +1,7 @@
 {
   "name": "hopper",
   "version": "1.0.0",
+  "license": "GPL-3.0",
   "private": true,
   "dependencies": {
     "react": "^18.2.0",
