@@ -1,6 +1,7 @@
 """Instagram-specific upload logic"""
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 import httpx
@@ -163,6 +164,9 @@ async def _poll_container_status(
                     except Exception:
                         pass
                     
+                    # Convert status_data to JSON string for logging (logging extra only accepts simple types)
+                    status_data_str = json.dumps(status_data) if status_data else None
+                    
                     # Log full error details
                     error_context = {
                         "container_id": container_id,
@@ -170,7 +174,7 @@ async def _poll_container_status(
                         "max_consecutive_errors": max_consecutive_errors,
                         "attempt": attempt + 1,
                         "max_retries": max_retries,
-                        "status_data": status_data,
+                        "status_data": status_data_str,
                         "status_message": status_message,
                         **video_metadata
                     }
@@ -193,7 +197,7 @@ async def _poll_container_status(
                         
                         instagram_logger.error(
                             f"Instagram container {container_id} returned ERROR status "
-                            f"{consecutive_errors} times in a row. Failing upload. Full status data: {status_data}",
+                            f"{consecutive_errors} times in a row. Failing upload. Full status data: {status_data_str}",
                             extra=error_context
                         )
                         raise Exception(error_msg)
@@ -719,8 +723,19 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
         record_platform_error(video_id, user_id, "instagram", error_message, db=db)
         delete_upload_progress(user_id, video_id)
         
+        # Clear active upload session BEFORE updating status to ensure cleanup happens
+        # This prevents deletion from being blocked if status update fails
+        try:
+            clear_active_upload_session(video_id, "instagram")
+        except Exception as clear_err:
+            instagram_logger.warning(f"Failed to clear active upload session for video {video_id}: {clear_err}")
+        
         update_video(video_id, user_id, db=db, status="failed", error=error_message)
         failed_uploads_gauge.inc()
     finally:
         # Always clear the active session flag when upload completes (success or failure)
-        clear_active_upload_session(video_id, "instagram")
+        # Double-check in case exception handler already cleared it
+        try:
+            clear_active_upload_session(video_id, "instagram")
+        except Exception:
+            pass

@@ -535,13 +535,17 @@ async def delete_video_files(
             
             # ROOT CAUSE FIX: Prevent deletion of videos with active platform uploads
             # Check if video has active platform uploads (even if status is "uploaded")
-            from app.db.redis import get_platform_upload_progress
+            from app.db.redis import get_platform_upload_progress, is_upload_active
             platforms_to_check = ["youtube", "tiktok", "instagram"]
             active_platforms = []
             
             for platform in platforms_to_check:
+                # Check both Redis session and platform progress
+                is_active = is_upload_active(video.id, platform)
                 platform_progress = get_platform_upload_progress(video.user_id, video.id, platform)
-                if platform_progress is not None and platform_progress >= 0 and platform_progress < 100:
+                # Only consider it active if BOTH Redis session exists AND progress is < 100
+                # If status is "failed", don't block deletion even if Redis session exists (cleanup issue)
+                if is_active and platform_progress is not None and platform_progress >= 0 and platform_progress < 100 and video.status != "failed":
                     active_platforms.append(platform)
             
             if active_platforms:
@@ -551,6 +555,7 @@ async def delete_video_files(
                 )
             
             # ROOT CAUSE FIX: Prevent deletion of uploading videos - must cancel first
+            # But allow deletion if status is "failed" (upload already failed, just cleanup)
             if video.status == "uploading":
                 raise ValueError(
                     f"Cannot delete video {video.id} ({video.filename}) while it is uploading. "

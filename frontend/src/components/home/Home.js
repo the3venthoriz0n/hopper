@@ -223,13 +223,26 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
           if (video.status === 'failed' && 
               video.error && 
               !video.error.toLowerCase().includes('cancelled')) {
-            setNotification({
-              type: 'error',
-              title: 'Upload Failed',
-              message: video.error || 'Upload failed',
-              videoFilename: video.filename
-            });
-            setTimeout(() => setNotification(null), 10000);
+            // Always show error notifications, even if one was previously dismissed
+            // Use a unique key to force re-render if the same error occurs again
+            const errorKey = `${video.id}-${video.error}`;
+            const lastErrorKey = sessionStorage.getItem('lastErrorKey');
+            
+            // Show notification if it's a new error or if enough time has passed since last error
+            if (errorKey !== lastErrorKey || !notification) {
+              setNotification({
+                type: 'error',
+                title: 'Upload Failed',
+                message: video.error || 'Upload failed',
+                videoFilename: video.filename,
+                key: errorKey // Add key to force re-render
+              });
+              sessionStorage.setItem('lastErrorKey', errorKey);
+              setTimeout(() => {
+                setNotification(null);
+                sessionStorage.removeItem('lastErrorKey');
+              }, 10000);
+            }
           }
         } else {
           // Fallback: if payload doesn't include video, do full reload
