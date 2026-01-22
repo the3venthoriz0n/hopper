@@ -23,6 +23,8 @@ from app.utils.templates import (
 )
 from app.services.video.config import PLATFORM_CONFIG
 from app.services.video.platforms.tiktok_api import fetch_tiktok_publish_status
+from datetime import datetime, timezone
+from typing import List
 
 logger = logging.getLogger(__name__)
 upload_logger = logging.getLogger("upload")
@@ -293,6 +295,9 @@ def check_upload_success(video: Video, dest_name: str) -> bool:
 def get_platform_statuses(video: Video, dest_settings: Dict[str, Any], all_tokens: Dict[str, Optional[OAuthToken]]) -> Dict[str, Any]:
     """Get upload status and specific error for each enabled platform (DRY, extensible)
     
+    Reads from stored platform_statuses in custom_settings. Returns "not_enabled" for
+    platforms that are not enabled or don't have tokens.
+    
     Args:
         video: Video object to check
         dest_settings: Destination settings dict
@@ -300,17 +305,16 @@ def get_platform_statuses(video: Video, dest_settings: Dict[str, Any], all_token
         
     Returns:
         Dictionary mapping platform names to dict with 'status' and 'error' keys:
-        - status: 'success', 'failed', 'pending', or 'not_enabled'
+        - status: 'success', 'failed', 'pending', 'uploading', 'cancelled', or 'not_enabled'
         - error: Platform-specific error message (None if no error)
     """
     custom_settings = video.custom_settings or {}
-    platform_errors = custom_settings.get("platform_errors", {})
+    stored_platform_statuses = custom_settings.get("platform_statuses", {})
     platform_statuses = {}
     
     # Process each platform using configuration
     for platform_name, config in PLATFORM_CONFIG.items():
         enabled_key = config['enabled_key']
-        id_keys = config['id_keys']
         
         is_enabled = dest_settings.get(enabled_key, False)
         has_token = all_tokens.get(platform_name) is not None
@@ -319,38 +323,164 @@ def get_platform_statuses(video: Video, dest_settings: Dict[str, Any], all_token
             platform_statuses[platform_name] = {"status": "not_enabled", "error": None}
             continue
         
-        # Check if upload succeeded (has platform ID) - DRY: same logic for all platforms
-        has_id = any(bool(custom_settings.get(key)) for key in id_keys)
-        
-        if has_id:
-            # Platform succeeded - clear any previous error (DRY: same for all platforms)
-            platform_statuses[platform_name] = {"status": "success", "error": None}
-        elif platform_name in platform_errors:
-            # Platform has a specific error recorded (DRY: same for all platforms)
-            platform_statuses[platform_name] = {
-                "status": "failed",
-                "error": platform_errors[platform_name]
-            }
-        elif video.status == "pending" or video.status == "uploading":
-            # Still in progress (DRY: same for all platforms)
-            platform_statuses[platform_name] = {"status": "pending", "error": None}
-        elif video.status == "uploaded" or video.status == "completed":
-            # Video marked as uploaded/completed but no ID for this platform
-            # ROOT CAUSE FIX: Only mark as "failed" if there's an actual error recorded.
-            # If no error, it means the platform was never attempted (e.g., just toggled on),
-            # so it should be "pending", not "failed".
-            # DRY: handles both "uploaded" (YouTube/TikTok) and "completed" (Instagram)
-            # Since we already checked platform_errors above, if we reach here with no error,
-            # the platform was never attempted, so it's pending
-            platform_statuses[platform_name] = {"status": "pending", "error": None}
-        elif video.status == "cancelled":
-            # Upload was cancelled (DRY: same for all platforms)
-            platform_statuses[platform_name] = {"status": "failed", "error": "Upload cancelled"}
-        else:
-            # Fallback for other statuses (failed, etc.) - DRY: same for all platforms
-            platform_statuses[platform_name] = {"status": "pending", "error": None}
+        # Get stored status for this platform (defaults to pending if not found)
+        stored_status = stored_platform_statuses.get(platform_name, {"status": "pending", "error": None})
+        platform_statuses[platform_name] = {
+            "status": stored_status.get("status", "pending"),
+            "error": stored_status.get("error")
+        }
     
     return platform_statuses
+
+
+def get_platform_status(video: Video, platform: str) -> Dict[str, Any]:
+    """Get status for a specific platform (requires platform_statuses to exist - no fallback)
+    
+    Args:
+        video: Video object
+        platform: Platform name (youtube, tiktok, instagram)
+        
+    Returns:
+        Dictionary with 'status', 'error', and 'updated_at' keys
+    """
+    platform_statuses = video.custom_settings.get("platform_statuses", {})
+    return platform_statuses.get(platform, {"status": "pending", "error": None, "updated_at": None})
+
+
+def get_all_platform_statuses(video: Video) -> Dict[str, Dict[str, Any]]:
+    """Get all platform statuses from video
+    
+    Args:
+        video: Video object
+        
+    Returns:
+        Dictionary mapping platform names to status dicts
+    """
+    return video.custom_settings.get("platform_statuses", {})
+
+
+def compute_global_status(video: Video, enabled_destinations: List[str]) -> str:
+    """Compute global status from platform statuses
+    
+    Args:
+        video: Video object
+        enabled_destinations: List of enabled destination names
+        
+    Returns:
+        Global status string: 'pending', 'uploading', 'uploaded', 'failed', 'partial', or 'cancelled'
+    """
+    platform_statuses = get_all_platform_statuses(video)
+    enabled_statuses = [
+        platform_statuses.get(platform, {}).get("status", "pending")
+        for platform in enabled_destinations
+    ]
+    
+    if not enabled_statuses:
+        return "pending"
+    
+    if all(s == "success" for s in enabled_statuses):
+        return "uploaded"
+    elif any(s == "uploading" for s in enabled_statuses):
+        return "uploading"
+    elif all(s == "failed" for s in enabled_statuses):
+        return "failed"
+    elif all(s == "cancelled" for s in enabled_statuses):
+        return "cancelled"
+    elif any(s == "success" for s in enabled_statuses):
+        return "partial"  # New status for partial success
+    else:
+        return "pending"
+
+
+async def set_platform_status(
+    video_id: int,
+    user_id: int,
+    platform: str,
+    status: str,
+    error: Optional[str] = None,
+    db: Session = None
+) -> None:
+    """Set status for a platform and update global status
+    
+    Args:
+        video_id: Video ID
+        user_id: User ID
+        platform: Platform name (youtube, tiktok, instagram)
+        status: Status string ('pending', 'uploading', 'success', 'failed', 'cancelled')
+        error: Optional error message (required if status is 'failed')
+        db: Database session (optional)
+    """
+    from app.db.session import SessionLocal
+    from app.db.helpers import update_video, get_user_settings
+    from sqlalchemy.orm.attributes import flag_modified
+    from app.services.event_service import publish_video_status_changed
+    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+    
+    should_close = False
+    if db is None:
+        db = SessionLocal()
+        should_close = True
+    
+    try:
+        video = db.query(Video).filter(
+            Video.id == video_id,
+            Video.user_id == user_id
+        ).first()
+        
+        if not video:
+            return
+        
+        # Initialize custom_settings and platform_statuses if needed
+        if video.custom_settings is None:
+            video.custom_settings = {}
+        if "platform_statuses" not in video.custom_settings:
+            video.custom_settings["platform_statuses"] = {}
+        
+        # Update platform status
+        video.custom_settings["platform_statuses"][platform] = {
+            "status": status,
+            "error": error,
+            "updated_at": datetime.now(timezone.utc).isoformat()
+        }
+        
+        # Flag as modified so SQLAlchemy detects the change
+        flag_modified(video, "custom_settings")
+        
+        # Get enabled destinations to compute global status
+        dest_settings = get_user_settings(user_id, "destinations", db=db)
+        all_tokens = get_all_oauth_tokens(user_id, db=db)
+        enabled_destinations = []
+        for dest_name in ["youtube", "tiktok", "instagram"]:
+            is_enabled = dest_settings.get(f"{dest_name}_enabled", False)
+            has_token = all_tokens.get(dest_name) is not None
+            if is_enabled and has_token:
+                enabled_destinations.append(dest_name)
+        
+        # Compute and update global status
+        old_status = video.status
+        new_global_status = compute_global_status(video, enabled_destinations)
+        
+        # Update global status if it changed
+        if old_status != new_global_status:
+            video.status = new_global_status
+            # Clear error if status is not failed
+            if new_global_status != "failed":
+                video.error = None
+        
+        db.commit()
+        
+        # Refresh video to get updated data
+        db.refresh(video)
+        
+        # Publish WebSocket event with updated video data
+        all_settings = get_all_user_settings(user_id, db=db)
+        all_tokens = get_all_oauth_tokens(user_id, db=db)
+        video_dict = build_video_response(video, all_settings, all_tokens, user_id)
+        await publish_video_status_changed(user_id, video_id, old_status, new_global_status, video_dict=video_dict)
+        
+    finally:
+        if should_close:
+            db.close()
 
 
 def record_platform_error(video_id: int, user_id: int, platform: str, error_message: str, db: Session = None):

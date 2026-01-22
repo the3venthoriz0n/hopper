@@ -10,6 +10,7 @@ from app.db.redis import set_upload_progress, get_upload_progress, is_upload_act
 from app.models.video import Video
 from app.services.video.platforms.tiktok_api import fetch_tiktok_publish_status
 from app.services.event_service import publish_video_status_changed, publish_video_updated, publish_upload_progress
+from app.services.video.helpers import set_platform_status, compute_global_status
 from app.core.config import INSTAGRAM_GRAPH_API_BASE
 from app.utils.encryption import decrypt
 from app.services.token_service import deduct_tokens, calculate_tokens_from_bytes
@@ -153,28 +154,31 @@ async def status_checker_task():
                                         update_video(video.id, video.user_id, db=db, tokens_consumed=tokens_required)
                                         status_logger.info(f"Deducted {tokens_required} tokens for user {video.user_id} (TikTok upload via status_checker)")
                                 
-                                if all_done and video.status != "uploaded":
-                                    update_video(video.id, video.user_id, db=db, custom_settings=custom_settings, status="uploaded")
-                                    
+                                # Update video with tiktok_id
+                                update_video(video.id, video.user_id, db=db, custom_settings=custom_settings)
+                                
+                                # Set TikTok platform status to success
+                                await set_platform_status(video.id, video.user_id, "tiktok", "success", error=None, db=db)
+                                
+                                # Refresh video to get updated status
+                                db.refresh(video)
+                                
+                                # Check if all destinations are done and update global status if needed
+                                if all_done:
                                     # Increment successful uploads counter
                                     successful_uploads_counter.inc()
                                     
                                     # Refresh video and build full response (backend is source of truth)
-                                    db.refresh(video)
-                                    from app.services.event_service import publish_video_status_changed
                                     from app.services.video.helpers import build_video_response
                                     video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
                                     
-                                    await publish_video_status_changed(video.user_id, video.id, old_status, "uploaded", video_dict=video_dict)
+                                    await publish_video_status_changed(video.user_id, video.id, old_status, video.status, video_dict=video_dict)
                                     if tiktok_id:
                                         status_logger.info(f"TikTok video {video.id} published successfully, tiktok_id: {tiktok_id}")
                                     else:
                                         status_logger.info(f"TikTok video {video.id} published successfully (via 404), publish_id: {tiktok_publish_id}")
                                 else:
-                                    update_video(video.id, video.user_id, db=db, custom_settings=custom_settings)
-                                    
                                     # Refresh video and build full response (backend is source of truth)
-                                    db.refresh(video)
                                     from app.services.event_service import publish_video_updated
                                     from app.services.video.helpers import build_video_response
                                     video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
@@ -230,19 +234,11 @@ async def status_checker_task():
                             elif status == "FAILED":
                                 # Upload failed
                                 fail_reason = status_data.get("fail_reason", "Unknown error")
-                                old_status = video.status
-                                update_video(video.id, video.user_id, db=db, status="failed", error=f"TikTok upload failed: {fail_reason}")
+                                error_msg = f"TikTok upload failed: {fail_reason}"
                                 
-                                # Refresh video and build full response (backend is source of truth)
-                                db.refresh(video)
-                                from app.services.event_service import publish_video_status_changed
-                                from app.services.video.helpers import build_video_response
-                                all_settings, all_tokens = _get_user_data_for_video(video, db)
-                                if all_settings is None or all_tokens is None:
-                                    continue
-                                video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
+                                # Set TikTok platform status to failed
+                                await set_platform_status(video.id, video.user_id, "tiktok", "failed", error=error_msg, db=db)
                                 
-                                await publish_video_status_changed(video.user_id, video.id, old_status, "failed", video_dict=video_dict)
                                 status_logger.warning(f"TikTok video {video.id} failed: {fail_reason}")
                     
                     except Exception as e:
@@ -349,16 +345,22 @@ async def status_checker_task():
                                             status_logger.error(f"No media ID in publish response for video {video.id}: {publish_result}")
                                             continue
                                         
-                                        # Update video with instagram_id and status
+                                        # Update video with instagram_id
                                         custom_settings = custom_settings.copy()
                                         custom_settings['instagram_id'] = media_id
                                         old_status = video.status
+                                        update_video(video.id, video.user_id, db=db, custom_settings=custom_settings)
                                         
-                                        # Check if all destinations are done
-                                        from app.services.video import check_upload_success
+                                        # Set Instagram platform status to success
+                                        await set_platform_status(video.id, video.user_id, "instagram", "success", error=None, db=db)
+                                        
+                                        # Get user data for building response
                                         all_settings, all_tokens = _get_user_data_for_video(video, db)
                                         if all_settings is None or all_tokens is None:
                                             continue
+                                        
+                                        # Check if all destinations are done
+                                        from app.services.video import check_upload_success
                                         
                                         # Check all enabled destinations
                                         enabled_destinations = []
@@ -370,12 +372,6 @@ async def status_checker_task():
                                             enabled_destinations.append("instagram")
                                         
                                         all_done = all(check_upload_success(video, dest) for dest in enabled_destinations)
-                                        
-                                        # Update status based on whether all destinations are done
-                                        if all_done:
-                                            update_video(video.id, video.user_id, db=db, custom_settings=custom_settings, status="completed")
-                                        else:
-                                            update_video(video.id, video.user_id, db=db, custom_settings=custom_settings)
                                         
                                         # Update progress to 100%
                                         set_upload_progress(video.user_id, video.id, 100)
@@ -407,13 +403,16 @@ async def status_checker_task():
                                                 update_video(video.id, video.user_id, db=db, tokens_consumed=tokens_required)
                                                 status_logger.info(f"Deducted {tokens_required} tokens for user {video.user_id} (Instagram upload via status_checker)")
                                         
-                                        # Refresh video and build full response
+                                        # Refresh video to get updated status
                                         db.refresh(video)
+                                        
+                                        # Build full response
                                         from app.services.video.helpers import build_video_response
                                         video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
                                         
-                                        if all_done and old_status != "completed":
-                                            await publish_video_status_changed(video.user_id, video.id, old_status, "completed", video_dict=video_dict)
+                                        # Publish status change if global status changed
+                                        if all_done and old_status != video.status:
+                                            await publish_video_status_changed(video.user_id, video.id, old_status, video.status, video_dict=video_dict)
                                         else:
                                             await publish_video_updated(video.user_id, video.id, video_dict=video_dict)
                                         
@@ -460,18 +459,9 @@ async def status_checker_task():
                                         continue
                                     
                                     # All checks passed - container is truly in ERROR state and upload is not active
-                                    # Container processing failed and video wasn't published - mark as failed
-                                    old_status = video.status
-                                    update_video(video.id, video.user_id, db=db, status="failed", error="Instagram container processing failed")
-                                    
-                                    # Refresh video and build full response (backend is source of truth)
-                                    db.refresh(video)
-                                    from app.services.event_service import publish_video_status_changed
-                                    from app.services.video.helpers import build_video_response
-                                    all_settings, all_tokens = _get_user_data_for_video(video, db)
-                                    if all_settings is not None and all_tokens is not None:
-                                        video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
-                                        await publish_video_status_changed(video.user_id, video.id, old_status, "failed", video_dict=video_dict)
+                                    # Container processing failed and video wasn't published - mark platform as failed
+                                    error_msg = "Instagram container processing failed"
+                                    await set_platform_status(video.id, video.user_id, "instagram", "failed", error=error_msg, db=db)
                                     status_logger.warning(f"Instagram container {instagram_container_id} failed for video {video.id}")
                                 
                                 elif status_code == "EXPIRED":
@@ -491,18 +481,9 @@ async def status_checker_task():
                                         )
                                         continue
                                     
-                                    # Container expired and video wasn't published - mark as failed
-                                    old_status = video.status
-                                    update_video(video.id, video.user_id, db=db, status="failed", error="Instagram container expired (not published within 24 hours)")
-                                    
-                                    # Refresh video and build full response (backend is source of truth)
-                                    db.refresh(video)
-                                    from app.services.event_service import publish_video_status_changed
-                                    from app.services.video.helpers import build_video_response
-                                    all_settings, all_tokens = _get_user_data_for_video(video, db)
-                                    if all_settings is not None and all_tokens is not None:
-                                        video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
-                                        await publish_video_status_changed(video.user_id, video.id, old_status, "failed", video_dict=video_dict)
+                                    # Container expired and video wasn't published - mark platform as failed
+                                    error_msg = "Instagram container expired (not published within 24 hours)"
+                                    await set_platform_status(video.id, video.user_id, "instagram", "failed", error=error_msg, db=db)
                                     status_logger.warning(f"Instagram container {instagram_container_id} expired for video {video.id}")
                                 
                                 # IN_PROGRESS - continue waiting

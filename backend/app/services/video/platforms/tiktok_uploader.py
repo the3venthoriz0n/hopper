@@ -163,7 +163,7 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
     global_settings = get_user_settings(user_id, "global", db=db)
     
     try:
-        update_video(video_id, user_id, db=db, status="uploading")
+        # Platform status is set to "uploading" by orchestrator
         last_published_progress = -1
         from app.services.video.helpers import should_publish_progress
         

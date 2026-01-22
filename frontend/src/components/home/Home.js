@@ -462,32 +462,49 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
       />
 
       {/* Cancel button for uploading videos - similar to cancel scheduled */}
-      {videos.some(v => v.status === 'uploading') && (
-        <button 
-          className="cancel-scheduled-btn" 
-          onClick={async () => {
-            const uploadingVideos = videos.filter(v => v.status === 'uploading');
-            for (const video of uploadingVideos) {
-              try {
-                // Check if it's R2 upload (has upload_progress) or destination upload
-                if (video.upload_progress !== undefined && 
-                    video.upload_progress < 100 && 
-                    (!video.platform_progress || Object.keys(video.platform_progress).length === 0)) {
-                  await axios.post(`${API}/videos/${video.id}/cancel-r2`);
-                } else {
-                  await axios.post(`${API}/videos/${video.id}/cancel`);
-                }
-              } catch (err) {
-                console.error(`Failed to cancel video ${video.id}:`, err);
-              }
+      {(() => {
+        // Check if any video has uploading platforms or R2 upload in progress
+        const uploadingVideos = videos.filter(v => {
+          // Check if any platform is uploading
+          const hasUploadingPlatform = v.platform_statuses && Object.values(v.platform_statuses).some(
+            statusData => {
+              const status = typeof statusData === 'object' ? statusData.status : statusData;
+              return status === 'uploading';
             }
-            if (setMessage) setMessage(`🛑 Cancelling ${uploadingVideos.length} upload${uploadingVideos.length !== 1 ? 's' : ''}...`);
-            loadVideos();
-          }}
-        >
-          Cancel Upload ({videos.filter(v => v.status === 'uploading').length})
-        </button>
-      )}
+          );
+          // Check if R2 upload is in progress
+          const hasR2Upload = v.status === 'uploading' && v.upload_progress !== undefined && 
+                              v.upload_progress < 100 && 
+                              (!v.platform_progress || Object.keys(v.platform_progress).length === 0);
+          return hasUploadingPlatform || hasR2Upload;
+        });
+        
+        return uploadingVideos.length > 0 && (
+          <button 
+            className="cancel-scheduled-btn" 
+            onClick={async () => {
+              for (const video of uploadingVideos) {
+                try {
+                  // Check if it's R2 upload (has upload_progress) or destination upload
+                  if (video.upload_progress !== undefined && 
+                      video.upload_progress < 100 && 
+                      (!video.platform_progress || Object.keys(video.platform_progress).length === 0)) {
+                    await axios.post(`${API}/videos/${video.id}/cancel-r2`);
+                  } else {
+                    await axios.post(`${API}/videos/${video.id}/cancel`);
+                  }
+                } catch (err) {
+                  console.error(`Failed to cancel video ${video.id}:`, err);
+                }
+              }
+              if (setMessage) setMessage(`🛑 Cancelling ${uploadingVideos.length} upload${uploadingVideos.length !== 1 ? 's' : ''}...`);
+              loadVideos();
+            }}
+          >
+            Cancel Upload ({uploadingVideos.length})
+          </button>
+        );
+      })()}
 
       {videos.some(v => v.status === 'scheduled') && (
         <button className="cancel-scheduled-btn" onClick={cancelScheduled}>

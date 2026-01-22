@@ -12,7 +12,8 @@ from app.db.session import SessionLocal
 from app.models.video import Video
 from app.services.token_service import check_tokens_available, get_token_balance, calculate_tokens_from_bytes
 from app.services.video.helpers import (
-    build_upload_context, check_upload_success, record_platform_error
+    build_upload_context, check_upload_success, record_platform_error,
+    set_platform_status, compute_global_status
 )
 
 upload_logger = logging.getLogger("upload")
@@ -180,11 +181,13 @@ async def _upload_single_video_to_destinations(
         # Publish status change event
         await publish_video_status_changed(user_id, video_id, old_status, "uploading", video_dict=video_dict)
         
-        # Initialize platform_errors in custom_settings
+        # Initialize platform_errors and platform_statuses in custom_settings
         if video.custom_settings is None:
             video.custom_settings = {}
         if "platform_errors" not in video.custom_settings:
             video.custom_settings["platform_errors"] = {}
+        if "platform_statuses" not in video.custom_settings:
+            video.custom_settings["platform_statuses"] = {}
         from sqlalchemy.orm.attributes import flag_modified
         flag_modified(video, "custom_settings")
         db.commit()
@@ -199,82 +202,94 @@ async def _upload_single_video_to_destinations(
                 upload_logger.info(f"Upload cancelled for video {video_id} during {dest_name} upload")
                 _cancellation_flags.pop(video_id, None)
                 
-                # Get current video status
-                current_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
-                old_status = current_video.status if current_video else "uploading"
+                # Set all remaining platforms to cancelled
+                for remaining_dest in enabled_destinations[enabled_destinations.index(dest_name):]:
+                    await set_platform_status(video_id, user_id, remaining_dest, "cancelled", error="Upload cancelled by user", db=db)
                 
-                update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
-                
-                # Refresh video and build full response
-                db.refresh(current_video)
-                all_settings = get_all_user_settings(user_id, db=db)
-                all_tokens = get_all_oauth_tokens(user_id, db=db)
-                video_dict = build_video_response(current_video, all_settings, all_tokens, user_id)
-                
-                await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
                 upload_cancelled = True
                 break  # Exit destination loop
             
             uploader_func = DESTINATION_UPLOADERS.get(dest_name)
             if uploader_func:
                 try:
+                    # Set platform status to uploading before starting
+                    await set_platform_status(video_id, user_id, dest_name, "uploading", error=None, db=db)
+                    
                     await uploader_func(user_id, video_id, db=db)
+                    
+                    # Check if upload succeeded
+                    updated_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
+                    if updated_video and check_upload_success(updated_video, dest_name):
+                        # Set platform status to success
+                        await set_platform_status(video_id, user_id, dest_name, "success", error=None, db=db)
+                    else:
+                        # Upload didn't succeed - check if there's an error recorded
+                        platform_errors = (updated_video.custom_settings or {}).get("platform_errors", {})
+                        error_msg = platform_errors.get(dest_name, "Upload failed")
+                        await set_platform_status(video_id, user_id, dest_name, "failed", error=error_msg, db=db)
                     
                     # Check for cancellation after each upload
                     if _cancellation_flags.get(video_id, False):
                         upload_logger.info(f"Upload cancelled for video {video_id} after {dest_name} upload")
                         _cancellation_flags.pop(video_id, None)
                         
-                        # Get current video status
-                        current_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
-                        old_status = current_video.status if current_video else "uploading"
+                        # Set platform status to cancelled
+                        await set_platform_status(video_id, user_id, dest_name, "cancelled", error="Upload cancelled by user", db=db)
                         
-                        update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
-                        
-                        # Refresh video and build full response
-                        db.refresh(current_video)
-                        all_settings = get_all_user_settings(user_id, db=db)
-                        all_tokens = get_all_oauth_tokens(user_id, db=db)
-                        video_dict = build_video_response(current_video, all_settings, all_tokens, user_id)
-                        
-                        await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
                         upload_cancelled = True
                         break  # Exit destination loop
                 except Exception as upload_err:
                     # Check if error is due to cancellation
                     if "cancelled by user" in str(upload_err).lower():
                         upload_logger.info(f"Upload cancelled for {dest_name}: {upload_err}")
-                    else:
-                        upload_logger.error(f"Upload failed for {dest_name}: {upload_err}")
-                        # Record platform-specific error
-                        record_platform_error(video_id, user_id, dest_name, str(upload_err), db=db)
-                    # Continue to next destination (or break if cancelled)
-                    if "cancelled by user" in str(upload_err).lower():
+                        await set_platform_status(video_id, user_id, dest_name, "cancelled", error="Upload cancelled by user", db=db)
                         upload_cancelled = True
                         break
+                    else:
+                        upload_logger.error(f"Upload failed for {dest_name}: {upload_err}")
+                        # Record platform-specific error and set status to failed
+                        record_platform_error(video_id, user_id, dest_name, str(upload_err), db=db)
+                        await set_platform_status(video_id, user_id, dest_name, "failed", error=str(upload_err), db=db)
         
         # Skip final status check if upload was cancelled
         if upload_cancelled:
             return ("cancelled", video_id)
         
-        # Check final status and collect actual error messages
+        # Compute global status from platform statuses
         updated_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
         if updated_video:
-            succeeded = []
-            failed = []
+            # Compute global status from platform statuses
+            new_global_status = compute_global_status(updated_video, enabled_destinations)
+            old_status = updated_video.status
             
-            for dest_name in enabled_destinations:
-                if check_upload_success(updated_video, dest_name):
-                    succeeded.append(dest_name)
+            # Update global status if it changed
+            if old_status != new_global_status:
+                # Get actual error message from video if it exists
+                actual_error = updated_video.error
+                
+                # Build error message based on platform statuses
+                platform_statuses = (updated_video.custom_settings or {}).get("platform_statuses", {})
+                succeeded = [d for d in enabled_destinations if platform_statuses.get(d, {}).get("status") == "success"]
+                failed = [d for d in enabled_destinations if platform_statuses.get(d, {}).get("status") == "failed"]
+                
+                if new_global_status == "uploaded":
+                    update_video(video_id, user_id, db=db, status="uploaded", error=None)
+                elif new_global_status == "partial":
+                    # Partial success - build error message
+                    if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
+                        update_video(video_id, user_id, db=db, status="partial", error=actual_error)
+                    else:
+                        update_video(video_id, user_id, db=db, status="partial", 
+                                   error=f"Partial upload: succeeded ({', '.join(succeeded)}), failed ({', '.join(failed)})")
+                elif new_global_status == "failed":
+                    if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
+                        update_video(video_id, user_id, db=db, status="failed", error=actual_error)
+                    else:
+                        update_video(video_id, user_id, db=db, status="failed", 
+                                   error=f"Upload failed for all destinations: {', '.join(failed)}")
                 else:
-                    failed.append(dest_name)
-            
-            # Get actual error message from video if it exists
-            actual_error = updated_video.error
-            
-            if len(succeeded) == len(enabled_destinations):
-                old_status = updated_video.status
-                update_video(video_id, user_id, db=db, status="uploaded")
+                    # For other statuses (uploading, pending, cancelled), just update status
+                    update_video(video_id, user_id, db=db, status=new_global_status)
                 
                 # Refresh video to get updated status
                 db.refresh(updated_video)
@@ -285,44 +300,14 @@ async def _upload_single_video_to_destinations(
                 video_dict = build_video_response(updated_video, all_settings, all_tokens, user_id)
                 
                 # Publish status change event
-                await publish_video_status_changed(user_id, video_id, old_status, "uploaded", video_dict=video_dict)
-                
+                await publish_video_status_changed(user_id, video_id, old_status, new_global_status, video_dict=video_dict)
+            
+            # Return result based on global status
+            if new_global_status == "uploaded":
                 return ("succeeded", video_id)
-            elif len(succeeded) > 0:
-                # Partial success
-                old_status = updated_video.status
-                
-                if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
-                    update_video(video_id, user_id, db=db, status="failed", error=actual_error)
-                else:
-                    update_video(video_id, user_id, db=db, status="failed", 
-                               error=f"Partial upload: succeeded ({', '.join(succeeded)}), failed ({', '.join(failed)})")
-                
-                # Refresh video and build full response
-                db.refresh(updated_video)
-                all_settings = get_all_user_settings(user_id, db=db)
-                all_tokens = get_all_oauth_tokens(user_id, db=db)
-                video_dict = build_video_response(updated_video, all_settings, all_tokens, user_id)
-                
-                await publish_video_status_changed(user_id, video_id, old_status, "failed", video_dict=video_dict)
-                return ("failed", video_id)
+            elif new_global_status == "cancelled":
+                return ("cancelled", video_id)
             else:
-                # All failed
-                old_status = updated_video.status
-                
-                if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
-                    update_video(video_id, user_id, db=db, status="failed", error=actual_error)
-                else:
-                    update_video(video_id, user_id, db=db, status="failed", 
-                               error=f"Upload failed for all destinations: {', '.join(failed)}")
-                
-                # Refresh video and build full response
-                db.refresh(updated_video)
-                all_settings = get_all_user_settings(user_id, db=db)
-                all_tokens = get_all_oauth_tokens(user_id, db=db)
-                video_dict = build_video_response(updated_video, all_settings, all_tokens, user_id)
-                
-                await publish_video_status_changed(user_id, video_id, old_status, "failed", video_dict=video_dict)
                 return ("failed", video_id)
         
         return ("failed", video_id)
@@ -558,20 +543,10 @@ async def retry_failed_upload(
             upload_logger.info(f"Retry upload cancelled for video {video_id} during {dest_name} upload")
             _cancellation_flags.pop(video_id, None)
             
-            # Get current video status
-            from app.models.video import Video as VideoModel
-            current_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
-            old_status = current_video.status if current_video else "uploading"
+            # Set all remaining platforms to cancelled
+            for remaining_dest in enabled_destinations[enabled_destinations.index(dest_name):]:
+                await set_platform_status(video_id, user_id, remaining_dest, "cancelled", error="Upload cancelled by user", db=db)
             
-            update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
-            
-            # Refresh video and build full response
-            db.refresh(current_video)
-            all_settings = get_all_user_settings(user_id, db=db)
-            all_tokens = get_all_oauth_tokens(user_id, db=db)
-            video_dict = build_video_response(current_video, all_settings, all_tokens, user_id)
-            
-            await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
             upload_cancelled = True
             break  # Exit destination loop
         
@@ -585,25 +560,17 @@ async def retry_failed_upload(
                 else:
                     uploader_func(user_id, video_id, db=db)
                 
+                # Set platform status to uploading before starting
+                await set_platform_status(video_id, user_id, dest_name, "uploading", error=None, db=db)
+                
                 # Check for cancellation after each upload
                 if _cancellation_flags.get(video_id, False):
                     upload_logger.info(f"Retry upload cancelled for video {video_id} after {dest_name} upload")
                     _cancellation_flags.pop(video_id, None)
                     
-                    # Get current video status
-                    from app.models.video import Video as VideoModel
-                    current_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
-                    old_status = current_video.status if current_video else "uploading"
+                    # Set platform status to cancelled
+                    await set_platform_status(video_id, user_id, dest_name, "cancelled", error="Upload cancelled by user", db=db)
                     
-                    update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
-                    
-                    # Refresh video and build full response
-                    db.refresh(current_video)
-                    all_settings = get_all_user_settings(user_id, db=db)
-                    all_tokens = get_all_oauth_tokens(user_id, db=db)
-                    video_dict = build_video_response(current_video, all_settings, all_tokens, user_id)
-                    
-                    await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
                     upload_cancelled = True
                     break  # Exit destination loop
                 
@@ -612,15 +579,25 @@ async def retry_failed_upload(
                 updated_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
                 if updated_video and check_upload_success(updated_video, dest_name):
                     succeeded_destinations.append(dest_name)
+                    # Set platform status to success
+                    await set_platform_status(video_id, user_id, dest_name, "success", error=None, db=db)
+                else:
+                    # Upload didn't succeed - check if there's an error recorded
+                    platform_errors = (updated_video.custom_settings or {}).get("platform_errors", {})
+                    error_msg = platform_errors.get(dest_name, "Upload failed")
+                    await set_platform_status(video_id, user_id, dest_name, "failed", error=error_msg, db=db)
             except Exception as upload_err:
                 # Check if error is due to cancellation
                 if "cancelled by user" in str(upload_err).lower():
                     upload_logger.info(f"Retry upload cancelled for {dest_name}: {upload_err}")
+                    await set_platform_status(video_id, user_id, dest_name, "cancelled", error="Upload cancelled by user", db=db)
                     upload_cancelled = True
                     break
                 else:
                     upload_logger.error(f"Retry upload failed for {dest_name}: {upload_err}")
-                    # Continue to next destination
+                    # Record platform-specific error and set status to failed
+                    record_platform_error(video_id, user_id, dest_name, str(upload_err), db=db)
+                    await set_platform_status(video_id, user_id, dest_name, "failed", error=str(upload_err), db=db)
     
     # If upload was cancelled, return early
     if upload_cancelled:
@@ -630,30 +607,35 @@ async def retry_failed_upload(
             "message": f"Retry cancelled. Partial success: {', '.join(succeeded_destinations) if succeeded_destinations else 'none'}"
         }
     
-    # Update final status - preserve actual error messages
+    # Compute global status from platform statuses
     from app.models.video import Video as VideoModel
     updated_video = db.query(VideoModel).filter(VideoModel.id == video_id).first()
-    actual_error = updated_video.error if updated_video else None
-    
-    if len(succeeded_destinations) == len(enabled_destinations):
-        update_video(video_id, user_id, db=db, status="uploaded")
-    elif len(succeeded_destinations) > 0:
-        # Partial success - preserve actual error if it's platform-specific, otherwise list failed destinations
-        failed_destinations = [d for d in enabled_destinations if d not in succeeded_destinations]
-        if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
-            update_video(video_id, user_id, db=db, status="failed", error=actual_error)
-        else:
-            # List which destinations succeeded and failed (like old implementation)
-            update_video(video_id, user_id, db=db, status="failed", 
-                       error=f"Partial upload: succeeded ({', '.join(succeeded_destinations)}), failed ({', '.join(failed_destinations)})")
-    else:
-        # All failed - preserve actual error if it's platform-specific, otherwise list failed destinations
-        failed_destinations = [d for d in enabled_destinations if d not in succeeded_destinations]
-        if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
-            update_video(video_id, user_id, db=db, status="failed", error=actual_error)
-        else:
-            update_video(video_id, user_id, db=db, status="failed", 
-                       error=f"Upload failed for all destinations: {', '.join(failed_destinations)}")
+    if updated_video:
+        new_global_status = compute_global_status(updated_video, enabled_destinations)
+        old_status = updated_video.status
+        
+        if old_status != new_global_status:
+            actual_error = updated_video.error
+            platform_statuses = (updated_video.custom_settings or {}).get("platform_statuses", {})
+            succeeded = [d for d in enabled_destinations if platform_statuses.get(d, {}).get("status") == "success"]
+            failed = [d for d in enabled_destinations if platform_statuses.get(d, {}).get("status") == "failed"]
+            
+            if new_global_status == "uploaded":
+                update_video(video_id, user_id, db=db, status="uploaded", error=None)
+            elif new_global_status == "partial":
+                if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
+                    update_video(video_id, user_id, db=db, status="partial", error=actual_error)
+                else:
+                    update_video(video_id, user_id, db=db, status="partial", 
+                               error=f"Partial upload: succeeded ({', '.join(succeeded)}), failed ({', '.join(failed)})")
+            elif new_global_status == "failed":
+                if actual_error and not any(pattern in actual_error.lower() for pattern in ["upload failed for all destinations", "upload succeeded for", "but failed for others", "partial upload:"]):
+                    update_video(video_id, user_id, db=db, status="failed", error=actual_error)
+                else:
+                    update_video(video_id, user_id, db=db, status="failed", 
+                               error=f"Upload failed for all destinations: {', '.join(failed)}")
+            else:
+                update_video(video_id, user_id, db=db, status=new_global_status)
     
     return {
         "ok": True,

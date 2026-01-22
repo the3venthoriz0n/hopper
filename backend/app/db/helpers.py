@@ -732,6 +732,16 @@ def add_user_video(user_id: int, filename: str, path: str, generated_title: str 
         should_close = True
     
     try:
+        # Initialize custom_settings with platform_statuses for new videos
+        from datetime import datetime, timezone
+        custom_settings = {
+            "platform_statuses": {
+                "youtube": {"status": "pending", "error": None, "updated_at": datetime.now(timezone.utc).isoformat()},
+                "tiktok": {"status": "pending", "error": None, "updated_at": datetime.now(timezone.utc).isoformat()},
+                "instagram": {"status": "pending", "error": None, "updated_at": datetime.now(timezone.utc).isoformat()}
+            }
+        }
+        
         video = Video(
             user_id=user_id,
             filename=filename,
@@ -739,6 +749,7 @@ def add_user_video(user_id: int, filename: str, path: str, generated_title: str 
             status="pending",
             generated_title=generated_title,
             generated_description=generated_description,
+            custom_settings=custom_settings,
             file_size_bytes=file_size_bytes,
             tokens_required=tokens_required,
             tokens_consumed=tokens_consumed

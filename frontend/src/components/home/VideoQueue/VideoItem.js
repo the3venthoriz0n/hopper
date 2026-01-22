@@ -67,13 +67,25 @@ export default function VideoItem({
       onDragOver={handleDragOver}
       onDrop={(e) => handleDrop(e, v, setMessage)}
     >
-      <div 
-        className="drag-handle" 
-        title="Drag to reorder"
-        draggable={v.status !== 'uploading'}
-        onDragStart={(e) => handleDragStart(e, v)}
-        onDragEnd={handleDragEnd}
-      >⋮⋮</div>
+      {(() => {
+        // Check if any platform is uploading
+        const isAnyPlatformUploading = v.platform_statuses && Object.values(v.platform_statuses).some(
+          statusData => {
+            const status = typeof statusData === 'object' ? statusData.status : statusData;
+            return status === 'uploading';
+          }
+        );
+        
+        return (
+          <div 
+            className="drag-handle" 
+            title="Drag to reorder"
+            draggable={!isAnyPlatformUploading && v.status !== 'uploading'}
+            onDragStart={(e) => handleDragStart(e, v)}
+            onDragEnd={handleDragEnd}
+          >⋮⋮</div>
+        );
+      })()}
       <div className="video-info-container">
         <div className="video-titles">
           <div className="youtube-title" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -335,10 +347,16 @@ export default function VideoItem({
         )}
         {(() => {
           // Check if video is actively uploading (status or platform progress)
-          const isVideoUploading = v.status === 'uploading' || 
-            (v.platform_progress && Object.values(v.platform_progress).some(
-              progress => typeof progress === 'number' && progress >= 0 && progress < 100
-            ));
+          // Check if any platform is uploading (use platform_statuses as source of truth)
+          const isVideoUploading = v.platform_statuses && Object.values(v.platform_statuses).some(
+            statusData => {
+              const status = typeof statusData === 'object' ? statusData.status : statusData;
+              return status === 'uploading';
+            }
+          ) || 
+          // Fallback: check R2 upload (status is 'uploading' and has upload_progress)
+          (v.status === 'uploading' && v.upload_progress !== undefined && v.upload_progress < 100 && 
+           (!v.platform_progress || Object.keys(v.platform_progress).length === 0));
           
           return (
             <button 
