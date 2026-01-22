@@ -149,17 +149,32 @@ def validate_origin_referer(request: Request) -> bool:
 
 
 def get_client_ip(request: Request) -> str:
-    """Extract client IP address from request
+    """Extract client IP address from request (supports both IPv4 and IPv6)
     
     Args:
         request: FastAPI Request object
         
     Returns:
-        str: Client IP address
+        str: Client IP address (IPv4 or IPv6 format)
     """
-    client_ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    # Check Cloudflare's CF-Connecting-IP header first (supports IPv6)
+    client_ip = request.headers.get("CF-Connecting-IP", "").strip()
+    
+    # Fallback to X-Forwarded-For (supports IPv6)
+    if not client_ip:
+        forwarded_for = request.headers.get("X-Forwarded-For", "").strip()
+        if forwarded_for:
+            # Take the first IP in the chain (original client)
+            client_ip = forwarded_for.split(",")[0].strip()
+    
+    # Final fallback to direct connection IP
     if not client_ip:
         client_ip = request.client.host if request.client else "unknown"
+    
+    # Log IPv6 detection for debugging
+    if ":" in client_ip and client_ip != "unknown":
+        security_logger.debug(f"Detected IPv6 client IP: {client_ip}")
+    
     return client_ip
 
 

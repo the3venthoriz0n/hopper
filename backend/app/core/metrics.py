@@ -238,8 +238,15 @@ def update_active_users_detail_gauge(active_users_data: dict, db) -> None:
         # Clear existing gauge data by clearing all label combinations
         active_users_detail_gauge._metrics.clear()
         
+        # Track processed user_ids to prevent duplicates
+        processed_user_ids = set()
+        
         # Populate gauge with current active users
         for user_id, last_activity in active_users_data.items():
+            # Skip if we've already processed this user_id (deduplicate)
+            if user_id in processed_user_ids:
+                continue
+            
             try:
                 # Get user email from database
                 user = db.query(User).filter(User.id == user_id).first()
@@ -250,6 +257,7 @@ def update_active_users_detail_gauge(active_users_data: dict, db) -> None:
                         user_email=user.email,
                         last_activity=last_activity
                     ).set(1)
+                    processed_user_ids.add(user_id)
             except Exception as e:
                 # Skip users that cause errors but continue processing others
                 import logging

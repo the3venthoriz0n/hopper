@@ -2,7 +2,9 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.logging import setup_logging, get_logger
@@ -159,5 +161,43 @@ app.include_router(websocket.router)
 # Security middleware
 app.middleware("http")(security_middleware)
 
-# Global exception handler
+# Specific exception handlers (must be registered before global handler)
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Handle Pydantic validation errors with detailed logging"""
+    errors = exc.errors()
+    error_details = "; ".join([f"{'.'.join(str(loc) for loc in e.get('loc', []))}: {e.get('msg', '')}" for e in errors])
+    
+    # Get client IP for logging
+    from app.core.security import get_client_ip
+    client_ip = get_client_ip(request)
+    
+    # Log detailed validation error
+    logger.warning(
+        f"Validation error on {request.method} {request.url.path}: {error_details} "
+        f"(client_ip={client_ip}, user_agent={request.headers.get('User-Agent', 'unknown')})"
+    )
+    
+    return JSONResponse(
+        status_code=422,
+        content={"detail": errors}
+    )
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Handle HTTP exceptions with detailed logging"""
+    from app.core.security import get_client_ip
+    client_ip = get_client_ip(request)
+    
+    logger.warning(
+        f"HTTP {exc.status_code} on {request.method} {request.url.path}: {exc.detail} "
+        f"(client_ip={client_ip}, user_agent={request.headers.get('User-Agent', 'unknown')})"
+    )
+    
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail}
+    )
+
+# Global exception handler (catches everything else)
 app.exception_handler(Exception)(global_exception_handler)

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional
 from pydantic import BaseModel
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 
@@ -50,13 +50,7 @@ router = APIRouter(prefix="/api/videos", tags=["videos"])
 upload_router = APIRouter(prefix="/api/upload", tags=["upload"])
 
 
-# Pydantic models for presigned upload requests
-class PresignedUploadRequest(BaseModel):
-    filename: str
-    file_size: int
-    content_type: Optional[str] = None
-
-
+# Pydantic models for upload requests
 class MultipartInitiateRequest(BaseModel):
     filename: str
     file_size: int
@@ -418,38 +412,6 @@ async def initiate_upload(
     except Exception as e:
         logger.error(f"Failed to initiate upload for user {user_id}: {e}", exc_info=True)
         raise HTTPException(500, f"Failed to initiate upload: {str(e)}")
-
-
-@upload_router.post("/presigned")
-async def get_presigned_upload_url(
-    request: PresignedUploadRequest,
-    user_id: int = Depends(require_csrf_new),
-    db: Session = Depends(get_db)
-):
-    """Generate presigned URL for single file upload to R2
-    
-    Validates file size and generates R2 object key, returns presigned URL
-    for direct client-to-R2 upload (bypasses backend).
-    """
-    from app.services.video.file_handler import get_presigned_upload_url_service
-    
-    try:
-        return get_presigned_upload_url_service(
-            filename=request.filename,
-            file_size=request.file_size,
-            content_type=request.content_type,
-            user_id=user_id,
-            db=db
-        )
-    except ValueError as e:
-        error_msg = str(e)
-        if "too large" in error_msg.lower():
-            raise HTTPException(413, error_msg)
-        else:
-            raise HTTPException(400, error_msg)
-    except Exception as e:
-        logger.error(f"Failed to generate presigned URL for user {user_id}: {e}", exc_info=True)
-        raise HTTPException(500, f"Failed to generate upload URL: {str(e)}")
 
 
 @upload_router.post("/multipart/initiate")

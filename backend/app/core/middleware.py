@@ -1,4 +1,5 @@
 """Middleware configuration for FastAPI application"""
+import json
 import logging
 import secrets
 from fastapi import Request, Response
@@ -8,7 +9,7 @@ from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.security import (
     get_client_identifier, check_rate_limit,
-    validate_origin_referer, log_api_access
+    validate_origin_referer, log_api_access, get_client_ip
 )
 from app.db.redis import get_csrf_token, set_csrf_token
 
@@ -91,6 +92,20 @@ async def security_middleware(request: Request, call_next):
         
         session_id = request.cookies.get("session_id")
         
+        # Log request details for upload endpoints to help diagnose failures
+        if request.method in ["POST", "PUT", "PATCH"] and path.startswith("/api/upload"):
+            client_ip = get_client_ip(request)
+            content_type = request.headers.get("Content-Type", "unknown")
+            origin = request.headers.get("Origin", "none")
+            referer = request.headers.get("Referer", "none")
+            
+            logger.info(
+                f"Upload request: {request.method} {path}, "
+                f"client_ip={client_ip}, content_type={content_type}, "
+                f"origin={origin}, referer={referer}, "
+                f"session_id={session_id[:16] + '...' if session_id else 'none'}"
+            )
+        
         # Rate limiting
         if not is_callback:
             identifier = get_client_identifier(request, session_id)
@@ -131,6 +146,48 @@ async def security_middleware(request: Request, call_next):
         # Process request
         response = await call_next(request)
         status_code = response.status_code
+        
+        # Extract error from response body for 400+ status codes
+        if status_code >= 400 and error is None:
+            try:
+                # Read response body to extract error details
+                body = b""
+                async for chunk in response.body_iterator:
+                    body += chunk
+                
+                # Parse JSON response to extract error message
+                if body:
+                    try:
+                        body_json = json.loads(body.decode('utf-8'))
+                        if isinstance(body_json, dict):
+                            error = body_json.get("detail") or body_json.get("error") or body_json.get("message")
+                            if isinstance(error, list):
+                                # Handle Pydantic validation errors (list of errors)
+                                error = "; ".join([str(e.get("msg", e)) for e in error])
+                            elif not error:
+                                # Fallback: use the whole JSON as string if no error field
+                                error = json.dumps(body_json)[:200]
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        error = body.decode('utf-8', errors='ignore')[:200]  # Truncate long errors
+                
+                # Recreate response with body (since we consumed it)
+                from fastapi.responses import Response as FastAPIResponse
+                response = FastAPIResponse(
+                    content=body,
+                    status_code=status_code,
+                    headers=dict(response.headers),
+                    media_type=response.media_type
+                )
+            except Exception as e:
+                logger.warning(f"Failed to extract error from response: {e}")
+        
+        # Log error details for 400+ errors
+        if status_code >= 400:
+            client_ip = get_client_ip(request)
+            logger.warning(
+                f"Request failed {status_code} on {request.method} {path}: "
+                f"client_ip={client_ip}, error={error or 'unknown'}"
+            )
         
         # FIX: Remove 'request.method == "GET"' so token is sent on POST/PUT too
         if session_id and not is_callback and status_code < 400:
