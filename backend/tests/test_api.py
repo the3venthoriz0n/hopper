@@ -9,7 +9,7 @@ from app.models.subscription import Subscription
 from app.models.token_balance import TokenBalance
 from app.models.video import Video
 from app.models.setting import Setting
-from tests.conftest import RESEND_TEST_DELIVERED
+from tests.conftest import RESEND_TEST_DELIVERED, create_test_video
 
 
 @pytest.mark.critical
@@ -115,7 +115,7 @@ class TestOwnershipValidation:
         user1, user2 = two_users
         
         # Create a video for user2
-        video = Video(
+        video = create_test_video(
             user_id=user2.id,
             filename="test.mp4",
             path=f"user_{user2.id}/video_1_test.mp4",  # R2 object key format

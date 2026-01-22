@@ -9,6 +9,7 @@ from app.models.subscription import Subscription
 from app.models.token_balance import TokenBalance
 from app.models.token_transaction import TokenTransaction
 from app.models.stripe_event import StripeEvent
+from tests.conftest import create_test_video
 from app.services.token_service import (
     deduct_tokens, check_tokens_available, reset_tokens_for_subscription,
     get_or_create_token_balance, get_token_balance
@@ -124,8 +125,7 @@ class TestTokenService:
         db_session.commit()
         
         # Create a video first (required for foreign key constraint)
-        from app.models.video import Video
-        video = Video(
+        video = create_test_video(
             user_id=test_user.id,
             filename="test.mp4",
             path=f"user_{test_user.id}/video_1_test.mp4",  # R2 object key format

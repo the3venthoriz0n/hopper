@@ -694,3 +694,53 @@ def mock_email_service():
 RESEND_TEST_DELIVERED = "delivered@resend.dev"
 RESEND_TEST_BOUNCED = "bounced@resend.dev"
 RESEND_TEST_COMPLAINED = "complained@resend.dev"
+
+
+def create_test_video(user_id: int, filename: str, path: str, status: str = "pending", **kwargs):
+    """Helper function to create a Video object with platform_statuses initialized
+    
+    Args:
+        user_id: User ID
+        filename: Video filename
+        path: Video file path (R2 object key)
+        status: Video status (default: "pending")
+        **kwargs: Additional Video attributes (e.g., custom_settings, file_size_bytes)
+    
+    Returns:
+        Video object with platform_statuses initialized
+    """
+    from app.models.video import Video
+    from datetime import datetime, timezone
+    
+    # Initialize custom_settings with platform_statuses if not provided
+    custom_settings = kwargs.pop('custom_settings', {})
+    if not isinstance(custom_settings, dict):
+        custom_settings = {}
+    
+    # Ensure platform_statuses exists (merge with existing if provided)
+    if "platform_statuses" not in custom_settings:
+        custom_settings["platform_statuses"] = {
+            "youtube": {"status": "pending", "error": None, "updated_at": datetime.now(timezone.utc).isoformat()},
+            "tiktok": {"status": "pending", "error": None, "updated_at": datetime.now(timezone.utc).isoformat()},
+            "instagram": {"status": "pending", "error": None, "updated_at": datetime.now(timezone.utc).isoformat()}
+        }
+    else:
+        # Merge platform_statuses - ensure all platforms are present
+        platform_statuses = custom_settings["platform_statuses"]
+        default_platforms = {
+            "youtube": {"status": "pending", "error": None, "updated_at": datetime.now(timezone.utc).isoformat()},
+            "tiktok": {"status": "pending", "error": None, "updated_at": datetime.now(timezone.utc).isoformat()},
+            "instagram": {"status": "pending", "error": None, "updated_at": datetime.now(timezone.utc).isoformat()}
+        }
+        for platform, default_status in default_platforms.items():
+            if platform not in platform_statuses:
+                platform_statuses[platform] = default_status
+    
+    return Video(
+        user_id=user_id,
+        filename=filename,
+        path=path,
+        status=status,
+        custom_settings=custom_settings,
+        **kwargs
+    )

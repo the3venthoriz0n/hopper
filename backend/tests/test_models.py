@@ -12,6 +12,7 @@ from app.models.video import Video
 from app.models.setting import Setting
 from app.models.oauth_token import OAuthToken
 from app.services.auth_service import create_user
+from tests.conftest import create_test_video
 
 
 @pytest.mark.medium
@@ -21,7 +22,7 @@ class TestModelRelationships:
     def test_user_videos_relationship(self, test_user, db_session):
         """Test User.videos relationship"""
         # Create video for user
-        video = Video(
+        video = create_test_video(
             user_id=test_user.id,
             filename="test.mp4",
             path=f"user_{test_user.id}/video_1_test.mp4",  # R2 object key format
@@ -91,7 +92,7 @@ class TestModelRelationships:
     def test_video_token_transactions_relationship(self, test_user, db_session):
         """Test Video.token_transactions relationship"""
         # Create video
-        video = Video(
+        video = create_test_video(
             user_id=test_user.id,
             filename="test.mp4",
             path=f"user_{test_user.id}/video_1_test.mp4",  # R2 object key format
@@ -125,13 +126,13 @@ class TestCascadeDeletes:
     def test_delete_user_deletes_videos(self, test_user, db_session):
         """Test deleting user deletes all videos"""
         # Create videos for user
-        video1 = Video(
+        video1 = create_test_video(
             user_id=test_user.id,
             filename="test1.mp4",
             path=f"user_{test_user.id}/video_1_test1.mp4",  # R2 object key format
             status="pending"
         )
-        video2 = Video(
+        video2 = create_test_video(
             user_id=test_user.id,
             filename="test2.mp4",
             path=f"user_{test_user.id}/video_2_test2.mp4",  # R2 object key format
@@ -378,7 +379,7 @@ class TestJSONColumnCompatibility:
             }
         }
         
-        video = Video(
+        video = create_test_video(
             user_id=test_user.id,
             filename="test.mp4",
             path=f"user_{test_user.id}/video_1_test.mp4",  # R2 object key format
@@ -390,10 +391,12 @@ class TestJSONColumnCompatibility:
         db_session.refresh(video)
         
         # Verify JSON was stored and retrieved correctly
-        assert video.custom_settings == complex_settings
+        # Note: platform_statuses will be merged into complex_settings
         assert video.custom_settings["title"] == "Test Video"
         assert video.custom_settings["tags"] == ["tag1", "tag2"]
         assert video.custom_settings["metadata"]["duration"] == 120
+        # Verify platform_statuses was initialized
+        assert "platform_statuses" in video.custom_settings
     
     def test_setting_value_json(self, test_user, db_session):
         """Test Setting.value JSON column stores/retrieves data"""
