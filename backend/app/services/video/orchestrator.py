@@ -498,8 +498,10 @@ async def retry_failed_upload(
     all_tokens = get_all_oauth_tokens(user_id, db=db)
     video_dict = build_video_response(video, all_settings, all_tokens, user_id)
     
-    # Publish status change event with full video data
-    await publish_video_status_changed(user_id, video_id, old_status, "pending", video_dict=video_dict)
+    # Publish status change event with full video data and queue token count
+    from app.services.token_service import get_queue_token_count
+    queue_token_count = get_queue_token_count(user_id, db)
+    await publish_video_status_changed(user_id, video_id, old_status, "pending", video_dict=video_dict, queue_token_count=queue_token_count)
     
     # Trigger upload immediately
     # Get enabled destinations

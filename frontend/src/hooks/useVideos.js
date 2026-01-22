@@ -146,6 +146,31 @@ export function useVideos(
     return `${size.toFixed(2)} ${units[unitIndex]}`;
   }, []);
 
+  const updateVideoFromWebSocket = useCallback((videoData) => {
+    if (!videoData || !videoData.id) {
+      console.warn('updateVideoFromWebSocket: Invalid video data', videoData);
+      return;
+    }
+    
+    setVideos(prev => {
+      const existingIndex = prev.findIndex(v => v.id === videoData.id);
+      if (existingIndex === -1) {
+        // Video doesn't exist yet, add it
+        return [...prev, videoData];
+      }
+      
+      // Update existing video, preserving platform_progress if present
+      const existingVideo = prev[existingIndex];
+      const updatedVideo = {
+        ...videoData,
+        // Preserve platform_progress from existing video if new video doesn't have it
+        platform_progress: videoData.platform_progress || existingVideo.platform_progress
+      };
+      
+      return prev.map((v, idx) => idx === existingIndex ? updatedVideo : v);
+    });
+  }, []);
+
   const updateVideoProgress = useCallback((videoId, progress, platform = null) => {
     setVideos(prev => prev.map(v => {
       if (v.id !== videoId) return v;
@@ -752,6 +777,8 @@ export function useVideos(
     upload,
     calculateQueueTokenCost,
     updateVideoProgress,
+    updateVideoFromWebSocket,
     formatFileSize,
+    setQueueTokenCount,
   };
 }

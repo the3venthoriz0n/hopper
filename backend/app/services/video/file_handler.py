@@ -249,7 +249,7 @@ async def confirm_upload(
     # Validate object_key belongs to user
     _validate_object_key_ownership(object_key, user_id)
     
-    # Verify R2 object exists
+    # Verify R2 object exists and get actual file size (source of truth)
     r2_service = get_r2_service()
     if not r2_service.object_exists(object_key):
         upload_logger.error(
@@ -259,16 +259,23 @@ async def confirm_upload(
         update_video(video_id, user_id, db=db, status="failed", error="R2 object not found after upload")
         raise ValueError(f"Upload failed: file was not saved to R2")
     
-    # Verify R2 object size matches expected size
+    # Get actual file size from R2 (source of truth)
     r2_object_size = r2_service.get_object_size(object_key)
-    if r2_object_size and r2_object_size != file_size:
-        upload_logger.warning(
-            f"File size mismatch for user {user_id}, video {video_id}: {filename}. "
-            f"Expected: {file_size} bytes, R2 object size: {r2_object_size} bytes"
+    if not r2_object_size:
+        upload_logger.error(
+            f"Could not get object size from R2 for user {user_id}, video {video_id}: {filename} at {object_key}"
         )
-        # Use actual R2 size if available
-        if r2_object_size:
-            file_size = r2_object_size
+        from app.db.helpers import update_video
+        update_video(video_id, user_id, db=db, status="failed", error="Could not verify file size from R2")
+        raise ValueError(f"Upload failed: could not verify file size from R2")
+    
+    # Use R2 object size as source of truth (may differ from client-reported size)
+    actual_file_size = r2_object_size
+    if actual_file_size != file_size:
+        upload_logger.info(
+            f"File size difference for user {user_id}, video {video_id}: {filename}. "
+            f"Client reported: {file_size} bytes, R2 actual: {actual_file_size} bytes"
+        )
     
     # Update R2 object key to final format: user_{user_id}/video_{video_id}_{filename}
     final_r2_key = f"user_{user_id}/video_{video_id}_{filename}"
@@ -287,22 +294,28 @@ async def confirm_upload(
             upload_logger.warning(f"Failed to rename R2 object from {object_key} to {final_r2_key}: {e}. Using original key.")
             # Continue with original key - not critical
     
-    # Update status to pending (ready for destination uploads)
+    # Recalculate tokens_required based on actual R2 file size (source of truth)
+    from app.services.token_service import calculate_tokens_from_bytes
+    tokens_required = calculate_tokens_from_bytes(actual_file_size)
+    
+    # Update status to pending and ensure file_size_bytes and tokens_required are set correctly
     from app.db.helpers import update_video
     old_status = video.status
-    update_video(video_id, user_id, db=db, status="pending")
+    update_video(video_id, user_id, db=db, status="pending", file_size_bytes=actual_file_size, tokens_required=tokens_required)
     db.refresh(video)
     
-    upload_logger.info(f"Video upload confirmed for user {user_id}: {filename} ({file_size / (1024*1024):.2f} MB, will cost {video.tokens_required} tokens on upload)")
+    upload_logger.info(f"Video upload confirmed for user {user_id}: {filename} ({actual_file_size / (1024*1024):.2f} MB, will cost {tokens_required} tokens on upload)")
     
     # Build video response
     all_settings = get_all_user_settings(user_id, db=db)
     all_tokens = get_all_oauth_tokens(user_id, db=db)
     video_dict = build_video_response(video, all_settings, all_tokens, user_id)
     
-    # Publish status change event
+    # Publish status change event with queue token count
     from app.services.event_service import publish_video_status_changed
-    await publish_video_status_changed(user_id, video_id, old_status, "pending", video_dict=video_dict)
+    from app.services.token_service import get_queue_token_count
+    queue_token_count = get_queue_token_count(user_id, db)
+    await publish_video_status_changed(user_id, video_id, old_status, "pending", video_dict=video_dict, queue_token_count=queue_token_count)
     
     return video_dict
 

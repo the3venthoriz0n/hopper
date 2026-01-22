@@ -126,6 +126,8 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
     clearAllVideos,
     handleDragStart,
     updateVideoProgress,
+    updateVideoFromWebSocket,
+    setQueueTokenCount,
     handleDragEnd,
     handleDragOver,
     handleDrop,
@@ -211,8 +213,10 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
         break;
         
       case 'video_status_changed':
-        loadVideos();
+        // Root cause fix: Update video directly from WebSocket payload instead of full API reload
+        // This eliminates the delay from the loadVideos() API call
         if (payload.video) {
+          updateVideoFromWebSocket(payload.video);
           const video = payload.video;
           if (video.status === 'failed') {
             setNotification({
@@ -223,6 +227,13 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
             });
             setTimeout(() => setNotification(null), 10000);
           }
+        } else {
+          // Fallback: if payload doesn't include video, do full reload
+          loadVideos();
+        }
+        // Update queue token count if provided in event (when status changes affect queue)
+        if (payload.queue_token_count !== undefined) {
+          setQueueTokenCount(payload.queue_token_count);
         }
         break;
         

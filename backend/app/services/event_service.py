@@ -90,7 +90,8 @@ async def publish_video_status_changed(
     video_id: int, 
     old_status: str, 
     new_status: str,
-    video_dict: Optional[Dict[str, Any]] = None
+    video_dict: Optional[Dict[str, Any]] = None,
+    queue_token_count: Optional[int] = None
 ) -> None:
     """Publish video_status_changed event
     
@@ -100,6 +101,7 @@ async def publish_video_status_changed(
         old_status: Previous status
         new_status: New status
         video_dict: Optional full video data (backend is source of truth - should always be provided)
+        queue_token_count: Optional queue token count (included when status changes affect queue)
     """
     payload = {
         "video_id": video_id,
@@ -109,6 +111,9 @@ async def publish_video_status_changed(
     # Include full video data if provided (backend is source of truth)
     if video_dict:
         payload["video"] = video_dict
+    # Include queue token count if provided (when status changes affect queue)
+    if queue_token_count is not None:
+        payload["queue_token_count"] = queue_token_count
     
     await publish_event(
         user_id,

@@ -135,28 +135,44 @@ async def _poll_container_status(
             
             # Update progress during polling (for IN_PROGRESS status or when status unknown)
             if status_code == "IN_PROGRESS" or status_code is None:
-                # Map polling attempts to progress percentage (20-90% range)
-                # Use attempt + 1 to get current attempt number (0-indexed to 1-indexed)
-                # Distribute progress 20-90% based on attempts completed
+                # Use time-based progress estimation for more realistic progress
+                # Instagram typically processes videos in 2-5 minutes, but can take up to 10 minutes
+                # Estimate: 20% at start, 90% at ~8 minutes (480 seconds)
+                import time
+                if not hasattr(_poll_container_status, '_start_times'):
+                    _poll_container_status._start_times = {}
+                
+                if video_id not in _poll_container_status._start_times:
+                    _poll_container_status._start_times[video_id] = time.time()
+                
+                elapsed_time = time.time() - _poll_container_status._start_times[video_id]
+                # Estimate 8 minutes (480 seconds) for typical processing
+                estimated_total_time = 480
+                
+                # Time-based progress (more realistic)
+                time_progress = 20 + int((elapsed_time / estimated_total_time) * 70)
+                time_progress = min(89, max(20, time_progress))
+                
+                # Attempt-based progress (fallback)
                 current_attempt = attempt + 1
-                # Calculate progress: 20% at start, 90% at max_retries
-                # Use (current_attempt / max_retries) to get progress ratio
-                progress = 20 + int((current_attempt / max_retries) * 70)
-                # Ensure progress doesn't exceed 89% (90% is reserved for FINISHED)
-                progress = min(89, max(20, progress))
+                attempt_progress = 20 + int((current_attempt / max_retries) * 70)
+                attempt_progress = min(89, max(20, attempt_progress))
+                
+                # Use the higher of the two for more optimistic progress
+                progress = max(time_progress, attempt_progress)
                 
                 # Get previous progress to check if we should publish
                 from app.db.redis import get_platform_upload_progress, get_upload_progress
                 previous_progress = get_platform_upload_progress(user_id, video_id, "instagram") or get_upload_progress(user_id, video_id) or 20
                 
-                # Always update progress (even if same, to ensure frontend sees it on first attempt)
+                # Always update progress
                 set_upload_progress(user_id, video_id, progress)
                 set_platform_upload_progress(user_id, video_id, "instagram", progress)
                 
-                # Publish WebSocket progress event (1% increments or on first attempt)
-                from app.services.video.helpers import should_publish_progress
+                # Publish WebSocket progress event (always publish if progress increased)
                 from app.services.event_service import publish_upload_progress
-                if attempt == 0 or should_publish_progress(progress, previous_progress):
+                # Publish if it's the first attempt, or if progress increased by at least 1%
+                if attempt == 0 or progress > previous_progress:
                     await publish_upload_progress(user_id, video_id, "instagram", progress)
             
             if attempt < max_retries - 1:
@@ -164,6 +180,9 @@ async def _poll_container_status(
     finally:
         # Always clear the active session flag when done (success or failure)
         clear_active_upload_session(video_id, "instagram")
+        # Clean up start time tracking
+        if hasattr(_poll_container_status, '_start_times') and video_id in _poll_container_status._start_times:
+            del _poll_container_status._start_times[video_id]
     
     raise Exception(f"Video processing timeout after {max_retries * retry_delay} seconds")
 
@@ -452,7 +471,7 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             
             await _poll_container_status(
                 client, container_id, access_token, user_id, video_id,
-                max_retries=60, retry_delay=60
+                max_retries=120, retry_delay=10  # Poll every 10 seconds for more frequent updates
             )
             
             # Check for cancellation after polling completes
