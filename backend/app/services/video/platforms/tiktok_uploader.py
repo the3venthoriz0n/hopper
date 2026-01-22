@@ -167,6 +167,12 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         last_published_progress = -1
         from app.services.video.helpers import should_publish_progress
         
+        # Log upload initiation with source type
+        tiktok_logger.info(
+            f"Starting TikTok upload - User {user_id}, Video {video_id} ({video.filename}), "
+            f"Source: PULL_FROM_URL, File size: {video.file_size_bytes / (1024*1024):.2f} MB"
+        )
+        
         set_upload_progress(user_id, video_id, 0)
         set_platform_upload_progress(user_id, video_id, "tiktok", 0)
         await publish_upload_progress(user_id, video_id, "tiktok", 0)
@@ -519,7 +525,13 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                 "platform": "tiktok",
                 "http_status": init_response.status_code,
                 "stage": "init_upload",
+                "source": "PULL_FROM_URL",
             }
+            
+            # Include video URL in error context for debugging (especially for custom domain issues)
+            if 'video_url' in locals():
+                error_context["video_url"] = video_url
+                error_context["r2_public_domain"] = settings.R2_PUBLIC_DOMAIN
             
             try:
                 response_data = init_response.json()
@@ -527,9 +539,12 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                 error = response_data.get("error", {})
                 error_code = error.get('code', '')
                 error_message = error.get('message', 'Unknown error')
-                error_context["error_code"] = error_code
-                error_context["error_message"] = error_message
+                log_id = error.get('log_id', '')
+                error_context["tiktok_error_code"] = error_code
+                error_context["tiktok_error_message"] = error_message
+                error_context["tiktok_log_id"] = log_id
                 
+                # Map TikTok API error codes to user-friendly messages per API docs
                 if error_code == "unaudited_client_can_only_post_to_private_accounts":
                     user_friendly_error = (
                         "TikTok app is not audited. Unaudited apps can only post to private accounts. "
@@ -537,28 +552,55 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                     )
                     tiktok_logger.error(
                         f"❌ TikTok upload FAILED - Unaudited client limitation - User {user_id}, Video {video_id} ({video.filename}): "
-                        f"{user_friendly_error}",
+                        f"TikTok error_code: {error_code}, message: {error_message}, log_id: {log_id}",
                         extra=error_context
                     )
                     raise Exception(user_friendly_error)
-                
-                # Include video URL in error context for debugging (especially for custom domain issues)
-                error_context["video_url"] = video_url if 'video_url' in locals() else "unknown"
-                error_context["r2_public_domain"] = settings.R2_PUBLIC_DOMAIN
-                
-                tiktok_logger.error(
-                    f"❌ TikTok upload FAILED - Init error - User {user_id}, Video {video_id} ({video.filename}): "
-                    f"HTTP {init_response.status_code} - {error_message}",
-                    extra=error_context
-                )
-                tiktok_logger.error(f"Full response: {json_module.dumps(response_data, indent=2)}")
-                raise Exception(f"Init failed: {error_message}")
+                elif error_code == "url_ownership_unverified":
+                    user_friendly_error = (
+                        "URL ownership not verified. The video URL domain must be verified in TikTok Developer Portal. "
+                        "Please verify your custom domain or URL prefix in TikTok Developer Portal."
+                    )
+                    tiktok_logger.error(
+                        f"❌ TikTok upload FAILED - URL ownership unverified - User {user_id}, Video {video_id} ({video.filename}): "
+                        f"TikTok error_code: {error_code}, message: {error_message}, log_id: {log_id}, video_url: {video_url}",
+                        extra=error_context
+                    )
+                    raise Exception(user_friendly_error)
+                elif error_code == "spam_risk_too_many_posts":
+                    user_friendly_error = "Daily post limit reached. Please try again tomorrow."
+                    tiktok_logger.error(
+                        f"❌ TikTok upload FAILED - Rate limit - User {user_id}, Video {video_id} ({video.filename}): "
+                        f"TikTok error_code: {error_code}, message: {error_message}, log_id: {log_id}",
+                        extra=error_context
+                    )
+                    raise Exception(user_friendly_error)
+                elif error_code == "privacy_level_option_mismatch":
+                    user_friendly_error = (
+                        "Privacy level mismatch. The selected privacy level is not available for this account. "
+                        "Please check your TikTok account settings."
+                    )
+                    tiktok_logger.error(
+                        f"❌ TikTok upload FAILED - Privacy level error - User {user_id}, Video {video_id} ({video.filename}): "
+                        f"TikTok error_code: {error_code}, message: {error_message}, log_id: {log_id}",
+                        extra=error_context
+                    )
+                    raise Exception(user_friendly_error)
+                else:
+                    # Generic error handling with TikTok error codes
+                    tiktok_logger.error(
+                        f"❌ TikTok upload FAILED - Init error - User {user_id}, Video {video_id} ({video.filename}): "
+                        f"HTTP {init_response.status_code}, TikTok error_code: {error_code}, message: {error_message}, log_id: {log_id}",
+                        extra=error_context
+                    )
+                    raise Exception(f"TikTok API error ({error_code}): {error_message}")
             except Exception as parse_error:
+                # If we can't parse the response, log the raw response
                 error_context["raw_response"] = init_response.text
                 error_context["parse_error"] = str(parse_error)
                 tiktok_logger.error(
                     f"❌ TikTok upload FAILED - Init error (parse failed) - User {user_id}, Video {video_id} ({video.filename}): "
-                    f"HTTP {init_response.status_code}",
+                    f"HTTP {init_response.status_code}, Could not parse response: {str(parse_error)}",
                     extra=error_context
                 )
                 tiktok_logger.error(f"Raw response text: {init_response.text}")
@@ -567,7 +609,11 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         init_data = init_response.json()
         publish_id = init_data["data"]["publish_id"]
         
-        tiktok_logger.info(f"Initialized, publish_id: {publish_id}")
+        # Log publish_id immediately after receiving it from TikTok API
+        tiktok_logger.info(
+            f"TikTok upload initialized - User {user_id}, Video {video_id} ({video.filename}), "
+            f"publish_id: {publish_id}, Source: PULL_FROM_URL"
+        )
         
         # ROOT CAUSE FIX: Save publish_id to database immediately so status_checker can track it
         # even if this upload task times out. This ensures long-running uploads aren't lost.
@@ -601,6 +647,7 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         max_polls = 120  # Poll for up to 10 minutes (5 second intervals)
         estimated_download_polls = 60  # Estimate download takes ~5 minutes
         estimated_upload_polls = 60  # Estimate processing takes ~5 minutes
+        last_logged_status = None  # Track last logged status for transition logging
         
         while poll_count < max_polls:
             # Check for cancellation
@@ -617,6 +664,14 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                 continue
             
             status = status_data.get("status")
+            
+            # Log status transitions for better observability
+            if status != last_logged_status:
+                tiktok_logger.info(
+                    f"TikTok upload status transition - User {user_id}, Video {video_id} ({video.filename}), "
+                    f"publish_id: {publish_id}, Status: {status} (was: {last_logged_status}), Poll: {poll_count}/{max_polls}"
+                )
+                last_logged_status = status
             
             # Map status to progress percentages
             if status == "PROCESSING_DOWNLOAD":
@@ -639,29 +694,50 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                     last_published_progress = progress
             elif status == "PUBLISH_COMPLETE":
                 # Upload complete: 100%
-                progress = 100
-                set_upload_progress(user_id, video_id, progress)
-                set_platform_upload_progress(user_id, video_id, "tiktok", progress)
-                await publish_upload_progress(user_id, video_id, "tiktok", progress)
-                last_published_progress = progress
-                break
-            elif status == "PUBLISHED":
-                # 404 returned PUBLISHED status - video was published, complete upload
-                # video_id may be None, but status_checker can fetch it later if needed
+                video_id_from_status = status_data.get("video_id")
                 progress = 100
                 set_upload_progress(user_id, video_id, progress)
                 set_platform_upload_progress(user_id, video_id, "tiktok", progress)
                 await publish_upload_progress(user_id, video_id, "tiktok", progress)
                 last_published_progress = progress
                 tiktok_logger.info(
-                    f"TikTok upload completed via 404 PUBLISHED status - "
-                    f"User {user_id}, Video {video_id} ({video.filename}), publish_id: {publish_id}"
+                    f"TikTok upload completed - PUBLISH_COMPLETE - User {user_id}, Video {video_id} ({video.filename}), "
+                    f"publish_id: {publish_id}, tiktok_id: {video_id_from_status}"
+                )
+                break
+            elif status == "PUBLISHED":
+                # 404 returned PUBLISHED status - video was published, complete upload
+                # video_id may be None, but status_checker can fetch it later if needed
+                video_id_from_status = status_data.get("video_id")
+                progress = 100
+                set_upload_progress(user_id, video_id, progress)
+                set_platform_upload_progress(user_id, video_id, "tiktok", progress)
+                await publish_upload_progress(user_id, video_id, "tiktok", progress)
+                last_published_progress = progress
+                tiktok_logger.info(
+                    f"TikTok upload completed - PUBLISHED (via 404) - User {user_id}, Video {video_id} ({video.filename}), "
+                    f"publish_id: {publish_id}, tiktok_id: {video_id_from_status}"
                 )
                 break
             elif status == "FAILED":
-                # Upload failed
-                error_msg = status_data.get("fail_reason", "Upload failed")
-                raise Exception(f"TikTok upload failed: {error_msg}")
+                # Upload failed - log fail_reason from TikTok API
+                fail_reason = status_data.get("fail_reason", "Unknown error")
+                error_code = status_data.get("error_code", "")
+                tiktok_logger.error(
+                    f"TikTok upload FAILED - User {user_id}, Video {video_id} ({video.filename}), "
+                    f"publish_id: {publish_id}, fail_reason: {fail_reason}, error_code: {error_code}",
+                    extra={
+                        "user_id": user_id,
+                        "video_id": video_id,
+                        "video_filename": video.filename,
+                        "publish_id": publish_id,
+                        "fail_reason": fail_reason,
+                        "error_code": error_code,
+                        "platform": "tiktok",
+                        "error_type": "TikTokAPIFailure",
+                    }
+                )
+                raise Exception(f"TikTok upload failed: {fail_reason}")
             
             # If we've been polling for a while and still processing, continue
             if status in ["PROCESSING_DOWNLOAD", "PROCESSING_UPLOAD"]:
@@ -697,12 +773,14 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         if should_publish_progress(progress, last_published_progress):
             await publish_upload_progress(user_id, video_id, "tiktok", progress)
             last_published_progress = progress
+        # Log successful upload completion with all relevant details
         tiktok_logger.info(
-            f"TikTok upload successful using PULL_FROM_URL method - "
-            f"User {user_id}, Video {video_id} ({video.filename}), publish_id: {publish_id}"
+            f"TikTok upload successful - User {user_id}, Video {video_id} ({video.filename}), "
+            f"publish_id: {publish_id}, Source: PULL_FROM_URL, Status: uploaded"
         )
         
-        # Increment successful uploads counter
+        # Increment successful uploads counter only on confirmed success
+        # (status is already "uploaded" at this point, indicating confirmed success)
         successful_uploads_counter.inc()
         
         # Deduct tokens after successful upload (only if not already deducted)

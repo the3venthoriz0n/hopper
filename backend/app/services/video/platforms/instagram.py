@@ -270,8 +270,11 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
     from app.db.redis import set_active_upload_session, clear_active_upload_session
     set_active_upload_session(video_id, "instagram")
     
+    # Note: Status is already set to "uploading" by orchestrator and event is published
+    # No need to set it again here - orchestrator handles status change events
+    
     try:
-        update_video(video_id, user_id, db=db, status="uploading")
+        # Set initial progress (status already "uploading" from orchestrator)
         set_upload_progress(user_id, video_id, 0)
         
         # Verify R2 object exists
