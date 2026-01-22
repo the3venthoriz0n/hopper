@@ -2,14 +2,35 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import './App.css';
 import { HOPPER_COLORS } from './utils/colors';
+import { loadPlans } from './services/subscriptionService';
 
 function Pricing() {
   const [publishableKey, setPublishableKey] = useState(null);
   const [pricingTableId, setPricingTableId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [plans, setPlans] = useState([]);
+  const [loadingPlans, setLoadingPlans] = useState(true);
+  const [plansError, setPlansError] = useState(null);
 
   useEffect(() => {
     document.title = 'Pricing - hopper';
+    
+    const fetchPlans = async () => {
+      try {
+        setLoadingPlans(true);
+        setPlansError(null);
+        const plansData = await loadPlans();
+        setPlans(plansData || []);
+      } catch (err) {
+        console.error('Failed to load plans:', err);
+        setPlansError('Failed to load pricing plans. Please try again later.');
+        setPlans([]);
+      } finally {
+        setLoadingPlans(false);
+      }
+    };
+    
+    fetchPlans();
     
     // Load Stripe publishable key and pricing table ID from environment or API
     const loadStripeConfig = async () => {
@@ -110,15 +131,161 @@ function Pricing() {
           <p className="landing-tagline">
             Pricing
           </p>
-          <h1 className="landing-title">Pricing Coming Soon</h1>
-          <p className="landing-description">
-            We're working on our pricing plans. Check back soon!
-          </p>
-          <div className="landing-cta">
-            <Link to="/login" className="landing-cta-button">
-              Get Started
-            </Link>
-          </div>
+          <h1 className="landing-title">Choose Your Plan</h1>
+          
+          {loadingPlans ? (
+            <p className="landing-description" style={{ marginTop: '1rem' }}>
+              Loading plans...
+            </p>
+          ) : plansError ? (
+            <p className="landing-description" style={{ marginTop: '1rem', color: HOPPER_COLORS.error }}>
+              {plansError}
+            </p>
+          ) : plans.length === 0 ? (
+            <p className="landing-description" style={{ marginTop: '1rem' }}>
+              No plans available at this time.
+            </p>
+          ) : (
+            <div style={{
+              marginTop: '2rem',
+              maxWidth: '1200px',
+              width: '100%'
+            }}
+            className="pricing-plans-grid">
+              {plans.map((plan) => {
+                const getPriceDisplay = () => {
+                  if (plan.key === 'free_daily' || plan.price?.amount_dollars === 0) {
+                    return 'Free';
+                  }
+                  return plan.price?.formatted || `$${plan.price?.amount_dollars?.toFixed(2) || '0.00'}/month`;
+                };
+                
+                const getTokenDisplay = () => {
+                  if (plan.tokens === -1) {
+                    return 'Unlimited tokens';
+                  }
+                  if (plan.recurring_interval === 'day') {
+                    return `${plan.tokens} tokens/day`;
+                  }
+                  return `${plan.tokens} tokens/month`;
+                };
+                
+                const getOverageDisplay = () => {
+                  if (plan.overage_price?.amount_dollars) {
+                    const overageCents = (plan.overage_price.amount_dollars * 100).toFixed(1);
+                    return `${overageCents}c per additional token`;
+                  }
+                  return null;
+                };
+                
+                return (
+                  <div
+                    key={plan.key}
+                    style={{
+                      background: HOPPER_COLORS.secondary,
+                      border: `1px solid ${HOPPER_COLORS.greyBorder}`,
+                      borderRadius: '8px',
+                      padding: '1.5rem',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '1rem',
+                      transition: 'transform 0.2s, box-shadow 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = 'translateY(-4px)';
+                      e.currentTarget.style.boxShadow = `0 4px 12px rgba(${HOPPER_COLORS.rgb.base}, 0.3)`;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = 'translateY(0)';
+                      e.currentTarget.style.boxShadow = 'none';
+                    }}
+                  >
+                    <div>
+                      <h3 style={{
+                        margin: 0,
+                        fontSize: '1.5rem',
+                        fontWeight: '600',
+                        color: HOPPER_COLORS.light
+                      }}>
+                        {plan.name}
+                      </h3>
+                      <p style={{
+                        margin: '0.5rem 0 0 0',
+                        fontSize: '2rem',
+                        fontWeight: '700',
+                        color: HOPPER_COLORS.accent
+                      }}>
+                        {getPriceDisplay()}
+                      </p>
+                    </div>
+                    
+                    <div style={{
+                      flex: 1,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '0.75rem'
+                    }}>
+                      <p style={{
+                        margin: 0,
+                        fontSize: '1rem',
+                        color: HOPPER_COLORS.light,
+                        fontWeight: '500'
+                      }}>
+                        {getTokenDisplay()}
+                      </p>
+                      
+                      {plan.description && (
+                        <p style={{
+                          margin: 0,
+                          fontSize: '0.9rem',
+                          color: HOPPER_COLORS.grey,
+                          lineHeight: '1.5'
+                        }}>
+                          {plan.description}
+                        </p>
+                      )}
+                      
+                      {plan.max_accrual && (
+                        <p style={{
+                          margin: 0,
+                          fontSize: '0.85rem',
+                          color: HOPPER_COLORS.grey,
+                          fontStyle: 'italic'
+                        }}>
+                          Max accrual: {plan.max_accrual} tokens
+                        </p>
+                      )}
+                      
+                      {getOverageDisplay() && (
+                        <p style={{
+                          margin: 0,
+                          fontSize: '0.85rem',
+                          color: HOPPER_COLORS.accent
+                        }}>
+                          {getOverageDisplay()}
+                        </p>
+                      )}
+                    </div>
+                    
+                    <div style={{ marginTop: '0.5rem' }}>
+                      <Link
+                        to="/login"
+                        className="landing-cta-button"
+                        style={{
+                          display: 'block',
+                          textAlign: 'center',
+                          textDecoration: 'none',
+                          width: '100%'
+                        }}
+                      >
+                        Get Started
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </main>
 

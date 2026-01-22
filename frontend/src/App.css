@@ -2293,6 +2293,24 @@ button:disabled {
   background: rgba(10, 10, 10, 0.8);
 }
 
+.pricing-plans-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.5rem;
+}
+
+@media (min-width: 768px) {
+  .pricing-plans-grid {
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .pricing-plans-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
 /* Mobile responsive styles for landing page */
 @media (max-width: 480px) {
   .landing-container {
