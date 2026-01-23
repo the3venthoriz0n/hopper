@@ -268,10 +268,9 @@ export default function VideoItem({
           )}
           {/* Progress bar for hopper server uploads (NOT for destination uploads) */}
           {/* Keep progress bar visible until upload is confirmed (status changes to 'pending' and upload_progress is cleared) */}
-          {/* Show during R2 upload: status is 'uploading' OR status is 'pending' with progress < 100, and no platform_progress */}
-          {((v.status === 'uploading') || (v.status === 'pending' && v.upload_progress !== undefined && v.upload_progress < 100)) && 
+          {/* Show during R2 upload: status is 'uploading' OR status is 'pending' with progress still defined (waiting for confirm_upload) */}
+          {((v.status === 'uploading') || (v.status === 'pending' && v.upload_progress !== undefined)) && 
            v.upload_progress !== undefined && 
-           v.upload_progress < 100 && 
            (!v.platform_progress || Object.keys(v.platform_progress).length === 0) && (
             <div className="progress-bar" style={{ marginTop: '0.5rem' }}>
               <div 

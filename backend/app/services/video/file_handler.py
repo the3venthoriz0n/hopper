@@ -307,8 +307,9 @@ async def confirm_upload(
     upload_logger.info(f"Video upload confirmed for user {user_id}: {filename} ({actual_file_size / (1024*1024):.2f} MB, will cost {tokens_required} tokens on upload)")
     
     # Clear upload info from Redis (upload completed successfully)
-    from app.db.redis import clear_r2_upload_info
+    from app.db.redis import clear_r2_upload_info, delete_upload_progress
     clear_r2_upload_info(video_id)
+    delete_upload_progress(user_id, video_id)  # Clear progress so it's not included in response
     
     # Build video response
     all_settings = get_all_user_settings(user_id, db=db)

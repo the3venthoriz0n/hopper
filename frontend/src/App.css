@@ -101,7 +101,7 @@
   /* ============================================
      DESTINATION TOGGLE COLORS
      ============================================ */
-  --toggle-destination-unchecked: rgba(var(--rgb-blue), var(--opacity-30));
+  --toggle-destination-unchecked: rgba(var(--rgb-white), var(--opacity-20));
   --toggle-destination-checked: rgba(var(--rgb-blue), 1);
   --toggle-destination-checked-hover: rgba(var(--rgb-blue), var(--opacity-90));
   

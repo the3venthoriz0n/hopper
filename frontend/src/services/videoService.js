@@ -496,6 +496,16 @@ export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress,
   let isCancelled = false; // Track cancellation state across the loop
   let lastReportedProgress = -1; // Track last reported progress for throttling
   
+  // Send initial 0% progress update immediately so progress bar appears right away
+  if (onProgress) {
+    onProgress({ loaded: 0, total: file.size });
+  }
+  if (videoId) {
+    updateR2UploadProgress(videoId, 0).catch(err => {
+      // Silently fail - progress updates are best effort
+    });
+  }
+  
   // Upload parts sequentially (can be parallelized later if needed)
   for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
     // Check cancellation before each part (event-driven, instant check)
@@ -550,6 +560,7 @@ export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress,
       let partCancelled = false;
       let isResolved = false;
       let partCancellationCheckInterval = null;
+      let partUploadedBytes = 0; // Track bytes uploaded for this part
       
       // Helper to reject with cancellation message
       const rejectCancelled = () => {
@@ -586,6 +597,27 @@ export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress,
           }
         }, 100); // Check frequently (100ms) since it's just checking a Set, no HTTP overhead
       }
+      
+      // Track progress during part upload (not just after completion)
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable && onProgress) {
+          // Calculate total progress including this part
+          partUploadedBytes = e.loaded;
+          const totalUploadedBytes = uploadedBytes + partUploadedBytes;
+          const percent = Math.round((totalUploadedBytes * 100) / file.size);
+          
+          // Update progress callback
+          onProgress({ loaded: totalUploadedBytes, total: file.size });
+          
+          // Report progress to backend for WebSocket publishing (throttled to 1% increments)
+          if (videoId && (percent - lastReportedProgress >= 1 || percent === 100)) {
+            lastReportedProgress = percent;
+            updateR2UploadProgress(videoId, percent).catch(err => {
+              // Silently fail - progress updates are best effort
+            });
+          }
+        }
+      });
       
       xhr.addEventListener('load', () => {
         if (isResolved || partCancelled) return;

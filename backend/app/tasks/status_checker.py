@@ -258,7 +258,7 @@ async def status_checker_task():
                                 
                                 # Build video response and publish status change
                                 from app.services.video.helpers import build_video_response
-                                from app.services.event_service import publish_video_status_changed
+                                # publish_video_status_changed is already imported at top of file
                                 video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
                                 await publish_video_status_changed(video.user_id, video.id, old_status, video.status, video_dict=video_dict)
                                 
