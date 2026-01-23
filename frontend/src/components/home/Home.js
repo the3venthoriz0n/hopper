@@ -7,6 +7,7 @@ import { usePlatforms } from '../../hooks/usePlatforms';
 import { useVideos } from '../../hooks/useVideos';
 import { useSettings } from '../../hooks/useSettings';
 import { useSubscription } from '../../hooks/useSubscription';
+import { isVideoInProgress } from '../../utils/videoStatus';
 import * as authService from '../../services/authService';
 import HomeHeader from './HomeHeader';
 import GlobalSettings from './GlobalSettings';
@@ -474,45 +475,15 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
         cancelAllUploads={cancelAllUploads}
       />
 
-      {/* Cancel button for uploading videos - similar to cancel scheduled */}
+      {/* Cancel button for uploading videos - uses cancelAllUploads from hook (DRY) */}
       {(() => {
-        // Check if any video has uploading platforms or R2 upload in progress
-        const uploadingVideos = videos.filter(v => {
-          // Check if any platform is uploading
-          const hasUploadingPlatform = v.platform_statuses && Object.values(v.platform_statuses).some(
-            statusData => {
-              const status = typeof statusData === 'object' ? statusData.status : statusData;
-              return status === 'uploading';
-            }
-          );
-          // Check if R2 upload is in progress
-          const hasR2Upload = v.status === 'uploading' && v.upload_progress !== undefined && 
-                              v.upload_progress < 100 && 
-                              (!v.platform_progress || Object.keys(v.platform_progress).length === 0);
-          return hasUploadingPlatform || hasR2Upload;
-        });
+        // Use helper function to check if any video is in progress (uploading, pending, or partial)
+        const uploadingVideos = videos.filter(v => isVideoInProgress(v));
         
         return uploadingVideos.length > 0 && (
           <button 
             className="cancel-scheduled-btn" 
-            onClick={async () => {
-              for (const video of uploadingVideos) {
-                try {
-                  // Check if it's R2 upload (has upload_progress) or destination upload
-                  if (video.upload_progress !== undefined && 
-                      video.upload_progress < 100 && 
-                      (!video.platform_progress || Object.keys(video.platform_progress).length === 0)) {
-                    await axios.post(`${API}/videos/${video.id}/cancel-r2`);
-                  } else {
-                    await axios.post(`${API}/videos/${video.id}/cancel`);
-                  }
-                } catch (err) {
-                  console.error(`Failed to cancel video ${video.id}:`, err);
-                }
-              }
-              if (setMessage) setMessage(`🛑 Cancelling ${uploadingVideos.length} upload${uploadingVideos.length !== 1 ? 's' : ''}...`);
-              loadVideos();
-            }}
+            onClick={cancelAllUploads}
           >
             Cancel Upload ({uploadingVideos.length})
           </button>

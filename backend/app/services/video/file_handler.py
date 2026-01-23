@@ -566,20 +566,21 @@ async def delete_video_files(
             # Safety measure: Cancel any in-progress uploads before deletion (shouldn't reach here for uploading videos)
             # This handles edge cases where status might change between check and deletion
             from app.services.video.orchestrator import _cancellation_flags
-            from app.db.redis import set_r2_upload_cancelled, get_upload_progress
+            from app.db.redis import set_r2_upload_cancelled
+            from app.services.video.helpers import get_upload_state, build_upload_context
+            
+            # Get enabled destinations to check upload state
+            upload_context = build_upload_context(video.user_id, db=db)
+            enabled_destinations = upload_context["enabled_destinations"]
+            
+            # Get unified upload state to determine what needs to be cancelled
+            upload_state = get_upload_state(video, video.user_id, enabled_destinations)
             
             # Set cancellation flag to stop any upload task
             _cancellation_flags[video.id] = True
             
-            # Also set R2 upload cancellation flag if it's an R2 upload
-            upload_progress = get_upload_progress(video.user_id, video.id)
-            # Check if it's an R2 upload (has upload_progress but no platform_progress)
-            has_platform_progress = any(
-                get_platform_upload_progress(video.user_id, video.id, platform) is not None
-                for platform in platforms_to_check
-            )
-            
-            if upload_progress is not None and upload_progress < 100 and not has_platform_progress:
+            # Cancel R2 upload if in progress
+            if upload_state['has_r2_upload']:
                 set_r2_upload_cancelled(video.id)
             
             # Delete from R2 if it exists

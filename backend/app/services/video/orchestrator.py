@@ -13,7 +13,8 @@ from app.models.video import Video
 from app.services.token_service import check_tokens_available, get_token_balance, calculate_tokens_from_bytes
 from app.services.video.helpers import (
     build_upload_context, check_upload_success, record_platform_error,
-    set_platform_status, compute_global_status
+    set_platform_status, compute_global_status, is_video_cancellable,
+    build_video_response, get_upload_state
 )
 
 upload_logger = logging.getLogger("upload")
@@ -670,9 +671,10 @@ def cancel_scheduled_videos(
 
 
 async def cancel_upload(video_id: int, user_id: int, db: Session) -> Dict[str, Any]:
-    """Cancel an in-progress upload for a specific video
+    """Cancel an in-progress upload for a specific video (handles both R2 and destination uploads)
     
     Immediately updates status to cancelled and stops any in-progress upload operations.
+    Handles both R2 uploads (client-side) and destination uploads (server-side).
     
     Args:
         video_id: Video ID to cancel
@@ -682,6 +684,10 @@ async def cancel_upload(video_id: int, user_id: int, db: Session) -> Dict[str, A
     Returns:
         Dict with 'ok' and 'message' keys
     """
+    from app.db.redis import set_r2_upload_cancelled
+    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
+    from app.services.event_service import publish_video_status_changed
+    
     # Verify video belongs to user
     video = db.query(Video).filter(
         Video.id == video_id,
@@ -691,30 +697,52 @@ async def cancel_upload(video_id: int, user_id: int, db: Session) -> Dict[str, A
     if not video:
         return {"ok": False, "message": "Video not found"}
     
-    # Only allow cancellation if video is pending or uploading
-    if video.status not in ["pending", "uploading"]:
+    # Get enabled destinations to check platform statuses
+    upload_context = build_upload_context(user_id, db=db)
+    enabled_destinations = upload_context["enabled_destinations"]
+    
+    # Check if video is cancellable using unified upload state detection
+    if not is_video_cancellable(video, enabled_destinations, user_id):
         return {"ok": False, "message": f"Cannot cancel video with status: {video.status}"}
     
-    # Immediately update status to cancelled and set cancellation flag
     old_status = video.status
-    update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
     
-    # Set cancellation flag to stop any in-progress upload operations
-    _cancellation_flags[video_id] = True
+    # Get unified upload state (R2 and/or destinations)
+    upload_state = get_upload_state(video, user_id, enabled_destinations)
+    
+    # Cancel R2 upload if in progress
+    if upload_state['has_r2_upload']:
+        set_r2_upload_cancelled(video_id)
+        upload_logger.info(f"R2 upload cancellation flag set for video {video_id}")
+    
+    # Cancel destination uploads if any are in progress
+    if upload_state['has_destination_uploads']:
+        # Set cancellation flag to stop any in-progress destination uploads
+        _cancellation_flags[video_id] = True
+        
+        # Cancel all active platform uploads
+        for platform in upload_state['active_platforms']:
+            await set_platform_status(video_id, user_id, platform, "cancelled", 
+                                     error="Upload cancelled by user", db=db)
+    
+    # Update global status using compute_global_status() to ensure consistency
+    # This will properly handle "partial" status and compute the correct final status
+    db.refresh(video)
+    new_status = compute_global_status(video, enabled_destinations)
+    update_video(video_id, user_id, db=db, status=new_status, error="Upload cancelled by user")
     
     # Publish status change event for immediate UI update
-    # Refresh video and build full response (backend is source of truth)
     db.refresh(video)
-    from app.services.event_service import publish_video_status_changed
-    from app.services.video.helpers import build_video_response
-    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
     all_settings = get_all_user_settings(user_id, db=db)
     all_tokens = get_all_oauth_tokens(user_id, db=db)
     video_dict = build_video_response(video, all_settings, all_tokens, user_id)
     
-    await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
+    await publish_video_status_changed(user_id, video_id, old_status, new_status, video_dict=video_dict)
     
-    upload_logger.info(f"Upload cancelled immediately for video {video_id} by user {user_id}")
+    upload_logger.info(
+        f"Upload cancelled immediately for video {video_id} by user {user_id} "
+        f"(R2: {upload_state['has_r2_upload']}, Destinations: {upload_state['has_destination_uploads']})"
+    )
     
     return {"ok": True, "message": "Upload cancelled"}
 

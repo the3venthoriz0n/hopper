@@ -76,7 +76,8 @@ export const cancelScheduled = async () => {
 };
 
 /**
- * Cancel video upload
+ * Cancel video upload (unified - handles both R2 and destination uploads)
+ * Backend automatically detects upload type and cancels appropriately.
  * @param {string|number} id - Video ID
  * @returns {Promise<void>}
  */
@@ -88,11 +89,14 @@ export const cancelVideoUpload = async (id) => {
 };
 
 /**
- * Cancel R2 upload
+ * Cancel R2 upload (kept for backward compatibility)
+ * Note: This now calls the unified /cancel endpoint which handles both R2 and destination uploads.
  * @param {string|number} id - Video ID
  * @returns {Promise<void>}
  */
 export const cancelR2Upload = async (id) => {
+  // Backend /cancel-r2 now calls the same unified cancel_upload service
+  // Keep this function for backward compatibility
   const csrfToken = Cookies.get('csrf_token_client');
   await axios.post(`${API}/videos/${id}/cancel-r2`, {}, {
     headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
@@ -304,70 +308,22 @@ export const failUpload = async (videoId) => {
 };
 
 /**
- * Upload file directly to R2 using presigned URL
- * @param {File} file - File to upload
- * @param {string} uploadUrl - Presigned upload URL
- * @param {function} onProgress - Progress callback (receives {loaded, total})
- * @param {function} checkCancellation - Optional function to check if upload is cancelled (returns Promise<boolean>)
- * @returns {Promise<void>}
+ * Get presigned upload URL for single file upload
+ * @param {string} filename - File name
+ * @param {number} fileSize - File size in bytes
+ * @param {string} contentType - Content type (MIME type), optional
+ * @returns {Promise<object>} {upload_url, object_key, expires_in}
  */
-export const uploadToR2Direct = async (file, uploadUrl, onProgress, checkCancellation = null) => {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    let cancellationCheckInterval = null;
-    
-    // Check cancellation periodically during upload
-    if (checkCancellation) {
-      cancellationCheckInterval = setInterval(async () => {
-        try {
-          const cancelled = await checkCancellation();
-          if (cancelled) {
-            clearInterval(cancellationCheckInterval);
-            xhr.abort();
-            reject(new Error('Upload cancelled by user'));
-          }
-        } catch (err) {
-          // Ignore errors from cancellation check
-          console.warn('Error checking cancellation:', err);
-        }
-      }, 1000); // Check every second
-    }
-    
-    xhr.upload.addEventListener('progress', (e) => {
-      if (e.lengthComputable && onProgress) {
-        onProgress({ loaded: e.loaded, total: e.total });
-      }
-    });
-    
-    xhr.addEventListener('load', () => {
-      if (cancellationCheckInterval) {
-        clearInterval(cancellationCheckInterval);
-      }
-      if (xhr.status >= 200 && xhr.status < 300) {
-        resolve();
-      } else {
-        reject(new Error(`Upload failed with status ${xhr.status}: ${xhr.statusText}`));
-      }
-    });
-    
-    xhr.addEventListener('error', () => {
-      if (cancellationCheckInterval) {
-        clearInterval(cancellationCheckInterval);
-      }
-      reject(new Error('Upload failed: network error'));
-    });
-    
-    xhr.addEventListener('abort', () => {
-      if (cancellationCheckInterval) {
-        clearInterval(cancellationCheckInterval);
-      }
-      reject(new Error('Upload cancelled by user'));
-    });
-    
-    xhr.open('PUT', uploadUrl);
-    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
-    xhr.send(file);
+export const getPresignedUploadUrl = async (filename, fileSize, contentType = null) => {
+  const csrfToken = Cookies.get('csrf_token_client');
+  const res = await axios.post(`${API}/upload/presigned`, {
+    filename,
+    file_size: fileSize,
+    content_type: contentType
+  }, {
+    headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
   });
+  return res.data;
 };
 
 /**

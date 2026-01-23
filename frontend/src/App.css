@@ -45,6 +45,7 @@
   --rgb-error: 229, 57, 53;
   --rgb-warning: 255, 179, 0;
   --rgb-info: 30, 136, 229;
+  --rgb-blue: 66, 133, 244; /* Blue for destination toggles and UI elements */
 
   /* Solid Hex Values */
   --color-base: #0f1115;
@@ -96,6 +97,13 @@
   --accent-primary: var(--color-accent);
   --accent-primary-hover: rgba(var(--rgb-accent), var(--opacity-80));
   --accent-gradient: linear-gradient(135deg, var(--color-accent) 0%, rgba(var(--rgb-accent), var(--opacity-80)) 100%);
+  
+  /* ============================================
+     DESTINATION TOGGLE COLORS
+     ============================================ */
+  --toggle-destination-unchecked: rgba(var(--rgb-blue), var(--opacity-30));
+  --toggle-destination-checked: rgba(var(--rgb-blue), 1);
+  --toggle-destination-checked-hover: rgba(var(--rgb-blue), var(--opacity-90));
   
   /* ============================================
      STATUS COLORS (Semantic)
@@ -509,6 +517,23 @@ input:checked + .slider {
 
 input:checked + .slider:before {
   transform: translateX(20px);
+}
+
+/* Destination toggles - more visible blue color */
+.destination .slider {
+  background: var(--toggle-destination-unchecked);
+}
+
+.destination input:checked + .slider {
+  background: var(--toggle-destination-checked);
+}
+
+.destination .toggle:hover .slider {
+  background: var(--toggle-destination-unchecked);
+}
+
+.destination .toggle:hover input:checked + .slider {
+  background: var(--toggle-destination-checked-hover);
 }
 
 .dropzone {

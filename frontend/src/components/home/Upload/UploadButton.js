@@ -1,5 +1,6 @@
 import React from 'react';
 import { HOPPER_COLORS, rgba } from '../../../utils/colors';
+import { isVideoInProgress } from '../../../utils/videoStatus';
 
 /**
  * Upload button component with TikTok compliance declaration
@@ -14,7 +15,7 @@ export default function UploadButton({
   globalSettings,
   isUploading,
   upload,
-  cancelAllUploads,
+  cancelAllUploads, // Keep prop for compatibility but not used here
 }) {
   if (videos.length === 0 || (!youtube.enabled && !tiktok.enabled && !instagram.enabled)) {
     return null;
@@ -97,62 +98,40 @@ export default function UploadButton({
     );
   };
 
-  const hasUploadingVideos = false; // Temporarily disabled
-  const isCancelMode = hasUploadingVideos;
-  const isDisabled = !isCancelMode && (
-    isUploading || 
+  // Upload button should be disabled if:
+  // - Currently uploading
+  // - Videos are in progress (active uploads happening)
+  // - TikTok compliance issue
+  const hasVideosInProgress = videos.some(v => isVideoInProgress(v));
+  const isDisabled = isUploading || 
+    hasVideosInProgress ||
     (tiktok.enabled && 
      commercialContentOn && 
-     !(hasYourBrand || hasBrandedContent))
-  );
-
-  const cancelBgGradient = `linear-gradient(135deg, ${HOPPER_COLORS.error} 0%, ${rgba(HOPPER_COLORS.rgb.error, 0.8)} 100%)`;
-  const cancelShadow = `0px 4px 20px ${rgba(HOPPER_COLORS.rgb.error, 0.2)}`;
-  const cancelShadowHover = `0 4px 12px ${rgba(HOPPER_COLORS.rgb.error, 0.5)}`;
+     !(hasYourBrand || hasBrandedContent));
 
   return (
     <>
       {getTikTokDeclaration()}
       <button 
         className="upload-btn" 
-        onClick={isCancelMode ? cancelAllUploads : upload} 
+        onClick={upload} 
         disabled={isDisabled}
         title={
-          isCancelMode
-            ? "Cancel all in-progress uploads"
-            : (tiktok.enabled && 
-               commercialContentOn && 
-               !(hasYourBrand || hasBrandedContent))
-              ? "You need to indicate if your content promotes yourself, a third party, or both."
-              : undefined
+          (tiktok.enabled && 
+           commercialContentOn && 
+           !(hasYourBrand || hasBrandedContent))
+            ? "You need to indicate if your content promotes yourself, a third party, or both."
+            : (hasVideosInProgress || isUploading)
+            ? "Please wait for current uploads to complete"
+            : undefined
         }
         style={{
-          cursor: isDisabled ? 'not-allowed' : undefined,
-          ...(isCancelMode ? {
-            background: cancelBgGradient,
-            boxShadow: cancelShadow
-          } : {})
-        }}
-        onMouseEnter={(e) => {
-          if (isCancelMode && !isDisabled) {
-            e.target.style.transform = 'translateY(-2px)';
-            e.target.style.boxShadow = cancelShadowHover;
-            e.target.style.filter = 'brightness(1.1)';
-          }
-        }}
-        onMouseLeave={(e) => {
-          if (isCancelMode && !isDisabled) {
-            e.target.style.transform = 'translateY(0)';
-            e.target.style.boxShadow = cancelShadow;
-            e.target.style.filter = 'none';
-          }
+          cursor: isDisabled ? 'not-allowed' : undefined
         }}
       >
-        {isCancelMode 
-          ? 'Cancel Upload' 
-          : (isUploading 
-             ? 'Uploading...' 
-             : (globalSettings.upload_immediately ? 'Upload' : 'Schedule Videos'))}
+        {isUploading 
+          ? 'Uploading...' 
+          : (globalSettings.upload_immediately ? 'Upload' : 'Schedule Videos')}
       </button>
     </>
   );

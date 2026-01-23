@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
 import * as videoService from '../services/videoService';
+import { isVideoInProgress } from '../utils/videoStatus';
 
 /**
  * Hook for managing video state and operations
@@ -635,13 +636,17 @@ export function useVideos(
   }, [draggedVideo, videos, setMessage]);
 
   const cancelAllUploads = useCallback(async () => {
-    const uploadingVideos = videos.filter(v => v.status === 'uploading');
+    // Use isVideoInProgress helper to find all videos with active uploads
+    const uploadingVideos = videos.filter(v => isVideoInProgress(v));
+    
     if (uploadingVideos.length === 0) {
+      if (setMessage) setMessage('No active uploads to cancel');
       return;
     }
     
     if (setMessage) setMessage('⏳ Cancelling uploads...');
     
+    // Optimistically update UI (backend will send correct status via WebSocket)
     setVideos(prev => prev.map(video => 
       uploadingVideos.some(uv => uv.id === video.id) 
         ? { ...video, status: 'cancelled' } 
@@ -649,13 +654,16 @@ export function useVideos(
     ));
     
     try {
+      // Use unified cancel endpoint (handles both R2 and destination uploads)
       const cancelPromises = uploadingVideos.map(v => videoService.cancelVideoUpload(v.id));
       await Promise.all(cancelPromises);
       
+      // Reload videos to get accurate status from backend
       await loadVideos();
       
       if (setMessage) setMessage(`✅ Cancelled ${uploadingVideos.length} upload(s)`);
     } catch (err) {
+      // Reload videos on error to get accurate status
       await loadVideos();
       
       const errorMsg = err.response?.data?.detail || err.response?.data?.message || err.message || 'Failed to cancel uploads';

@@ -1,6 +1,7 @@
 import React from 'react';
 import { PLATFORM_CONFIG } from '../../../utils/platformConfig';
 import { HOPPER_COLORS, rgba } from '../../../utils/colors';
+import { isVideoInProgress } from '../../../utils/videoStatus';
 import PerimeterProgress from './PerimeterProgress';
 
 const flexTextStyle = { 
@@ -346,28 +347,19 @@ export default function VideoItem({
           </div>
         )}
         {(() => {
-          // Check if video is actively uploading (status or platform progress)
-          // Check if any platform is uploading (use platform_statuses as source of truth)
-          const isVideoUploading = v.platform_statuses && Object.values(v.platform_statuses).some(
-            statusData => {
-              const status = typeof statusData === 'object' ? statusData.status : statusData;
-              return status === 'uploading';
-            }
-          ) || 
-          // Fallback: check R2 upload (status is 'uploading' and has upload_progress)
-          (v.status === 'uploading' && v.upload_progress !== undefined && v.upload_progress < 100 && 
-           (!v.platform_progress || Object.keys(v.platform_progress).length === 0));
+          // Use helper function to check if video is in progress (uploading, pending, or partial)
+          const isVideoInProgressState = isVideoInProgress(v);
           
           return (
             <button 
               onClick={() => {
-                if (isVideoUploading) {
-                  if (setMessage) setMessage('⚠️ Cannot delete video while uploading. Please cancel the upload first.');
+                if (isVideoInProgressState) {
+                  if (setMessage) setMessage('⚠️ Cannot delete video while uploading or while destinations are pending. Please cancel the upload first.');
                   return;
                 }
                 removeVideo(v.id, setMessage);
               }} 
-              disabled={isVideoUploading}
+              disabled={isVideoInProgressState}
               style={{
                 height: '32px',
                 minWidth: '32px',
@@ -382,24 +374,24 @@ export default function VideoItem({
                 border: `1px solid ${rgba(HOPPER_COLORS.rgb.adminRed, 0.3)}`,
                 borderRadius: '6px',
                 color: HOPPER_COLORS.adminRed,
-                cursor: isVideoUploading ? 'not-allowed' : 'pointer',
-                opacity: isVideoUploading ? 0.5 : 1,
+                cursor: isVideoInProgressState ? 'not-allowed' : 'pointer',
+                opacity: isVideoInProgressState ? 0.5 : 1,
                 transition: 'all 0.2s',
                 boxSizing: 'border-box'
               }}
               onMouseEnter={(e) => {
-                if (!isVideoUploading) {
+                if (!isVideoInProgressState) {
                   e.target.style.background = rgba(HOPPER_COLORS.rgb.adminRed, 0.2);
                   e.target.style.borderColor = rgba(HOPPER_COLORS.rgb.adminRed, 0.5);
                 }
               }}
               onMouseLeave={(e) => {
-                if (!isVideoUploading) {
+                if (!isVideoInProgressState) {
                   e.target.style.background = rgba(HOPPER_COLORS.rgb.adminRed, 0.1);
                   e.target.style.borderColor = rgba(HOPPER_COLORS.rgb.adminRed, 0.3);
                 }
               }}
-              title={isVideoUploading ? 'Cannot delete while uploading. Cancel upload first.' : 'Delete video'}
+              title={isVideoInProgressState ? 'Cannot delete while uploading or while destinations are pending. Cancel upload first.' : 'Delete video'}
             >
               ×
             </button>

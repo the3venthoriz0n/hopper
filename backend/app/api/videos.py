@@ -160,39 +160,17 @@ async def cancel_video_upload(video_id: int, user_id: int = Depends(require_csrf
 
 @router.post("/{video_id}/cancel-r2")
 async def cancel_r2_upload(video_id: int, user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
-    """Cancel R2 upload for a video (client-side upload)"""
-    from app.db.redis import set_r2_upload_cancelled
+    """Cancel R2 upload for a video (client-side upload)
     
-    # Verify video belongs to user
-    videos = get_user_videos(user_id, db=db)
-    video = next((v for v in videos if v.id == video_id), None)
-    
-    if not video:
-        raise HTTPException(404, "Video not found")
-    
-    # Only allow cancellation if video is uploading (R2 upload in progress)
-    if video.status != "uploading":
-        raise HTTPException(400, f"Cannot cancel R2 upload for video with status: {video.status}")
-    
-    # Set cancellation flag
-    set_r2_upload_cancelled(video_id)
-    
-    # Also update video status to cancelled immediately (not just set flag)
-    from app.db.helpers import update_video
-    old_status = video.status
-    update_video(video_id, user_id, db=db, status="cancelled", error="Upload cancelled by user")
-    
-    # Publish status change event
-    from app.services.event_service import publish_video_status_changed
-    from app.services.video.helpers import build_video_response
-    from app.db.helpers import get_all_user_settings, get_all_oauth_tokens
-    db.refresh(video)
-    all_settings = get_all_user_settings(user_id, db=db)
-    all_tokens = get_all_oauth_tokens(user_id, db=db)
-    video_dict = build_video_response(video, all_settings, all_tokens, user_id)
-    await publish_video_status_changed(user_id, video_id, old_status, "cancelled", video_dict=video_dict)
-    
-    return {"ok": True, "message": "R2 upload cancelled"}
+    Note: This endpoint is kept for backward compatibility.
+    The /cancel endpoint now handles both R2 and destination uploads.
+    This endpoint simply calls the unified cancel_upload service.
+    """
+    from app.services.video.orchestrator import cancel_upload
+    result = await cancel_upload(video_id, user_id, db)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("message", "Failed to cancel upload"))
+    return result
 
 
 @router.get("/{video_id}/r2-cancelled")

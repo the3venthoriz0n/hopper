@@ -359,6 +359,77 @@ def get_all_platform_statuses(video: Video) -> Dict[str, Dict[str, Any]]:
     return video.custom_settings.get("platform_statuses", {})
 
 
+def get_upload_state(video: Video, user_id: int, enabled_destinations: List[str]) -> Dict[str, Any]:
+    """Get current upload state (R2 and/or destinations)
+    
+    Checks both R2 upload progress from Redis and platform statuses to determine
+    what uploads are currently in progress. This provides a unified view of upload state.
+    
+    Args:
+        video: Video object
+        user_id: User ID for Redis progress lookup
+        enabled_destinations: List of enabled destination names
+        
+    Returns:
+        Dictionary with:
+            - 'has_r2_upload': bool - True if R2 upload is in progress (< 100%)
+            - 'has_destination_uploads': bool - True if any destination is uploading/pending
+            - 'active_platforms': List[str] - Platforms with status 'uploading' or 'pending'
+            - 'r2_progress': Optional[int] - R2 upload progress (0-100) or None
+    """
+    # Check R2 upload progress
+    r2_progress = get_upload_progress(user_id, video.id)
+    
+    # Check if any platform has progress (indicates destination uploads have started)
+    has_platform_progress = any(
+        get_platform_upload_progress(user_id, video.id, platform) is not None
+        for platform in ["youtube", "tiktok", "instagram"]
+    )
+    
+    # R2 upload is in progress if we have progress < 100% and no platform progress yet
+    has_r2_upload = r2_progress is not None and r2_progress < 100 and not has_platform_progress
+    
+    # Check platform statuses for active destination uploads
+    platform_statuses = get_all_platform_statuses(video)
+    active_platforms = []
+    for platform in enabled_destinations:
+        platform_status = platform_statuses.get(platform, {}).get("status", "pending")
+        if platform_status in ["uploading", "pending"]:
+            active_platforms.append(platform)
+    
+    has_destination_uploads = len(active_platforms) > 0
+    
+    return {
+        "has_r2_upload": has_r2_upload,
+        "has_destination_uploads": has_destination_uploads,
+        "active_platforms": active_platforms,
+        "r2_progress": r2_progress
+    }
+
+
+def is_video_cancellable(video: Video, enabled_destinations: List[str], user_id: int) -> bool:
+    """Check if video has any active uploads that can be cancelled
+    
+    A video is cancellable if:
+    - R2 upload is in progress (< 100%)
+    - OR any enabled platform has status "uploading" or "pending"
+    
+    This works regardless of global status (handles "partial" correctly).
+    A video with status "partial" can still have active uploads if some platforms
+    succeeded while others are still uploading.
+    
+    Args:
+        video: Video object
+        enabled_destinations: List of enabled destination names
+        user_id: User ID for Redis progress lookup
+        
+    Returns:
+        True if video can be cancelled, False otherwise
+    """
+    upload_state = get_upload_state(video, user_id, enabled_destinations)
+    return upload_state['has_r2_upload'] or upload_state['has_destination_uploads']
+
+
 def compute_global_status(video: Video, enabled_destinations: List[str]) -> str:
     """Compute global status from platform statuses
     
@@ -382,12 +453,17 @@ def compute_global_status(video: Video, enabled_destinations: List[str]) -> str:
         return "uploaded"
     elif any(s == "uploading" for s in enabled_statuses):
         return "uploading"
+    elif any(s == "pending" for s in enabled_statuses):
+        # If any destination is still pending, status is "uploading" (not "partial")
+        # This prevents premature status changes when some destinations succeed but others haven't started
+        return "uploading"
     elif all(s == "failed" for s in enabled_statuses):
         return "failed"
     elif all(s == "cancelled" for s in enabled_statuses):
         return "cancelled"
     elif any(s == "success" for s in enabled_statuses):
-        return "partial"  # New status for partial success
+        # Partial success: some succeeded, others failed (no pending or uploading)
+        return "partial"
     else:
         return "pending"
 
