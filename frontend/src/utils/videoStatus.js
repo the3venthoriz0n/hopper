@@ -43,6 +43,7 @@ export const isVideoInProgress = (video) => {
   }
   
   // Check platform progress - if any platform has progress < 100%, upload is in progress
+  // BUT ignore if video is cancelled (status check already happened above)
   if (video.platform_progress && Object.keys(video.platform_progress).length > 0) {
     const hasInProgressProgress = Object.values(video.platform_progress).some(
       progress => typeof progress === 'number' && progress >= 0 && progress < 100
@@ -52,13 +53,16 @@ export const isVideoInProgress = (video) => {
   
   // Check if status is partial (some succeeded, others still uploading/failed)
   // Backend should keep status as "uploading" if any are uploading, but check here as safety
+  // BUT ignore if video is cancelled (status check already happened above)
   if (video.status === 'partial') return true;
   
   // Additional check: R2 upload in progress (even if status isn't "uploading" yet)
   // This catches R2 uploads that are in progress but status hasn't been updated
+  // BUT explicitly exclude cancelled videos - even if they have progress, they're not in progress
   if (video.upload_progress !== undefined && 
       video.upload_progress < 100 && 
-      (!video.platform_progress || Object.keys(video.platform_progress).length === 0)) {
+      (!video.platform_progress || Object.keys(video.platform_progress).length === 0) &&
+      video.status !== 'cancelled') {  // Explicitly exclude cancelled videos
     return true;
   }
   
