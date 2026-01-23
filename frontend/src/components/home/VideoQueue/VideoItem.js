@@ -267,8 +267,9 @@ export default function VideoItem({
             </div>
           )}
           {/* Progress bar for hopper server uploads (NOT for destination uploads) */}
-          {/* Only show during R2 upload: status is 'uploading', has upload_progress < 100, and no platform_progress (destination uploads haven't started) */}
-          {v.status === 'uploading' && 
+          {/* Keep progress bar visible until upload is confirmed (status changes to 'pending' and upload_progress is cleared) */}
+          {/* Show during R2 upload: status is 'uploading' OR status is 'pending' with progress < 100, and no platform_progress */}
+          {((v.status === 'uploading') || (v.status === 'pending' && v.upload_progress !== undefined && v.upload_progress < 100)) && 
            v.upload_progress !== undefined && 
            v.upload_progress < 100 && 
            (!v.platform_progress || Object.keys(v.platform_progress).length === 0) && (
@@ -285,6 +286,8 @@ export default function VideoItem({
           <span style={flexTextStyle}>
             {v.status === 'cancelled' ? (
               <span style={{ color: HOPPER_COLORS.grey }}>Cancelled</span>
+            ) : v.status === 'partial' ? (
+              <span style={{ color: HOPPER_COLORS.warning || HOPPER_COLORS.info }}>Partial Success</span>
             ) : v.scheduled_time ? (
               <span>Scheduled for {new Date(v.scheduled_time).toLocaleString(undefined, {
                 year: 'numeric',
@@ -299,8 +302,8 @@ export default function VideoItem({
         </div>
       </div>
       <div className="video-actions">
-        {/* Retry button for failed or cancelled videos */}
-        {(v.status === 'failed' || v.status === 'cancelled') && (
+        {/* Retry button for failed, cancelled, or partial videos */}
+        {(v.status === 'failed' || v.status === 'cancelled' || v.status === 'partial') && (
           <button 
             onClick={async () => {
               try {

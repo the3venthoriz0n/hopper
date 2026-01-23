@@ -190,6 +190,7 @@ export default function DestinationDetailsModal({
             {platformNames[platform]} Upload Details
             {platformStatus === 'success' && <span style={{ color: HOPPER_COLORS.success, marginLeft: '8px' }}>✓</span>}
             {platformStatus === 'failed' && <span style={{ color: HOPPER_COLORS.error, marginLeft: '8px' }}>✕</span>}
+            {platformStatus === 'uploading' && <span style={{ color: HOPPER_COLORS.info, marginLeft: '8px' }}>⏳</span>}
           </h2>
           <button className="btn-close" onClick={() => setDestinationModal(null)}>×</button>
         </div>
@@ -249,6 +250,7 @@ export default function DestinationDetailsModal({
             }}>
               {platformStatus === 'success' && '✓ Upload Successful'}
               {platformStatus === 'failed' && '✕ Upload Failed'}
+              {platformStatus === 'uploading' && '⏳ Uploading...'}
               {platformStatus === 'pending' && '⏳ Pending Upload'}
             </div>
           </div>

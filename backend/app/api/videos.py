@@ -662,6 +662,15 @@ async def abort_upload(
     upload_info = get_r2_upload_info(request.video_id)
     
     if upload_info:
+        # Validate object_key ownership for extra security
+        object_key = upload_info.get("object_key")
+        if object_key:
+            from app.services.video.file_handler import _validate_object_key_ownership
+            try:
+                _validate_object_key_ownership(object_key, user_id)
+            except ValueError:
+                raise HTTPException(403, "Invalid object key for user")
+        
         # If multipart, abort the multipart upload in R2
         if upload_info.get("upload_type") == "multipart":
             r2_service = get_r2_service()

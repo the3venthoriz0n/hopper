@@ -232,14 +232,50 @@ async def status_checker_task():
                                 status_logger.debug(f"TikTok video {video.id} still processing: {status}, progress: {progress}%")
                             
                             elif status == "FAILED":
-                                # Upload failed
+                                # Upload failed - ensure proper error handling and status updates
                                 fail_reason = status_data.get("fail_reason", "Unknown error")
-                                error_msg = f"TikTok upload failed: {fail_reason}"
+                                error_code = status_data.get("error_code", "")
+                                
+                                # Build comprehensive error message
+                                if error_code:
+                                    error_msg = f"TikTok upload failed ({error_code}): {fail_reason}"
+                                else:
+                                    error_msg = f"TikTok upload failed: {fail_reason}"
+                                
+                                # Get user data for building response
+                                all_settings, all_tokens = _get_user_data_for_video(video, db)
+                                if all_settings is None or all_tokens is None:
+                                    status_logger.warning(f"Could not get user data for video {video.id}, skipping status update")
+                                    continue
+                                
+                                old_status = video.status
                                 
                                 # Set TikTok platform status to failed
                                 await set_platform_status(video.id, video.user_id, "tiktok", "failed", error=error_msg, db=db)
                                 
-                                status_logger.warning(f"TikTok video {video.id} failed: {fail_reason}")
+                                # Refresh video to get updated status
+                                db.refresh(video)
+                                
+                                # Build video response and publish status change
+                                from app.services.video.helpers import build_video_response
+                                from app.services.event_service import publish_video_status_changed
+                                video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
+                                await publish_video_status_changed(video.user_id, video.id, old_status, video.status, video_dict=video_dict)
+                                
+                                status_logger.error(
+                                    f"TikTok video {video.id} failed - User {video.user_id}, "
+                                    f"publish_id: {tiktok_publish_id}, fail_reason: {fail_reason}, error_code: {error_code}",
+                                    extra={
+                                        "user_id": video.user_id,
+                                        "video_id": video.id,
+                                        "video_filename": video.filename,
+                                        "publish_id": tiktok_publish_id,
+                                        "fail_reason": fail_reason,
+                                        "error_code": error_code,
+                                        "platform": "tiktok",
+                                        "error_type": "TikTokAPIFailure"
+                                    }
+                                )
                     
                     except Exception as e:
                         status_logger.error(f"Error checking TikTok status for video {video.id}: {e}", exc_info=True)

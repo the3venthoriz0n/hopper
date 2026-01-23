@@ -463,9 +463,9 @@ async def retry_failed_upload(
     if not video:
         raise ValueError("Video not found")
     
-    # Allow retry for failed or cancelled videos
-    if video.status not in ["failed", "cancelled"]:
-        raise ValueError(f"Cannot retry video with status '{video.status}'. Only failed or cancelled videos can be retried.")
+    # Allow retry for failed, cancelled, or partial videos
+    if video.status not in ["failed", "cancelled", "partial"]:
+        raise ValueError(f"Cannot retry video with status '{video.status}'. Only failed, cancelled, or partial videos can be retried.")
     
     # Check if R2 object exists before retrying
     # If upload was cancelled before reaching R2, the object won't exist
@@ -519,10 +519,29 @@ async def retry_failed_upload(
     if not enabled_destinations:
         raise ValueError("No enabled destinations. Enable at least one destination first.")
     
+    # For partial status videos, only retry failed platforms, not successful ones
+    from app.services.video.helpers import get_all_platform_statuses
+    platform_statuses = get_all_platform_statuses(video)
+    platforms_to_retry = []
+    
+    if old_status == "partial":
+        # Only retry platforms that failed or were cancelled
+        for dest_name in enabled_destinations:
+            platform_status = platform_statuses.get(dest_name, {}).get("status", "pending")
+            if platform_status in ["failed", "cancelled"]:
+                platforms_to_retry.append(dest_name)
+                # Reset failed platform status to pending for retry
+                await set_platform_status(video_id, user_id, dest_name, "pending", error=None, db=db)
+        if not platforms_to_retry:
+            raise ValueError("No failed platforms to retry. All platforms already succeeded.")
+    else:
+        # For failed/cancelled videos, retry all enabled destinations
+        platforms_to_retry = enabled_destinations
+    
     # Import DESTINATION_UPLOADERS from video module
     from app.services.video import DESTINATION_UPLOADERS
     
-    # Upload to all enabled destinations
+    # Upload to platforms that need retry
     succeeded_destinations = []
     upload_cancelled = False
     
@@ -538,14 +557,14 @@ async def retry_failed_upload(
         video_dict = build_video_response(retry_video, all_settings, all_tokens, user_id)
         await publish_video_status_changed(user_id, video_id, "pending", "uploading", video_dict=video_dict)
     
-    for dest_name in enabled_destinations:
+    for dest_name in platforms_to_retry:
         # Check for cancellation before each destination
         if _cancellation_flags.get(video_id, False):
             upload_logger.info(f"Retry upload cancelled for video {video_id} during {dest_name} upload")
             _cancellation_flags.pop(video_id, None)
             
             # Set all remaining platforms to cancelled
-            for remaining_dest in enabled_destinations[enabled_destinations.index(dest_name):]:
+            for remaining_dest in platforms_to_retry[platforms_to_retry.index(dest_name):]:
                 await set_platform_status(video_id, user_id, remaining_dest, "cancelled", error="Upload cancelled by user", db=db)
             
             upload_cancelled = True
