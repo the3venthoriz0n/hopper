@@ -715,6 +715,10 @@ async def cancel_upload(video_id: int, user_id: int, db: Session) -> Dict[str, A
         set_r2_upload_cancelled(video_id)
         upload_logger.info(f"R2 upload cancellation flag set for video {video_id}")
         
+        # Publish cancellation event immediately for real-time frontend notification
+        from app.services.event_service import publish_r2_upload_cancelled
+        await publish_r2_upload_cancelled(user_id, video_id)
+        
         # Clean up R2 upload (abort multipart if applicable)
         from app.db.redis import get_r2_upload_info, clear_r2_upload_info
         upload_info = get_r2_upload_info(video_id)

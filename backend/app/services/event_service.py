@@ -265,3 +265,21 @@ async def publish_token_balance_changed(user_id: int, new_balance: int, change_a
         }
     )
 
+
+async def publish_r2_upload_cancelled(user_id: int, video_id: int) -> None:
+    """Publish r2_upload_cancelled event for immediate cancellation notification
+    
+    This event is published when an R2 upload is cancelled, allowing the frontend
+    to immediately stop the upload without polling delays.
+    
+    Args:
+        user_id: User ID
+        video_id: Video ID that was cancelled
+    """
+    await publish_event(
+        user_id,
+        "r2_upload_cancelled",
+        {
+            "video_id": video_id
+        }
+    )

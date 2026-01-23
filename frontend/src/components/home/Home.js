@@ -7,6 +7,7 @@ import { usePlatforms } from '../../hooks/usePlatforms';
 import { useVideos } from '../../hooks/useVideos';
 import { useSettings } from '../../hooks/useSettings';
 import { useSubscription } from '../../hooks/useSubscription';
+import { useCancellationListener } from '../../hooks/useCancellationListener';
 import { isVideoInProgress } from '../../utils/videoStatus';
 import * as authService from '../../services/authService';
 import HomeHeader from './HomeHeader';
@@ -149,7 +150,8 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
     tiktokSettings,
     globalSettings,
     tokenBalance,
-    subscription
+    subscription,
+    cancellationListener
   );
 
   const loadUploadLimits = useCallback(async () => {
@@ -211,6 +213,15 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
     switch (eventType) {
       case 'video_added':
         loadVideos();
+        break;
+        
+      case 'r2_upload_cancelled':
+        // Real-time R2 upload cancellation event
+        // Mark video as cancelled in the listener for immediate upload abort
+        if (payload.video_id) {
+          cancellationListener.markCancelled(payload.video_id);
+          console.log(`R2 upload cancelled for video ${payload.video_id} via WebSocket`);
+        }
         break;
         
       case 'video_status_changed':

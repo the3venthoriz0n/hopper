@@ -352,11 +352,11 @@ export const getPresignedUploadUrl = async (filename, fileSize, contentType = nu
  * @param {File} file - File to upload
  * @param {string} uploadUrl - Presigned upload URL
  * @param {function} onProgress - Progress callback (receives {loaded, total})
- * @param {function} checkCancellation - Optional function to check if upload is cancelled (returns Promise<boolean>)
- * @param {number} videoId - Optional video ID for cleanup on cancellation
+ * @param {object} cancellationListener - Cancellation listener object with isCancelled(videoId) method
+ * @param {number} videoId - Video ID for cancellation checking and cleanup
  * @returns {Promise<void>}
  */
-export const uploadToR2Direct = async (file, uploadUrl, onProgress, checkCancellation = null, videoId = null) => {
+export const uploadToR2Direct = async (file, uploadUrl, onProgress, cancellationListener = null, videoId = null) => {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     let cancellationCheckInterval = null;
@@ -375,28 +375,26 @@ export const uploadToR2Direct = async (file, uploadUrl, onProgress, checkCancell
       }
     };
     
-    // Check cancellation periodically during upload
-    if (checkCancellation) {
-      cancellationCheckInterval = setInterval(async () => {
+    // Check cancellation using event listener (real-time, no polling delay)
+    if (cancellationListener && videoId) {
+      cancellationCheckInterval = setInterval(() => {
         try {
-          const cancelled = await checkCancellation();
-          if (cancelled) {
+          // Use event-driven cancellation check (instant, no HTTP request)
+          if (cancellationListener.isCancelled(videoId)) {
             clearInterval(cancellationCheckInterval);
             isCancelled = true;
             xhr.abort();
             // Clean up R2 upload (abort multipart if applicable)
-            if (videoId) {
-              abortR2Upload(videoId).catch(err => {
-                console.warn('Failed to abort R2 upload on cancellation:', err);
-              });
-            }
+            abortR2Upload(videoId).catch(err => {
+              console.warn('Failed to abort R2 upload on cancellation:', err);
+            });
             rejectCancelled();
           }
         } catch (err) {
           // Ignore errors from cancellation check
           console.warn('Error checking cancellation:', err);
         }
-      }, 1000); // Check every second
+      }, 100); // Check frequently (100ms) since it's just checking a Set, no HTTP overhead
     }
     
     xhr.upload.addEventListener('progress', (e) => {
@@ -451,11 +449,11 @@ export const uploadToR2Direct = async (file, uploadUrl, onProgress, checkCancell
  * @param {function} onProgress - Progress callback (receives {loaded, total})
  * @param {function} getPartUrl - Function to get multipart part URL for a part
  * @param {function} completeUpload - Function to complete multipart upload
- * @param {function} checkCancellation - Optional function to check if upload is cancelled (returns Promise<boolean>)
- * @param {number} videoId - Optional video ID for cleanup on cancellation
+ * @param {object} cancellationListener - Cancellation listener object with isCancelled(videoId) method
+ * @param {number} videoId - Video ID for cancellation checking and cleanup
  * @returns {Promise<object>} {object_key, size}
  */
-export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress, getPartUrl, completeUpload, checkCancellation = null, videoId = null) => {
+export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress, getPartUrl, completeUpload, cancellationListener = null, videoId = null) => {
   const MULTIPART_PART_SIZE = 100 * 1024 * 1024; // 100MB per part
   const MAX_CONCURRENT_PARTS = 5; // Upload up to 5 parts in parallel
   
@@ -464,38 +462,60 @@ export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress,
   const uploadedParts = [];
   let uploadedBytes = 0;
   let currentXhr = null;
+  let isCancelled = false; // Track cancellation state across the loop
   
   // Upload parts sequentially (can be parallelized later if needed)
   for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
-    // Check cancellation before each part
-    if (checkCancellation) {
-      const cancelled = await checkCancellation();
-      if (cancelled) {
-        if (currentXhr) {
-          currentXhr.abort();
-        }
-        // Clean up R2 upload (abort multipart upload)
-        if (videoId) {
-          abortR2Upload(videoId).catch(err => {
-            console.warn('Failed to abort R2 upload on cancellation:', err);
-          });
-        }
-        throw new Error('Upload cancelled by user');
+    // Check cancellation before each part (event-driven, instant check)
+    if (cancellationListener && videoId && cancellationListener.isCancelled(videoId)) {
+      isCancelled = true;
+      if (currentXhr) {
+        currentXhr.abort();
       }
+      // Clean up R2 upload (abort multipart upload) - fire immediately
+      abortR2Upload(videoId).catch(err => {
+        console.warn('Failed to abort R2 upload on cancellation:', err);
+      });
+      throw new Error('Upload cancelled by user');
+    }
+    
+    // If cancelled, break immediately (shouldn't reach here, but safety check)
+    if (isCancelled) {
+      throw new Error('Upload cancelled by user');
     }
     
     const start = (partNumber - 1) * MULTIPART_PART_SIZE;
     const end = Math.min(start + MULTIPART_PART_SIZE, file.size);
     const partBlob = file.slice(start, end);
     
+    // Check cancellation again before getting part URL (event-driven)
+    if (cancellationListener && videoId && cancellationListener.isCancelled(videoId)) {
+      isCancelled = true;
+      abortR2Upload(videoId).catch(err => {
+        console.warn('Failed to abort R2 upload on cancellation:', err);
+      });
+      throw new Error('Upload cancelled by user');
+    }
+    
     // Get multipart part URL for this part
     const { upload_url } = await getPartUrl(objectKey, uploadId, partNumber);
     
-    // Upload part
-    const etag = await new Promise((resolve, reject) => {
+    // Check cancellation one more time right before uploading the part (event-driven)
+    if (cancellationListener && videoId && cancellationListener.isCancelled(videoId)) {
+      isCancelled = true;
+      abortR2Upload(videoId).catch(err => {
+        console.warn('Failed to abort R2 upload on cancellation:', err);
+      });
+      throw new Error('Upload cancelled by user');
+    }
+    
+    // Upload part - wrap in try-catch to handle cancellation even if part completes
+    let etag;
+    try {
+      etag = await new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       currentXhr = xhr;
-      let isCancelled = false;
+      let partCancelled = false;
       let isResolved = false;
       let partCancellationCheckInterval = null;
       
@@ -503,7 +523,8 @@ export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress,
       const rejectCancelled = () => {
         if (!isResolved) {
           isResolved = true;
-          isCancelled = true;
+          partCancelled = true;
+          isCancelled = true; // Set outer flag
           if (partCancellationCheckInterval) {
             clearInterval(partCancellationCheckInterval);
           }
@@ -511,32 +532,31 @@ export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress,
         }
       };
       
-      // Check cancellation periodically during part upload
-      if (checkCancellation) {
-        partCancellationCheckInterval = setInterval(async () => {
+      // Check cancellation periodically during part upload (event-driven, no HTTP overhead)
+      if (cancellationListener && videoId) {
+        partCancellationCheckInterval = setInterval(() => {
           try {
-            const cancelled = await checkCancellation();
-            if (cancelled) {
+            // Use event-driven cancellation check (instant, no HTTP request)
+            if (cancellationListener.isCancelled(videoId)) {
               clearInterval(partCancellationCheckInterval);
-              isCancelled = true;
+              partCancelled = true;
+              isCancelled = true; // Set outer flag
               xhr.abort();
-              // Clean up R2 upload (abort multipart upload)
-              if (videoId) {
-                abortR2Upload(videoId).catch(err => {
-                  console.warn('Failed to abort R2 upload on cancellation:', err);
-                });
-              }
+              // Clean up R2 upload (abort multipart upload) - fire immediately
+              abortR2Upload(videoId).catch(err => {
+                console.warn('Failed to abort R2 upload on cancellation:', err);
+              });
               rejectCancelled();
             }
           } catch (err) {
             // Ignore errors from cancellation check
             console.warn('Error checking cancellation:', err);
           }
-        }, 1000); // Check every second
+        }, 100); // Check frequently (100ms) since it's just checking a Set, no HTTP overhead
       }
       
       xhr.addEventListener('load', () => {
-        if (isResolved || isCancelled) return;
+        if (isResolved || partCancelled) return;
         if (partCancellationCheckInterval) {
           clearInterval(partCancellationCheckInterval);
         }
@@ -560,7 +580,7 @@ export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress,
       
       xhr.addEventListener('error', () => {
         // If we intentionally cancelled, use cancellation message
-        if (isCancelled) {
+        if (partCancelled) {
           rejectCancelled();
           return;
         }
@@ -579,7 +599,38 @@ export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress,
       xhr.open('PUT', upload_url);
       xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
       xhr.send(partBlob);
-    });
+      });
+      
+      // Check cancellation immediately after part completes (before adding to uploadedParts)
+      if (checkCancellation && !isCancelled) {
+        const cancelled = await checkCancellation();
+        if (cancelled) {
+          isCancelled = true;
+          // Clean up R2 upload (abort multipart upload) - fire immediately
+          if (videoId) {
+            // Fire and forget - start abort immediately, don't wait
+            abortR2Upload(videoId).catch(err => {
+              console.warn('Failed to abort R2 upload on cancellation:', err);
+            });
+          }
+          throw new Error('Upload cancelled by user');
+        }
+      }
+    } catch (err) {
+      // If cancellation error, re-throw immediately
+      if (err.message?.includes('cancelled') || err.message?.includes('aborted')) {
+        // Make sure abort is called if not already
+        if (videoId && !isCancelled) {
+          isCancelled = true;
+          abortR2Upload(videoId).catch(abortErr => {
+            console.warn('Failed to abort R2 upload on cancellation:', abortErr);
+          });
+        }
+        throw err;
+      }
+      // Re-throw other errors
+      throw err;
+    }
     
     currentXhr = null;
     uploadedParts.push({ part_number: partNumber, etag });
@@ -589,6 +640,11 @@ export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress,
     if (onProgress) {
       onProgress({ loaded: uploadedBytes, total: file.size });
     }
+  }
+  
+  // If cancelled, don't complete the upload
+  if (isCancelled) {
+    throw new Error('Upload cancelled by user');
   }
   
   // Complete multipart upload

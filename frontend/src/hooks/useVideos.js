@@ -32,7 +32,8 @@ export function useVideos(
   tiktokSettings,
   globalSettings,
   tokenBalance,
-  subscription
+  subscription,
+  cancellationListener = null
 ) {
   const [videos, setVideos] = useState([]);
   const [editingVideo, setEditingVideo] = useState(null);
@@ -299,16 +300,18 @@ export function useVideos(
               ));
             }
           },
-          async () => {
-            // Check cancellation periodically during upload
-            return await videoService.checkR2Cancelled(videoId);
-          },
+          cancellationListener, // Use event-driven cancellation listener
           videoId
         );
       }
       
       // Step 3: Confirm upload and update video record
       const videoData = await videoService.confirmUpload(videoId, objectKey, file.name, file.size);
+      
+      // Clear cancellation status since upload completed successfully
+      if (cancellationListener) {
+        cancellationListener.clearCancellation(videoId);
+      }
       
       // Update video in state
       setVideos(prev => prev.map(v => 
