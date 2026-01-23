@@ -311,7 +311,7 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
             chunk_count = 0
             last_published_progress = -1
             while response is None:
-                # Check for cancellation during upload
+                # Check for cancellation FIRST, before processing chunk
                 if _cancellation_flags.get(video_id, False):
                     youtube_logger.info(f"YouTube upload cancelled for video {video_id} during upload")
                     raise Exception("Upload cancelled by user")
@@ -319,6 +319,12 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
                 status, response = request.next_chunk()
                 if status:
                     progress = int(status.progress() * 100)
+                    
+                    # Check cancellation again after getting progress (before updating state)
+                    if _cancellation_flags.get(video_id, False):
+                        youtube_logger.info(f"YouTube upload cancelled for video {video_id} during upload")
+                        raise Exception("Upload cancelled by user")
+                    
                     set_upload_progress(user_id, video_id, progress)
                     set_platform_upload_progress(user_id, video_id, "youtube", progress)
                     # Publish websocket event for real-time progress updates (1% increments or at completion)

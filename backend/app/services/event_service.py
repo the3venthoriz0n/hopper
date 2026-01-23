@@ -229,7 +229,14 @@ async def publish_destination_toggled(user_id: int, platform: str, enabled: bool
 
 
 async def publish_upload_progress(user_id: int, video_id: int, platform: str, progress_percent: int) -> None:
-    """Publish upload_progress event"""
+    """Publish upload_progress event
+    
+    Args:
+        user_id: User ID
+        video_id: Video ID
+        platform: Platform name ("youtube", "tiktok", "instagram", "r2" for R2 uploads)
+        progress_percent: Progress percentage (0-100)
+    """
     await publish_event(
         user_id,
         "upload_progress",

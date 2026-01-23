@@ -14,7 +14,7 @@ from app.services.token_service import check_tokens_available, get_token_balance
 from app.services.video.helpers import (
     build_upload_context, check_upload_success, record_platform_error,
     set_platform_status, compute_global_status, is_video_cancellable,
-    build_video_response, get_upload_state
+    build_video_response, get_upload_state, get_all_platform_statuses
 )
 
 upload_logger = logging.getLogger("upload")
@@ -746,20 +746,31 @@ async def cancel_upload(video_id: int, user_id: int, db: Session) -> Dict[str, A
             # Clear upload info from Redis
             clear_r2_upload_info(video_id)
     
-    # Cancel destination uploads if any are in progress
-    if upload_state['has_destination_uploads']:
-        # Set cancellation flag to stop any in-progress destination uploads
-        _cancellation_flags[video_id] = True
-        
-        # Cancel all active platform uploads
-        for platform in upload_state['active_platforms']:
+    # Cancel destination uploads - set flag FIRST to stop any in-progress uploads
+    # This must happen before updating platform statuses to prevent race conditions
+    _cancellation_flags[video_id] = True
+    
+    # Cancel ALL platforms that are not already in final state (success/failed)
+    # This ensures we cancel any remaining uploads even if some already succeeded
+    platform_statuses = get_all_platform_statuses(video)
+    cancelled_any = False
+    for platform in enabled_destinations:
+        platform_status = platform_statuses.get(platform, {}).get("status", "pending")
+        # Cancel if platform is still uploading or pending
+        if platform_status in ["uploading", "pending"]:
             await set_platform_status(video_id, user_id, platform, "cancelled", 
                                      error="Upload cancelled by user", db=db)
+            cancelled_any = True
     
-    # Update global status using compute_global_status() to ensure consistency
-    # This will properly handle "partial" status and compute the correct final status
-    db.refresh(video)
-    new_status = compute_global_status(video, enabled_destinations)
+    # Force status to "cancelled" if we cancelled anything, or if status is "partial"
+    # This ensures user can retry after cancellation
+    if cancelled_any or upload_state['has_r2_upload'] or video.status == "partial":
+        new_status = "cancelled"
+    else:
+        # If nothing was active, compute status normally
+        db.refresh(video)
+        new_status = compute_global_status(video, enabled_destinations)
+    
     update_video(video_id, user_id, db=db, status=new_status, error="Upload cancelled by user")
     
     # Publish status change event for immediate UI update

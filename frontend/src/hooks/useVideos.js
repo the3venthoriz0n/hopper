@@ -271,10 +271,7 @@ export function useVideos(
           },
           getPartUrl,
           completeUpload,
-          async () => {
-            // Check cancellation before each part
-            return await videoService.checkR2Cancelled(videoId);
-          },
+          cancellationListener, // Use event-driven cancellation listener
           videoId
         );
       } else {

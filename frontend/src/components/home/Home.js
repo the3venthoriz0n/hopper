@@ -103,6 +103,9 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
     clearWordbank,
   } = useSettings(setMessage);
 
+  // Cancellation listener for real-time R2 upload cancellation
+  const cancellationListener = useCancellationListener();
+
   const {
     videos,
     editingVideo,
@@ -218,7 +221,7 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
       case 'r2_upload_cancelled':
         // Real-time R2 upload cancellation event
         // Mark video as cancelled in the listener for immediate upload abort
-        if (payload.video_id) {
+        if (payload.video_id && cancellationListener) {
           cancellationListener.markCancelled(payload.video_id);
           console.log(`R2 upload cancelled for video ${payload.video_id} via WebSocket`);
         }
@@ -290,8 +293,15 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
       case 'upload_progress':
         const { video_id, progress_percent, platform } = payload;
         if (video_id && progress_percent !== undefined) {
-          // Pass platform to updateVideoProgress for platform-specific tracking
-          updateVideoProgress(video_id, progress_percent, platform);
+          // For R2 uploads, platform is "r2" or null - update general upload_progress
+          // For destination uploads (youtube, tiktok, instagram), update platform_progress
+          if (platform === 'r2' || !platform) {
+            // R2 upload progress - update general upload_progress
+            updateVideoProgress(video_id, progress_percent, null);
+          } else {
+            // Destination upload progress - update platform-specific progress
+            updateVideoProgress(video_id, progress_percent, platform);
+          }
         }
         break;
         
@@ -338,7 +348,7 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
       default:
         console.log('Unhandled WebSocket event type:', eventType, payload);
     }
-  }, [loadVideos, loadSubscription, loadDestinations, loadGlobalSettings, loadYoutubeSettings, loadTiktokSettings, loadInstagramSettings, setNotification, setQueueTokenCount, updateVideoFromWebSocket]);
+  }, [loadVideos, loadSubscription, loadDestinations, loadGlobalSettings, loadYoutubeSettings, loadTiktokSettings, loadInstagramSettings, setNotification, setQueueTokenCount, updateVideoFromWebSocket, cancellationListener]);
 
   const { connected: wsConnected } = useWebSocket('/ws', handleWebSocketMessage, {
     reconnect: true,

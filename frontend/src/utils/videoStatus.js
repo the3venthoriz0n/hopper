@@ -18,6 +18,11 @@
 export const isVideoInProgress = (video) => {
   if (!video) return false;
   
+  // Explicitly exclude cancelled videos - they are not in progress
+  if (video.status === 'cancelled') {
+    return false;
+  }
+  
   // First check: If overall status is "uploading", video is definitely in progress
   // This catches R2 uploads, immediate uploads, and scheduled uploads that have started
   if (video.status === 'uploading') {

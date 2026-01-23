@@ -670,6 +670,11 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                 # Status not available yet, continue polling
                 continue
             
+            # Check cancellation after getting status (before processing)
+            if _cancellation_flags.get(video_id, False):
+                tiktok_logger.info(f"TikTok upload cancelled for video {video_id} during PULL_FROM_URL polling")
+                raise Exception("Upload cancelled by user")
+            
             status = status_data.get("status")
             
             # Log status transitions for better observability
@@ -684,6 +689,12 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
             if status == "PROCESSING_DOWNLOAD":
                 # TikTok is downloading from our server: 10-50% range
                 progress = 10 + int(min(poll_count / estimated_download_polls, 1.0) * 40)
+                
+                # Check cancellation before updating progress
+                if _cancellation_flags.get(video_id, False):
+                    tiktok_logger.info(f"TikTok upload cancelled for video {video_id} during PULL_FROM_URL polling")
+                    raise Exception("Upload cancelled by user")
+                
                 set_upload_progress(user_id, video_id, progress)
                 set_platform_upload_progress(user_id, video_id, "tiktok", progress)
                 if should_publish_progress(progress, last_published_progress):
@@ -694,12 +705,23 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
                 download_polls = min(poll_count, estimated_download_polls)
                 upload_polls = poll_count - download_polls
                 progress = 50 + int(min(upload_polls / estimated_upload_polls, 1.0) * 40)
+                
+                # Check cancellation before updating progress
+                if _cancellation_flags.get(video_id, False):
+                    tiktok_logger.info(f"TikTok upload cancelled for video {video_id} during PULL_FROM_URL polling")
+                    raise Exception("Upload cancelled by user")
+                
                 set_upload_progress(user_id, video_id, progress)
                 set_platform_upload_progress(user_id, video_id, "tiktok", progress)
                 if should_publish_progress(progress, last_published_progress):
                     await publish_upload_progress(user_id, video_id, "tiktok", progress)
                     last_published_progress = progress
             elif status == "PUBLISH_COMPLETE":
+                # Check cancellation before marking as complete
+                if _cancellation_flags.get(video_id, False):
+                    tiktok_logger.info(f"TikTok upload cancelled for video {video_id} before marking as complete")
+                    raise Exception("Upload cancelled by user")
+                
                 # Upload complete: 100%
                 video_id_from_status = status_data.get("video_id")
                 progress = 100

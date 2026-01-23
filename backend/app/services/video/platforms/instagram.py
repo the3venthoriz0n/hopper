@@ -127,6 +127,11 @@ async def _poll_container_status(
             
             status_response = await client.get(status_url, params=status_params)
             
+            # Check cancellation after getting status response (before processing)
+            if _cancellation_flags.get(video_id, False):
+                instagram_logger.info(f"Instagram upload cancelled for video {video_id} during polling")
+                raise Exception("Upload cancelled by user")
+            
             status_code = None
             if status_response.status_code == 200:
                 status_data = status_response.json()
@@ -136,11 +141,22 @@ async def _poll_container_status(
                 instagram_logger.info(f"Container status: {status_code} (attempt {attempt + 1}/{max_retries})")
                 
                 if status_code == "FINISHED":
+                    # Check cancellation before marking as finished
+                    if _cancellation_flags.get(video_id, False):
+                        instagram_logger.info(f"Instagram upload cancelled for video {video_id} before marking as finished")
+                        raise Exception("Upload cancelled by user")
+                    
                     # Reset error counter on success
                     consecutive_errors = 0
                     instagram_logger.info(f"Video processed successfully, ready to publish")
                     # FINISHED status = 90% (ready to publish)
                     progress = 90
+                    
+                    # Check cancellation again before updating progress
+                    if _cancellation_flags.get(video_id, False):
+                        instagram_logger.info(f"Instagram upload cancelled for video {video_id} before updating progress")
+                        raise Exception("Upload cancelled by user")
+                    
                     set_upload_progress(user_id, video_id, progress)
                     set_platform_upload_progress(user_id, video_id, "instagram", progress)
                     # Publish final progress update

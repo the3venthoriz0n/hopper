@@ -413,10 +413,10 @@ def is_video_cancellable(video: Video, enabled_destinations: List[str], user_id:
     A video is cancellable if:
     - R2 upload is in progress (< 100%)
     - OR any enabled platform has status "uploading" or "pending"
+    - OR video status is "partial" (some platforms may still be uploading)
     
-    This works regardless of global status (handles "partial" correctly).
-    A video with status "partial" can still have active uploads if some platforms
-    succeeded while others are still uploading.
+    This works regardless of global status - if there are ANY active uploads,
+    the video can be cancelled.
     
     Args:
         video: Video object
@@ -427,7 +427,22 @@ def is_video_cancellable(video: Video, enabled_destinations: List[str], user_id:
         True if video can be cancelled, False otherwise
     """
     upload_state = get_upload_state(video, user_id, enabled_destinations)
-    return upload_state['has_r2_upload'] or upload_state['has_destination_uploads']
+    
+    # Always allow cancellation if there are active uploads
+    if upload_state['has_r2_upload'] or upload_state['has_destination_uploads']:
+        return True
+    
+    # Also allow cancellation if status is "partial" - user should be able to cancel
+    # remaining uploads even if some platforms already succeeded
+    if video.status == "partial":
+        # Check if any platform is still uploading/pending
+        platform_statuses = get_all_platform_statuses(video)
+        for platform in enabled_destinations:
+            platform_status = platform_statuses.get(platform, {}).get("status", "pending")
+            if platform_status in ["uploading", "pending"]:
+                return True
+    
+    return False
 
 
 def compute_global_status(video: Video, enabled_destinations: List[str]) -> str:

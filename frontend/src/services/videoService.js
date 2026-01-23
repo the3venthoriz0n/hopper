@@ -133,6 +133,27 @@ export const abortR2Upload = async (videoId) => {
 };
 
 /**
+ * Update R2 upload progress (publishes via WebSocket)
+ * @param {string|number} videoId - Video ID
+ * @param {number} progressPercent - Progress percentage (0-100)
+ * @returns {Promise<void>}
+ */
+export const updateR2UploadProgress = async (videoId, progressPercent) => {
+  const csrfToken = Cookies.get('csrf_token_client');
+  try {
+    await axios.post(`${API}/videos/${videoId}/progress`, {
+      video_id: videoId,
+      progress_percent: progressPercent
+    }, {
+      headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
+    });
+  } catch (err) {
+    // Log but don't throw - progress update failure shouldn't block upload
+    console.warn('Failed to update R2 upload progress:', err);
+  }
+};
+
+/**
  * Update video settings
  * @param {string|number} videoId - Video ID
  * @param {object} settings - Settings object
@@ -397,9 +418,19 @@ export const uploadToR2Direct = async (file, uploadUrl, onProgress, cancellation
       }, 100); // Check frequently (100ms) since it's just checking a Set, no HTTP overhead
     }
     
+    let lastReportedProgress = -1;
     xhr.upload.addEventListener('progress', (e) => {
       if (e.lengthComputable && onProgress) {
+        const percent = Math.round((e.loaded * 100) / e.total);
         onProgress({ loaded: e.loaded, total: e.total });
+        
+        // Report progress to backend for WebSocket publishing (throttled to 1% increments)
+        if (videoId && (percent - lastReportedProgress >= 1 || percent === 100)) {
+          lastReportedProgress = percent;
+          updateR2UploadProgress(videoId, percent).catch(err => {
+            // Silently fail - progress updates are best effort
+          });
+        }
       }
     });
     
@@ -463,6 +494,7 @@ export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress,
   let uploadedBytes = 0;
   let currentXhr = null;
   let isCancelled = false; // Track cancellation state across the loop
+  let lastReportedProgress = -1; // Track last reported progress for throttling
   
   // Upload parts sequentially (can be parallelized later if needed)
   for (let partNumber = 1; partNumber <= totalParts; partNumber++) {
@@ -602,17 +634,13 @@ export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress,
       });
       
       // Check cancellation immediately after part completes (before adding to uploadedParts)
-      if (checkCancellation && !isCancelled) {
-        const cancelled = await checkCancellation();
-        if (cancelled) {
+      if (cancellationListener && videoId && !isCancelled) {
+        if (cancellationListener.isCancelled(videoId)) {
           isCancelled = true;
           // Clean up R2 upload (abort multipart upload) - fire immediately
-          if (videoId) {
-            // Fire and forget - start abort immediately, don't wait
-            abortR2Upload(videoId).catch(err => {
-              console.warn('Failed to abort R2 upload on cancellation:', err);
-            });
-          }
+          abortR2Upload(videoId).catch(err => {
+            console.warn('Failed to abort R2 upload on cancellation:', err);
+          });
           throw new Error('Upload cancelled by user');
         }
       }
@@ -638,7 +666,16 @@ export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress,
     
     // Update progress
     if (onProgress) {
+      const percent = Math.round((uploadedBytes * 100) / file.size);
       onProgress({ loaded: uploadedBytes, total: file.size });
+      
+      // Report progress to backend for WebSocket publishing (throttled to 1% increments)
+      if (videoId && (percent - lastReportedProgress >= 1 || percent === 100)) {
+        lastReportedProgress = percent;
+        updateR2UploadProgress(videoId, percent).catch(err => {
+          // Silently fail - progress updates are best effort
+        });
+      }
     }
   }
   

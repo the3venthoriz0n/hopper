@@ -36,7 +36,8 @@ from app.utils.video_tokens import verify_video_access_token
 from app.schemas.video import VideoUpdateRequest, VideoReorderRequest
 from app.services.event_service import (
     publish_video_added, publish_video_deleted, publish_video_updated,
-    publish_video_title_recomputed, publish_videos_bulk_recomputed
+    publish_video_title_recomputed, publish_videos_bulk_recomputed,
+    publish_upload_progress
 )
 
 # Loggers
@@ -100,6 +101,11 @@ class FailUploadRequest(BaseModel):
 
 class AbortUploadRequest(BaseModel):
     video_id: int
+
+
+class UpdateUploadProgressRequest(BaseModel):
+    video_id: int
+    progress_percent: int
 
 
 @router.get("")
@@ -192,6 +198,45 @@ async def check_r2_cancelled(video_id: int, user_id: int = Depends(require_auth)
         raise HTTPException(404, "Video not found")
     
     return {"cancelled": is_r2_upload_cancelled(video_id)}
+
+
+@router.post("/{video_id}/progress")
+async def update_upload_progress(
+    video_id: int,
+    request: UpdateUploadProgressRequest,
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
+    """Update R2 upload progress and publish via WebSocket
+    
+    Called by frontend during R2 uploads to report progress.
+    Stores progress in Redis and publishes WebSocket event for real-time updates.
+    """
+    from app.services.video.helpers import should_publish_progress
+    
+    # Verify video belongs to user
+    videos = get_user_videos(user_id, db=db)
+    video = next((v for v in videos if v.id == video_id), None)
+    
+    if not video:
+        raise HTTPException(404, "Video not found")
+    
+    # Validate progress range
+    progress = max(0, min(100, request.progress_percent))
+    
+    # Get last published progress from Redis to throttle updates
+    from app.db.redis import get_upload_progress
+    last_published_progress = get_upload_progress(user_id, video_id) or -1
+    
+    # Store progress in Redis
+    set_upload_progress(user_id, video_id, progress)
+    
+    # Publish WebSocket event (throttled to 1% increments or at completion)
+    if should_publish_progress(progress, last_published_progress):
+        # Use "r2" as platform identifier for R2 uploads
+        await publish_upload_progress(user_id, video_id, "r2", progress)
+    
+    return {"ok": True, "progress": progress}
 
 
 @router.get("/{video_id}/file")
