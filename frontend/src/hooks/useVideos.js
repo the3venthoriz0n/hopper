@@ -239,7 +239,8 @@ export function useVideos(
         const multipartInit = await videoService.initiateMultipartUpload(
           file.name,
           file.size,
-          file.type
+          file.type,
+          videoId
         );
         objectKey = multipartInit.object_key;
         const uploadId = multipartInit.upload_id;
@@ -272,14 +273,16 @@ export function useVideos(
           async () => {
             // Check cancellation before each part
             return await videoService.checkR2Cancelled(videoId);
-          }
+          },
+          videoId
         );
       } else {
         // Get presigned URL for single-file upload (small files)
         const presignedData = await videoService.getPresignedUploadUrl(
           file.name,
           file.size,
-          file.type
+          file.type,
+          videoId
         );
         objectKey = presignedData.object_key;
         
@@ -299,7 +302,8 @@ export function useVideos(
           async () => {
             // Check cancellation periodically during upload
             return await videoService.checkR2Cancelled(videoId);
-          }
+          },
+          videoId
         );
       }
       
@@ -315,9 +319,12 @@ export function useVideos(
       if (setMessage) setMessage(`✅ Added ${file.name} to queue (will cost ${tokensRequired} ${tokensRequired === 1 ? 'token' : 'tokens'} on upload)`);
     } catch (err) {
       // Check if upload was cancelled - don't show error notification for cancellations
-      const isCancelled = err.message?.toLowerCase().includes('cancelled') || 
-                         err.message?.toLowerCase().includes('aborted') ||
-                         err.response?.data?.detail?.toLowerCase().includes('cancelled');
+      const errorMessage = err.message?.toLowerCase() || '';
+      const errorDetail = err.response?.data?.detail?.toLowerCase() || '';
+      const isCancelled = errorMessage.includes('cancelled') || 
+                         errorMessage.includes('aborted') ||
+                         errorMessage.includes('upload cancelled by user') ||
+                         errorDetail.includes('cancelled');
       
       // On failure, remove video from queue (unless cancelled - cancelled videos stay in queue with cancelled status)
       if (videoId && !isCancelled) {

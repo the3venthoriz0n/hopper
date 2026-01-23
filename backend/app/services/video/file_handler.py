@@ -306,6 +306,10 @@ async def confirm_upload(
     
     upload_logger.info(f"Video upload confirmed for user {user_id}: {filename} ({actual_file_size / (1024*1024):.2f} MB, will cost {tokens_required} tokens on upload)")
     
+    # Clear upload info from Redis (upload completed successfully)
+    from app.db.redis import clear_r2_upload_info
+    clear_r2_upload_info(video_id)
+    
     # Build video response
     all_settings = get_all_user_settings(user_id, db=db)
     all_tokens = get_all_oauth_tokens(user_id, db=db)
@@ -326,7 +330,8 @@ def get_presigned_upload_url_service(
     file_size: int,
     content_type: Optional[str],
     user_id: int,
-    db: Session
+    db: Session,
+    video_id: Optional[int] = None
 ) -> Dict[str, Any]:
     """Get presigned URL for single file upload to R2
     
@@ -336,6 +341,7 @@ def get_presigned_upload_url_service(
         content_type: Optional content type (MIME type)
         user_id: User ID
         db: Database session
+        video_id: Optional video ID for storing upload info in Redis
         
     Returns:
         Dict with upload_url, object_key, expires_in
@@ -356,6 +362,11 @@ def get_presigned_upload_url_service(
         expires_in=settings.R2_PRESIGNED_URL_EXPIRY
     )
     
+    # Store upload info in Redis if video_id is provided
+    if video_id:
+        from app.db.redis import set_r2_upload_info
+        set_r2_upload_info(video_id, "single", object_key)
+    
     return {
         "upload_url": upload_url,
         "object_key": object_key,
@@ -369,7 +380,8 @@ def initiate_multipart_upload_service(
     file_size: int,
     content_type: Optional[str],
     user_id: int,
-    db: Session
+    db: Session,
+    video_id: Optional[int] = None
 ) -> Dict[str, Any]:
     """Initiate multipart upload for large files
     
@@ -379,6 +391,7 @@ def initiate_multipart_upload_service(
         content_type: Optional content type (MIME type)
         user_id: User ID
         db: Database session
+        video_id: Optional video ID for storing upload info in Redis
         
     Returns:
         Dict with upload_id, object_key, expires_in
@@ -397,6 +410,11 @@ def initiate_multipart_upload_service(
         object_key,
         content_type=content_type
     )
+    
+    # Store upload info in Redis if video_id is provided
+    if video_id:
+        from app.db.redis import set_r2_upload_info
+        set_r2_upload_info(video_id, "multipart", object_key, upload_id)
     
     return {
         "upload_id": upload_id,

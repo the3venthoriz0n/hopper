@@ -714,6 +714,33 @@ async def cancel_upload(video_id: int, user_id: int, db: Session) -> Dict[str, A
     if upload_state['has_r2_upload']:
         set_r2_upload_cancelled(video_id)
         upload_logger.info(f"R2 upload cancellation flag set for video {video_id}")
+        
+        # Clean up R2 upload (abort multipart if applicable)
+        from app.db.redis import get_r2_upload_info, clear_r2_upload_info
+        upload_info = get_r2_upload_info(video_id)
+        if upload_info:
+            # If multipart, abort the multipart upload in R2
+            if upload_info.get("upload_type") == "multipart":
+                from app.services.storage.r2_service import get_r2_service
+                r2_service = get_r2_service()
+                try:
+                    r2_service.abort_multipart_upload(
+                        upload_info["object_key"],
+                        upload_info["upload_id"]
+                    )
+                    upload_logger.info(
+                        f"Aborted multipart upload for video {video_id}: "
+                        f"object_key={upload_info['object_key']}, upload_id={upload_info['upload_id']}"
+                    )
+                except Exception as e:
+                    upload_logger.warning(
+                        f"Failed to abort multipart upload for video {video_id}: {e}",
+                        exc_info=True
+                    )
+                    # Continue anyway - clear Redis entry
+            
+            # Clear upload info from Redis
+            clear_r2_upload_info(video_id)
     
     # Cancel destination uploads if any are in progress
     if upload_state['has_destination_uploads']:

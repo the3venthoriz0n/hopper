@@ -55,12 +55,14 @@ class PresignedUploadRequest(BaseModel):
     filename: str
     file_size: int
     content_type: Optional[str] = None
+    video_id: Optional[int] = None  # Optional video ID for storing upload info
 
 
 class MultipartInitiateRequest(BaseModel):
     filename: str
     file_size: int
     content_type: Optional[str] = None
+    video_id: Optional[int] = None  # Optional video ID for storing upload info
 
 
 class MultipartPartUrlRequest(BaseModel):
@@ -93,6 +95,10 @@ class ConfirmUploadRequest(BaseModel):
 
 
 class FailUploadRequest(BaseModel):
+    video_id: int
+
+
+class AbortUploadRequest(BaseModel):
     video_id: int
 
 
@@ -431,7 +437,8 @@ async def get_presigned_upload_url(
             file_size=request_data.file_size,
             content_type=request_data.content_type,
             user_id=user_id,
-            db=db
+            db=db,
+            video_id=request_data.video_id
         )
         logger.info(f"Successfully generated presigned URL for user {user_id}, filename={request_data.filename}")
         return result
@@ -472,7 +479,8 @@ async def initiate_multipart_upload(
             file_size=request.file_size,
             content_type=request.content_type,
             user_id=user_id,
-            db=db
+            db=db,
+            video_id=request.video_id
         )
     except ValueError as e:
         error_msg = str(e)
@@ -582,6 +590,56 @@ async def confirm_upload(
     except Exception as e:
         logger.error(f"Failed to confirm upload for user {user_id}: {e}", exc_info=True)
         raise HTTPException(500, f"Failed to confirm upload: {str(e)}")
+
+
+@upload_router.post("/abort")
+async def abort_upload(
+    request: AbortUploadRequest,
+    user_id: int = Depends(require_csrf_new),
+    db: Session = Depends(get_db)
+):
+    """Abort R2 upload (works for both single and multipart uploads)
+    
+    Cleans up multipart uploads in R2 if applicable, and clears upload info from Redis.
+    """
+    from app.db.redis import get_r2_upload_info, clear_r2_upload_info
+    from app.services.storage.r2_service import get_r2_service
+    from app.db.helpers import get_user_videos
+    
+    # Verify video belongs to user
+    videos = get_user_videos(user_id, db=db)
+    video = next((v for v in videos if v.id == request.video_id), None)
+    
+    if not video:
+        raise HTTPException(404, "Video not found")
+    
+    # Get upload info from Redis
+    upload_info = get_r2_upload_info(request.video_id)
+    
+    if upload_info:
+        # If multipart, abort the multipart upload in R2
+        if upload_info.get("upload_type") == "multipart":
+            r2_service = get_r2_service()
+            try:
+                r2_service.abort_multipart_upload(
+                    upload_info["object_key"],
+                    upload_info["upload_id"]
+                )
+                logger.info(
+                    f"Aborted multipart upload for video {request.video_id}: "
+                    f"object_key={upload_info['object_key']}, upload_id={upload_info['upload_id']}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to abort multipart upload for video {request.video_id}: {e}",
+                    exc_info=True
+                )
+                # Continue anyway - clear Redis entry
+        
+        # Clear upload info from Redis
+        clear_r2_upload_info(request.video_id)
+    
+    return {"ok": True, "message": "Upload aborted"}
 
 
 @upload_router.post("/fail")

@@ -114,6 +114,25 @@ export const checkR2Cancelled = async (id) => {
 };
 
 /**
+ * Abort R2 upload (works for both single and multipart uploads)
+ * @param {string|number} videoId - Video ID
+ * @returns {Promise<void>}
+ */
+export const abortR2Upload = async (videoId) => {
+  const csrfToken = Cookies.get('csrf_token_client');
+  try {
+    await axios.post(`${API}/upload/abort`, {
+      video_id: videoId
+    }, {
+      headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
+    });
+  } catch (err) {
+    // Log but don't throw - cleanup failure shouldn't block cancellation
+    console.warn('Failed to abort R2 upload:', err);
+  }
+};
+
+/**
  * Update video settings
  * @param {string|number} videoId - Video ID
  * @param {object} settings - Settings object
@@ -203,12 +222,13 @@ export const getQueueTokenCount = async () => {
  * @param {string} contentType - Content type (MIME type)
  * @returns {Promise<object>} {upload_id, object_key, expires_in}
  */
-export const initiateMultipartUpload = async (filename, fileSize, contentType = null) => {
+export const initiateMultipartUpload = async (filename, fileSize, contentType = null, videoId = null) => {
   const csrfToken = Cookies.get('csrf_token_client');
   const res = await axios.post(`${API}/upload/multipart/initiate`, {
     filename,
     file_size: fileSize,
-    content_type: contentType
+    content_type: contentType,
+    video_id: videoId
   }, {
     headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
   });
@@ -314,12 +334,13 @@ export const failUpload = async (videoId) => {
  * @param {string} contentType - Content type (MIME type), optional
  * @returns {Promise<object>} {upload_url, object_key, expires_in}
  */
-export const getPresignedUploadUrl = async (filename, fileSize, contentType = null) => {
+export const getPresignedUploadUrl = async (filename, fileSize, contentType = null, videoId = null) => {
   const csrfToken = Cookies.get('csrf_token_client');
   const res = await axios.post(`${API}/upload/presigned`, {
     filename,
     file_size: fileSize,
-    content_type: contentType
+    content_type: contentType,
+    video_id: videoId
   }, {
     headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {}
   });
@@ -332,12 +353,27 @@ export const getPresignedUploadUrl = async (filename, fileSize, contentType = nu
  * @param {string} uploadUrl - Presigned upload URL
  * @param {function} onProgress - Progress callback (receives {loaded, total})
  * @param {function} checkCancellation - Optional function to check if upload is cancelled (returns Promise<boolean>)
+ * @param {number} videoId - Optional video ID for cleanup on cancellation
  * @returns {Promise<void>}
  */
-export const uploadToR2Direct = async (file, uploadUrl, onProgress, checkCancellation = null) => {
+export const uploadToR2Direct = async (file, uploadUrl, onProgress, checkCancellation = null, videoId = null) => {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     let cancellationCheckInterval = null;
+    let isCancelled = false; // Track if we intentionally cancelled
+    let isResolved = false; // Prevent multiple rejections/resolutions
+    
+    // Helper to reject with cancellation message
+    const rejectCancelled = () => {
+      if (!isResolved) {
+        isResolved = true;
+        isCancelled = true;
+        if (cancellationCheckInterval) {
+          clearInterval(cancellationCheckInterval);
+        }
+        reject(new Error('Upload cancelled by user'));
+      }
+    };
     
     // Check cancellation periodically during upload
     if (checkCancellation) {
@@ -346,8 +382,15 @@ export const uploadToR2Direct = async (file, uploadUrl, onProgress, checkCancell
           const cancelled = await checkCancellation();
           if (cancelled) {
             clearInterval(cancellationCheckInterval);
+            isCancelled = true;
             xhr.abort();
-            reject(new Error('Upload cancelled by user'));
+            // Clean up R2 upload (abort multipart if applicable)
+            if (videoId) {
+              abortR2Upload(videoId).catch(err => {
+                console.warn('Failed to abort R2 upload on cancellation:', err);
+              });
+            }
+            rejectCancelled();
           }
         } catch (err) {
           // Ignore errors from cancellation check
@@ -363,28 +406,35 @@ export const uploadToR2Direct = async (file, uploadUrl, onProgress, checkCancell
     });
     
     xhr.addEventListener('load', () => {
+      if (isResolved || isCancelled) return;
       if (cancellationCheckInterval) {
         clearInterval(cancellationCheckInterval);
       }
       if (xhr.status >= 200 && xhr.status < 300) {
+        isResolved = true;
         resolve();
       } else {
+        isResolved = true;
         reject(new Error(`Upload failed with status ${xhr.status}: ${xhr.statusText}`));
       }
     });
     
     xhr.addEventListener('error', () => {
+      // If we intentionally cancelled, use cancellation message
+      if (isCancelled) {
+        rejectCancelled();
+        return;
+      }
+      if (isResolved) return;
       if (cancellationCheckInterval) {
         clearInterval(cancellationCheckInterval);
       }
+      isResolved = true;
       reject(new Error('Upload failed: network error'));
     });
     
     xhr.addEventListener('abort', () => {
-      if (cancellationCheckInterval) {
-        clearInterval(cancellationCheckInterval);
-      }
-      reject(new Error('Upload cancelled by user'));
+      rejectCancelled();
     });
     
     xhr.open('PUT', uploadUrl);
@@ -402,9 +452,10 @@ export const uploadToR2Direct = async (file, uploadUrl, onProgress, checkCancell
  * @param {function} getPartUrl - Function to get multipart part URL for a part
  * @param {function} completeUpload - Function to complete multipart upload
  * @param {function} checkCancellation - Optional function to check if upload is cancelled (returns Promise<boolean>)
+ * @param {number} videoId - Optional video ID for cleanup on cancellation
  * @returns {Promise<object>} {object_key, size}
  */
-export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress, getPartUrl, completeUpload, checkCancellation = null) => {
+export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress, getPartUrl, completeUpload, checkCancellation = null, videoId = null) => {
   const MULTIPART_PART_SIZE = 100 * 1024 * 1024; // 100MB per part
   const MAX_CONCURRENT_PARTS = 5; // Upload up to 5 parts in parallel
   
@@ -423,6 +474,12 @@ export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress,
         if (currentXhr) {
           currentXhr.abort();
         }
+        // Clean up R2 upload (abort multipart upload)
+        if (videoId) {
+          abortR2Upload(videoId).catch(err => {
+            console.warn('Failed to abort R2 upload on cancellation:', err);
+          });
+        }
         throw new Error('Upload cancelled by user');
       }
     }
@@ -438,29 +495,85 @@ export const uploadToR2Multipart = async (file, uploadId, objectKey, onProgress,
     const etag = await new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       currentXhr = xhr;
+      let isCancelled = false;
+      let isResolved = false;
+      let partCancellationCheckInterval = null;
+      
+      // Helper to reject with cancellation message
+      const rejectCancelled = () => {
+        if (!isResolved) {
+          isResolved = true;
+          isCancelled = true;
+          if (partCancellationCheckInterval) {
+            clearInterval(partCancellationCheckInterval);
+          }
+          reject(new Error('Upload cancelled by user'));
+        }
+      };
+      
+      // Check cancellation periodically during part upload
+      if (checkCancellation) {
+        partCancellationCheckInterval = setInterval(async () => {
+          try {
+            const cancelled = await checkCancellation();
+            if (cancelled) {
+              clearInterval(partCancellationCheckInterval);
+              isCancelled = true;
+              xhr.abort();
+              // Clean up R2 upload (abort multipart upload)
+              if (videoId) {
+                abortR2Upload(videoId).catch(err => {
+                  console.warn('Failed to abort R2 upload on cancellation:', err);
+                });
+              }
+              rejectCancelled();
+            }
+          } catch (err) {
+            // Ignore errors from cancellation check
+            console.warn('Error checking cancellation:', err);
+          }
+        }, 1000); // Check every second
+      }
       
       xhr.addEventListener('load', () => {
+        if (isResolved || isCancelled) return;
+        if (partCancellationCheckInterval) {
+          clearInterval(partCancellationCheckInterval);
+        }
         if (xhr.status >= 200 && xhr.status < 300) {
           // Extract ETag from response headers
           const etag = xhr.getResponseHeader('ETag') || xhr.getResponseHeader('etag');
           if (!etag) {
+            isResolved = true;
             reject(new Error('Missing ETag in response'));
             return;
           }
           // Remove quotes from ETag if present
           const cleanEtag = etag.replace(/^"|"$/g, '');
+          isResolved = true;
           resolve(cleanEtag);
         } else {
+          isResolved = true;
           reject(new Error(`Part ${partNumber} upload failed with status ${xhr.status}`));
         }
       });
       
       xhr.addEventListener('error', () => {
+        // If we intentionally cancelled, use cancellation message
+        if (isCancelled) {
+          rejectCancelled();
+          return;
+        }
+        if (isResolved) return;
+        if (partCancellationCheckInterval) {
+          clearInterval(partCancellationCheckInterval);
+        }
+        isResolved = true;
         reject(new Error(`Part ${partNumber} upload failed: network error`));
       });
       
       xhr.addEventListener('abort', () => {
-        reject(new Error('Upload cancelled by user'));
+        rejectCancelled();
       });
       
       xhr.open('PUT', upload_url);

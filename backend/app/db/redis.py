@@ -232,6 +232,47 @@ def clear_r2_upload_cancelled(video_id: int) -> None:
     get_redis_client().delete(key)
 
 
+def set_r2_upload_info(video_id: int, upload_type: str, object_key: str, upload_id: Optional[str] = None) -> None:
+    """Store R2 upload info (works for both single and multipart uploads)
+    
+    Args:
+        video_id: Video ID
+        upload_type: "single" or "multipart"
+        object_key: R2 object key
+        upload_id: Multipart upload ID (only for multipart uploads)
+    """
+    key = f"r2_upload_info:{video_id}"
+    info = {
+        "upload_type": upload_type,
+        "object_key": object_key
+    }
+    if upload_id:
+        info["upload_id"] = upload_id
+    get_redis_client().setex(key, 3600, json.dumps(info))  # 1 hour TTL
+
+
+def get_r2_upload_info(video_id: int) -> Optional[Dict[str, str]]:
+    """Get R2 upload info (works for both single and multipart uploads)
+    
+    Args:
+        video_id: Video ID
+        
+    Returns:
+        Dict with upload_type, object_key, and upload_id (if multipart), or None if not found
+    """
+    key = f"r2_upload_info:{video_id}"
+    data = get_redis_client().get(key)
+    if data:
+        return json.loads(data)
+    return None
+
+
+def clear_r2_upload_info(video_id: int) -> None:
+    """Clear R2 upload info"""
+    key = f"r2_upload_info:{video_id}"
+    get_redis_client().delete(key)
+
+
 def increment_rate_limit(identifier: str, window: int) -> int:
     """Increment rate limit counter and return current count.
     Uses Lua script to atomically increment and set TTL only for new keys (fixed window rate limiting)."""
