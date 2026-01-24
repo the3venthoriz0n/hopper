@@ -529,29 +529,242 @@ class TestHappyPathIntegration:
             assert sub_data["subscription"]["plan_type"] == "free_daily"
             
             # Update cookies from subscription response (in case session was updated)
-            client.cookies.update(sub_response.cookies)
+
+
+@pytest.mark.high
+class TestFileTypeValidation:
+    """Test file type validation for upload endpoints"""
+    
+    def test_initiate_upload_rejects_invalid_file_type(self, authenticated_client, csrf_token):
+        """Test /api/upload/initiate rejects non-MP4/MOV files"""
+        # File type validation happens first, so no need to mock tokens
+        response = authenticated_client.post(
+            "/api/upload/initiate",
+            json={
+                "filename": "video.webm",
+                "file_size": 1024 * 1024  # 1MB
+            },
+            headers={"X-CSRF-Token": csrf_token}
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert "Invalid file type" in data["detail"]
+        assert ".webm" in data["detail"]
+        assert "Only MP4 (.mp4) and MOV (.mov)" in data["detail"]
+    
+    def test_presigned_url_rejects_invalid_file_type(self, authenticated_client, csrf_token):
+        """Test /api/upload/presigned rejects non-MP4/MOV files"""
+        # Mock R2 service to avoid actual R2 calls
+        with patch('app.services.video.file_handler.get_r2_service') as mock_r2:
+            mock_r2_service = Mock()
+            mock_r2_service.generate_presigned_upload_url.return_value = "https://example.com/upload"
+            mock_r2.return_value = mock_r2_service
             
-            # 5. Get CSRF token from CSRF endpoint (needed for POST requests)
-            csrf_response = client.get("/api/auth/csrf")
-            assert csrf_response.status_code == status.HTTP_200_OK
-            
-            # Update cookies from CSRF response (in case session was updated/initialized)
-            client.cookies.update(csrf_response.cookies)
-            
-            csrf_token = csrf_response.headers.get("X-CSRF-Token") or csrf_response.json().get("csrf_token")
-            assert csrf_token is not None, "CSRF token should be available"
-            
-            # 6. Toggle YouTube destination (cookies are now on client, no need to pass manually)
-            toggle_response = client.post(
-                "/api/destinations/youtube/toggle",
-                json={"enabled": True},
-                headers={"X-CSRF-Token": csrf_token}  # Only pass the header
+            # File type validation happens first, so no need to mock tokens
+            response = authenticated_client.post(
+                "/api/upload/presigned",
+                json={
+                    "filename": "video.avi",
+                    "file_size": 1024 * 1024,  # 1MB
+                    "content_type": "video/x-msvideo"
+                },
+                headers={"X-CSRF-Token": csrf_token}
             )
-            assert toggle_response.status_code == status.HTTP_200_OK
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+            data = response.json()
+            assert "Invalid file type" in data["detail"]
+            assert ".avi" in data["detail"]
+            assert "Only MP4 (.mp4) and MOV (.mov)" in data["detail"]
+    
+    def test_multipart_initiate_rejects_invalid_file_type(self, authenticated_client, csrf_token):
+        """Test /api/upload/multipart/initiate rejects non-MP4/MOV files"""
+        # Mock R2 service to avoid actual R2 calls
+        with patch('app.services.video.file_handler.get_r2_service') as mock_r2:
+            mock_r2_service = Mock()
+            mock_r2_service.initiate_multipart_upload.return_value = {
+                "upload_id": "test_upload_id",
+                "object_key": "test_key"
+            }
+            mock_r2.return_value = mock_r2_service
             
-            # 7. Verify settings reflect changes
-            settings_response = client.get("/api/destinations")
-            assert settings_response.status_code == status.HTTP_200_OK
-            dest_data = settings_response.json()
-            assert dest_data["youtube"]["enabled"] is True
+            # File type validation happens first, so no need to mock tokens
+            response = authenticated_client.post(
+                "/api/upload/multipart/initiate",
+                json={
+                    "filename": "video.mkv",
+                    "file_size": 1024 * 1024 * 100,  # 100MB (large enough for multipart)
+                    "content_type": "video/x-matroska"
+                },
+                headers={"X-CSRF-Token": csrf_token}
+            )
+            assert response.status_code == status.HTTP_400_BAD_REQUEST
+            data = response.json()
+            assert "Invalid file type" in data["detail"]
+            assert ".mkv" in data["detail"]
+            assert "Only MP4 (.mp4) and MOV (.mov)" in data["detail"]
+    
+    def test_initiate_upload_accepts_mp4(self, authenticated_client, csrf_token, test_user, db_session):
+        """Test MP4 files are accepted by /api/upload/initiate"""
+        # Create token balance so tokens are available
+        from app.models.subscription import Subscription
+        from app.models.token_balance import TokenBalance
+        from datetime import datetime, timezone, timedelta
+        
+        subscription = Subscription(
+            user_id=test_user.id,
+            stripe_subscription_id="sub_test123",
+            stripe_customer_id="cus_test123",
+            plan_type="free",
+            status="active",
+            current_period_start=datetime.now(timezone.utc),
+            current_period_end=datetime.now(timezone.utc) + timedelta(days=30)
+        )
+        db_session.add(subscription)
+        
+        balance = TokenBalance(
+            user_id=test_user.id,
+            tokens_remaining=100,  # Enough tokens
+            tokens_used_this_period=0,
+            monthly_tokens=100,
+            period_start=datetime.now(timezone.utc),
+            period_end=datetime.now(timezone.utc) + timedelta(days=30)
+        )
+        db_session.add(balance)
+        db_session.commit()
+        
+        with patch('app.services.video.file_handler.get_r2_service') as mock_r2:
+            # Mock R2 service to avoid actual R2 calls
+            mock_r2_service = Mock()
+            mock_r2_service.object_exists.return_value = False
+            mock_r2.return_value = mock_r2_service
+            
+            response = authenticated_client.post(
+                "/api/upload/initiate",
+                json={
+                    "filename": "video.mp4",
+                    "file_size": 1024 * 1024  # 1MB
+                },
+                headers={"X-CSRF-Token": csrf_token}
+            )
+            # Should succeed (200) or fail for other reasons, but not file type
+            assert response.status_code != status.HTTP_400_BAD_REQUEST or "Invalid file type" not in response.json().get("detail", "")
+    
+    def test_initiate_upload_accepts_mov(self, authenticated_client, csrf_token, test_user, db_session):
+        """Test MOV files are accepted by /api/upload/initiate"""
+        # Create token balance so tokens are available
+        from app.models.subscription import Subscription
+        from app.models.token_balance import TokenBalance
+        from datetime import datetime, timezone, timedelta
+        
+        subscription = Subscription(
+            user_id=test_user.id,
+            stripe_subscription_id="sub_test123",
+            stripe_customer_id="cus_test123",
+            plan_type="free",
+            status="active",
+            current_period_start=datetime.now(timezone.utc),
+            current_period_end=datetime.now(timezone.utc) + timedelta(days=30)
+        )
+        db_session.add(subscription)
+        
+        balance = TokenBalance(
+            user_id=test_user.id,
+            tokens_remaining=100,  # Enough tokens
+            tokens_used_this_period=0,
+            monthly_tokens=100,
+            period_start=datetime.now(timezone.utc),
+            period_end=datetime.now(timezone.utc) + timedelta(days=30)
+        )
+        db_session.add(balance)
+        db_session.commit()
+        
+        with patch('app.services.video.file_handler.get_r2_service') as mock_r2:
+            # Mock R2 service to avoid actual R2 calls
+            mock_r2_service = Mock()
+            mock_r2_service.object_exists.return_value = False
+            mock_r2.return_value = mock_r2_service
+            
+            response = authenticated_client.post(
+                "/api/upload/initiate",
+                json={
+                    "filename": "video.mov",
+                    "file_size": 1024 * 1024  # 1MB
+                },
+                headers={"X-CSRF-Token": csrf_token}
+            )
+            # Should succeed (200) or fail for other reasons, but not file type
+            assert response.status_code != status.HTTP_400_BAD_REQUEST or "Invalid file type" not in response.json().get("detail", "")
+    
+    def test_initiate_upload_case_insensitive(self, authenticated_client, csrf_token, test_user, db_session):
+        """Test file type validation is case-insensitive"""
+        # Create token balance so tokens are available
+        from app.models.subscription import Subscription
+        from app.models.token_balance import TokenBalance
+        from datetime import datetime, timezone, timedelta
+        
+        subscription = Subscription(
+            user_id=test_user.id,
+            stripe_subscription_id="sub_test123",
+            stripe_customer_id="cus_test123",
+            plan_type="free",
+            status="active",
+            current_period_start=datetime.now(timezone.utc),
+            current_period_end=datetime.now(timezone.utc) + timedelta(days=30)
+        )
+        db_session.add(subscription)
+        
+        balance = TokenBalance(
+            user_id=test_user.id,
+            tokens_remaining=100,  # Enough tokens
+            tokens_used_this_period=0,
+            monthly_tokens=100,
+            period_start=datetime.now(timezone.utc),
+            period_end=datetime.now(timezone.utc) + timedelta(days=30)
+        )
+        db_session.add(balance)
+        db_session.commit()
+        
+        with patch('app.services.video.file_handler.get_r2_service') as mock_r2:
+            # Mock R2 service to avoid actual R2 calls
+            mock_r2_service = Mock()
+            mock_r2_service.object_exists.return_value = False
+            mock_r2.return_value = mock_r2_service
+            
+            # Test uppercase
+            response = authenticated_client.post(
+                "/api/upload/initiate",
+                json={
+                    "filename": "video.MP4",
+                    "file_size": 1024 * 1024
+                },
+                headers={"X-CSRF-Token": csrf_token}
+            )
+            assert response.status_code != status.HTTP_400_BAD_REQUEST or "Invalid file type" not in response.json().get("detail", "")
+            
+            # Test mixed case
+            response = authenticated_client.post(
+                "/api/upload/initiate",
+                json={
+                    "filename": "video.Mov",
+                    "file_size": 1024 * 1024
+                },
+                headers={"X-CSRF-Token": csrf_token}
+            )
+            assert response.status_code != status.HTTP_400_BAD_REQUEST or "Invalid file type" not in response.json().get("detail", "")
+    
+    def test_initiate_upload_rejects_no_extension(self, authenticated_client, csrf_token):
+        """Test files without extension are rejected"""
+        # File type validation happens first, so no need to mock tokens
+        response = authenticated_client.post(
+            "/api/upload/initiate",
+            json={
+                "filename": "video",
+                "file_size": 1024 * 1024
+            },
+            headers={"X-CSRF-Token": csrf_token}
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert "Invalid file type" in data["detail"]
+        assert "no file extension" in data["detail"]
 

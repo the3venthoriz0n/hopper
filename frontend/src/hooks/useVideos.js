@@ -190,6 +190,39 @@ export function useVideos(
   }, []);
 
   const addVideo = useCallback(async (file) => {
+    // Validate file type first (fail fast)
+    const filename = file.name;
+    if (!filename || filename.indexOf('.') === -1) {
+      const errorMsg = `Invalid file type: ${filename} has no file extension. Only MP4 and MOV files are supported.`;
+      setNotification({
+        type: 'error',
+        title: 'Invalid File Type',
+        message: errorMsg,
+        videoFilename: filename
+      });
+      setTimeout(() => setNotification(null), 10000);
+      if (setMessage) setMessage(`❌ ${errorMsg}`);
+      return;
+    }
+    
+    // Get the last extension (handle cases like file.mp4.backup)
+    const parts = filename.split('.');
+    const extension = parts.length > 1 ? parts[parts.length - 1].toLowerCase() : '';
+    const allowedExtensions = ['mp4', 'mov'];
+    
+    if (!allowedExtensions.includes(extension)) {
+      const errorMsg = `Invalid file type: ${filename} has extension .${extension}. Only MP4 (.mp4) and MOV (.mov) files are supported.`;
+      setNotification({
+        type: 'error',
+        title: 'Invalid File Type',
+        message: errorMsg,
+        videoFilename: filename
+      });
+      setTimeout(() => setNotification(null), 10000);
+      if (setMessage) setMessage(`❌ ${errorMsg}`);
+      return;
+    }
+    
     // Use backend-provided limit for client-side validation (better UX - block before upload)
     // Backend also validates as safety net
     const maxSizeBytes = maxFileSize?.max_file_size_bytes || (10 * 1024 * 1024 * 1024); // 10GB default

@@ -31,11 +31,10 @@ function Help() {
 
         <section style={{ marginBottom: '3rem' }}>
           <h2 style={{ marginBottom: '1rem', color: HOPPER_COLORS.purpleViolet }}>Supported File Types</h2>
-          <p style={{ marginBottom: '1rem' }}>hopper accepts any video file with a standard video MIME type. For best compatibility across all platforms:</p>
+          <p style={{ marginBottom: '1rem' }}>hopper only accepts MP4 and MOV video files:</p>
           <ul style={{ lineHeight: '1.8', marginBottom: '1rem' }}>
             <li><strong>MP4</strong> - Recommended format, supported by all platforms (YouTube, TikTok, Instagram)</li>
-            <li><strong>MOV</strong> - Supported by TikTok</li>
-            <li><strong>WebM</strong> - Supported by TikTok</li>
+            <li><strong>MOV</strong> - Supported by TikTok and Instagram</li>
           </ul>
           <div style={{ 
             background: rgba(HOPPER_COLORS.rgb.warning, 0.1), 
@@ -44,7 +43,7 @@ function Help() {
             padding: '1rem',
             fontSize: '0.9rem'
           }}>
-            <strong>Note:</strong> While hopper accepts any video file type, each platform has its own format requirements. MP4 is the safest choice for maximum compatibility.
+            <strong>Note:</strong> Only MP4 (.mp4) and MOV (.mov) files are accepted for upload. Other video formats (WebM, AVI, etc.) are not supported.
           </div>
         </section>
 

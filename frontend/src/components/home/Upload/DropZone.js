@@ -39,7 +39,7 @@ export default function DropZone({
         id="file-input"
         type="file"
         multiple
-        accept="video/*"
+        accept=".mp4,.mov,video/mp4,video/quicktime"
         style={{ display: 'none' }}
         onChange={handleFileChange}
       />

@@ -29,6 +29,33 @@ logger = logging.getLogger(__name__)
 
 
 # Helper functions for validation and R2 operations
+def _validate_file_type(filename: str) -> None:
+    """Validate file type - only MP4 and MOV are allowed
+    
+    Args:
+        filename: File name to validate
+        
+    Raises:
+        ValueError: If file type is not MP4 or MOV
+    """
+    # Extract file extension (case-insensitive)
+    if '.' not in filename:
+        raise ValueError(
+            f"Invalid file type: {filename} has no file extension. Only MP4 and MOV files are supported."
+        )
+    
+    # Get the last extension (handle cases like file.mp4.backup)
+    extension = filename.rsplit('.', 1)[-1].lower()
+    
+    # Allowed extensions
+    allowed_extensions = {'mp4', 'mov'}
+    
+    if extension not in allowed_extensions:
+        raise ValueError(
+            f"Invalid file type: {filename} has extension .{extension}. Only MP4 (.mp4) and MOV (.mov) files are supported."
+        )
+
+
 def _validate_file_size(file_size: int, filename: str) -> None:
     """Validate file size against MAX_FILE_SIZE
     
@@ -115,8 +142,11 @@ async def initiate_upload_service(
         Dict with video data (same format as GET /api/videos)
         
     Raises:
-        ValueError: For validation errors (file too large, duplicate)
+        ValueError: For validation errors (invalid file type, file too large, duplicate)
     """
+    # Validate file type first (fail fast)
+    _validate_file_type(filename)
+    
     # Validate file size
     _validate_file_size(file_size, filename)
     
@@ -348,9 +378,12 @@ def get_presigned_upload_url_service(
         Dict with upload_url, object_key, expires_in
         
     Raises:
-        ValueError: For validation errors (file too large, duplicate)
+        ValueError: For validation errors (invalid file type, file too large, duplicate)
         Exception: For R2 errors
     """
+    # Validate file type first (fail fast)
+    _validate_file_type(filename)
+    
     _validate_file_size(file_size, filename)
     _check_duplicate_filename(filename, user_id, db)
     
@@ -398,9 +431,12 @@ def initiate_multipart_upload_service(
         Dict with upload_id, object_key, expires_in
         
     Raises:
-        ValueError: For validation errors (file too large, duplicate)
+        ValueError: For validation errors (invalid file type, file too large, duplicate)
         Exception: For R2 errors
     """
+    # Validate file type first (fail fast)
+    _validate_file_type(filename)
+    
     _validate_file_size(file_size, filename)
     _check_duplicate_filename(filename, user_id, db)
     

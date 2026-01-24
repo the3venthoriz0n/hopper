@@ -14,6 +14,7 @@ if str(backend_dir) not in sys.path:
 
 from app.utils.templates import replace_template_placeholders
 from app.services.video.helpers import cleanup_video_file
+from app.services.video.file_handler import _validate_file_type
 from app.core.security import get_client_identifier
 from app.models.subscription import Subscription
 from app.models.token_balance import TokenBalance
@@ -185,6 +186,80 @@ class TestVideoCleanup:
         
         result = cleanup_video_file(mock_video)
         assert result is True
+
+
+class TestFileTypeValidation:
+    """Test file type validation for R2 uploads"""
+    
+    def test_validate_file_type_valid_mp4(self):
+        """Test .mp4 extension (lowercase) is accepted"""
+        _validate_file_type("video.mp4")
+        # Should not raise an exception
+    
+    def test_validate_file_type_valid_mov(self):
+        """Test .mov extension (lowercase) is accepted"""
+        _validate_file_type("video.mov")
+        # Should not raise an exception
+    
+    def test_validate_file_type_case_insensitive(self):
+        """Test case-insensitive extension validation"""
+        # Test uppercase
+        _validate_file_type("video.MP4")
+        _validate_file_type("video.MOV")
+        
+        # Test mixed case
+        _validate_file_type("video.Mp4")
+        _validate_file_type("video.Mov")
+        
+        # Test lowercase (already tested above, but for completeness)
+        _validate_file_type("video.mp4")
+        _validate_file_type("video.mov")
+    
+    def test_validate_file_type_invalid_webm(self):
+        """Test .webm extension is rejected"""
+        with pytest.raises(ValueError) as exc_info:
+            _validate_file_type("video.webm")
+        assert "Invalid file type" in str(exc_info.value)
+        assert ".webm" in str(exc_info.value)
+        assert "Only MP4 (.mp4) and MOV (.mov)" in str(exc_info.value)
+    
+    def test_validate_file_type_invalid_avi(self):
+        """Test .avi extension is rejected"""
+        with pytest.raises(ValueError) as exc_info:
+            _validate_file_type("video.avi")
+        assert "Invalid file type" in str(exc_info.value)
+        assert ".avi" in str(exc_info.value)
+        assert "Only MP4 (.mp4) and MOV (.mov)" in str(exc_info.value)
+    
+    def test_validate_file_type_no_extension(self):
+        """Test files without extension are rejected"""
+        with pytest.raises(ValueError) as exc_info:
+            _validate_file_type("video")
+        assert "Invalid file type" in str(exc_info.value)
+        assert "no file extension" in str(exc_info.value)
+        assert "Only MP4 and MOV files" in str(exc_info.value)
+    
+    def test_validate_file_type_multiple_extensions(self):
+        """Test files with multiple dots use last extension"""
+        # Should check last extension (.backup), not .mp4
+        with pytest.raises(ValueError) as exc_info:
+            _validate_file_type("file.mp4.backup")
+        assert "Invalid file type" in str(exc_info.value)
+        assert ".backup" in str(exc_info.value)
+        
+        # But .mov.backup should also fail
+        with pytest.raises(ValueError) as exc_info:
+            _validate_file_type("file.mov.backup")
+        assert ".backup" in str(exc_info.value)
+    
+    def test_validate_file_type_other_invalid_extensions(self):
+        """Test various other invalid extensions are rejected"""
+        invalid_extensions = [".mkv", ".flv", ".wmv", ".m4v", ".3gp", ".ogv"]
+        for ext in invalid_extensions:
+            with pytest.raises(ValueError) as exc_info:
+                _validate_file_type(f"video{ext}")
+            assert "Invalid file type" in str(exc_info.value)
+            assert f"Only MP4 (.mp4) and MOV (.mov)" in str(exc_info.value)
 
 
 class TestStripeFunctionality:
