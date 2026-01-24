@@ -189,10 +189,18 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     from app.core.security import get_client_ip
     client_ip = get_client_ip(request)
     
-    logger.warning(
-        f"HTTP {exc.status_code} on {request.method} {request.url.path}: {exc.detail} "
-        f"(client_ip={client_ip}, user_agent={request.headers.get('User-Agent', 'unknown')})"
-    )
+    # Log user-blocking errors (400 Bad Request) as errors, not warnings
+    # These typically indicate validation errors that prevent user actions
+    if exc.status_code == 400:
+        logger.error(
+            f"HTTP {exc.status_code} on {request.method} {request.url.path}: {exc.detail} "
+            f"(client_ip={client_ip}, user_agent={request.headers.get('User-Agent', 'unknown')})"
+        )
+    else:
+        logger.warning(
+            f"HTTP {exc.status_code} on {request.method} {request.url.path}: {exc.detail} "
+            f"(client_ip={client_ip}, user_agent={request.headers.get('User-Agent', 'unknown')})"
+        )
     
     return JSONResponse(
         status_code=exc.status_code,

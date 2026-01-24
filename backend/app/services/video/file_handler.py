@@ -75,21 +75,33 @@ def _validate_file_size(file_size: int, filename: str) -> None:
         )
 
 
-def _check_duplicate_filename(filename: str, user_id: int, db: Session) -> None:
+def _check_duplicate_filename(filename: str, user_id: int, db: Session, exclude_video_id: Optional[int] = None) -> None:
     """Check for duplicate filename if duplicates are not allowed
+    
+    Only checks videos that are still in queue (pending, uploading, scheduled).
+    Completed videos (uploaded, failed, cancelled) are not considered duplicates.
     
     Args:
         filename: File name to check
         user_id: User ID
         db: Database session
+        exclude_video_id: Optional video ID to exclude from duplicate check (for same upload in progress)
         
     Raises:
         ValueError: If duplicate found and duplicates not allowed
     """
     global_settings = get_user_settings(user_id, "global", db=db)
+    # Now allow_duplicates is guaranteed to be a boolean (not a string)
     if not global_settings.get("allow_duplicates", False):
         existing_videos = get_user_videos(user_id, db=db)
-        if any(v.filename == filename for v in existing_videos):
+        # Only check videos that are still in queue (not completed)
+        # Exclude the current video_id if provided (same upload in progress)
+        in_queue_videos = [
+            v for v in existing_videos 
+            if v.status in ['pending', 'uploading', 'scheduled'] 
+            and (exclude_video_id is None or v.id != exclude_video_id)
+        ]
+        if any(v.filename == filename for v in in_queue_videos):
             raise ValueError(f"Duplicate video: {filename} is already in the queue")
 
 
@@ -385,7 +397,7 @@ def get_presigned_upload_url_service(
     _validate_file_type(filename)
     
     _validate_file_size(file_size, filename)
-    _check_duplicate_filename(filename, user_id, db)
+    _check_duplicate_filename(filename, user_id, db, exclude_video_id=video_id)
     
     object_key = _generate_r2_object_key(filename, user_id)
     
@@ -438,7 +450,7 @@ def initiate_multipart_upload_service(
     _validate_file_type(filename)
     
     _validate_file_size(file_size, filename)
-    _check_duplicate_filename(filename, user_id, db)
+    _check_duplicate_filename(filename, user_id, db, exclude_video_id=video_id)
     
     object_key = _generate_r2_object_key(filename, user_id)
     

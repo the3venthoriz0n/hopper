@@ -182,12 +182,19 @@ async def security_middleware(request: Request, call_next):
                 logger.warning(f"Failed to extract error from response: {e}")
         
         # Log error details for 400+ errors
+        # User-blocking errors (400 Bad Request) should be logged as errors
         if status_code >= 400:
             client_ip = get_client_ip(request)
-            logger.warning(
-                f"Request failed {status_code} on {request.method} {path}: "
-                f"client_ip={client_ip}, error={error or 'unknown'}"
-            )
+            if status_code == 400:
+                logger.error(
+                    f"Request failed {status_code} on {request.method} {path}: "
+                    f"client_ip={client_ip}, error={error or 'unknown'}"
+                )
+            else:
+                logger.warning(
+                    f"Request failed {status_code} on {request.method} {path}: "
+                    f"client_ip={client_ip}, error={error or 'unknown'}"
+                )
         
         # FIX: Remove 'request.method == "GET"' so token is sent on POST/PUT too
         if session_id and not is_callback and status_code < 400:

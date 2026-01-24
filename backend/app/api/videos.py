@@ -391,6 +391,10 @@ async def retry_failed_upload_route(video_id: int, user_id: int = Depends(requir
         return await retry_failed_upload(video_id, user_id, db)
     except ValueError as e:
         error_msg = str(e)
+        # Log user-blocking errors as errors, not warnings
+        logger.error(
+            f"Retry upload failed: user_id={user_id}, video_id={video_id}, error={error_msg}"
+        )
         if "not found" in error_msg.lower():
             raise HTTPException(404, error_msg)
         else:
@@ -489,7 +493,7 @@ async def get_presigned_upload_url(
         return result
     except ValueError as e:
         error_msg = str(e)
-        logger.warning(
+        logger.error(
             f"Validation error for presigned upload: user_id={user_id}, "
             f"filename={request_data.filename}, file_size={request_data.file_size}, "
             f"client_ip={client_ip}, error={error_msg}"

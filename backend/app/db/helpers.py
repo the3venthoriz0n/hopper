@@ -58,15 +58,37 @@ def get_user_settings(user_id: int, category: str = "global", db: Session = None
                 # If not JSON, use as string (legacy data)
                 settings_dict[setting.key] = setting.value
         
-        # Override wordbank from new table if category is global
+        # Apply defaults for global settings (like get_all_user_settings does)
         if category == "global":
+            global_defaults = {
+                "title_template": "{filename}",
+                "description_template": "Uploaded via hopper",
+                "wordbank": [],
+                "upload_immediately": True,
+                "schedule_mode": "spaced",
+                "schedule_interval_value": 1,
+                "schedule_interval_unit": "hours",
+                "schedule_start_time": "",
+                "upload_first_immediately": True,
+                "allow_duplicates": False
+            }
+            # Merge defaults with user settings (user settings take precedence)
+            settings_dict = {**global_defaults, **settings_dict}
+            
+            # Override wordbank from new table (new table takes precedence)
             wordbank_words = get_wordbank_words_list(user_id, db=db)
             if wordbank_words:
-                # Use new table data
                 settings_dict["wordbank"] = wordbank_words
             elif "wordbank" not in settings_dict:
-                # No words in new table and no legacy data, default to empty list
                 settings_dict["wordbank"] = []
+            
+            # Normalize boolean settings (handle legacy string values - one-time conversion)
+            boolean_keys = ["allow_duplicates", "upload_immediately", "upload_first_immediately"]
+            for key in boolean_keys:
+                if key in settings_dict and isinstance(settings_dict[key], str):
+                    # Convert legacy string to boolean and update in database
+                    settings_dict[key] = settings_dict[key].lower() in ("true", "1", "yes")
+                    set_user_setting(user_id, "global", key, settings_dict[key], db=db)
         
         # Cache the result
         set_cached_settings(user_id, category, settings_dict)

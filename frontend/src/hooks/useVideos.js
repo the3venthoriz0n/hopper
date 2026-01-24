@@ -351,9 +351,12 @@ export function useVideos(
       const tokensRequired = videoData.tokens_required || 0;
       if (setMessage) setMessage(`✅ Added ${file.name} to queue (will cost ${tokensRequired} ${tokensRequired === 1 ? 'token' : 'tokens'} on upload)`);
     } catch (err) {
-      // Check if upload was cancelled - don't show error notification for cancellations
+      // Get error details (original case for duplicate/file size checks, lowercase for cancellation check)
+      const errorDetailOriginal = err.response?.data?.detail || '';
       const errorMessage = err.message?.toLowerCase() || '';
-      const errorDetail = err.response?.data?.detail?.toLowerCase() || '';
+      const errorDetail = errorDetailOriginal.toLowerCase();
+      
+      // Check if upload was cancelled - don't show error notification for cancellations
       const isCancelled = errorMessage.includes('cancelled') || 
                          errorMessage.includes('aborted') ||
                          errorMessage.includes('upload cancelled by user') ||
@@ -382,12 +385,27 @@ export function useVideos(
       const isNetworkError = !err.response && (err.code === 'ERR_NETWORK' || err.code === 'ECONNRESET');
       // Backend is source of truth - check for backend validation errors
       const isFileSizeError = err.response?.status === 413 || 
-                              err.response?.status === 400 && err.response?.data?.detail?.includes('too large');
+                              err.response?.status === 400 && errorDetailOriginal.includes('too large');
+      
+      // Check for duplicate video error
+      const isDuplicateError = err.response?.status === 400 && 
+                               (errorDetailOriginal.includes('Duplicate video') || errorDetailOriginal.includes('already in the queue'));
       
       // Always prioritize backend error message
-      let errorMsg = err.response?.data?.detail || err.message || 'Error adding video';
+      let errorMsg = errorDetailOriginal || err.message || 'Error adding video';
       
-      if (isTimeout) {
+      if (isDuplicateError) {
+        // Provide user-friendly duplicate video error message
+        errorMsg = `Duplicate video not allowed: "${file.name}" is already in your upload queue. Please remove the existing video or enable "Allow Duplicate Videos" in settings if you want to upload the same file again.`;
+        
+        setNotification({
+          type: 'error',
+          title: 'Duplicate Video Not Allowed',
+          message: errorMsg,
+          videoFilename: file.name
+        });
+        setTimeout(() => setNotification(null), 20000);
+      } else if (isTimeout) {
         const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
         errorMsg = `Upload timeout: The file "${file.name}" (${fileSizeMB} MB) timed out. Please try again or check your connection.`;
         
@@ -426,7 +444,7 @@ export function useVideos(
           videoFilename: file.name
         });
         setTimeout(() => setNotification(null), 15000);
-      } else if (!isTimeout && !isNetworkError && !isFileSizeError && err.response?.status !== 401) {
+      } else if (!isTimeout && !isNetworkError && !isFileSizeError && !isDuplicateError && err.response?.status !== 401) {
         const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
         errorMsg = `Upload failed: "${file.name}" (${fileSizeMB} MB). Please check your connection and try again.`;
         
@@ -439,7 +457,7 @@ export function useVideos(
         setTimeout(() => setNotification(null), 10000);
       }
       
-      if (!isTimeout && !isNetworkError && !isFileSizeError && err.response?.status !== 401) {
+      if (!isTimeout && !isNetworkError && !isFileSizeError && !isDuplicateError && err.response?.status !== 401) {
         if (setMessage) setMessage(`❌ ${errorMsg}`);
       }
       
