@@ -284,7 +284,7 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
         # Get settings: per-video custom > destination settings
         privacy_level = custom_settings.get('privacy_level') or tiktok_settings.get('privacy_level')
         if not privacy_level:
-            error_msg = "Privacy level is required. Please set a privacy level in the video settings or TikTok destination settings."
+            error_msg = "TikTok privacy level is required. Please select a privacy level in TikTok destination settings before uploading videos to TikTok."
             tiktok_logger.error(
                 f"❌ TikTok upload FAILED - Privacy level not set - User {user_id}, Video {video_id} ({video.filename})",
                 extra={

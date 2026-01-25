@@ -740,6 +740,18 @@ export function useVideos(
       }
     }
     
+    if (tiktok.enabled && tiktok.connected) {
+      if (!tiktokSettings.privacy_level || tiktokSettings.privacy_level.trim() === '') {
+        setNotification({
+          type: 'error',
+          title: 'TikTok Privacy Level Required',
+          message: 'You need to select a privacy level in TikTok settings before uploading videos to TikTok.',
+        });
+        setTimeout(() => setNotification(null), 10000);
+        return;
+      }
+    }
+    
     if (!youtube.enabled && !tiktok.enabled && !instagram.enabled) {
       if (setMessage) setMessage('❌ Enable at least one destination first');
       return;

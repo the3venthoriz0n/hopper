@@ -755,6 +755,16 @@ async def upload_videos(user_id: int = Depends(require_csrf_new), db: Session = 
             detail="No enabled and connected destinations. Enable at least one destination and ensure it's connected."
         )
     
+    # Validate TikTok privacy level if TikTok is enabled
+    if "tiktok" in enabled_destinations:
+        tiktok_settings = get_user_settings(user_id, "tiktok", db=db)
+        privacy_level = tiktok_settings.get("privacy_level")
+        if not privacy_level or str(privacy_level).strip() == '':
+            raise HTTPException(
+                status_code=400,
+                detail="TikTok privacy level is required. Please select a privacy level in TikTok destination settings before uploading."
+            )
+    
     user_videos = get_user_videos(user_id, db=db)
     pending_videos = [v for v in user_videos if v.status in ['pending', 'failed', 'uploading', 'cancelled']]
     
