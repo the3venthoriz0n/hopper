@@ -234,16 +234,46 @@ def update_active_users_detail_gauge(active_users_data: dict, db) -> None:
     """
     try:
         from app.models.user import User
+        from datetime import datetime
+        
+        # First, deduplicate active_users_data to keep only most recent timestamp per user_id
+        # This handles edge cases where same user_id might appear multiple times
+        deduplicated_users = {}
+        for user_id, last_activity in active_users_data.items():
+            # Convert user_id to int for consistency
+            user_id_int = int(user_id) if isinstance(user_id, str) else user_id
+            
+            # If user_id already exists, keep the most recent timestamp
+            if user_id_int in deduplicated_users:
+                try:
+                    existing_time = datetime.fromisoformat(deduplicated_users[user_id_int].replace('Z', '+00:00'))
+                    new_time = datetime.fromisoformat(last_activity.replace('Z', '+00:00'))
+                    if new_time > existing_time:
+                        deduplicated_users[user_id_int] = last_activity
+                except (ValueError, AttributeError):
+                    # If timestamp parsing fails, keep the existing one
+                    pass
+            else:
+                deduplicated_users[user_id_int] = last_activity
         
         # Clear existing gauge data by clearing all label combinations
-        active_users_detail_gauge._metrics.clear()
+        # Use clear() method if available, otherwise clear the _metrics dict
+        try:
+            if hasattr(active_users_detail_gauge, '_metrics'):
+                active_users_detail_gauge._metrics.clear()
+            elif hasattr(active_users_detail_gauge, 'clear'):
+                active_users_detail_gauge.clear()
+        except Exception as clear_err:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to clear active_users_detail_gauge: {clear_err}")
         
         # Track processed user_ids to prevent duplicates
         processed_user_ids = set()
         
-        # Populate gauge with current active users
-        for user_id, last_activity in active_users_data.items():
-            # Skip if we've already processed this user_id (deduplicate)
+        # Populate gauge with current active users (now deduplicated)
+        for user_id, last_activity in deduplicated_users.items():
+            # Skip if we've already processed this user_id (extra safety check)
             if user_id in processed_user_ids:
                 continue
             
@@ -252,6 +282,7 @@ def update_active_users_detail_gauge(active_users_data: dict, db) -> None:
                 user = db.query(User).filter(User.id == user_id).first()
                 if user:
                     # Set gauge with labels - value is always 1 (user is active)
+                    # Use consistent string conversion for user_id
                     active_users_detail_gauge.labels(
                         user_id=str(user_id),
                         user_email=user.email,

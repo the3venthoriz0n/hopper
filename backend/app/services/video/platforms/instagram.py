@@ -644,8 +644,6 @@ async def upload_video_to_instagram(user_id: int, video_id: int, db: Session = N
             update_video(video_id, user_id, db=db, status="completed", custom_settings=custom_settings)
             set_upload_progress(user_id, video_id, 100)
             
-            successful_uploads_counter.inc()
-            
             if video.tokens_consumed == 0:
                 tokens_required = video.tokens_required if video.tokens_required is not None else (calculate_tokens_from_bytes(video.file_size_bytes) if video.file_size_bytes else 0)
                 if tokens_required > 0:

@@ -348,9 +348,6 @@ async def upload_video_to_youtube(user_id: int, video_id: int, db: Session = Non
             await set_platform_status(video_id, user_id, "youtube", "success", error=None, db=db)
             youtube_logger.info(f"Successfully uploaded {video.filename}, YouTube ID: {response['id']}")
             
-            # Increment successful uploads counter
-            successful_uploads_counter.inc()
-            
             # Deduct tokens after successful upload (only if not already deducted)
             if video.tokens_consumed == 0:
                 # Use stored tokens_required with fallback for backward compatibility

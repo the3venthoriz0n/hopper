@@ -12,7 +12,7 @@ cd "$PROJECT_ROOT"
 # Hardcoded remote server configuration
 REMOTE_HOST="dbserver"
 REMOTE_USER="root"
-REMOTE_PATH="/mnt/y/Misc/_DevRemote/hopper_sync"
+REMOTE_PATH="/mnt/user/Misc/_DevRemote/hopper_sync"
 
 SYNC_DEST="${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_PATH}"
 

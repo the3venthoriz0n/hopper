@@ -810,10 +810,6 @@ async def upload_video_to_tiktok(user_id: int, video_id: int, db: Session = None
             f"publish_id: {publish_id}, Source: PULL_FROM_URL, Status: uploaded"
         )
         
-        # Increment successful uploads counter only on confirmed success
-        # (status is already "uploaded" at this point, indicating confirmed success)
-        successful_uploads_counter.inc()
-        
         # Deduct tokens after successful upload (only if not already deducted)
         if video.tokens_consumed == 0:
             # Use stored tokens_required with fallback for backward compatibility

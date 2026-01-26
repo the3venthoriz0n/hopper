@@ -245,8 +245,11 @@ async def scheduler_task():
                                         # Publish status change event with full video data
                                         await publish_video_status_changed(user_id, video_id, old_status, "uploaded", video_dict=video_dict)
                                     
-                                    # Increment successful uploads counter
-                                    successful_uploads_counter.inc()
+                                    # Only increment counter if video status is changing to "uploaded" (not already uploaded)
+                                    # This prevents double-counting if scheduler runs multiple times or if status_checker already counted it
+                                    if old_status != "uploaded":
+                                        # Increment successful uploads counter
+                                        successful_uploads_counter.inc()
                                     
                                     # Cleanup: Delete video file after successful upload to all destinations
                                     # Keep database record for history

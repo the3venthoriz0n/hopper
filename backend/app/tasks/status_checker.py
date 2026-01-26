@@ -165,8 +165,11 @@ async def status_checker_task():
                                 
                                 # Check if all destinations are done and update global status if needed
                                 if all_done:
-                                    # Increment successful uploads counter
-                                    successful_uploads_counter.inc()
+                                    # Only increment counter if video status is changing to "uploaded" (not already uploaded)
+                                    # This prevents double-counting if status_checker runs multiple times
+                                    if old_status != "uploaded":
+                                        # Increment successful uploads counter
+                                        successful_uploads_counter.inc()
                                     
                                     # Refresh video and build full response (backend is source of truth)
                                     from app.services.video.helpers import build_video_response
@@ -414,8 +417,12 @@ async def status_checker_task():
                                         set_platform_upload_progress(video.user_id, video.id, "instagram", 100)
                                         await publish_upload_progress(video.user_id, video.id, "instagram", 100)
                                         
-                                        # Increment successful uploads counter
-                                        successful_uploads_counter.inc()
+                                        # Only increment counter if video status is not already "uploaded"
+                                        # This prevents double-counting if status_checker runs multiple times
+                                        db.refresh(video)
+                                        if video.status != "uploaded":
+                                            # Increment successful uploads counter
+                                            successful_uploads_counter.inc()
                                         
                                         # Deduct tokens if not already deducted
                                         db.refresh(video)
