@@ -16,6 +16,7 @@ from app.services.settings_service import (
     get_destinations_status, toggle_destination, update_settings_batch,
     add_wordbank_word, remove_wordbank_word, clear_wordbank
 )
+from app.services.admin_service import get_banner_message
 
 router = APIRouter(prefix="/api", tags=["settings"])
 logger = logging.getLogger(__name__)
@@ -64,6 +65,12 @@ def remove_wordbank_word_route(word: str, user_id: int = Depends(require_csrf_ne
 def clear_wordbank_route(user_id: int = Depends(require_csrf_new), db: Session = Depends(get_db)):
     """Clear all words from the global wordbank"""
     return clear_wordbank(user_id, db)
+
+
+@router.get("/banner")
+def get_banner_route(user_id: int = Depends(require_auth), db: Session = Depends(get_db)):
+    """Get current banner message (requires authentication)"""
+    return get_banner_message(db)
 
 
 @router.get("/youtube/settings")

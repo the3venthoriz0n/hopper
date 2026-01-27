@@ -401,6 +401,34 @@ h3 {
   outline-offset: 2px;
 }
 
+/* ============================================
+   BANNER
+   ============================================ */
+
+.banner-container {
+  margin: var(--spacing-lg) 0;
+  width: 100%;
+}
+
+.banner-content {
+  background: rgba(var(--rgb-warning), var(--opacity-20));
+  border: 1px solid rgba(var(--rgb-warning), var(--opacity-40));
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md) var(--spacing-lg);
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  word-wrap: break-word;
+  box-shadow: var(--shadow-sm);
+}
+
+@media (max-width: 768px) {
+  .banner-content {
+    padding: var(--spacing-sm) var(--spacing-md);
+    font-size: 0.9rem;
+  }
+}
+
 .destination-status-button {
   display: flex;
   align-items: center;

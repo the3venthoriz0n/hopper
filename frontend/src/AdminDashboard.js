@@ -177,6 +177,9 @@ function AdminDashboard() {
   const [userToDelete, setUserToDelete] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [availablePlans, setAvailablePlans] = useState([]);
+  const [bannerMessage, setBannerMessage] = useState('');
+  const [bannerEnabled, setBannerEnabled] = useState(false);
+  const [bannerLoading, setBannerLoading] = useState(false);
 
   // Fetch CSRF token on mount
   useEffect(() => {
@@ -202,6 +205,47 @@ function AdminDashboard() {
   useEffect(() => {
     loadPlans();
   }, []);
+
+  // Load banner on mount
+  useEffect(() => {
+    loadBanner();
+  }, []);
+
+  const loadBanner = async () => {
+    try {
+      const response = await axios.get(`${API}/admin/banner`, {
+        headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
+        withCredentials: true
+      });
+      setBannerMessage(response.data.message || '');
+      setBannerEnabled(response.data.enabled || false);
+    } catch (err) {
+      console.error('Error loading banner:', err);
+    }
+  };
+
+  const handleUpdateBanner = async () => {
+    try {
+      setBannerLoading(true);
+      const response = await axios.post(
+        `${API}/admin/banner`,
+        {
+          message: bannerMessage,
+          enabled: bannerEnabled
+        },
+        {
+          headers: csrfToken ? { 'X-CSRF-Token': csrfToken } : {},
+          withCredentials: true
+        }
+      );
+      setMessage('✅ Banner updated successfully');
+      setTimeout(() => setMessage(''), 3000);
+    } catch (err) {
+      setMessage(`❌ Error updating banner: ${err.response?.data?.detail || err.message}`);
+    } finally {
+      setBannerLoading(false);
+    }
+  };
 
   const loadPlans = async () => {
     try {
@@ -551,6 +595,40 @@ function AdminDashboard() {
               </button>
             </form>
           )}
+        </div>
+
+        {/* Banner Management Section */}
+        <div className="admin-card">
+          <div className="admin-card-header">
+            <h2 className="admin-card-title">Banner Message</h2>
+          </div>
+          <div className="admin-form">
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-primary)', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={bannerEnabled}
+                onChange={(e) => setBannerEnabled(e.target.checked)}
+                style={{ cursor: 'pointer' }}
+              />
+              <span style={{ fontSize: '0.9rem' }}>Enable banner</span>
+            </label>
+            <textarea
+              value={bannerMessage}
+              onChange={(e) => setBannerMessage(e.target.value)}
+              placeholder="Enter banner message to display to all users..."
+              className="admin-input"
+              rows="3"
+              style={{ resize: 'vertical', fontFamily: 'inherit' }}
+            />
+            <button
+              onClick={handleUpdateBanner}
+              disabled={bannerLoading}
+              className="admin-button admin-button-primary"
+              style={{ opacity: bannerLoading ? 0.6 : 1, cursor: bannerLoading ? 'not-allowed' : 'pointer' }}
+            >
+              {bannerLoading ? 'Saving...' : 'Save Banner'}
+            </button>
+          </div>
         </div>
 
         {/* Delete Confirmation Dialog */}

@@ -1,5 +1,6 @@
 """Admin service - Admin operations and user management"""
 import logging
+import json
 from typing import Dict, Optional, List, Any
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
@@ -9,6 +10,7 @@ from app.models.user import User
 from app.models.subscription import Subscription
 from app.models.token_transaction import TokenTransaction
 from app.models.video import Video
+from app.models.system_setting import SystemSetting
 from app.services.token_service import get_token_balance
 from app.services.video.helpers import cleanup_video_file
 
@@ -696,4 +698,77 @@ def get_user_token_transactions(
     
     transactions = get_token_transactions(user_id, limit, db)
     return {"transactions": transactions}
+
+
+def get_banner_message(db: Session) -> Dict[str, Any]:
+    """Get current banner message (system-wide setting)
+    
+    Args:
+        db: Database session
+    
+    Returns:
+        Dict with 'message' and 'enabled' keys
+    """
+    setting = db.query(SystemSetting).filter(SystemSetting.key == "banner").first()
+    
+    if not setting:
+        return {"message": "", "enabled": False}
+    
+    try:
+        value = json.loads(setting.value)
+        return {
+            "message": value.get("message", ""),
+            "enabled": value.get("enabled", False)
+        }
+    except (json.JSONDecodeError, TypeError):
+        return {"message": "", "enabled": False}
+
+
+def update_banner_message(message: Optional[str], enabled: Optional[bool], db: Session) -> Dict[str, Any]:
+    """Update banner message (system-wide setting)
+    
+    Args:
+        message: Banner message text (optional)
+        enabled: Whether banner is enabled (optional)
+        db: Database session
+    
+    Returns:
+        Dict with updated 'message' and 'enabled' keys
+    """
+    setting = db.query(SystemSetting).filter(SystemSetting.key == "banner").first()
+    
+    if setting:
+        try:
+            current_value = json.loads(setting.value)
+        except (json.JSONDecodeError, TypeError):
+            current_value = {"message": "", "enabled": False}
+    else:
+        current_value = {"message": "", "enabled": False}
+    
+    if message is not None:
+        current_value["message"] = message
+    if enabled is not None:
+        current_value["enabled"] = enabled
+    
+    value_json = json.dumps(current_value)
+    
+    if setting:
+        setting.value = value_json
+        setting.updated_at = datetime.now(timezone.utc)
+    else:
+        setting = SystemSetting(
+            key="banner",
+            value=value_json,
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc)
+        )
+        db.add(setting)
+    
+    db.commit()
+    db.refresh(setting)
+    
+    return {
+        "message": current_value["message"],
+        "enabled": current_value["enabled"]
+    }
 

@@ -10,9 +10,10 @@ from app.models.token_transaction import TokenTransaction
 from app.models.stripe_event import StripeEvent
 from app.models.email_event import EmailEvent
 from app.models.wordbank_word import WordbankWord
+from app.models.system_setting import SystemSetting
 
 # Export all for convenience
 __all__ = [
     "Base", "User", "Video", "Setting", "OAuthToken",
-    "Subscription", "TokenBalance", "TokenTransaction", "StripeEvent", "EmailEvent", "WordbankWord"
+    "Subscription", "TokenBalance", "TokenTransaction", "StripeEvent", "EmailEvent", "WordbankWord", "SystemSetting"
 ]

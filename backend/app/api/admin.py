@@ -15,8 +15,10 @@ from app.services.admin_service import (
     list_users_with_subscriptions, get_user_details_with_balance, trigger_manual_cleanup,
     create_user_with_admin_flag, reset_user_password_admin,
     enroll_user_unlimited_plan, unenroll_user_unlimited_plan, switch_user_plan,
-    test_meter_event_for_user, get_webhook_events_list, get_user_token_transactions
+    test_meter_event_for_user, get_webhook_events_list, get_user_token_transactions,
+    get_banner_message, update_banner_message
 )
+from app.schemas.admin import BannerMessageUpdate
 from app.services.auth_service import delete_user_account
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -291,4 +293,20 @@ async def manual_cleanup(user_id: int = Depends(require_auth), db: Session = Dep
         cleanup_logger = logging.getLogger("cleanup")
         cleanup_logger.error(f"Error in manual cleanup for user {user_id}: {e}", exc_info=True)
         raise HTTPException(500, f"Cleanup failed: {str(e)}")
+
+
+@router.get("/banner")
+def get_banner(admin_user: User = Depends(require_admin_get), db: Session = Depends(get_db)):
+    """Get current banner message (admin only)"""
+    return get_banner_message(db)
+
+
+@router.post("/banner")
+def update_banner(
+    request_data: BannerMessageUpdate,
+    admin_user: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    """Update banner message (admin only)"""
+    return update_banner_message(request_data.message, request_data.enabled, db)
 

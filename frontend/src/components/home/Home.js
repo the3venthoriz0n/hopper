@@ -10,7 +10,9 @@ import { useSubscription } from '../../hooks/useSubscription';
 import { useCancellationListener } from '../../hooks/useCancellationListener';
 import { isVideoInProgress } from '../../utils/videoStatus';
 import * as authService from '../../services/authService';
+import * as bannerService from '../../services/bannerService';
 import HomeHeader from './HomeHeader';
+import Banner from './Banner';
 import GlobalSettings from './GlobalSettings';
 import DestinationsList from './Destinations/DestinationsList';
 import UploadButton from './Upload/UploadButton';
@@ -48,6 +50,7 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
   const [wordbankExpanded, setWordbankExpanded] = useState(false);
   const [destinationModal, setDestinationModal] = useState(null);
   const [maxFileSize, setMaxFileSize] = useState(null);
+  const [banner, setBanner] = useState({ message: '', enabled: false });
 
   const {
     youtube,
@@ -166,6 +169,15 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
     }
   }, [API]);
 
+  const loadBanner = useCallback(async () => {
+    try {
+      const data = await bannerService.getBanner();
+      setBanner(data);
+    } catch (err) {
+      console.error('Error loading banner:', err);
+    }
+  }, []);
+
   useEffect(() => {
     if (user) {
       loadUploadLimits();
@@ -176,8 +188,9 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
       loadInstagramSettings();
       loadVideos();
       loadSubscription();
+      loadBanner();
     }
-  }, [user, loadUploadLimits, loadDestinations, loadGlobalSettings, loadYoutubeSettings, loadTiktokSettings, loadInstagramSettings, loadVideos, loadSubscription]);
+  }, [user, loadUploadLimits, loadDestinations, loadGlobalSettings, loadYoutubeSettings, loadTiktokSettings, loadInstagramSettings, loadVideos, loadSubscription, loadBanner]);
 
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
@@ -437,6 +450,8 @@ export default function Home({ user, isAdmin, setUser, authLoading }) {
         setShowGlobalSettings={setShowGlobalSettings}
         showGlobalSettings={showGlobalSettings}
       />
+
+      <Banner message={banner.message} enabled={banner.enabled} />
 
       <GlobalSettings
         showGlobalSettings={showGlobalSettings}
