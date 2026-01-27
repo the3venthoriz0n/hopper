@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
 revision: str = '001'
@@ -18,21 +19,36 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Add event_id column as nullable first
-    op.add_column('stripe_events', sa.Column('event_id', sa.String(length=255), nullable=True))
+    # Check if columns already exist (in case migration was partially applied)
+    conn = op.get_bind()
+    inspector = inspect(conn)
     
-    # Copy data from stripe_event_id to event_id for existing rows
-    op.execute("UPDATE stripe_events SET event_id = stripe_event_id WHERE event_id IS NULL")
+    # Get existing columns for stripe_events table
+    existing_columns = [col['name'] for col in inspector.get_columns('stripe_events')]
     
-    # Now make event_id non-nullable
-    op.alter_column('stripe_events', 'event_id', nullable=False)
+    # Add event_id column if it doesn't exist
+    if 'event_id' not in existing_columns:
+        op.add_column('stripe_events', sa.Column('event_id', sa.String(length=255), nullable=True))
+        
+        # Copy data from stripe_event_id to event_id for existing rows
+        op.execute("UPDATE stripe_events SET event_id = stripe_event_id WHERE event_id IS NULL")
+        
+        # Now make event_id non-nullable
+        op.alter_column('stripe_events', 'event_id', nullable=False)
     
-    # Add unique constraint and index to event_id
-    op.create_unique_constraint('uq_stripe_events_event_id', 'stripe_events', ['event_id'])
-    op.create_index('ix_stripe_events_event_id', 'stripe_events', ['event_id'])
+    # Get existing indexes and constraints
+    existing_indexes = [idx['name'] for idx in inspector.get_indexes('stripe_events')]
+    existing_constraints = [con['name'] for con in inspector.get_unique_constraints('stripe_events')]
     
-    # Add processed_at column
-    op.add_column('stripe_events', sa.Column('processed_at', sa.DateTime(timezone=True), nullable=True))
+    # Add unique constraint and index to event_id if they don't exist
+    if 'uq_stripe_events_event_id' not in existing_constraints:
+        op.create_unique_constraint('uq_stripe_events_event_id', 'stripe_events', ['event_id'])
+    if 'ix_stripe_events_event_id' not in existing_indexes:
+        op.create_index('ix_stripe_events_event_id', 'stripe_events', ['event_id'])
+    
+    # Add processed_at column if it doesn't exist
+    if 'processed_at' not in existing_columns:
+        op.add_column('stripe_events', sa.Column('processed_at', sa.DateTime(timezone=True), nullable=True))
 
 
 def downgrade() -> None:

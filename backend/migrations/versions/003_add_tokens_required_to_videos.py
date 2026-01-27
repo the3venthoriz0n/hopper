@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect
 
 
 # revision identifiers, used by Alembic.
@@ -19,8 +20,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Add tokens_required column as nullable (for backward compatibility with existing videos)
-    op.add_column('videos', sa.Column('tokens_required', sa.Integer(), nullable=True))
+    # Check if column already exists (in case migration was partially applied)
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    existing_columns = [col['name'] for col in inspector.get_columns('videos')]
+    
+    # Add tokens_required column as nullable (for backward compatibility with existing videos) if it doesn't exist
+    if 'tokens_required' not in existing_columns:
+        op.add_column('videos', sa.Column('tokens_required', sa.Integer(), nullable=True))
 
 
 def downgrade() -> None:

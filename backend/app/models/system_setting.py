@@ -1,5 +1,5 @@
 """System setting model"""
-from sqlalchemy import Column, Integer, String, Text, DateTime, Index
+from sqlalchemy import Column, Integer, String, Text, DateTime
 from datetime import datetime, timezone
 from app.models.base import Base
 
@@ -13,7 +13,3 @@ class SystemSetting(Base):
     value = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
-    
-    __table_args__ = (
-        Index('ix_system_settings_key', 'key'),
-    )

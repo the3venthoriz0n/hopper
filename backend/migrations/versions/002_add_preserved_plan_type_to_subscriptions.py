@@ -9,6 +9,7 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect
 
 
 # revision identifiers, used by Alembic.
@@ -19,8 +20,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Add preserved_plan_type column as nullable
-    op.add_column('subscriptions', sa.Column('preserved_plan_type', sa.String(length=50), nullable=True))
+    # Check if column already exists (in case migration was partially applied)
+    conn = op.get_bind()
+    inspector = inspect(conn)
+    existing_columns = [col['name'] for col in inspector.get_columns('subscriptions')]
+    
+    # Add preserved_plan_type column as nullable if it doesn't exist
+    if 'preserved_plan_type' not in existing_columns:
+        op.add_column('subscriptions', sa.Column('preserved_plan_type', sa.String(length=50), nullable=True))
 
 
 def downgrade() -> None:
