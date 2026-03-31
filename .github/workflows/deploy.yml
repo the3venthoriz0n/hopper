@@ -16,6 +16,7 @@ on:
 env:
   GHCR_REGISTRY: ghcr.io
   IMAGE_PREFIX: ${{ github.repository }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   test:
@@ -28,13 +29,13 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build backend image for testing
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./backend
           file: ./backend/Dockerfile
@@ -65,7 +66,7 @@ jobs:
           echo "✅ Backend test suite passed!"
 
       - name: Build frontend image for testing
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./frontend
           file: ./frontend/Dockerfile
@@ -205,7 +206,7 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set environment
         id: env
@@ -237,17 +238,17 @@ jobs:
           fi
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.GHCR_REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build and push backend
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./backend
           file: ./backend/Dockerfile
@@ -259,7 +260,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and push frontend
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./frontend
           push: true
@@ -276,7 +277,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and push otel-collector
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./monitoring
           file: ./monitoring/Dockerfile.otel.${{ steps.env.outputs.env }}
@@ -288,7 +289,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and push prometheus
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./monitoring
           file: ./monitoring/Dockerfile.prometheus
@@ -302,7 +303,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and push loki
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./monitoring
           file: ./monitoring/Dockerfile.loki.${{ steps.env.outputs.env }}
@@ -314,7 +315,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and push grafana
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./monitoring
           file: ./monitoring/Dockerfile.grafana
@@ -335,7 +336,7 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set deployment variables
         id: vars
