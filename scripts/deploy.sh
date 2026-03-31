@@ -76,6 +76,17 @@ docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" pull || {
     echo "⚠️  Some images failed to pull. Continuing with existing images..."
 }
 
+# Configure Docker log rotation (prevents logs from filling disk)
+echo "📝 Configuring Docker log rotation..."
+DAEMON_CONFIG="/etc/docker/daemon.json"
+if [ ! -f "$DAEMON_CONFIG" ] || ! grep -q "max-size" "$DAEMON_CONFIG" 2>/dev/null; then
+    echo '{"log-driver":"json-file","log-opts":{"max-size":"50m","max-file":"7"}}' | sudo tee "$DAEMON_CONFIG" > /dev/null
+    sudo systemctl reload docker || echo "⚠️  Docker reload failed — log rotation will apply to new containers only"
+    echo "✅ Log rotation configured"
+else
+    echo "✅ Log rotation already configured"
+fi
+
 # Prune old/unused Docker images
 echo "🧹 Pruning old Docker images..."
 docker image prune -af --filter "until=168h" || {
