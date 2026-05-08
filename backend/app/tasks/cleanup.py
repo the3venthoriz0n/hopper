@@ -5,7 +5,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.core.config import settings
-from app.db.helpers import get_all_scheduled_videos
 from app.db.session import SessionLocal
 from app.models.video import Video
 from app.services.video.helpers import cleanup_video_file

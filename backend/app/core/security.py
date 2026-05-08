@@ -56,7 +56,8 @@ async def require_csrf_new(
         try:
             form_data = await request.form()
             csrf_token = form_data.get("csrf_token")
-        except: pass
+        except Exception:
+            pass
 
     # DEBUG LOG (Temporary)
     # print(f"DEBUG: Session: {session_id}, Received: {csrf_token}")

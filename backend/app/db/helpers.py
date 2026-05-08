@@ -3,11 +3,9 @@ from sqlalchemy.orm import Session
 from typing import Optional, List, Dict, Any
 import json
 import logging
-import os
 from datetime import datetime, timezone, timedelta
 from google.oauth2.credentials import Credentials
 
-from app.models.user import User
 from app.models.video import Video
 from app.models.setting import Setting
 from app.models.oauth_token import OAuthToken
@@ -16,7 +14,7 @@ from app.db.session import SessionLocal
 from app.utils.encryption import encrypt, decrypt
 from app.db.redis import (
     get_cached_settings, set_cached_settings, invalidate_settings_cache,
-    get_cached_oauth_token, set_cached_oauth_token, invalidate_oauth_token_cache
+    invalidate_oauth_token_cache
 )
 from app.core.config import settings
 
@@ -343,15 +341,6 @@ def get_oauth_token(user_id: int, platform: str, db: Session = None) -> Optional
         Storing decrypted tokens in Redis would move the security vulnerability
         from Postgres to Redis. Always cache encrypted token values.
     """
-    # Try to get from cache first
-    cached = get_cached_oauth_token(user_id, platform)
-    if cached is not None:
-        # SECURITY WARNING: If implementing cache reconstruction, ensure cached data contains
-        # ENCRYPTED tokens only. Decrypted tokens should NEVER be cached.
-        # Reconstruct OAuthToken object from cached data (encrypted values only)
-        # This is a simplified version - full implementation would properly deserialize
-        pass
-    
     should_close = False
     if db is None:
         db = SessionLocal()
@@ -401,13 +390,6 @@ def save_oauth_token(user_id: int, platform: str, access_token: str,
                 f"Cannot save OAuth token with None access_token for user {user_id}, platform {platform}. "
                 f"This usually means token decryption failed or refresh returned None."
             )
-        
-        # ROOT CAUSE FIX: Handle session rollback errors
-        try:
-            # Check if session is in a bad state and rollback if needed
-            db.rollback()
-        except Exception:
-            pass  # Session might not need rollback, ignore
         
         token = db.query(OAuthToken).filter(
             OAuthToken.user_id == user_id,

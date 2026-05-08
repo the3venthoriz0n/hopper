@@ -182,19 +182,9 @@ def check_tokens_available(user_id: int, tokens_required: int, db: Session, incl
     
     # Calculate total tokens required (including queued videos if requested)
     total_tokens_required = tokens_required
-    
+
     if include_queued_videos:
-        from app.db.helpers import get_user_videos
-        
-        queued_videos = get_user_videos(user_id, db=db)
-        # Sum tokens required for all pending/scheduled videos that haven't consumed tokens yet
-        for video in queued_videos:
-            if video.status in ('pending', 'scheduled') and video.tokens_consumed == 0:
-                # Use stored tokens_required with fallback for backward compatibility
-                video_tokens = video.tokens_required if video.tokens_required is not None else (
-                    calculate_tokens_from_bytes(video.file_size_bytes) if video.file_size_bytes else 0
-                )
-                total_tokens_required += video_tokens
+        total_tokens_required += get_queue_token_count(user_id, db)
     
     # When queueing (include_queued_videos=True), check based on plan type
     if include_queued_videos:

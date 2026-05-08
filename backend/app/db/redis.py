@@ -78,17 +78,10 @@ SESSION_TTL = 30 * 24 * 60 * 60
 ACTIVITY_TTL = 60 * 60
 
 # Rate limiting configuration
-# In development, use more lenient limits
-if settings.ENVIRONMENT == "development":
-    RATE_LIMIT_WINDOW = 60  # seconds
-    RATE_LIMIT_REQUESTS = 1000  # requests per window (very lenient for dev)
-    RATE_LIMIT_STRICT_WINDOW = 60  # seconds
-    RATE_LIMIT_STRICT_REQUESTS = 1000  # requests per window for state-changing operations (very lenient for dev)
-else:
-    RATE_LIMIT_WINDOW = 60  # seconds
-    RATE_LIMIT_REQUESTS = 1000  # requests per window (matching dev)
-    RATE_LIMIT_STRICT_WINDOW = 60  # seconds
-    RATE_LIMIT_STRICT_REQUESTS = 1000  # requests per window for state-changing operations (matching dev)
+RATE_LIMIT_WINDOW = 60  # seconds
+RATE_LIMIT_REQUESTS = 1000  # requests per window
+RATE_LIMIT_STRICT_WINDOW = 60  # seconds
+RATE_LIMIT_STRICT_REQUESTS = 1000  # requests per window for state-changing operations
 
 # Cache TTLs
 SETTINGS_CACHE_TTL = 5 * 60  # 5 minutes
@@ -350,12 +343,7 @@ def invalidate_settings_cache(user_id: int, category: Optional[str] = None) -> N
             if keys:
                 client.delete(*keys)
     except Exception as e:
-        # Log but don't fail - cache invalidation is best-effort
         logger.warning(f"Failed to invalidate settings cache for user {user_id}: {e}")
-        # In test mode, this is expected if Redis isn't available
-        if settings.ENVIRONMENT.lower() != "test":
-            # In production, log but continue - don't break user operations
-            pass
 
 
 def get_cached_oauth_token(user_id: int, platform: str) -> Optional[Dict]:
@@ -409,10 +397,7 @@ def invalidate_oauth_token_cache(user_id: int, platform: Optional[str] = None) -
             if keys:
                 client.delete(*keys)
     except Exception as e:
-        # Log but don't fail - cache invalidation is best-effort
         logger.warning(f"Failed to invalidate OAuth token cache for user {user_id}: {e}")
-        if settings.ENVIRONMENT.lower() != "test":
-            pass
 
 
 def delete_all_user_sessions(user_id: int) -> int:

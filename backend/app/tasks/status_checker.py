@@ -15,7 +15,6 @@ from app.core.config import INSTAGRAM_GRAPH_API_BASE
 from app.utils.encryption import decrypt
 from app.services.token_service import deduct_tokens, calculate_tokens_from_bytes
 from app.core.metrics import successful_uploads_counter
-from sqlalchemy.orm.attributes import flag_modified
 
 logger = logging.getLogger(__name__)
 status_logger = logging.getLogger("status_checker")
@@ -182,7 +181,6 @@ async def status_checker_task():
                                         status_logger.info(f"TikTok video {video.id} published successfully (via 404), publish_id: {tiktok_publish_id}")
                                 else:
                                     # Refresh video and build full response (backend is source of truth)
-                                    from app.services.event_service import publish_video_updated
                                     from app.services.video.helpers import build_video_response
                                     video_dict = build_video_response(video, all_settings, all_tokens, video.user_id)
                                     
