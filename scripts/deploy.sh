@@ -62,7 +62,7 @@ PROJECT_NAME="${ENV}-hopper"
 
 # Pull latest images
 echo "📥 Pulling latest images..."
-docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" pull || {
+docker-compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" pull || {
     echo "⚠️  Some images failed to pull. Continuing with existing images..."
 }
 
@@ -71,8 +71,7 @@ echo "📝 Configuring Docker log rotation..."
 DAEMON_CONFIG="/etc/docker/daemon.json"
 if [ ! -f "$DAEMON_CONFIG" ] || ! grep -q "max-size" "$DAEMON_CONFIG" 2>/dev/null; then
     echo '{"log-driver":"json-file","log-opts":{"max-size":"50m","max-file":"7"}}' | sudo tee "$DAEMON_CONFIG" > /dev/null
-    sudo systemctl reload docker || echo "⚠️  Docker reload failed — log rotation will apply to new containers only"
-    echo "✅ Log rotation configured"
+    echo "✅ Log rotation configured (applies to new containers)"
 else
     echo "✅ Log rotation already configured"
 fi
@@ -86,11 +85,11 @@ echo "✅ Image pruning complete"
 
 # Stop existing containers
 echo "🛑 Stopping existing containers..."
-docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" down
+docker-compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" down
 
 # Start services
 echo "🚀 Starting services..."
-docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" up -d
+docker-compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" up -d
 
 # Wait for services to start
 echo "⏳ Waiting for services to start..."
@@ -189,7 +188,7 @@ check_health grafana || echo "⚠️  grafana check failed"
 
 echo ""
 echo "📊 Service status:"
-docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" ps
+docker-compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" ps
 
 if [ $HEALTH_CHECK_FAILED -eq 1 ]; then
     echo "❌ Critical services failed health checks!"
