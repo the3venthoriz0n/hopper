@@ -25,6 +25,8 @@ Thumbs.db
 .env
 .env.prod
 .env.dev
+.env.local
+frontend/.env.local
 
 # Keys
 deployment-keys/

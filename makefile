@@ -1,4 +1,4 @@
-.PHONY: help sync up down rebuild logs shell clean test test-frontend test-security rebuild-grafana clear-grafana-cache setup-stripe backup-db restore-db list-backups
+.PHONY: help sync up down rebuild logs shell clean test test-frontend test-security rebuild-grafana clear-grafana-cache setup-stripe backup-db restore-db list-backups frontend-local
 
 # Default environment (can be overridden: make up ENV=prod)
 ENV ?= dev
@@ -44,6 +44,7 @@ help:
 	@echo "  make logs SERVICE=backend    Follow backend logs"
 	@echo "  make logs LINES=100          View last 100 lines"
 	@echo "  make rebuild ENV=prod        Fresh prod rebuild"
+	@echo "  make frontend-local          Run frontend locally against dev backend"
 	@echo ""
 	@echo "Environments:"
 	@echo "  dev:   hopper-dev.dunkbox.net (Unraid, local builds, hot reload)"
@@ -153,6 +154,10 @@ setup-stripe:
 	@echo "🔄 Syncing to remote..."
 	@$(MAKE) sync
 	@echo "✅ Stripe setup completed and synced."
+
+frontend-local:
+	@echo "🖥️  Starting local frontend (→ dev backend at api-dev.dunkbox.net)..."
+	@cd frontend && npm start
 
 backup-db:
 	@bash scripts/backup-db.sh
