@@ -141,7 +141,7 @@ jobs:
             --network hopper_test_network \
             -e DATABASE_URL=postgresql://hopper:test_password@test-postgres:5432/hopper \
             -e REDIS_URL=redis://test-redis:6379/0 \
-            -e ENVIRONMENT=test \
+            -e ENVIRONMENT=development \
             -e ENCRYPTION_KEY="$TEST_ENCRYPTION_KEY" \
             -e LOG_LEVEL=INFO \
             hopper-backend-test:latest
