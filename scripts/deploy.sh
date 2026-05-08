@@ -7,26 +7,16 @@ set -e
 ENV=${1:-prod}
 TAG=${2:-latest}
 
-# App directory configuration
-if [ "$ENV" == "prod" ]; then
-    APP_DIR="/opt/hopper-prod"
-else
-    APP_DIR="/opt/hopper-dev"
-fi
-
 if [ "$ENV" != "dev" ] && [ "$ENV" != "prod" ]; then
     echo "❌ Invalid environment: $ENV. Use 'dev' or 'prod'"
     exit 1
 fi
 
+# Use directory we were called from (workflow already cd'd to APP_DIR)
+APP_DIR="$(pwd)"
+
 echo "🚀 Deploying $ENV environment with tag: $TAG"
 echo "📁 App directory: $APP_DIR"
-
-# Check if app directory exists
-if [ ! -d "$APP_DIR" ]; then
-    echo "❌ App directory not found: $APP_DIR"
-    exit 1
-fi
 
 cd "$APP_DIR"
 

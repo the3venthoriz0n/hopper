@@ -1,4 +1,4 @@
-.PHONY: help sync up down rebuild logs shell clean test test-frontend test-security rebuild-grafana clear-grafana-cache setup-stripe backup-db restore-db list-backups frontend-local
+.PHONY: help up down rebuild logs shell clean test test-frontend test-security rebuild-grafana clear-grafana-cache setup-stripe backup-db restore-db list-backups frontend-local
 
 # Default environment (can be overridden: make up ENV=prod)
 ENV ?= dev
@@ -24,8 +24,7 @@ help:
 	@echo "  test          Run backend unit tests"
 	@echo "  test-frontend Run frontend unit tests"
 	@echo "  test-security Run security tests (requires API to be running)"
-	@echo "  sync          Sync local code to remote server"
-	@echo "  up            Start services (with build, runs tests first)"
+	@echo "  up            Start services (with build)"
 	@echo "  down          Stop services"
 	@echo "  rebuild       Stop, rebuild from scratch, and start (runs tests first)"
 	@echo "  rebuild-grafana Rebuild Grafana service (clears cache and restarts)"
@@ -50,13 +49,6 @@ help:
 	@echo "  dev:   hopper-dev.dunkbox.net (Unraid, local builds, hot reload)"
 	@echo "  prod:  hopper.dunkbox.net     (DigitalOcean, GHCR images)"
 
-sync:
-	@if [ "$(ENV)" = "prod" ]; then \
-		echo "⏭️  Skipping sync for prod (code is deployed via GitHub Actions)"; \
-	else \
-		bash scripts/sync-rsync.sh; \
-	fi
-
 test:
 	@if [ "$(ENV)" = "prod" ]; then \
 		echo "⏭️  Skipping tests for prod environment (use deploy.sh for production deployments)"; \
@@ -78,7 +70,7 @@ test-integration:
 	echo "⚠️  Note: These tests require a running backend server"; \
 	$(COMPOSE) run --rm -e RUN_INTEGRATION_TESTS=true -e ENV=$(ENV) backend python -m pytest /app/tests/test_integration.py -v --tb=short;
 
-up: sync
+up:
 	@echo "🚀 Starting $(ENV) environment..."
 	@if [ "$(ENV)" = "prod" ]; then \
 		$(COMPOSE) up -d $(SERVICE); \
@@ -91,7 +83,7 @@ down:
 	@echo "🛑 Stopping $(ENV) environment..."
 	@$(COMPOSE) down $(SERVICE)
 
-rebuild: down sync
+rebuild: down
 	@if [ "$(ENV)" != "prod" ] && [ -z "$(SKIP_TESTS)" ]; then \
 		$(MAKE) test ENV=$(ENV); \
 	fi
@@ -107,7 +99,7 @@ rebuild: down sync
 	@docker image prune -f
 	@echo "✅ $(ENV) rebuild complete!"
 
-rebuild-grafana: sync
+rebuild-grafana:
 	@echo "🔄 Rebuilding Grafana for $(ENV) environment..."
 	@echo "🗑️  Clearing Grafana cache to ensure fresh load..."
 	@$(COMPOSE) stop grafana || true
@@ -151,9 +143,7 @@ setup-stripe:
 		exit 1; \
 	fi
 	@cd backend && ./venv/bin/python ../scripts/setup_stripe.py --env-file $(ENV)
-	@echo "🔄 Syncing to remote..."
-	@$(MAKE) sync
-	@echo "✅ Stripe setup completed and synced."
+	@echo "✅ Stripe setup completed."
 
 frontend-local:
 	@echo "🖥️  Starting local frontend (→ dev backend at api-dev.dunkbox.net)..."
