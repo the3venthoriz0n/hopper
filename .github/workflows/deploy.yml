@@ -1,12 +1,22 @@
 name: Build and Deploy
 
 on:
+  push:
+    branches: [main]
+    # Triggers dev deployment on every push to main
   release:
     types: [created]
-    # Triggers when you create a new release (which creates a git tag)
-    # Note: 'dev' branch deployments are handled manually on Unraid
+    # Triggers prod deployment when a release is created
   workflow_dispatch:
     inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
       skip_tests:
         description: 'Skip running tests'
         required: false
@@ -21,12 +31,11 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # Skip tests if workflow_dispatch with skip_tests=true
-    # For release events, inputs.skip_tests won't exist, so tests will run normally
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.skip_tests != true }}
+    # Skip tests for dev pushes (fast deploy) and when skip_tests is true
+    if: ${{ github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.skip_tests != true) }}
     permissions:
       contents: read
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -54,7 +63,6 @@ jobs:
       - name: Run backend test suite
         run: |
           echo "🧪 Running backend test suite..."
-          # Generate a valid Fernet key for testing (44 chars, base64-encoded)
           TEST_ENCRYPTION_KEY=$(docker run --rm hopper-backend-test:latest python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
           docker run --rm \
             -e ENCRYPTION_KEY="$TEST_ENCRYPTION_KEY" \
@@ -95,47 +103,39 @@ jobs:
           echo "✅ Frontend test suite passed!"
 
       - name: Start services for integration tests
-        # Skip integration tests for production releases
-        if: github.event_name != 'release'
+        if: github.event_name == 'release'
         run: |
           echo "🚀 Starting services for integration tests..."
           docker network create hopper_test_network || true
-          
-          # Start PostgreSQL
+
           docker run -d --name test-postgres \
             --network hopper_test_network \
             -e POSTGRES_DB=hopper \
             -e POSTGRES_USER=hopper \
             -e POSTGRES_PASSWORD=test_password \
             postgres:16-alpine
-          
-          # Start Redis
+
           docker run -d --name test-redis \
             --network hopper_test_network \
             redis:7-alpine
-          
-          # Wait for services to be ready
+
           echo "⏳ Waiting for services to start..."
           sleep 5
-          
-          # Wait for PostgreSQL
+
           until docker exec test-postgres pg_isready -U hopper; do
             echo "Waiting for PostgreSQL..."
             sleep 2
           done
-          
-          # Wait for Redis
+
           until docker exec test-redis redis-cli ping; do
             echo "Waiting for Redis..."
             sleep 2
           done
 
       - name: Start backend for integration tests
-        # Skip integration tests for production releases
-        if: github.event_name != 'release'
+        if: github.event_name == 'release'
         run: |
           echo "🚀 Starting backend for integration tests..."
-          # Generate a valid Fernet key for testing (44 chars, base64-encoded)
           TEST_ENCRYPTION_KEY=$(docker run --rm hopper-backend-test:latest python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
           docker run -d --name test-backend \
             --network hopper_test_network \
@@ -145,8 +145,7 @@ jobs:
             -e ENCRYPTION_KEY="$TEST_ENCRYPTION_KEY" \
             -e LOG_LEVEL=INFO \
             hopper-backend-test:latest
-          
-          # Wait for backend to be ready
+
           echo "⏳ Waiting for backend to start..."
           for i in {1..30}; do
             if docker exec test-backend curl -f http://localhost:8000/health >/dev/null 2>&1 || \
@@ -154,7 +153,6 @@ jobs:
               echo "✅ Backend is ready!"
               break
             fi
-            # Fallback: check if container is running
             if [ "$(docker inspect -f '{{.State.Running}}' test-backend 2>/dev/null)" = "true" ]; then
               if [ $i -ge 10 ]; then
                 echo "⚠️  Backend container is running but health endpoint not responding (may be starting)"
@@ -166,11 +164,9 @@ jobs:
           done
 
       - name: Run integration tests
-        # Skip integration tests for production releases
-        if: github.event_name != 'release'
+        if: github.event_name == 'release'
         run: |
           echo "🔒 Running integration tests..."
-          # Generate a valid Fernet key for testing (44 chars, base64-encoded)
           TEST_ENCRYPTION_KEY=$(docker run --rm hopper-backend-test:latest python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
           docker run --rm \
             --network hopper_test_network \
@@ -183,59 +179,58 @@ jobs:
           echo "✅ Integration tests passed!"
 
       - name: Cleanup test services
-        # Skip cleanup if integration tests were skipped
-        if: always() && github.event_name != 'release'
+        if: always() && github.event_name == 'release'
         run: |
           echo "🧹 Cleaning up test services..."
           docker stop test-backend test-postgres test-redis 2>/dev/null || true
           docker rm test-backend test-postgres test-redis 2>/dev/null || true
           docker network rm hopper_test_network 2>/dev/null || true
 
-  build-and-push:
-    needs: test
-    # Run if test succeeded or was skipped
-    if: always() && (needs.test.result == 'success' || needs.test.result == 'skipped')
+  # Determine target environment
+  set-environment:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    
     outputs:
-      env: ${{ steps.env.outputs.env }}
+      environment: ${{ steps.env.outputs.environment }}
       tag: ${{ steps.tag.outputs.tag }}
-    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Set environment
+      - name: Determine environment
         id: env
         run: |
-          # Releases are always production
-          echo "env=prod" >> $GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" == "release" ]; then
+            echo "environment=prod" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "environment=${{ inputs.environment }}" >> $GITHUB_OUTPUT
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+          fi
 
       - name: Generate tag
         id: tag
         run: |
-          # Use the release tag (e.g., v5.0.5) from the release event
-          RELEASE_TAG="${{ github.event.release.tag_name }}"
-          
-          if [ -n "$RELEASE_TAG" ]; then
-            echo "tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
-            echo "✅ Using release tag: $RELEASE_TAG"
+          ENV="${{ steps.env.outputs.environment }}"
+          if [ "${{ github.event_name }}" == "release" ]; then
+            echo "tag=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
           else
-            # Fallback: get latest tag (shouldn't happen with release trigger)
-            GIT_TAG=$(git tag --sort=-version:refname | head -1 || echo "")
-            if [ -n "$GIT_TAG" ]; then
-              echo "tag=$GIT_TAG" >> $GITHUB_OUTPUT
-              echo "⚠️  Using latest git tag as fallback: $GIT_TAG"
-            else
-              SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
-              FALLBACK_TAG="${{ steps.env.outputs.env }}-${SHORT_SHA}"
-              echo "tag=${FALLBACK_TAG}" >> $GITHUB_OUTPUT
-              echo "⚠️  No tags found, using fallback: ${FALLBACK_TAG}"
-            fi
+            SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+            echo "tag=${ENV}-${SHORT_SHA}" >> $GITHUB_OUTPUT
           fi
+
+  build-and-push:
+    needs: [test, set-environment]
+    if: always() && (needs.test.result == 'success' || needs.test.result == 'skipped') && needs.set-environment.result == 'success'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.set-environment.outputs.environment }}
+    permissions:
+      contents: read
+      packages: write
+
+    outputs:
+      env: ${{ needs.set-environment.outputs.environment }}
+      tag: ${{ needs.set-environment.outputs.tag }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
 
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -254,8 +249,8 @@ jobs:
           file: ./backend/Dockerfile
           push: true
           tags: |
-            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-backend:${{ steps.tag.outputs.tag }}
-            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-backend:${{ steps.env.outputs.env }}-latest
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-backend:${{ needs.set-environment.outputs.tag }}
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-backend:${{ needs.set-environment.outputs.environment }}-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -265,14 +260,14 @@ jobs:
           context: ./frontend
           push: true
           build-args: |
-            REACT_APP_BACKEND_URL=${{ steps.env.outputs.env == 'prod' && secrets.PROD_BACKEND_URL || secrets.DEV_BACKEND_URL }}
-            REACT_APP_DOMAIN=${{ steps.env.outputs.env == 'prod' && secrets.PROD_DOMAIN || secrets.DEV_DOMAIN }}
-            REACT_APP_FRONTEND_URL=${{ steps.env.outputs.env == 'prod' && secrets.PROD_FRONTEND_URL || secrets.DEV_FRONTEND_URL }}
-            REACT_APP_ENVIRONMENT=${{ steps.env.outputs.env == 'prod' && 'production' || 'development' }}
-            REACT_APP_VERSION=${{ steps.tag.outputs.tag }}
+            REACT_APP_BACKEND_URL=${{ secrets.BACKEND_URL }}
+            REACT_APP_DOMAIN=${{ secrets.DOMAIN }}
+            REACT_APP_FRONTEND_URL=${{ secrets.FRONTEND_URL }}
+            REACT_APP_ENVIRONMENT=${{ needs.set-environment.outputs.environment == 'prod' && 'production' || 'development' }}
+            REACT_APP_VERSION=${{ needs.set-environment.outputs.tag }}
           tags: |
-            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-frontend:${{ steps.tag.outputs.tag }}
-            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-frontend:${{ steps.env.outputs.env }}-latest
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-frontend:${{ needs.set-environment.outputs.tag }}
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-frontend:${{ needs.set-environment.outputs.environment }}-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -280,11 +275,11 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./monitoring
-          file: ./monitoring/Dockerfile.otel.${{ steps.env.outputs.env }}
+          file: ./monitoring/Dockerfile.otel.${{ needs.set-environment.outputs.environment }}
           push: true
           tags: |
-            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-otel:${{ steps.tag.outputs.tag }}
-            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-otel:${{ steps.env.outputs.env }}-latest
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-otel:${{ needs.set-environment.outputs.tag }}
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-otel:${{ needs.set-environment.outputs.environment }}-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -295,10 +290,10 @@ jobs:
           file: ./monitoring/Dockerfile.prometheus
           push: true
           build-args: |
-            ENV=${{ steps.env.outputs.env }}
+            ENV=${{ needs.set-environment.outputs.environment }}
           tags: |
-            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-prometheus:${{ steps.tag.outputs.tag }}
-            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-prometheus:${{ steps.env.outputs.env }}-latest
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-prometheus:${{ needs.set-environment.outputs.tag }}
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-prometheus:${{ needs.set-environment.outputs.environment }}-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -306,11 +301,11 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./monitoring
-          file: ./monitoring/Dockerfile.loki.${{ steps.env.outputs.env }}
+          file: ./monitoring/Dockerfile.loki.${{ needs.set-environment.outputs.environment }}
           push: true
           tags: |
-            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-loki:${{ steps.tag.outputs.tag }}
-            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-loki:${{ steps.env.outputs.env }}-latest
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-loki:${{ needs.set-environment.outputs.tag }}
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-loki:${{ needs.set-environment.outputs.environment }}-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -321,19 +316,19 @@ jobs:
           file: ./monitoring/Dockerfile.grafana
           push: true
           build-args: |
-            ENV=${{ steps.env.outputs.env }}
+            ENV=${{ needs.set-environment.outputs.environment }}
           tags: |
-            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-grafana:${{ steps.tag.outputs.tag }}
-            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-grafana:${{ steps.env.outputs.env }}-latest
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-grafana:${{ needs.set-environment.outputs.tag }}
+            ${{ env.GHCR_REGISTRY }}/${{ env.IMAGE_PREFIX }}/hopper-grafana:${{ needs.set-environment.outputs.environment }}-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
   deploy:
-    needs: [test, build-and-push]
-    # Run if both succeeded (or test was skipped) and it's a release event OR manual workflow_dispatch
-    if: always() && (needs.test.result == 'success' || needs.test.result == 'skipped') && needs.build-and-push.result == 'success' && (github.event_name == 'release' || github.event_name == 'workflow_dispatch')
+    needs: [test, set-environment, build-and-push]
+    if: always() && (needs.test.result == 'success' || needs.test.result == 'skipped') && needs.build-and-push.result == 'success'
     runs-on: ubuntu-latest
-    
+    environment: ${{ needs.set-environment.outputs.environment }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -341,131 +336,98 @@ jobs:
       - name: Set deployment variables
         id: vars
         run: |
-          ENV="${{ needs.build-and-push.outputs.env }}"
-          TAG="${{ needs.build-and-push.outputs.tag }}"
-          
-          # Set environment-specific variables
-          if [ "$ENV" == "prod" ]; then
-            echo "ssh_host=${{ secrets.PROD_HOST }}" >> $GITHUB_OUTPUT
-            echo "ssh_user=${{ secrets.PROD_USER }}" >> $GITHUB_OUTPUT
-            echo "app_dir=/opt/hopper-prod" >> $GITHUB_OUTPUT
-          else
-            echo "ssh_host=${{ secrets.DEV_HOST }}" >> $GITHUB_OUTPUT
-            echo "ssh_user=${{ secrets.DEV_USER }}" >> $GITHUB_OUTPUT
-            echo "app_dir=/opt/hopper-dev" >> $GITHUB_OUTPUT
-          fi
-          
-          # Generate short tag for display/deployment script
-          # For version tags (v5.0.5), use as-is
-          # For fallback tags (prod-e366b5a), use full tag to match image tags
-          if [[ "$TAG" =~ ^v[0-9] ]]; then
-            echo "short_tag=$TAG" >> $GITHUB_OUTPUT
-          else
-            # Use full tag to match what was used in build-and-push
-            echo "short_tag=$TAG" >> $GITHUB_OUTPUT
-          fi
+          ENV="${{ needs.set-environment.outputs.environment }}"
+          TAG="${{ needs.set-environment.outputs.tag }}"
+
+          echo "app_dir=${{ secrets.APP_DIR }}" >> $GITHUB_OUTPUT
+          echo "short_tag=$TAG" >> $GITHUB_OUTPUT
 
       - name: Set up SSH key
         run: |
-          ENV="${{ needs.build-and-push.outputs.env }}"
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          
-          # Write SSH key to file
-          if [ "$ENV" == "prod" ]; then
-            echo "${{ secrets.PROD_SSH_KEY }}" > ~/.ssh/deploy_key
-          else
-            echo "${{ secrets.DEV_SSH_KEY }}" > ~/.ssh/deploy_key
-          fi
-          
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          
-          # Test the key format
+
           ssh-keygen -l -f ~/.ssh/deploy_key || {
             echo "❌ Invalid SSH key format!"
             exit 1
           }
-          
+
           echo "✅ SSH key configured successfully"
 
       - name: Create environment file
         run: |
-          ENV="${{ needs.build-and-push.outputs.env }}"
-          # Use the actual tag used in the 'build-and-push' job
-          FULL_TAG="${{ needs.build-and-push.outputs.tag }}"
-          # Create .env file with all secrets
-          cat > .env.$ENV << 'ENVEOF'
-          ENVIRONMENT=${{ needs.build-and-push.outputs.env == 'prod' && 'production' || 'development' }}
-          LOG_LEVEL=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_LOG_LEVEL || secrets.DEV_LOG_LEVEL }}
-          DOMAIN=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_DOMAIN || secrets.DEV_DOMAIN }}
-          FRONTEND_URL=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_FRONTEND_URL || secrets.DEV_FRONTEND_URL }}
-          BACKEND_URL=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_BACKEND_URL || secrets.DEV_BACKEND_URL }}
-          CLOUDFLARE_ACCESS_AUD_TAG=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_CLOUDFLARE_ACCESS_AUD_TAG || secrets.DEV_CLOUDFLARE_ACCESS_AUD_TAG }}
-          CLOUDFLARE_ACCESS_TEAM_DOMAIN=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_CLOUDFLARE_ACCESS_TEAM_DOMAIN || secrets.DEV_CLOUDFLARE_ACCESS_TEAM_DOMAIN }}
-          GOOGLE_CLIENT_ID=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_GOOGLE_CLIENT_ID || secrets.DEV_GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_GOOGLE_CLIENT_SECRET || secrets.DEV_GOOGLE_CLIENT_SECRET }}
-          GOOGLE_PROJECT_ID=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_GOOGLE_PROJECT_ID || secrets.DEV_GOOGLE_PROJECT_ID }}
-          TIKTOK_CLIENT_KEY=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_TIKTOK_CLIENT_KEY || secrets.DEV_TIKTOK_CLIENT_KEY }}
-          TIKTOK_CLIENT_SECRET=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_TIKTOK_CLIENT_SECRET || secrets.DEV_TIKTOK_CLIENT_SECRET }}
-          INSTAGRAM_APP_ID=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_INSTAGRAM_APP_ID || secrets.DEV_INSTAGRAM_APP_ID }}
-          INSTAGRAM_APP_SECRET=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_INSTAGRAM_APP_SECRET || secrets.DEV_INSTAGRAM_APP_SECRET }}
-          POSTGRES_PASSWORD=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_POSTGRES_PASSWORD || secrets.DEV_POSTGRES_PASSWORD }}
-          ENCRYPTION_KEY=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_ENCRYPTION_KEY || secrets.DEV_ENCRYPTION_KEY }}
-          STRIPE_SECRET_KEY=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_STRIPE_SECRET_KEY || secrets.DEV_STRIPE_SECRET_KEY }}
-          STRIPE_PUBLISHABLE_KEY=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_STRIPE_PUBLISHABLE_KEY || secrets.DEV_STRIPE_PUBLISHABLE_KEY }}
-          STRIPE_WEBHOOK_SECRET=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_STRIPE_WEBHOOK_SECRET || secrets.DEV_STRIPE_WEBHOOK_SECRET }}
-          STRIPE_PRICING_TABLE_ID=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_STRIPE_PRICING_TABLE_ID || secrets.DEV_STRIPE_PRICING_TABLE_ID }}
-          STRIPE_API_VERSION=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_STRIPE_API_VERSION || secrets.DEV_STRIPE_API_VERSION || '2024-11-20.acacia' }}
-          RESEND_API_KEY=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_RESEND_API_KEY || secrets.DEV_RESEND_API_KEY }}
-          RESEND_FROM_EMAIL=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_RESEND_FROM_EMAIL || secrets.DEV_RESEND_FROM_EMAIL }}
-          GRAFANA_PASSWORD=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_GRAFANA_PASSWORD || secrets.DEV_GRAFANA_PASSWORD || 'admin' }}
-          R2_ACCOUNT_ID=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_ACCOUNT_ID || secrets.DEV_R2_ACCOUNT_ID }}
-          R2_ACCESS_KEY_ID=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_ACCESS_KEY_ID || secrets.DEV_R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_SECRET_ACCESS_KEY || secrets.DEV_R2_SECRET_ACCESS_KEY }}
-          R2_BUCKET_NAME=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_BUCKET_NAME || secrets.DEV_R2_BUCKET_NAME }}
-          R2_ENDPOINT_URL=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_ENDPOINT_URL || secrets.DEV_R2_ENDPOINT_URL }}
-          R2_PUBLIC_DOMAIN=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_PUBLIC_DOMAIN || secrets.DEV_R2_PUBLIC_DOMAIN || '' }}
-          R2_VALIDATE_CUSTOM_DOMAIN_URLS=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_VALIDATE_CUSTOM_DOMAIN_URLS || secrets.DEV_R2_VALIDATE_CUSTOM_DOMAIN_URLS || 'true' }}
-          R2_URL_VALIDATION_TIMEOUT=${{ needs.build-and-push.outputs.env == 'prod' && secrets.PROD_R2_URL_VALIDATION_TIMEOUT || secrets.DEV_R2_URL_VALIDATION_TIMEOUT || '10' }}
+          ENV="${{ needs.set-environment.outputs.environment }}"
+          TAG="${{ needs.set-environment.outputs.tag }}"
+
+          cat > .env.$ENV << EOF
+          ENVIRONMENT=${{ needs.set-environment.outputs.environment == 'prod' && 'production' || 'development' }}
+          LOG_LEVEL=${{ secrets.LOG_LEVEL }}
+          DOMAIN=${{ secrets.DOMAIN }}
+          FRONTEND_URL=${{ secrets.FRONTEND_URL }}
+          BACKEND_URL=${{ secrets.BACKEND_URL }}
+          CLOUDFLARE_ACCESS_AUD_TAG=${{ secrets.CLOUDFLARE_ACCESS_AUD_TAG }}
+          CLOUDFLARE_ACCESS_TEAM_DOMAIN=${{ secrets.CLOUDFLARE_ACCESS_TEAM_DOMAIN }}
+          GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_PROJECT_ID=${{ secrets.GOOGLE_PROJECT_ID }}
+          TIKTOK_CLIENT_KEY=${{ secrets.TIKTOK_CLIENT_KEY }}
+          TIKTOK_CLIENT_SECRET=${{ secrets.TIKTOK_CLIENT_SECRET }}
+          INSTAGRAM_APP_ID=${{ secrets.INSTAGRAM_APP_ID }}
+          INSTAGRAM_APP_SECRET=${{ secrets.INSTAGRAM_APP_SECRET }}
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
+          STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_PUBLISHABLE_KEY=${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+          STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STRIPE_PRICING_TABLE_ID=${{ secrets.STRIPE_PRICING_TABLE_ID }}
+          STRIPE_API_VERSION=${{ secrets.STRIPE_API_VERSION }}
+          RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
+          RESEND_FROM_EMAIL=${{ secrets.RESEND_FROM_EMAIL }}
+          GRAFANA_PASSWORD=${{ secrets.GRAFANA_PASSWORD }}
+          R2_ACCOUNT_ID=${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID=${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY=${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME=${{ secrets.R2_BUCKET_NAME }}
+          R2_ENDPOINT_URL=${{ secrets.R2_ENDPOINT_URL }}
+          R2_PUBLIC_DOMAIN=${{ secrets.R2_PUBLIC_DOMAIN }}
+          R2_VALIDATE_CUSTOM_DOMAIN_URLS=${{ secrets.R2_VALIDATE_CUSTOM_DOMAIN_URLS }}
+          R2_URL_VALIDATION_TIMEOUT=${{ secrets.R2_URL_VALIDATION_TIMEOUT }}
           GITHUB_REPOSITORY=${{ github.repository }}
-          TAG=$FULL_TAG
-          GHCR_IMAGE_BACKEND=ghcr.io/${{ github.repository }}/hopper-backend:${{ steps.vars.outputs.short_tag }}
-          GHCR_IMAGE_FRONTEND=ghcr.io/${{ github.repository }}/hopper-frontend:${{ steps.vars.outputs.short_tag }}
-          GHCR_IMAGE_OTEL=ghcr.io/${{ github.repository }}/hopper-otel:${{ steps.vars.outputs.short_tag }}
-          GHCR_IMAGE_PROMETHEUS=ghcr.io/${{ github.repository }}/hopper-prometheus:${{ steps.vars.outputs.short_tag }}
-          GHCR_IMAGE_LOKI=ghcr.io/${{ github.repository }}/hopper-loki:${{ steps.vars.outputs.short_tag }}
-          GHCR_IMAGE_GRAFANA=ghcr.io/${{ github.repository }}/hopper-grafana:${{ steps.vars.outputs.short_tag }}
-          ENVEOF
-          
+          TAG=$TAG
+          GHCR_IMAGE_BACKEND=ghcr.io/${{ github.repository }}/hopper-backend:${TAG}
+          GHCR_IMAGE_FRONTEND=ghcr.io/${{ github.repository }}/hopper-frontend:${TAG}
+          GHCR_IMAGE_OTEL=ghcr.io/${{ github.repository }}/hopper-otel:${TAG}
+          GHCR_IMAGE_PROMETHEUS=ghcr.io/${{ github.repository }}/hopper-prometheus:${TAG}
+          GHCR_IMAGE_LOKI=ghcr.io/${{ github.repository }}/hopper-loki:${TAG}
+          GHCR_IMAGE_GRAFANA=ghcr.io/${{ github.repository }}/hopper-grafana:${TAG}
+          EOF
+
           chmod 600 .env.$ENV
 
       - name: Deploy to server
         env:
           SSH_OPTS: "-i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o IdentitiesOnly=yes"
-          SSH_HOST: ${{ steps.vars.outputs.ssh_host }}
-          SSH_USER: ${{ steps.vars.outputs.ssh_user }}
-          APP_DIR: ${{ steps.vars.outputs.app_dir }}
-          ENV: ${{ needs.build-and-push.outputs.env }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          ENV: ${{ needs.set-environment.outputs.environment }}
           SHORT_TAG: ${{ steps.vars.outputs.short_tag }}
         run: |
           echo "🚀 Deploying $ENV environment (tag: $SHORT_TAG) to $SSH_USER@$SSH_HOST"
-          
+
           # Test SSH connection
           echo "🔍 Testing SSH connection..."
           ssh $SSH_OPTS $SSH_USER@$SSH_HOST "echo '✅ SSH connection successful'" || {
             echo "❌ SSH connection failed!"
-            echo "💡 Troubleshooting:"
-            echo "   1. Verify ${ENV}_SSH_KEY secret contains the full private key (including -----BEGIN/END-----)"
-            echo "   2. Verify the public key is in ~/.ssh/authorized_keys on the server"
-            echo "   3. Check ${ENV}_HOST and ${ENV}_USER secrets are correct"
-            echo "   4. Verify firewall allows SSH (port 22)"
             exit 1
           }
-          
+
           # Create directories
           echo "📁 Creating directories..."
           ssh $SSH_OPTS $SSH_USER@$SSH_HOST "mkdir -p $APP_DIR/nginx $APP_DIR/scripts"
-          
+
           # Deploy secrets file
           echo "🔐 Deploying secrets..."
           scp $SSH_OPTS .env.$ENV $SSH_USER@$SSH_HOST:/tmp/.env.$ENV.$$
@@ -474,46 +436,41 @@ jobs:
             sudo chmod 600 $APP_DIR/.env.$ENV
           "
           rm .env.$ENV
-          
+
           # Copy application files
           echo "📦 Copying application files..."
           scp $SSH_OPTS docker-compose.$ENV.yml $SSH_USER@$SSH_HOST:$APP_DIR/
           scp $SSH_OPTS scripts/deploy.sh $SSH_USER@$SSH_HOST:$APP_DIR/
           scp $SSH_OPTS makefile $SSH_USER@$SSH_HOST:$APP_DIR/
-          
-          # Copy backup scripts
-          echo "📦 Copying backup scripts..."
-          ssh $SSH_OPTS $SSH_USER@$SSH_HOST "mkdir -p $APP_DIR/scripts"
+
+          # Copy scripts
+          echo "📦 Copying scripts..."
           scp $SSH_OPTS scripts/backup-db.sh $SSH_USER@$SSH_HOST:$APP_DIR/scripts/
           scp $SSH_OPTS scripts/restore-db.sh $SSH_USER@$SSH_HOST:$APP_DIR/scripts/
-          
-          # Copy nginx config and SSL deployment script for prod only
+
+          # Copy nginx config (environment-specific)
           if [ "$ENV" == "prod" ]; then
             scp $SSH_OPTS nginx/prod-hopper.conf $SSH_USER@$SSH_HOST:$APP_DIR/nginx/
-            scp $SSH_OPTS scripts/deploy-ssl-certs.sh $SSH_USER@$SSH_HOST:$APP_DIR/scripts/
+          else
+            scp $SSH_OPTS nginx/dev-hopper.conf $SSH_USER@$SSH_HOST:$APP_DIR/nginx/
           fi
-          
-          # Deploy SSL certificates (before running main deployment)
+
+          # Deploy SSL certificates (prod only)
           if [ "$ENV" == "prod" ]; then
             echo "🔒 Deploying SSL certificates..."
-            # Write certificates to temporary files if they exist
-            if [ -n "${{ secrets.PROD_SSL_CERT }}" ] && [ -n "${{ secrets.PROD_SSL_KEY }}" ]; then
-              # Create temp files with restrictive permissions
+            scp $SSH_OPTS scripts/deploy-ssl-certs.sh $SSH_USER@$SSH_HOST:$APP_DIR/scripts/
+            if [ -n "${{ secrets.SSL_CERT }}" ] && [ -n "${{ secrets.SSL_KEY }}" ]; then
               TEMP_DIR=$(mktemp -d)
               chmod 700 "$TEMP_DIR"
-              echo "${{ secrets.PROD_SSL_CERT }}" > "$TEMP_DIR/ssl_cert.pem"
-              echo "${{ secrets.PROD_SSL_KEY }}" > "$TEMP_DIR/ssl_key.pem"
+              echo "${{ secrets.SSL_CERT }}" > "$TEMP_DIR/ssl_cert.pem"
+              echo "${{ secrets.SSL_KEY }}" > "$TEMP_DIR/ssl_key.pem"
               chmod 600 "$TEMP_DIR/ssl_cert.pem" "$TEMP_DIR/ssl_key.pem"
-              
-              # Copy to server with restrictive permissions
+
               SERVER_TEMP=$(ssh $SSH_OPTS $SSH_USER@$SSH_HOST "mktemp -d" | tr -d '\r\n')
               scp $SSH_OPTS "$TEMP_DIR/ssl_cert.pem" $SSH_USER@$SSH_HOST:"$SERVER_TEMP/ssl_cert.pem"
               scp $SSH_OPTS "$TEMP_DIR/ssl_key.pem" $SSH_USER@$SSH_HOST:"$SERVER_TEMP/ssl_key.pem"
-              
-              # Clean up local temp files immediately
               rm -rf "$TEMP_DIR"
-              
-              # Deploy certificates and clean up server temp files
+
               ssh $SSH_OPTS $SSH_USER@$SSH_HOST "
                 chmod 600 $SERVER_TEMP/ssl_cert.pem $SERVER_TEMP/ssl_key.pem && \
                 cd $APP_DIR && \
@@ -523,17 +480,14 @@ jobs:
                 rm -rf $SERVER_TEMP && \
                 sudo -E ./scripts/deploy-ssl-certs.sh $ENV
               " || {
-                echo "⚠️  SSL certificate deployment failed"
-                # Ensure cleanup even on failure
+                echo "⚠️  SSL certificate deployment failed, continuing..."
                 ssh $SSH_OPTS $SSH_USER@$SSH_HOST "rm -rf $SERVER_TEMP" 2>/dev/null || true
-                echo "   Continuing with deployment (certificates can be deployed manually)"
               }
             else
-              echo "⚠️  SSL certificates not configured in GitHub secrets"
-              echo "   Skipping SSL certificate deployment"
+              echo "⚠️  SSL certificates not configured, skipping"
             fi
           fi
-          
+
           # Run deployment
           echo "🚀 Running deployment script..."
           ssh $SSH_OPTS $SSH_USER@$SSH_HOST "
@@ -542,18 +496,18 @@ jobs:
             source .env.$ENV && \
             ./deploy.sh $ENV $SHORT_TAG
           "
-          
+
           echo "✅ Deployment completed successfully!"
 
-      - name: Cleanup secrets
+      - name: Cleanup on failure
         if: failure()
         env:
           SSH_OPTS: "-i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ServerAliveInterval=60 -o ServerAliveCountMax=3 -o IdentitiesOnly=yes"
-          SSH_HOST: ${{ steps.vars.outputs.ssh_host }}
-          SSH_USER: ${{ steps.vars.outputs.ssh_user }}
-          APP_DIR: ${{ steps.vars.outputs.app_dir }}
-          ENV: ${{ needs.build-and-push.outputs.env }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+          ENV: ${{ needs.set-environment.outputs.environment }}
         run: |
-          echo "🧹 Cleaning up secrets after failed deployment..."
+          echo "🧹 Cleaning up after failed deployment..."
           ssh $SSH_OPTS $SSH_USER@$SSH_HOST "rm -f $APP_DIR/.env.$ENV" 2>/dev/null || true
           rm -f ~/.ssh/deploy_key
