@@ -100,6 +100,14 @@ $COMPOSE up -d
 echo "⏳ Waiting for services to start..."
 sleep 5
 
+# Run database migrations
+echo "🗄️  Running database migrations..."
+docker exec "${ENV}-hopper-backend" alembic upgrade head || {
+    echo "❌ Migrations failed!"
+    exit 1
+}
+echo "✅ Migrations complete"
+
 # Health check function
 check_health() {
     local service=$1
