@@ -342,6 +342,12 @@ jobs:
           echo "app_dir=${{ secrets.APP_DIR }}" >> $GITHUB_OUTPUT
           echo "short_tag=$TAG" >> $GITHUB_OUTPUT
 
+      - name: Connect to Tailscale
+        if: needs.set-environment.outputs.environment == 'dev'
+        uses: tailscale/github-action@v2
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+
       - name: Set up SSH key
         run: |
           mkdir -p ~/.ssh
